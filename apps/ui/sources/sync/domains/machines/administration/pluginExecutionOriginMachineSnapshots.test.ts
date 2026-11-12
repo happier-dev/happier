@@ -8,8 +8,9 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import { subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import * as inventory from '@/sync/domains/machines/machineInventorySnapshots';
-import { publishMachineActivities } from '@/sync/domains/machines/machineActivity';
+import { publishMachineActivities, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import * as origins from './pluginExecutionOrigin';
+import * as preferences from './selectionPreferences';
 import * as fleet from './fleetUnion';
 import * as originIdentity from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed,
@@ -38,6 +39,14 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
+// These unit inputs are settled census publications. Publish their real activity
+// answer before waking snapshot readers, as the production Machine store does.
+function publishMachineSnapshot(update: Partial<ReturnType<typeof storage.getState>>) {
+    const machines = Object.values(update.machineListByServerId ?? {}).flatMap(rows => rows ?? []);
+    publishMachineActivities(machines.map(machine => ({ machine, activity: readMachineActivity(machine), projections: [] })));
+    storage.setState(update);
+}
+
 function fixture() {
     const now = Date.now();
     const machine = createMachineFixture({ id: 'origin-count-machine', activeAt: now });
@@ -48,7 +57,7 @@ function fixture() {
             sourceCustody: { kind: 'development' as const, registeredRootId: 'root' } } },
         version: '1.0.0', occurrenceId: 'occurrence', serverId: home.id },
         releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } };
-    storage.setState({ machines: {}, machineListByServerId: { [home.id]: [machine] },
+    publishMachineSnapshot({ machines: {}, machineListByServerId: { [home.id]: [machine] },
         machineListStatusByServerId: { [home.id]: 'idle' } });
     const inputs: ExecutionOriginMachineSnapshotInputs = { pluginId: 'acme.count', profiles: [home], activeServerId: home.id,
         readinessServerIdentityId: home.serverIdentityId,
@@ -68,7 +77,7 @@ describe('execution-origin Machine publication', () => {
     it('uses Availability declarations for thin census rows, retains unknown coverage, and switches only for proven improvement', () => {
         const { inputs, home, machine, source, connect } = fixture();
         const second = createMachineFixture({ id: 'z-thin-machine', activeAt: machine.activeAt });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, second] } });
         const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.thin-source', version: '1.0.0',
             displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
                 actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
@@ -144,7 +153,7 @@ describe('execution-origin Machine publication', () => {
     it('retains Auto across published native authentication changes without probes or unnecessary notifications', async () => {
         const { inputs, home, machine, source, connect, now } = fixture();
         const second = createMachineFixture({ id: 'native-auth-other', activeAt: now + 1 });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, second] } });
         const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: 'acme.native-source', version: '1.0.0',
             displayName: 'Source', runtime: { apiVersion: 1 }, contributes: {
                 actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
@@ -199,7 +208,7 @@ describe('execution-origin Machine publication', () => {
     it('retains Auto on better contributor republish, fails over when its Machine disappears, and keeps reads free of scans', () => {
         const { inputs, home, machine, source, connect } = fixture();
         const second = createMachineFixture({ id: 'z-second-machine', activeAt: machine.activeAt });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, second] } });
         const next = { ...inputs, sources: [source, { ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }],
             selection: { availabilityRevision: {}, storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
@@ -226,7 +235,7 @@ describe('execution-origin Machine publication', () => {
         declarationReads = 0;
         for (let render = 0; render < 100; render += 1) expect(connection.getSnapshot()).toBe(selected);
         expect(declarationReads).toBe(0);
-        storage.setState({ machineListByServerId: { [home.id]: [second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [second] } });
         expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected',
             origin: { sourceRef: { machineId: second.id } } });
         connection.updateInputs({ ...next, materializations: [{ ...contributor, machineId: machine.id }] });
@@ -250,8 +259,8 @@ describe('execution-origin Machine publication', () => {
         for (const cancel of [...retirements]) cancel();
         expect(connection.getSnapshot().selection).toBeNull();
         const revoked = { ...machine, revokedAt: Date.now() };
-        storage.setState({ machineListByServerId: { [home.id]: [revoked] } });
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...revoked,
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [revoked] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...revoked,
             metadata: { ...revoked.metadata!, displayName: 'Changed while retired' } }] } });
         connection.updateInputs({ ...next, accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) } });
         expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'unavailable', reasons: ['revoked'] });
@@ -262,7 +271,7 @@ describe('execution-origin Machine publication', () => {
         const machines = [machine, ...Array.from({ length: 169 }, (_, index) => createMachineFixture({
             id: `origin-scale-${index}`, activeAt: Date.now(),
         }))];
-        storage.setState({ machineListByServerId: { [home.id]: machines } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: machines } });
         const build = vi.spyOn(origins, 'buildPluginMachineExecutionOriginCandidates');
         const equal = vi.spyOn(originIdentity, 'arePluginMachineExecutionOriginsEqual');
         const classifyRelease = vi.fn(() => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }));
@@ -286,7 +295,7 @@ describe('execution-origin Machine publication', () => {
         expect(build).not.toHaveBeenCalled();
         expect(classifyRelease).not.toHaveBeenCalled();
         expect(equal).not.toHaveBeenCalled();
-        storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machine.id
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: machines.map(row => row.id === machine.id
             ? { ...row, revokedAt: Date.now() } : row) } });
         expect(build.mock.calls.flatMap(([params]) => params.materializations).map(row => row.machineId))
             .toEqual(plugins.map(() => machine.id));
@@ -321,7 +330,7 @@ describe('execution-origin Machine publication', () => {
             return connect(next);
         });
         demandReads = 0;
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
         // Each demand reads its own identity for preference/readiness resolution;
         // no publication searches every sibling demand for reusable projections.
         expect(demandReads).toBeLessThanOrEqual(demands.length * 4);
@@ -343,14 +352,14 @@ describe('execution-origin Machine publication', () => {
         expect(firstListener).toHaveBeenCalledTimes(1);
         expect(secondListener).not.toHaveBeenCalled();
         first.dispose();
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } });
         expect(secondListener).toHaveBeenCalledTimes(1);
         expect(second.getSnapshot().key).toContain('revoked');
     });
 
     it('resolves newly available Auto choices without scanning unrelated plugin demands', () => {
         const { inputs, home, machine, source, now, connect } = fixture();
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, active: false, activeAt: 0 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, active: false, activeAt: 0 }] } });
         let demandReads = 0;
         const selection = { availabilityRevision: {}, storedOrigin: null,
             homeServerIdentityId: home.serverIdentityId,
@@ -363,7 +372,7 @@ describe('execution-origin Machine publication', () => {
         });
         for (const demand of demands) expect(demand.getSnapshot().selection?.state.kind).toBe('unavailable');
         demandReads = 0;
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 1 }] } });
         // Two identity reads prepare the shared view; the remaining reads are
         // each demand's own preference, candidate and election inputs.
         expect(demandReads).toBeLessThanOrEqual(demands.length * 16);
@@ -385,12 +394,12 @@ describe('execution-origin Machine publication', () => {
         expect(fact()).toMatchObject({ eligible: false, rejection: 'home_unreachable' });
         recordMachineRequestSucceeded({ ...scope, machineId: machine.id, observedAtMs: 11 });
         expect(fact()).toMatchObject({ eligible: true, rejection: null });
-        storage.setState({ machineListByServerId: { [home.id]: [] }, machineListStatusByServerId: { [home.id]: 'loading' } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [] }, machineListStatusByServerId: { [home.id]: 'loading' } });
         expect(fact().rejection).toBe('unknown');
         storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } });
         expect(fact().rejection).toBe('missing');
         expect(connection.getSnapshot().key).toContain('missing');
-        storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine] } });
         expect(fact()).toMatchObject({ eligible: true, rejection: null });
         // A profile correspondence rebuild replaces the whole inventory basis;
         // previously selected targets can disappear without a changed row.
@@ -404,7 +413,7 @@ describe('execution-origin Machine publication', () => {
         const machines = [machine, ...Array.from({ length: 137 }, (_, index) => createMachineFixture({
             id: `unrelated-${index}`, activeAt: Date.now() - index - 1,
         }))];
-        storage.setState({ machineListByServerId: { [home.id]: machines } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: machines } });
         const sources = machines.map(row => ({ ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: row.id } } } }));
         const connection = connect({ ...inputs, sources });
@@ -416,7 +425,7 @@ describe('execution-origin Machine publication', () => {
         for (let index = 1; index <= 5; index += 1) {
             const next = [...machines];
             next[1] = { ...next[1]!, metadata: { ...next[1]!.metadata!, displayName: `renamed-${index}` } };
-            storage.setState({ machineListByServerId: { [home.id]: next } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: next } });
             expect(connection.readCurrent().readMachineFact(untouchedTarget)).toBe(untouched);
             expect(connection.getSnapshot()).toBe(initial);
             // The current raw accessor remains usable, but does not stand in for
@@ -432,7 +441,7 @@ describe('execution-origin Machine publication', () => {
         expect(rejectionReads).toHaveBeenCalledTimes(6);
         recordMachineRequestSucceeded({ ...scope, machineId: machines[2]!.id });
         expect(rejectionReads).toHaveBeenCalledTimes(7);
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }, ...machines.slice(1)] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }, ...machines.slice(1)] } });
         expect(connection.readCurrent().readMachineFact(untouchedTarget)).toMatchObject({ rejection: 'revoked', eligible: false });
         expect(connection.getSnapshot().eligibilityKey).not.toBe(initial.eligibilityKey);
     });
@@ -441,7 +450,7 @@ describe('execution-origin Machine publication', () => {
         const second = createMachineFixture({ id: 'second-origin-machine', activeAt: now - 1 });
         const secondSource = { ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } };
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, second] } });
         const current = { ...inputs, sources: [source, secondSource], selection: { availabilityRevision: {},
             storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
             classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) } };
@@ -452,7 +461,7 @@ describe('execution-origin Machine publication', () => {
             source: { ...candidate.source, origin: { ...candidate.source.origin,
                 sourceRef: { ...candidate.source.origin.sourceRef } } } })) });
         expect(first.getSnapshot().selection).toBe(initial);
-        storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, activeAt: now + 1 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, activeAt: now + 1 }] } });
         expect(first.getSnapshot().selection).toBe(initial);
         const page = connect({ ...current, selection: { ...current.selection } });
         expect(page.getSnapshot().selection).toBe(initial);
@@ -461,14 +470,14 @@ describe('execution-origin Machine publication', () => {
         } } });
         const pinned = first.getSnapshot().selection;
         expect(pinned?.state).toMatchObject({ kind: 'selected', origin: secondSource.source.origin, selectionSource: 'pinned' });
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 2 }, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: now + 2 }, second] } });
         expect(first.getSnapshot().selection).toBe(pinned);
         expect(page.getSnapshot().selection).toBe(pinned);
-        storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, active: false, activeAt: 0 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, active: false, activeAt: 0 }] } });
         expect(first.getSnapshot().selection?.state).toMatchObject({ kind: 'unavailable', storedTarget: { machineId: second.id } });
         storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} } });
         expect(first.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: source.source.origin, selectionSource: 'auto' });
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, active: false, activeAt: 0 }, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, active: false, activeAt: 0 }, second] } });
         expect(first.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: secondSource.source.origin, selectionSource: 'auto' });
     });
 
@@ -477,13 +486,13 @@ describe('execution-origin Machine publication', () => {
         const second = createMachineFixture({ id: 'replacement-other-machine', activeAt: now - 1 });
         const secondSource = { ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } };
-        storage.setState({ machineListByServerId: { [home.id]: [machine, second] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, second] } });
         const current = { ...inputs, sources: [source, secondSource], selection: { availabilityRevision: {},
             storedOrigin: null, homeServerIdentityId: home.serverIdentityId,
             classifyRelease: () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }) } };
         const connection = connect(current);
         expect(connection.getSnapshot().selection?.state).toMatchObject({ kind: 'selected', origin: source.source.origin });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, activeAt: now + 1 }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, activeAt: now + 1 }] } });
         const replacementSource = { ...source, source: { ...source.source, occurrenceId: 'replacement',
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef,
                 sourceCustody: { kind: 'development' as const, registeredRootId: 'replacement-root' } } } } };
@@ -495,7 +504,7 @@ describe('execution-origin Machine publication', () => {
         vi.useFakeTimers();
         const { inputs, connect, home, machine, source, now } = fixture();
         const other = createMachineFixture({ id: 'other-pending-machine', activeAt: now - 1 });
-        storage.setState({ machineListByServerId: { [home.id]: [machine, other] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, other] } });
         storage.getState().applyMachines([machine, other], false, { sourceServerId: home.id });
         const connection = connect({ ...inputs, selection: { availabilityRevision: {}, storedOrigin: null,
             homeServerIdentityId: home.serverIdentityId,
@@ -574,7 +583,7 @@ describe('execution-origin Machine publication', () => {
             storage.setState({ settingsVersion: index });
         }
         expect([build.mock.calls.length, elect.mock.calls.length]).toEqual(before);
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } });
         expect(first.getSnapshot()).toMatchObject({ selection: { state: { kind: 'unavailable', reasons: ['revoked'] } } });
         expect(second.getSnapshot()).toBe(first.getSnapshot());
         expect([build.mock.calls.length, elect.mock.calls.length]).toEqual(before.map(count => count + 1));
@@ -630,7 +639,7 @@ describe('execution-origin Machine publication', () => {
         function manyPlugins(count: number) {
             const ctx = fixture();
             const second = createMachineFixture({ id: 'origin-count-machine-b', activeAt: ctx.now });
-            storage.setState({ machineListByServerId: { [ctx.home.id]: [ctx.machine, second] } });
+            publishMachineSnapshot({ machineListByServerId: { [ctx.home.id]: [ctx.machine, second] } });
             const sourceFor = (pluginId: string, machineId: string) => ({ ...ctx.source, source: { ...ctx.source.source,
                 origin: { ...ctx.source.source.origin, sourceRef: { ...ctx.source.source.origin.sourceRef, pluginId, machineId } } } });
             const plugins = Array.from({ length: count }, (_, index) => {
@@ -662,7 +671,7 @@ describe('execution-origin Machine publication', () => {
         it('wakes only demands supplied by the Machine whose eligibility changed', () => {
             const { plugins, home, machine, second } = manyPlugins(20);
             for (const plugin of plugins) plugin.listener.mockClear();
-            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, revokedAt: Date.now() }] } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, revokedAt: Date.now() }] } });
             for (const plugin of plugins) {
                 expect(plugin.listener).toHaveBeenCalledTimes(plugin.machineId === second.id ? 1 : 0);
             }
@@ -677,8 +686,8 @@ describe('execution-origin Machine publication', () => {
             const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
             for (const plugin of plugins) plugin.listener.mockClear();
             // Machine B announces newer daemon content, then opens it.
-            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
-            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
             const wakes = onFirst.reduce((sum, plugin) => sum + plugin.listener.mock.calls.length, 0);
             const elections = elect.mock.calls.filter(([input]) => input.pluginId && onFirst.some(plugin => plugin.pluginId === input.pluginId)).length;
             expect({ wakes, elections }).toEqual({ wakes: 0, elections: 0 });
@@ -703,8 +712,8 @@ describe('execution-origin Machine publication', () => {
             const version = (second.daemonStateVersion ?? 0) + 1;
             const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
             for (const plugin of plugins) plugin.listener.mockClear();
-            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
-            storage.setState({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });
             expect(onFirst.reduce((sum, plugin) => sum + plugin.listener.mock.calls.length, 0)).toBe(0);
             onFirst.forEach((plugin, index) => expect(plugin.connection.getSnapshot().selection).toBe(before[index]));
         });
@@ -730,7 +739,7 @@ describe('execution-origin Machine publication', () => {
             const ctx = fixture();
             const machines = [ctx.machine, ...Array.from({ length: machineCount - 1 }, (_, index) =>
                 createMachineFixture({ id: `origin-work-${index}`, activeAt: ctx.now }))];
-            storage.setState({ machineListByServerId: { [ctx.home.id]: machines } });
+            publishMachineSnapshot({ machineListByServerId: { [ctx.home.id]: machines } });
             if (includeSources || declarationCount) publishMachineActivities(machines.map(machine => ({ machine, activity: machine, projections: [] })));
             const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.work-${index}`);
             const counts = { declarationReads: 0, rowPluginIdReads: 0 };
@@ -790,7 +799,52 @@ describe('execution-origin Machine publication', () => {
             return { ...ctx, machines, pluginIds, connections, inputsFor, measure, scope, rowsFor, publish, revisionFor: (pluginId: string) => store.bind(scope).getObservationSnapshot(pluginId) };
         }
         const revokeMachine = ({ home, machines }: ReturnType<typeof account>, machineId: string) =>
-            storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machineId ? { ...row, revokedAt: Date.now() } : row) } });
+            publishMachineSnapshot({ machineListByServerId: { [home.id]: machines.map(row => row.id === machineId ? { ...row, revokedAt: Date.now() } : row) } });
+
+        it('publishes only changed demand snapshots at reload152 scale and none on unchanged refresh', () => {
+            const work = account(107, 344, false, 10019);
+            const demandReads = vi.spyOn(preferences, 'readPluginMachineExecutionTargetPreference');
+            let publications = 0;
+            const freeze = Object.freeze;
+            const observe = vi.spyOn(Object, 'freeze').mockImplementation(value => {
+                if (value && typeof value === 'object' && 'eligibilityKey' in value && 'readMachineFact' in value
+                    && 'snapshots' in value && 'selection' in value) publications++;
+                return freeze(value);
+            });
+            const refresh = (changed = false) => work.connections.forEach((connection, index) => {
+                const inputs = work.inputsFor(work.pluginIds[index]!);
+                connection.updateInputs({ ...inputs, profiles: [...inputs.profiles],
+                    materializations: changed ? inputs.materializations.map((row, i) => i === 0 ? { ...row, version: '1.0.1' } : row)
+                        : inputs.materializations });
+            });
+            const before = work.connections.map(connection => connection.readCurrent());
+            refresh();
+            expect(publications).toBe(0);
+            expect(demandReads).not.toHaveBeenCalled();
+            work.connections.forEach((connection, index) => expect(connection.readCurrent()).toBe(before[index]));
+            publishMachineSnapshot({ machineListByServerId: { [work.home.id]: work.machines.map(machine => ({ ...machine })) } });
+            expect(publications).toBe(0);
+            expect(demandReads).not.toHaveBeenCalled();
+            work.connections.forEach((connection, index) => expect(connection.readCurrent()).toBe(before[index]));
+            refresh(true);
+            expect(publications).toBe(1);
+            expect(demandReads).toHaveBeenCalledTimes(1);
+            work.connections.slice(1).forEach((connection, index) => expect(connection.readCurrent()).toBe(before[index + 1]));
+            expect(work.connections[0]!.getSnapshot().selection!.candidates.some(candidate =>
+                'materialization' in candidate && candidate.materialization.version === '1.0.1')).toBe(true);
+            observe.mockRestore();
+            const changed = { ...work.machines[0]!, updatedAt: work.machines[0]!.updatedAt + 1 };
+            const activity = { active: true, activeAt: work.now + 1 };
+            publishMachineActivities([{ machine: changed, activity, projections: [] }]);
+            publishMachineSnapshot({ machineListByServerId: { [work.home.id]: [changed, ...work.machines.slice(1)] } });
+            expect(work.connections[0]!.readCurrent().readMachineFact({ serverIdentityId: work.home.serverIdentityId,
+                machineId: changed.id }).activeAt).toBe(activity.activeAt);
+            const next = { ...changed };
+            publishMachineActivities([{ machine: next, activity: { ...activity, activeAt: work.now + 2 }, projections: [] }]);
+            publishMachineSnapshot({ machineListByServerId: { [work.home.id]: [next, ...work.machines.slice(1)] } });
+            expect(work.connections[0]!.readCurrent().readMachineFact({ serverIdentityId: work.home.serverIdentityId,
+                machineId: next.id }).activeAt).toBe(work.now + 2);
+        });
 
         it('publishes only changed candidates and collects superseded generations at reload151 scale', async () => {
             const allocated: WeakRef<object>[] = [];
@@ -919,7 +973,7 @@ describe('execution-origin Machine publication', () => {
         const machines = [machine, second, ...Array.from({ length: 136 }, (_, index) => createMachineFixture({
             id: `heartbeat-unrelated-${index}`, activeAt: now,
         }))];
-        storage.setState({ machineListByServerId: { [home.id]: machines } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: machines } });
         storage.getState().applyMachines(machines, false, { sourceServerId: home.id });
         const pair = { ...inputs, sources: [source, { ...source, source: { ...source.source,
             origin: { ...source.source.origin, sourceRef: { ...source.source.origin.sourceRef, machineId: second.id } } } }] };
@@ -962,7 +1016,7 @@ describe('execution-origin Machine publication', () => {
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBeNull();
         storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: now + 2 }], { sourceServerId: home.id });
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBe('offline');
-        storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now(), revokedAt: Date.now() }] } });
+        publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now(), revokedAt: Date.now() }] } });
         expect(connection.readCurrent().readMachineFact({ serverIdentityId: home.serverIdentityId, machineId: machine.id }).rejection).toBe('revoked');
     });
 });
