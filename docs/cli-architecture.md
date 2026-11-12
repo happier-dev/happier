@@ -5555,8 +5555,10 @@ and nested fields without changing literal defaults or constants. Cyclic input
 references are presented as unconstrained objects or arrays (preserving primitive
 alternatives for recursive JSON values), with `action_spec_get` guidance. This
 imposes no input depth limit; the original parser validates nested values.
-Acyclic shared references, MCP output schemas and Action discovery schemas
-are unchanged.
+Non-strict input discovery also caps expanded schema nesting at ten levels for
+Meta: deeper subtrees become opaque objects with `action_spec_get` guidance.
+Shared references remain compact; a shared subtree is cut to fit its deepest
+advertised use. MCP output schemas and Action discovery schemas are unchanged.
 
 The development definition family delegates to Protocol's
 `createWorkflowDefinitionActions`; CLI Artifact transport is a host adapter,

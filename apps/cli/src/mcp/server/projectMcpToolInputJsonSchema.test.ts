@@ -24,6 +24,29 @@ function oversizedEnums(value: unknown, path = '#'): string[] {
     ];
 }
 
+// Count schema levels, following local refs at the use site (not JSON containers).
+function schemaDepth(document: unknown, value: unknown = document): number {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
+    const node = value as Record<string, unknown>;
+    let depth = 1;
+    if (typeof node.$ref === 'string' && node.$ref.startsWith('#/')) {
+        let target: unknown = document;
+        for (const part of node.$ref.slice(2).split('/')) {
+            target = target && typeof target === 'object'
+                ? (target as Record<string, unknown>)[part.replace(/~1/g, '/').replace(/~0/g, '~')] : undefined;
+        }
+        depth = Math.max(depth, schemaDepth(document, target));
+    }
+    for (const [key, child] of Object.entries(node)) {
+        if (['properties', 'patternProperties', 'dependentSchemas', 'definitions', '$defs'].includes(key)) {
+            for (const entry of Object.values(child as Record<string, unknown>)) depth = Math.max(depth, 1 + schemaDepth(document, entry));
+        } else if (['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems', 'anyOf', 'oneOf', 'allOf', 'prefixItems'].includes(key)) {
+            for (const entry of Array.isArray(child) ? child : [child]) depth = Math.max(depth, 1 + schemaDepth(document, entry));
+        }
+    }
+    return depth;
+}
+
 function recursiveReferences(document: unknown): string[] {
     const active = new Set<object>();
     const done = new Set<object>();
@@ -56,17 +79,38 @@ function recursiveReferences(document: unknown): string[] {
 }
 
 describe('MCP provider input projection', () => {
-    it('keeps every exported MCP tool input non-recursive and within provider enum thresholds', () => {
+    it('keeps every exported MCP tool input non-recursive and within provider enum and depth thresholds', () => {
         const offenders = HAPPIER_BUILT_IN_TOOLS.flatMap(tool => {
             const schema = zodSchemaToJsonSchemaObject(toMcpToolObjectSchema(tool.inputSchema, 'inputSchema'));
-            return [...oversizedEnums(schema), ...recursiveReferences(schema)].map(offender => `${tool.name} ${offender}`);
+            return [...oversizedEnums(schema), ...recursiveReferences(schema),
+                ...(schemaDepth(schema) > 10 ? ['depth=' + schemaDepth(schema)] : [])].map(offender => `${tool.name} ${offender}`);
         });
         const native = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'enum-session',
             happierToolsEnabled: true, memoryRecallGuidanceEnabled: true, sessionMemoryEnabled: true,
             isServerFeatureEnabled: () => true });
         expect(native.length).toBeGreaterThan(0);
-        offenders.push(...native.flatMap(tool => [...oversizedEnums(tool.inputSchema), ...recursiveReferences(tool.inputSchema)].map(offender => `native:${tool.name} ${offender}`)));
+        offenders.push(...native.flatMap(tool => [...oversizedEnums(tool.inputSchema), ...recursiveReferences(tool.inputSchema),
+            ...(schemaDepth(tool.inputSchema) > 10 ? ['depth=' + schemaDepth(tool.inputSchema)] : [])].map(offender => `native:${tool.name} ${offender}`)));
         expect(offenders).toEqual([]);
+    });
+
+    it('bounds expanded reference depth while preserving boundary leaves and opaque discovery guidance', () => {
+        const nest = (levels: number): Record<string, unknown> => levels === 1
+            ? { type: 'string', enum: ['ok'] }
+            : { type: 'object', properties: { child: nest(levels - 1) } };
+        const schema = { type: 'object', properties: {
+            boundary: nest(9), deep: nest(10), referenced: { $ref: '#/definitions/deep' },
+        }, definitions: { deep: nest(11) }, default: { properties: { literal: true } } };
+        const projected = projectMcpToolInputJsonSchema(schema);
+        expect(schemaDepth(projected)).toBeLessThanOrEqual(10);
+        expect(projected.properties).toMatchObject({ boundary: nest(9) });
+        let node = (projected.properties as Record<string, unknown>).deep as Record<string, unknown>;
+        for (let level = 2; level < 10; level++) node = (node.properties as Record<string, unknown>).child as Record<string, unknown>;
+        expect(node).toMatchObject({ type: 'object', description: expect.stringContaining('action_spec_get') });
+        expect(node.properties).toBeUndefined();
+        expect(new Ajv({ strict: false }).compile(projected)({ deep: {}, referenced: {} })).toBe(true);
+        expect(schemaDepth(schema)).toBe(12);
+        expect(projected.default).toEqual(schema.default);
     });
 
     it('projects large string enums in nested schemas without changing small enums or literal data', () => {

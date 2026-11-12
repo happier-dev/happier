@@ -103,6 +103,35 @@ function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
     ].filter(Boolean).join(' ') };
 }
 
+/** Meta limits expanded discovery schemas to ten levels, even in non-strict mode.
+ * Shared subtrees use their deepest advertised placement, retaining compact refs.
+ * https://dev.meta.ai/docs/structured-output
+ */
+function projectSchemaDepth(document: JsonSchemaObject): JsonSchemaObject {
+    const levels = new Map<JsonSchemaObject, number>();
+    const opaque = new Set<JsonSchemaObject>();
+    const visit = (node: JsonSchemaObject, level: number): JsonSchemaObject => {
+        if ((levels.get(node) ?? 0) >= level) return node;
+        levels.set(node, level);
+        // The canonical Zod exporter expands type arrays into anyOf branches.
+        if (level === 10 && Array.isArray(node.type)) opaque.add(node);
+        const target = referencedObject(document, node.$ref);
+        if (target) visit(target, level);
+        mapSchemaChildren(node, child => {
+            if (level === 10) opaque.add(node);
+            else visit(child, level + 1);
+            return child;
+        });
+        return node;
+    };
+    visit(document, 1);
+    return mapMcpJsonSchema(document, node => opaque.has(node) ? {
+        type: 'object', description: [node.description,
+            'Nested value: see action_spec_get for the full input shape; the server validates every nested value.',
+        ].filter(Boolean).join(' '),
+    } : node);
+}
+
 /**
  * Provider-facing presentation only. MCP arguments remain the original flat
  * object, and the original Action/plugin validator still checks every call.
@@ -111,6 +140,10 @@ function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
  * Cross-field/variant correlations remain authoritative at call validation.
  */
 export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSchemaObject {
+    return projectSchemaDepth(projectMcpToolObjectRoot(schema));
+}
+
+function projectMcpToolObjectRoot(schema: JsonSchemaObject): JsonSchemaObject {
     schema = projectRecursiveReferences(mapMcpJsonSchema(schema, projectProviderEnum));
     const projected = projectObjectInputSchema(schema, schema, new Set());
     const removed = ['anyOf', 'oneOf', 'allOf'].filter(key => Array.isArray(schema[key]));

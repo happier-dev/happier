@@ -24,7 +24,6 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { projectMcpToolInputJsonSchema } from './projectMcpToolInputJsonSchema';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -209,8 +208,10 @@ describe('registerHappierMcpBuiltInTools', () => {
       // Mis-binding the schema producer cannot certify the Board invocation.
       expect(compiler.compile(zodSchemaToJsonSchemaObject(getActionSpec('workflow.run.get').inputSchema,
         { target: 'draft-7' }))(input)).toBe(false);
-      const inline = projectMcpToolInputJsonSchema(zodSchemaToJsonSchemaObject(spec.inputSchema,
-        { target: 'draft-7', reused: 'inline' }));
+      // Compare to the original inline contract: depth cuts can remove different
+      // amounts from inline and shared presentations.
+      const inline = zodSchemaToJsonSchemaObject(spec.inputSchema,
+        { target: 'draft-7', reused: 'inline' });
       expect(JSON.stringify(advertised.inputSchema).length).toBeLessThan(JSON.stringify(inline).length);
       // Discovery must carry the definitions consumed by its advertised references.
       expect(() => new Ajv({ strict: false, validateFormats: false }).compile({ ...advertised.inputSchema, definitions: {} })).toThrow();
