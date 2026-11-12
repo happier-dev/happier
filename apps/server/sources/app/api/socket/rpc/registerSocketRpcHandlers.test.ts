@@ -66,6 +66,7 @@ function createFakeSocket(overrides: Record<string, any> = {}) {
     return createSocketHarnessFake({
         ...overrides,
         data: {
+            userId: "user-1", authTokenKind: "account", tokenEpoch: 3,
             authAuthority: "present_user",
             authTokenAuthenticationEvidence: [],
             accountStoredContentCompatibility: evaluateAccountStoredContentSocketCompatibility({
@@ -293,6 +294,28 @@ describe("registerSocketRpcHandlers", () => {
         const method = `approval-origin.${'a'.repeat(43)}:approval.origin.decide`;
         const receiverData = { clientType: 'user-scoped', authTokenKind: 'account', authAuthority: 'present_user' };
 
+        it('uses connect identity for repeated RPCs without re-verifying the bearer (B4)', async () => {
+            const token = await auth.createToken('user-1', undefined, { kind: 'account', authority: 'present_user' });
+            const admitted = await auth.verifyTokenForRoute(token);
+            expect(admitted).not.toBeNull();
+            const effect = vi.fn(async () => ({ ok: true }));
+            const target = { id: 'origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
+            const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+            const socket = createFakeSocket({ data: { ...receiverData, userId: admitted!.userId,
+                tokenEpoch: admitted!.tokenEpoch }, handshake: { auth: { token } } });
+            registerSocketRpcHandlers({ userId: 'user-1', socket: socket as unknown as Socket, io });
+            const verifications = vi.spyOn(auth, 'verifyTokenForRoute');
+            try {
+                for (let call = 0; call < 3; call++) {
+                    const ack = vi.fn();
+                    await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, ack);
+                    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+                }
+                expect(effect).toHaveBeenCalledTimes(3);
+                expect(verifications.mock.calls.length).toBe(0);
+            } finally { verifications.mockRestore(); }
+        });
+
         it('delivers only current unrestricted present-user decisions to the live CLI origin', async () => {
             const effect = vi.fn(async () => ({ ok: true, status: 'completed' }));
             const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
@@ -365,12 +388,12 @@ describe("registerSocketRpcHandlers", () => {
             expect(rejectedEffect).not.toHaveBeenCalled();
         });
 
-        it('rechecks the current caller credential after target discovery and before delivery', async () => {
+        it('refuses a caller disconnected during target discovery before delivery (B4)', async () => {
             const effect = vi.fn(async () => ({ ok: true }));
             const target = { id: 'live-cli-origin', data: receiverData, timeout: () => ({ emitWithAck: effect }) };
             const { io, fetchSockets } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
             fetchSockets.mockImplementation(async room => {
-                accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 4 });
+                socket.connected = false;
                 return room === target.id || room === `rpc:user-1:${method}` ? [target] : [];
             });
             const socket = createFakeSocket({ id: 'decider', data: receiverData,
@@ -384,7 +407,7 @@ describe("registerSocketRpcHandlers", () => {
             expect(effect).not.toHaveBeenCalled();
         });
 
-        it('uses fresh terminal credentials and preserves the original socket ceiling', async () => {
+        it('uses admitted terminal identity until disconnect and preserves the socket ceiling (B4)', async () => {
             accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 3 });
             const token = await auth.createToken('user-1', undefined, { kind: 'terminal', authority: 'account_automation' });
             const effect = vi.fn(async () => ({ ok: true }));
@@ -398,12 +421,13 @@ describe("registerSocketRpcHandlers", () => {
             expect(allowed).toHaveBeenCalledWith(expect.objectContaining({ ok: true, result: { ok: true } }));
 
             accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 4 });
-            expect(await auth.verifyTokenForRoute(token)).toBeNull();
+            socket.connected = false;
             const revokedAuthority = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, revokedAuthority);
             expect(revokedAuthority).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
 
             accountFindUniqueMock.mockResolvedValue({ status: 'active', tokenEpoch: 3 });
+            socket.connected = true;
             handshake.auth.authorityCeiling = 'account_automation';
             const narrowed = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-decision' }, narrowed);
@@ -1074,7 +1098,7 @@ describe("registerSocketRpcHandlers", () => {
             workspaceSyncSourceRouting: routing,
             machineAdmission: expect.objectContaining({ machineId: 'machine-source', installationId: 'installation-source' }),
         }));
-        Object.assign(source, { handshake: { auth: { token: 'retired-account-credential' } } });
+        source.connected = false; // B4: credential retirement evicts the connection.
         const refused = vi.fn();
         await triggerSocketHandler(source, SOCKET_RPC_EVENTS.CALL, { method, params: 'sealed-retained-cleanup',
             workspaceSyncSourceRouting: routing }, refused);
@@ -1615,7 +1639,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it('admits an explicitly approving token and refuses it after revocation despite a retained socket', async () => {
+    it('admits an explicitly approving token and refuses it after eviction (B4)', async () => {
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
         const { socket, admission } = createTokenViewer('sess_1', true, true);
         const effect = vi.fn(async () => ({ success: true }));
@@ -1627,6 +1651,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, accepted);
         expect(accepted).toHaveBeenCalledWith({ ok: true, result: { success: true } });
         apiTokenFindUniqueMock.mockResolvedValue(null);
+        socket.connected = false; // B4: existing credential eviction closes the socket.
         const refused = vi.fn();
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, refused);
         expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
@@ -1704,6 +1729,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         machine.accountId = 'user-1';
         expect(effect).toHaveBeenCalledTimes(methods.length + 1);
         apiTokenFindUniqueMock.mockResolvedValue(null);
+        socket.connected = false; // B4: existing credential eviction closes the socket.
         const revoked = vi.fn();
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: `sess_1:${methods[0]}`, params: 'sealed-private-input',
             transferRouting: { method: methods[0], t, sessionId: 'sess_1' } }, revoked);
@@ -3382,6 +3408,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         });
         const socket = createFakeSocket({
             id: "caller-socket",
+            data: { userId: "shared-user", authTokenAuthenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] },
             ...(decisionMethod === 'approval.request.decide' ? { handshake: { auth: { token: await auth.createToken('shared-user', undefined, {
                 kind: 'account', authority: 'present_user', authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }],
             }) } } } : {}),
@@ -3493,6 +3520,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         });
         const socket = createFakeSocket({
             id: 'requester-fresh-device',
+            data: { userId: 'shared-user', authTokenAuthenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] },
             handshake: { auth: { token: await auth.createToken('shared-user', undefined, {
                 kind: 'account',
                 authority: 'present_user',

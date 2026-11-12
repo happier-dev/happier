@@ -1172,10 +1172,12 @@ Configured sources in the aggregate list result add optional
 projects the upstream plugin-admission code and plugin id from the registration
 snapshot; consumers disclose that supplied cause without another inventory read.
 Omission preserves existing results and does not manufacture a request id.
+The exact reobservation result carries the same optional source failure on its
+existing `unavailable` arm, so detail reads preserve the same supplied diagnosis.
 
 Registration, the aggregate producer, shared schema and mounted readers reload
 together under the unpublished 0.3 development cut. Earlier strict development
-readers can reject the field. No persisted record, protocol epoch, gate,
+readers can reject these fields. No persisted record, protocol epoch, gate,
 migration or predecessor adapter is added.
 
 ## Triage exact PR status lookup (unreleased 0.3)

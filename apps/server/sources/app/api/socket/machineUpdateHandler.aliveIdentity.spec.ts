@@ -5,11 +5,13 @@ import {
     ExternalSessionTranscriptInvalidationV1Schema,
 } from "@happier-dev/protocol";
 
-import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { createFakeSocket as createTransportSocket, getSocketHandler } from "../testkit/socketHarness";
 
-vi.mock("@/app/api/socket/socketCredentialCurrentness", async () => (
-    await import("../testkit/socketHarness")
-).createCurrentSocketCredentialModuleMock());
+// This suite starts after the transport has authenticated Account u1.
+const createFakeSocket = (overrides: Parameters<typeof createTransportSocket>[0] = {}) => createTransportSocket({
+    ...overrides,
+    data: { userId: "u1", authTokenKind: "account", authAuthority: "present_user", tokenEpoch: 0, ...overrides.data },
+});
 
 const log = vi.fn();
 const emitEphemeral = vi.fn();

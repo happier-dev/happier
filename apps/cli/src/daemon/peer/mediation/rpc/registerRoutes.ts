@@ -120,14 +120,16 @@ export function registerPeerMediationMachineRpcDirectRoutes(
         }
         observe({ flowId: validation.request.requestId, kind: 'flow.started' });
 
-        const reservation = validation.request.v === 2
+        const singleUse = validation.grant.scope.kind === 'machine_rpc'
+            && validation.grant.scope.highRiskSingleUseMethods?.includes(validation.request.method) === true;
+        const reservation = singleUse
             ? grantConsumption.reserve({
                 grantId: validation.grant.grantId,
                 expiresAt: validation.grant.exp,
                 nowMs: options.nowMs(),
             })
             : null;
-        if (validation.request.v === 2 && !reservation) {
+        if (singleUse && !reservation) {
             observe({
                 flowId: validation.request.requestId,
                 kind: 'cap.exceeded',

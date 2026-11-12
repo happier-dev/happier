@@ -23,7 +23,6 @@ const grant = {
       kind: 'machine_rpc',
       rpcScopeId: 'machine-1:daemon.getState',
       allowedMethods: ['daemon.getState'],
-      maxCalls: 1,
       maxIdleMs: 30_000,
     },
     iat: 1_000,

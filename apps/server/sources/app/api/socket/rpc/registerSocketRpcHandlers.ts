@@ -48,7 +48,7 @@ import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/m
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
 import { auth } from "@/app/auth/auth";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { hasCurrentSocketCredential } from "../socketCredentialCurrentness";
+import { hasCurrentSocketCredential, readCurrentSocketCredential } from "../socketCredentialCurrentness";
 import { transferRelayLifecycle } from "../transferRelayLifecycle";
 import {
     SOCKET_RPC_EVENTS,
@@ -371,7 +371,6 @@ function readMachineScopedSocketMachineId(socket: SocketDataCarrier): string | n
 /** The credentialed daemon attests original Session facts only while it hosts that Session. */
 async function hasCurrentSessionActionRpcSource(params: Readonly<{
     accountId: string;
-    credentialAccountId?: string;
     socket: Socket;
     io: Server;
     presence?: SessionPublisherPresenceForRpc;
@@ -383,13 +382,12 @@ async function hasCurrentSessionActionRpcSource(params: Readonly<{
     const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(data);
     if (!machineId || !installationId || params.socket.connected !== true
         || (data.authTokenKind !== "account" && data.authTokenKind !== "terminal") || data.ephemeralRunnerAdmission != null
-        || data.apiTokenPrincipal != null
-        || !await hasCurrentSocketCredential(params.credentialAccountId ?? params.accountId, params.socket)) return false;
+        || data.apiTokenPrincipal != null) return false;
     const currentSource = await hasCurrentSessionActionRpcSourceBinding({ accountId: params.accountId, machineId, installationId,
         sourceSessionId: params.sourceSessionId, targetSessionId: params.targetSessionId,
         resolveCurrentSessionMachine: input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.presence, ...input }),
     });
-    return currentSource && await hasCurrentSocketCredential(params.credentialAccountId ?? params.accountId, params.socket);
+    return currentSource;
 }
 
 function readMachineIdPrefix(method: string): string | null {
@@ -565,7 +563,7 @@ async function resolveWorkspaceSyncChildAdmission(params: Readonly<{
     for (const sessionId of sourceSessions) {
         const session = await db.session.findUnique({ where: { id: sessionId }, select: { accountId: true } });
         if (!session || !await hasCurrentSessionActionRpcSource({ accountId: session.accountId,
-            credentialAccountId: params.accountId, socket: params.socket, io: params.io, presence: params.presence,
+            socket: params.socket, io: params.io, presence: params.presence,
             sourceSessionId: sessionId, targetSessionId: sessionId,
         })) return null;
     }
@@ -1554,8 +1552,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const isRequesterApprovalDecision = methodSessionAuthorization?.method === RPC_METHODS.APPROVAL_REQUEST_DECIDE;
             let requesterDecisionAuthentication: SessionPermissionDecisionAuthenticationV1 | undefined;
             if (isRequesterApprovalDecision && !detachedMachine) {
-                const token = (params.socket.handshake?.auth as { token?: unknown } | undefined)?.token;
-                const verified = typeof token === 'string' ? await auth.verifyTokenForRoute(token) : null;
+                const verified = await readCurrentSocketCredential(actorAccountId, params.socket);
                 if (!verified || verified.userId !== actorAccountId || verified.authority !== 'present_user'
                     || verified.tokenEpoch === undefined) { callback?.(buildForbiddenRpcResponse()); return; }
                 requesterDecisionAuthentication = { tokenEpoch: verified.tokenEpoch,

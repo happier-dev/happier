@@ -1,11 +1,13 @@
+import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
+import { SignedDirectRouteGrantV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { createEphemeralPeerRouteProofHandleV2, type PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import { getRandomBytes } from '@/platform/cryptoRandom';
+import { requestPeerMediationServerJsonForCredential } from '../peerMediationServerRequest';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { runtimeFetchManualResponse } from '@/utils/system/runtimeFetch';
-import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { PeerLoopbackEndpointCandidateV1Schema, type PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
 import { PeerMachineRpcDirectResponseV2Schema, type PeerMachineRpcDirectRequestV2, type PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
-import { SignedDirectRouteGrantV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
-import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import type { PeerMachineRpcDirectFallbackReasonCodeV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV1';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -13,7 +15,6 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { getRandomBytes } from '@/platform/cryptoRandom';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import {
     areServerProfileIdentifiersEquivalent,
@@ -30,22 +31,17 @@ import { readLocalDaemonSharedState } from '@/components/settings/machines/local
 import type { LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { isDaemonOnActiveRelay } from '@/sync/domains/server/relayDrift/relayDriftModel';
 
-import { requestPeerMediationServerJsonForCredential } from '../peerMediationServerRequest';
 import { readPeerEndpointForServerScope } from '../readPeerEndpointForServerScope';
 import { MachineRpcDirectIdentityError, resolveDirectRpcUrl, type MachineRpcDirectRouteResolution } from './client';
 import { resolveMachineRpcDirectRoutePreflight } from './directRoutePreflight';
+import { resolveMachineRpcDirectRouteGrant } from './routeGrant';
 
 const MACHINE_RPC_DIRECT_FETCH_TIMEOUT_MS = 5_000;
-const MACHINE_RPC_DIRECT_GRANT_MAX_IDLE_MS = 30_000;
 
 type TargetServer = Readonly<{
     serverId: string;
     serverUrl: string;
 }>;
-
-type OperationResult<T> =
-    | Readonly<{ ok: true; value: T }>
-    | Readonly<{ ok: false; reasonCode: string }>;
 
 type DirectJsonResponse = Readonly<{
     ok: boolean;
@@ -54,6 +50,97 @@ type DirectJsonResponse = Readonly<{
     bodyWasJson: boolean;
     body: unknown;
 }>;
+
+type OperationResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reasonCode: string }>;
+type Admission = Readonly<{ grant: SignedDirectRouteGrantV2; proof: PeerRouteEphemeralProofV2 }>;
+const MACHINE_RPC_DIRECT_GRANT_MAX_IDLE_MS = 30_000;
+
+async function requestMachineRpcRouteGrantV2(input: Readonly<{
+    server: TargetServer;
+    credentials: AuthCredentials;
+    machineId: string;
+    method: string;
+    endpointFingerprint: string;
+    ephemeralPublicKeyBase64Url: string;
+    timeoutMs?: number;
+}>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
+    try {
+        const response = await requestPeerMediationServerJsonForCredential({
+            serverId: input.server.serverId,
+            token: input.credentials.token,
+            path: '/v1/machines/peer/mediation/route-grants',
+            timeoutMs: input.timeoutMs,
+            init: {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    v: 2,
+                    kind: 'ephemeral_ed25519',
+                    ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
+                    machineId: input.machineId,
+                    flowKind: 'machine_rpc',
+                    routeKind: 'loopback_direct',
+                    endpointFingerprint: input.endpointFingerprint,
+                    ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.loopbackMachineRpcDefault,
+                    scope: {
+                        kind: 'machine_rpc',
+                        rpcScopeId: `${input.machineId}:${input.method}`,
+                        allowedMethods: [input.method],
+                        maxIdleMs: MACHINE_RPC_DIRECT_GRANT_MAX_IDLE_MS,
+                    },
+                }),
+            },
+        });
+        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
+        const body = response.body as { ok?: unknown; reasonCode?: unknown; grant?: unknown } | null;
+        if (body?.ok !== true) {
+            return {
+                ok: false,
+                reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing',
+            };
+        }
+        const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
+        return parsed.success
+            ? { ok: true, value: parsed.data }
+            : { ok: false, reasonCode: 'grant_invalid' };
+    } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
+        return { ok: false, reasonCode: 'grant_missing' };
+    }
+}
+
+
+function resolveMachineRpcRouteAdmission(input: Readonly<{
+    server: TargetServer;
+    credentials: AuthCredentials;
+    accountId: string;
+    machineId: string;
+    method: string;
+    endpointUrl: string;
+    endpointFingerprint: string;
+    timeoutMs?: number;
+}>): Promise<OperationResult<Admission>> {
+    // The immutable credential fingerprint separates present-user and automation
+    // bearer authority. The issuer signs that authority into each admission.
+    const key = JSON.stringify([input.server.serverId, input.server.serverUrl, input.accountId,
+        resolveAuthCredentialsScopeKey(input.credentials), input.machineId, input.method,
+        input.endpointUrl, input.endpointFingerprint]);
+    return resolveMachineRpcDirectRouteGrant({ key, admit: async () => {
+        const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
+        try {
+            const result = await requestMachineRpcRouteGrantV2({ ...input, ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url });
+            if (!result.ok) return result;
+            return { ok: true, value: { grant: result.value, proof: proofHandle.sign(result.value) } };
+        } catch (error) {
+            if (error instanceof CredentialRequestRedirectError) throw error;
+            return { ok: false, reasonCode: 'grant_invalid' };
+        } finally {
+            proofHandle.dispose();
+        }
+    } });
+}
 
 function createDirectResponseError(
     response: DirectJsonResponse,
@@ -182,62 +269,6 @@ async function fetchJson(params: Readonly<{
     }
 }
 
-async function requestMachineRpcRouteGrantV2(input: Readonly<{
-    server: TargetServer;
-    credentials: AuthCredentials;
-    machineId: string;
-    method: string;
-    endpointFingerprint: string;
-    ephemeralPublicKeyBase64Url: string;
-    timeoutMs?: number;
-}>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
-    try {
-        const response = await requestPeerMediationServerJsonForCredential({
-            serverId: input.server.serverId,
-            token: input.credentials.token,
-            path: '/v1/machines/peer/mediation/route-grants',
-            timeoutMs: input.timeoutMs,
-            init: {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    v: 2,
-                    kind: 'ephemeral_ed25519',
-                    ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
-                    machineId: input.machineId,
-                    flowKind: 'machine_rpc',
-                    routeKind: 'loopback_direct',
-                    endpointFingerprint: input.endpointFingerprint,
-                    ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.loopbackMachineRpcDefault,
-                    scope: {
-                        kind: 'machine_rpc',
-                        rpcScopeId: `${input.machineId}:${input.method}`,
-                        allowedMethods: [input.method],
-                        maxCalls: 1,
-                        maxIdleMs: MACHINE_RPC_DIRECT_GRANT_MAX_IDLE_MS,
-                    },
-                }),
-            },
-        });
-        if (!response.ok) return { ok: false, reasonCode: 'grant_missing' };
-        const body = response.body as { ok?: unknown; reasonCode?: unknown; grant?: unknown } | null;
-        if (body?.ok !== true) {
-            return {
-                ok: false,
-                reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing',
-            };
-        }
-        const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
-        return parsed.success
-            ? { ok: true, value: parsed.data }
-            : { ok: false, reasonCode: 'grant_invalid' };
-    } catch (error) {
-        if (error instanceof CredentialRequestRedirectError) throw error;
-        return { ok: false, reasonCode: 'grant_missing' };
-    }
-}
 
 function fallbackDirectResponse(
     request: PeerMachineRpcDirectRequestV2,
@@ -364,21 +395,21 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
     recordMachineRequestSucceeded(routeScope);
 
     {
-        const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
         try {
             const grantTimeoutMs = input.resolveRemainingTimeoutMs?.() ?? input.timeoutMs;
             if (grantTimeoutMs !== undefined && grantTimeoutMs <= 0) return fallback('topology_unavailable');
-            const grant = await requestMachineRpcRouteGrantV2({
+            const admission = await resolveMachineRpcRouteAdmission({
                 server,
                 credentials,
+                accountId,
                 machineId: input.machineId,
                 method: input.method,
+                endpointUrl: endpoint.url,
                 endpointFingerprint: endpoint.endpointFingerprint,
-                ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
                 timeoutMs: grantTimeoutMs,
             });
-            if (!grant.ok) return fallback(grant.reasonCode);
-            const proof = proofHandle.sign(grant.value);
+            if (!admission.ok) return fallback(admission.reasonCode);
+            const { grant, proof } = admission.value;
             return {
                 kind: 'selected',
                 receipt: PEER_MEDIATION_RECEIPTS.routeSelected,
@@ -386,15 +417,15 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
                     url: endpoint.url,
                     endpointFingerprint: endpoint.endpointFingerprint,
                 },
-                grant: grant.value,
+                grant,
                 proof,
                 ...(readLifetime?.isCurrent() && readLifetime.scope.accountId === accountId
                     && areServerProfileIdentifiersEquivalent(readLifetime.scope.serverId, server.serverId)
                     ? { readBinding: {
                         key: JSON.stringify(['direct', server.serverId, server.serverUrl,
                             resolveAuthCredentialsScopeKey(credentials), input.machineId, input.method,
-                            endpoint.url, endpoint.endpointFingerprint, grant.value.signature.keyId,
-                            grant.value.payload.scope, grant.value.payload.callerAuthority ?? null]),
+                            endpoint.url, endpoint.endpointFingerprint, grant.signature.keyId,
+                            grant.payload.scope, grant.payload.callerAuthority ?? null]),
                         scope: [readLifetime],
                         assertCurrent: () => {
                             const currentServer = resolveTargetServer(input.serverId);
@@ -409,8 +440,6 @@ export async function resolveProductionMachineRpcDirectRoute(input: Readonly<{
         } catch (error) {
             if (error instanceof CredentialRequestRedirectError) throw error;
             return fallback('grant_invalid');
-        } finally {
-            proofHandle.dispose();
         }
     }
 

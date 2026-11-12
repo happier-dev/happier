@@ -15,7 +15,6 @@ const baseGrant = {
       kind: 'machine_rpc',
       rpcScopeId: 'rpc_scope_1',
       allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
-      maxCalls: 2,
       maxIdleMs: 10_000,
     },
     iat: 1_000,

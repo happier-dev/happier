@@ -14,7 +14,7 @@ const request: PeerMachineRpcDirectRequestV2 = {
         payload: {
             v: 2, grantId: 'grant-a', accountId: 'account-a', machineId: 'machine-a',
             flowKind: 'machine_rpc', routeKind: 'loopback_direct',
-            scope: { kind: 'machine_rpc', rpcScopeId: 'scope-a', allowedMethods: [RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ], maxCalls: 1, maxIdleMs: 30_000 },
+            scope: { kind: 'machine_rpc', rpcScopeId: 'scope-a', allowedMethods: [RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ], maxIdleMs: 30_000 },
             iat: 1_000, exp: 301_000, aud: 'happier-daemon-route-grant', endpointFingerprint: 'endpoint-a',
             proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: Buffer.alloc(32, 1).toString('base64url'),
         },

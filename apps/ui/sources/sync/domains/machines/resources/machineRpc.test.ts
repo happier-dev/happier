@@ -118,7 +118,7 @@ it('preserves the direct handler failure as a typed uncertain outcome through th
         endpoint: { url: 'http://127.0.0.1:3000', endpointFingerprint: 'endpoint_1' },
         grant: { payload: { v: 2 as const, grantId: 'grant_1', accountId: 'owner', machineId: key.machineId,
             flowKind: 'machine_rpc' as const, routeKind: 'loopback_direct' as const,
-            scope: { kind: 'machine_rpc' as const, rpcScopeId: 'scope_1', allowedMethods: [method], maxCalls: 1, maxIdleMs: 10_000 },
+            scope: { kind: 'machine_rpc' as const, rpcScopeId: 'scope_1', allowedMethods: [method], maxIdleMs: 10_000 },
             iat: 1_000, exp: 601_000, aud: 'happier-daemon-route-grant' as const, endpointFingerprint: 'endpoint_1',
             proofKind: 'ephemeral_ed25519' as const, ephemeralPublicKeyBase64Url: publicKey },
             signature: { keyId: 'key_1', alg: 'Ed25519' as const, valueBase64Url: signature } },

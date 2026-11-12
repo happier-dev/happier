@@ -93,7 +93,6 @@ export const MachineRpcGrantScopeV1Schema = lazyZodSchema(() => z.strictObject({
   rpcScopeId: z.string().check(z.minLength(1)),
   allowedMethods: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
   sessionId: z.optional(z.string().check(z.minLength(1))),
-  maxCalls: PositiveIntSchema,
   maxIdleMs: PositiveIntSchema,
   highRiskSingleUseMethods: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));

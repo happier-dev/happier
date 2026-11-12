@@ -304,7 +304,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
         const grantPayload: SignedDirectRouteGrantV2['payload'] = {
           v: 2, grantId: `speech:${method}`, accountId: payload.accountId, machineId: payload.targetMachineId,
           flowKind: 'machine_rpc', routeKind: 'loopback_direct', endpointFingerprint: 'speech-endpoint',
-          scope: { kind: 'machine_rpc', rpcScopeId: method, allowedMethods: [method], maxCalls: 1, maxIdleMs: 30000 },
+          scope: { kind: 'machine_rpc', rpcScopeId: method, allowedMethods: [method], maxIdleMs: 30000 },
           iat: 1000, exp: 301000, aud: 'happier-daemon-route-grant', proofKind: 'ephemeral_ed25519',
           ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
         };

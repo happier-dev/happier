@@ -6516,6 +6516,12 @@ Socket ids expire on reconnect. The existing `answering-client.v1/` operation
 protects selection on the relay; an unsupported relay returns
 `client_routing_update_required` without unselected delivery.
 
+In 0.3 development source, `actions/settings/settingsDeclarationCatalog.ts` owns
+the merged built-in and loaded-plugin declaration catalog used by App and native
+Settings Actions. Plugin field discovery and native reads use that catalog;
+contribution mutations retain the App's activated callbacks and confirmation
+owners. Sensitive fields remain discoverable but their values are redacted.
+
 `settings.list/get/set/invoke` discover U4 setting declarations by anchor. Explicit
 declaration bindings name the canonical Account or device preference key or an
 owner-backed nested field and its exact mutation schema;

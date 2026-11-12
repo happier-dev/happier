@@ -70,7 +70,6 @@ function createSignedMachineRpcGrant(input: Readonly<{
       kind: 'machine_rpc',
       rpcScopeId: 'rpc_scope_1',
       allowedMethods: [...input.allowedMethods],
-      maxCalls: 2,
       maxIdleMs: 30_000,
     },
     iat: 1_000,
@@ -1212,7 +1211,7 @@ describe('machine/1 Iroh admission route', () => {
       flow: 'workspace_sync', accountId: 'requester-a',
       grantOverrides: { flowKind: 'machine_rpc', scope: {
         kind: 'machine_rpc', rpcScopeId: IROH_OPERATION_ID, allowedMethods: ['workspace.sync'],
-        maxCalls: 1, maxIdleMs: 60_000, highRiskSingleUseMethods: ['workspace.sync'],
+        maxIdleMs: 60_000, highRiskSingleUseMethods: ['workspace.sync'],
       } },
     });
     try {

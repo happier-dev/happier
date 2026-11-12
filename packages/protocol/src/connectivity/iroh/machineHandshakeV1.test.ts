@@ -207,7 +207,6 @@ describe('IrohMachineHandshakeV1 (canonical happier/machine/1 handshake)', () =>
           kind: 'machine_rpc' as const,
           rpcScopeId: 'workspace-1',
           allowedMethods: ['workspace.sync'],
-          maxCalls: 1,
           maxIdleMs: 1_000,
         },
         iroh: {

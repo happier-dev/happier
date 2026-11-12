@@ -112,7 +112,7 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
             body: { machineId: machine.id, flowKind, routeKind: 'loopback_direct',
                 endpointFingerprint: 'current-endpoint', ttlMs: 60_000,
                 scope: flowKind === 'machine_rpc'
-                    ? { kind: 'machine_rpc', rpcScopeId: randomUUID(), allowedMethods: ['daemon.memory.status'], maxCalls: 1, maxIdleMs: 1000 }
+                    ? { kind: 'machine_rpc', rpcScopeId: randomUUID(), allowedMethods: ['daemon.memory.status'], maxIdleMs: 1000 }
                     : { kind: 'bounded_transfer', mode: 'single', transferId: randomUUID(), maxBytes: 1024 } },
         };
         expect((await route.invoke(request)).response).toMatchObject({ ok: false,

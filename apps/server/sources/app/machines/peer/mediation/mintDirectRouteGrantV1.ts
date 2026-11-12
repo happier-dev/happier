@@ -267,7 +267,6 @@ export function isWorkspaceSyncMachineCarrierGrant(input: Pick<MintDirectRouteGr
         && input.iroh.initiator.kind === 'machine'
         && scope.allowedMethods.length === 1
         && scope.allowedMethods[0] === 'workspace.sync'
-        && scope.maxCalls === 1
         && scope.sessionId === undefined
         && scope.highRiskSingleUseMethods?.length === 1
         && scope.highRiskSingleUseMethods[0] === 'workspace.sync';

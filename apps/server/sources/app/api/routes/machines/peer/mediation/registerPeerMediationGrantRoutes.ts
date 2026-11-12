@@ -599,14 +599,6 @@ export function registerPeerMediationGrantRoutes(
                 ...directGrantInput,
                 scope: parsed.data.scope,
                 ...(parsed.data.scope.kind === 'machine_rpc'
-                    && parsed.data.scope.allowedMethods.some(method => method === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
-                        || method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START
-                        || method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT
-                        || method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START
-                        || method === RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE
-                        || method === RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
-                        || method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST
-                        || method === RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH)
                     ? { callerAuthority: request.authAuthority === 'present_user' ? 'present_user' as const : 'account_automation' as const }
                     : {}),
                 ...(irohBinding ? { iroh: irohBinding } : {}),

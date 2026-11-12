@@ -135,14 +135,14 @@ describe("registerPeerMediationGrantRoutes", () => {
         expect(await route.handler(request, route.createReply())).toMatchObject({ ok: true,
             grant: { payload: { accountId: 'account_1', scope: { serviceExport: { commitment: `sha256:${'a'.repeat(64)}` } } } } });
     });
-    it.each(["present_user", "account_automation"] as const)("signs verified %s authority only for the private continuation", async (authority) => {
+    it.each(["present_user", "account_automation"] as const)("signs verified %s authority for ordinary direct RPC", async (authority) => {
         const route = createRoute();
         const request = route.createAuthenticatedRequest({ userId: "account_1" });
         request.authAuthority = authority;
         request.body = { v: 2, kind: "ephemeral_ed25519", ephemeralPublicKeyBase64Url: toBase64Url(new Uint8Array(32).fill(11)),
             machineId: "machine_1", flowKind: "machine_rpc", routeKind: "loopback_direct", endpointFingerprint: "loopback_endpoint_1",
             ttlMs: 60_000, scope: { kind: "machine_rpc", rpcScopeId: "rpc_scope_1",
-                allowedMethods: ["daemon.approval.request.secretContinue.v1"], maxCalls: 1, maxIdleMs: 1_000 } };
+                allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS], maxIdleMs: 1_000 } };
         const response = await route.handler(request, route.createReply());
         expect(response).toMatchObject({ ok: true, grant: { payload: { callerAuthority: authority } } });
     });
@@ -168,7 +168,7 @@ describe("registerPeerMediationGrantRoutes", () => {
         request.body = { v: 2, kind: "ephemeral_ed25519", ephemeralPublicKeyBase64Url: toBase64Url(new Uint8Array(32).fill(11)),
             machineId: "machine_1", flowKind: "machine_rpc", routeKind: "loopback_direct", endpointFingerprint: "loopback_endpoint_1",
             ttlMs: 60_000, scope: { kind: "machine_rpc", rpcScopeId: "rpc_scope_1",
-                allowedMethods: [method], maxCalls: 1, maxIdleMs: 1_000 } };
+                allowedMethods: [method], maxIdleMs: 1_000 } };
         const response = await route.handler(request, route.createReply());
         expect(response).toMatchObject({ ok: true, grant: { payload: { callerAuthority: authority } } });
     });
@@ -203,7 +203,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     kind: "machine_rpc",
                     rpcScopeId: "rpc_scope_1",
                     allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
-                    maxCalls: 1,
                     maxIdleMs: 1_000,
                 },
             },
@@ -219,7 +218,7 @@ describe("registerPeerMediationGrantRoutes", () => {
                 },
             },
         });
-        expect(response).not.toHaveProperty('grant.payload.callerAuthority');
+        expect(response).toHaveProperty('grant.payload.callerAuthority', 'present_user');
 
         const malformed = await route.invoke({
             userId: "account_1",
@@ -477,7 +476,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     kind: "machine_rpc",
                     rpcScopeId: "rpc_scope_1",
                     allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
-                    maxCalls: 1,
                     maxIdleMs: 1_000,
                 },
                 iroh: { ...irohBody.iroh, operationKind: "finite_transfer" },
@@ -527,7 +525,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     kind: "machine_rpc",
                     rpcScopeId: "rpc_scope_1",
                     allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
-                    maxCalls: 1,
                     maxIdleMs: 1_000,
                 },
             },
@@ -981,7 +978,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                     kind: "machine_rpc",
                     rpcScopeId: "rpc_scope_1",
                     allowedMethods: [RPC_METHODS.SPAWN_HAPPY_SESSION],
-                    maxCalls: 1,
                     maxIdleMs: 1_000,
                 },
             },
@@ -1007,7 +1003,6 @@ describe("registerPeerMediationGrantRoutes", () => {
                         kind: "machine_rpc",
                         rpcScopeId: "rpc_scope_1",
                         allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS],
-                        maxCalls: 1,
                         maxIdleMs: 1_000,
                     },
                 },

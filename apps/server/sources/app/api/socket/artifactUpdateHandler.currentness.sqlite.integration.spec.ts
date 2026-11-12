@@ -7,6 +7,7 @@ import tweetnacl from "tweetnacl";
 import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
+import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { eventRouter } from "@/app/events/connectionEventRouter";
 import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
 import { db } from "@/storage/db";
@@ -19,8 +20,7 @@ import { artifactUpdateHandler } from "./artifactUpdateHandler";
 /**
  * Sealed-looking bytes: the Account is e2ee, so the stored pair is opaque to the
  * Home and the handler hands it back verbatim. That is the disclosure under
- * test — the socket returns stored Artifact content it no longer has a current
- * credential for.
+ * test: an evicted connection must not return stored Artifact content.
  */
 const sealed = (label: string) => new TextEncoder().encode(`sealed:${label}`);
 
@@ -39,6 +39,8 @@ function readyE2eeAccountData() {
     };
 }
 
+const establishedConnections: ClientConnection[] = [];
+
 async function createEstablishedArtifactFixture(label: string) {
     const account = await db.account.create({
         data: readyE2eeAccountData(),
@@ -56,21 +58,29 @@ async function createEstablishedArtifactFixture(label: string) {
     });
     const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
 
-    const disconnect = vi.fn();
-    const socket = Object.assign(
-        createFakeSocket({
-            data: {
-                clientType: "user-scoped",
-                accountStoredContentCompatibility: {
-                    supportsCurrentProtocol: true,
-                    outcome: "accepted",
-                    declaration: null,
-                    upgradeRequired: null,
-                },
+    const verified = await auth.verifyTokenForRoute(token);
+    if (!verified) throw new Error("expected connect-time Account identity");
+    const transport = createFakeSocket({
+        data: {
+            clientType: "user-scoped", userId: verified.userId,
+            authTokenKind: verified.authTokenKind, authAuthority: verified.authority,
+            tokenEpoch: verified.tokenEpoch,
+            accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true,
+                outcome: "accepted",
+                declaration: null,
+                upgradeRequired: null,
             },
-        }),
-        { handshake: { auth: { token } }, disconnect },
-    );
+        },
+    });
+    const socket = Object.assign(transport, {
+        disconnect: vi.fn(() => { transport.connected = false; }),
+    });
+    const connection: ClientConnection = {
+        connectionType: "user-scoped", userId: account.id, socket: socket as unknown as Socket,
+    };
+    eventRouter.addConnection(account.id, connection);
+    establishedConnections.push(connection);
     artifactUpdateHandler(account.id, socket as unknown as Socket);
 
     return { accountId: account.id, artifactId, socket };
@@ -85,9 +95,7 @@ async function emit(fixture: Fixture, event: string, payload: unknown) {
 }
 
 async function suspend(fixture: Fixture) {
-    // The eager eviction leg is stubbed to a no-op: this is exactly the state a
-    // lost cross-node disconnect publication leaves behind.
-    const eviction = vi.spyOn(eventRouter, "disconnectAccountSockets").mockImplementation(() => {});
+    // Suspension closes this Account through the production connection owner.
     const applied = await inTx(async (tx) => await setAccountStatusInTx(tx, {
         actorAccountId: fixture.accountId,
         targetAccountId: fixture.accountId,
@@ -95,7 +103,8 @@ async function suspend(fixture: Fixture) {
         authority: "account_erasure",
     }));
     expect(applied).toEqual({ status: "applied" });
-    expect(eviction).toHaveBeenCalledWith(fixture.accountId);
+    expect(fixture.socket.disconnect).toHaveBeenCalledWith(true);
+    expect(fixture.socket.connected).toBe(false);
 }
 
 describe("Artifact content disclosure on an established socket", () => {
@@ -114,6 +123,9 @@ describe("Artifact content disclosure on an established socket", () => {
     }, 120_000);
 
     afterEach(async () => {
+        for (const connection of establishedConnections.splice(0)) {
+            eventRouter.removeConnection(connection.userId, connection);
+        }
         vi.restoreAllMocks();
         harness.resetEnv({
             HANDY_MASTER_SECRET: "artifact-currentness-secret",
@@ -127,7 +139,7 @@ describe("Artifact content disclosure on an established socket", () => {
         await harness.close();
     });
 
-    it("refuses artifact-read and disconnects when the Account credential is no longer current", async () => {
+    it("closes the suspended Account socket and refuses queued artifact-read disclosure", async () => {
         const subject = await createEstablishedArtifactFixture("read");
         const control = await createEstablishedArtifactFixture("read-control");
 
@@ -186,7 +198,7 @@ describe("Artifact content disclosure on an established socket", () => {
         expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
     });
 
-    it("refuses a stale socket before a successful artifact update", async () => {
+    it("refuses a evicted socket before a successful artifact update", async () => {
         const subject = await createEstablishedArtifactFixture("update-write");
 
         await suspend(subject);
@@ -201,7 +213,7 @@ describe("Artifact content disclosure on an established socket", () => {
             .resolves.toMatchObject({ headerVersion: 0 });
     });
 
-    it("refuses a stale socket before a new artifact create", async () => {
+    it("refuses a evicted socket before a new artifact create", async () => {
         const subject = await createEstablishedArtifactFixture("create-write");
         const artifactId = `artifact-new-${randomUUID()}`;
 
@@ -218,7 +230,7 @@ describe("Artifact content disclosure on an established socket", () => {
         await expect(db.artifact.findUnique({ where: { id: artifactId }, select: { id: true } })).resolves.toBeNull();
     });
 
-    it("refuses a stale socket before artifact deletion", async () => {
+    it("refuses a evicted socket before artifact deletion", async () => {
         const subject = await createEstablishedArtifactFixture("delete-write");
 
         await suspend(subject);

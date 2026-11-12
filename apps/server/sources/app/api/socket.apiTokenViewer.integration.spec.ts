@@ -25,7 +25,7 @@ describe("API-token Session viewer", () => {
     }, 120_000);
     afterAll(async () => harness.close());
 
-    it("isolates Session delivery, strips access, and disconnects the revoked credential", async () => {
+    it.each(["revoke", "narrow"] as const)("isolates Session delivery and evicts the credential on %s (B4)", async mutation => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: {
             accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
@@ -36,9 +36,10 @@ describe("API-token Session viewer", () => {
         const parentToken = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "viewer",
             expiresAt: new Date(Date.now() + 60_000), grant: {
                 v: 1, actions: { families: ["session_transcripts"], ids: [] },
-                targets: { sessions: [session.id], machines: [] }, approve: false,
+                targets: { sessions: [session.id, otherSession.id], machines: [] }, approve: false,
                 origins: [], models: null, permissionModes: null, create: null,
             } });
+        const verifications = vi.spyOn(auth, "verifyTokenForRoute");
         const app = Fastify({ logger: false }) as AppFastify;
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
@@ -53,7 +54,7 @@ describe("API-token Session viewer", () => {
         const minted = await app.inject({ method: 'POST', url: '/v1/auth/api-tokens/children/create',
             headers: { authorization: `Bearer ${parentToken.token}` }, payload: {
                 tokenId: randomUUID(), label: 'viewer child', expiresAt: new Date(Date.now() + 30_000).toISOString(),
-                grant: parentToken.grant,
+                grant: { ...parentToken.grant, targets: { sessions: [session.id], machines: [] } },
             } });
         expect(minted.statusCode, minted.body).toBe(200);
         const token = { token: minted.json().token as string, tokenId: minted.json().apiToken.tokenId as string };
@@ -67,6 +68,8 @@ describe("API-token Session viewer", () => {
             });
             await vi.waitFor(() => expect(io.sockets.sockets.get(client.id!)?.rooms.has(`session:${session.id}:${account.id}`)).toBe(true));
             const admitted = io.sockets.sockets.get(client.id!)!;
+            // B4: connect authenticates once; packets consume the admitted identity.
+            expect(verifications.mock.calls.length).toBe(1);
             expect(admitted.rooms.has(`user:${account.id}`)).toBe(false);
             expect(admitted.rooms.has(`api-token-revocation:${token.tokenId}`)).toBe(true);
             const updates: unknown[] = [];
@@ -82,6 +85,7 @@ describe("API-token Session viewer", () => {
                 recipientFilter: { type: "all-interested-in-session", sessionId: otherSession.id } });
             const ping = await client.timeout(5_000).emitWithAck("ping");
             expect(ping).toBeDefined();
+            expect(verifications.mock.calls.length).toBe(1);
             expect(updates).toHaveLength(1);
             const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
             const presentationChanges: unknown[] = [];
@@ -102,14 +106,25 @@ describe("API-token Session viewer", () => {
             expect((await edit({ tokenId: parentToken.tokenId, label: 'Renamed' })).statusCode).toBe(200);
             await client.timeout(5_000).emitWithAck('ping');
             expect(presentationChanges).toHaveLength(1);
-            const revoked = await auth.revokeApiToken({ accountId: account.id, tokenId: parentToken.tokenId });
-            expect(revoked.revoked).toBe(true);
             const disconnected = new Promise<void>(resolve => client.once("disconnect", () => resolve()));
-            if (!app.disconnectApiTokenSockets) throw new Error("Missing token socket revocation callback");
-            app.disconnectApiTokenSockets(revoked.revokedTokenIds);
+            if (mutation === 'narrow') {
+                const narrowed = await edit({ tokenId: parentToken.tokenId,
+                    grant: { ...parentToken.grant, targets: { sessions: [otherSession.id], machines: [] } } });
+                expect(narrowed.statusCode, narrowed.body).toBe(200);
+            } else {
+                const revoked = await auth.revokeApiToken({ accountId: account.id, tokenId: parentToken.tokenId });
+                expect(revoked.revoked).toBe(true);
+                if (!app.disconnectApiTokenSockets) throw new Error("Missing token socket revocation callback");
+                app.disconnectApiTokenSockets(revoked.revokedTokenIds);
+            }
             await disconnected;
             expect(client.connected).toBe(false);
+            const refused = new Promise<Error>(resolve => client.once('connect_error', resolve));
+            client.connect();
+            expect(await refused).toBeInstanceOf(Error);
+            expect(client.connected).toBe(false);
         } finally {
+            verifications.mockRestore();
             client.disconnect(); await io.close(); await app.close();
             // The harness owns disposal of the isolated database, including audit rows.
         }

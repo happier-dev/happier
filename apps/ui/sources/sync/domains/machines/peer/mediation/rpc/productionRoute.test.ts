@@ -14,9 +14,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
-import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
-import { publishLocalDaemonStatus } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 const getReadyServerFeaturesSpy = vi.hoisted(() => vi.fn());
 const TOKEN_A = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
@@ -31,6 +30,8 @@ const storageSnapshot = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 const storageGetStateSpy = vi.hoisted(() => vi.fn());
+let getSystemTasksRunner: typeof import('@/components/systemTasks/systemTasksRuntime')['getSystemTasksRunner'];
+let publishLocalDaemonStatus: typeof import('@/components/settings/machines/localControl/localDaemonSharedState')['publishLocalDaemonStatus'];
 
 vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
     getReadyServerFeatures: (...args: unknown[]) => getReadyServerFeaturesSpy(...args),
@@ -53,7 +54,8 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     } });
 });
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
+vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/server/serverRuntime')>(),
     getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
 }));
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
@@ -100,7 +102,7 @@ function createDirectRequest(): PeerMachineRpcDirectRequestV2 {
             payload: {
                 v: 2, grantId: 'grant_1', accountId: 'account-1', machineId: 'machine_1',
                 flowKind: 'machine_rpc', routeKind: 'loopback_direct',
-                scope: { kind: 'machine_rpc', rpcScopeId: 'scope_1', allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS], maxCalls: 1, maxIdleMs: 30_000 },
+                scope: { kind: 'machine_rpc', rpcScopeId: 'scope_1', allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS], maxIdleMs: 30_000 },
                 iat: 1_000, exp: 301_000, aud: 'happier-daemon-route-grant', endpointFingerprint: 'endpoint_1',
                 proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: Buffer.from(new Uint8Array(32).fill(1)).toString('base64url'),
             },
@@ -127,47 +129,56 @@ async function importProductionRoute() {
     return await import('./productionRoute').catch((error: unknown) => ({ importError: error }));
 }
 
+function resetRouteBoundary() {
+    clearMachineRequestReachabilityForTest();
+    getReadyServerFeaturesSpy.mockReset();
+    getCredentialsForServerUrlSpy.mockReset();
+    storageGetStateSpy.mockReset();
+    getActiveServerSnapshotSpy.mockReset();
+    captureAuthoritySpy.mockReset();
+    vi.unstubAllGlobals();
+    // Desktop host is the OS boundary; status publication and locality logic stay real.
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
+    // Keep the desktop identity real while replacing its native HTTP boundary.
+    setRuntimeFetch((input, init) => fetch(input, init));
+    storageSnapshot.state = { machines: {}, machineListByServerId: {} };
+    getActiveServerSnapshotSpy.mockReturnValue({
+        serverId: 'server-a',
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    });
+    getReadyServerFeaturesSpy.mockResolvedValue(createFeaturePayload());
+    getCredentialsForServerUrlSpy.mockResolvedValue({
+        token: TOKEN_A,
+        secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
+    });
+    captureAuthoritySpy.mockImplementation(async ({ scope, activeRequest }) => {
+        const current = await getCredentialsForServerUrlSpy();
+        const payload = JSON.parse(Buffer.from(String(current.token).split('.')[1]!, 'base64url').toString('utf8')) as { sub?: string };
+        if (payload.sub !== scope.accountId) throw new Error('Account scope changed');
+        return { scope, request: activeRequest, release: async () => {} };
+    });
+    storageGetStateSpy.mockImplementation(() => ({
+        settingsScope: { serverId: 'server-a', accountId: 'account-1' },
+        settings: { peerMediationPreferencesV1: { v: 1, flows: {}, byMachineId: {} } },
+        ...storageSnapshot.state,
+    }));
+}
+
+// Runtime initialization reads its Home immediately; install this fixture before loading it.
+resetRouteBoundary();
+({ getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime'));
+({ publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState'));
+
 describe('production peer mediation machine RPC route adapter', () => {
     afterEach(() => resetRuntimeFetch());
 
     beforeEach(() => {
-        clearMachineRequestReachabilityForTest();
-        getReadyServerFeaturesSpy.mockReset();
-        getCredentialsForServerUrlSpy.mockReset();
-        storageGetStateSpy.mockReset();
-        getActiveServerSnapshotSpy.mockReset();
-        captureAuthoritySpy.mockReset();
-        vi.unstubAllGlobals();
-        // Desktop host is the OS boundary; status publication and locality logic stay real.
-        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
-        // Keep the desktop identity real while replacing its native HTTP boundary.
-        setRuntimeFetch((input, init) => fetch(input, init));
+        resetRouteBoundary();
         publishLocalDaemonStatus(getSystemTasksRunner(), {
             machineId: 'machine_1', daemonAccountId: 'account-1',
             daemonServerUrl: 'https://server-a.example.test',
         });
-        storageSnapshot.state = { machines: {}, machineListByServerId: {} };
-        getActiveServerSnapshotSpy.mockReturnValue({
-            serverId: 'server-a',
-            serverUrl: 'https://server-a.example.test',
-            generation: 1,
-        });
-        getReadyServerFeaturesSpy.mockResolvedValue(createFeaturePayload());
-        getCredentialsForServerUrlSpy.mockResolvedValue({
-            token: TOKEN_A,
-            secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64'),
-        });
-        captureAuthoritySpy.mockImplementation(async ({ scope, activeRequest }) => {
-            const current = await getCredentialsForServerUrlSpy();
-            const payload = JSON.parse(Buffer.from(String(current.token).split('.')[1]!, 'base64url').toString('utf8')) as { sub?: string };
-            if (payload.sub !== scope.accountId) throw new Error('Account scope changed');
-            return { scope, request: activeRequest, release: async () => {} };
-        });
-        storageGetStateSpy.mockImplementation(() => ({
-            settingsScope: { serverId: 'server-a', accountId: 'account-1' },
-            settings: { peerMediationPreferencesV1: { v: 1, flows: {}, byMachineId: {} } },
-            ...storageSnapshot.state,
-        }));
     });
 
     it.each([null, { machineId: 'other-machine', daemonAccountId: 'account-1', daemonServerUrl: 'https://server-a.example.test' },
@@ -282,7 +293,7 @@ describe('production peer mediation machine RPC route adapter', () => {
                         routeKind: 'loopback_direct',
                         scope: {
                             kind: 'machine_rpc', rpcScopeId: `machine_1:${RPC_METHODS.DAEMON_MEMORY_STATUS}`,
-                            allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS], maxCalls: 2, maxIdleMs: 30_000,
+                            allowedMethods: [RPC_METHODS.DAEMON_MEMORY_STATUS], maxIdleMs: 30_000,
                         },
                         iat: 1_000,
                         exp: 301_000,
@@ -315,6 +326,66 @@ describe('production peer mediation machine RPC route adapter', () => {
         expect(mintBody).toMatchObject({ v: 2, kind: 'ephemeral_ed25519' });
     });
 
+
+    it('keeps the native workspace single-use carrier outside ordinary RPC admission', async () => {
+        const fetchSpy = vi.fn();
+        vi.stubGlobal('fetch', fetchSpy);
+        const module = await importProductionRoute();
+        if ('importError' in module) throw module.importError;
+        await expect(module.resolveProductionMachineRpcDirectRoute({
+            serverId: 'server-a', machineId: 'machine_1', method: 'workspace.sync',
+        })).resolves.toMatchObject({ kind: 'fallback', reasonCode: 'method_unclassified' });
+        expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('reuses one signed admission for concurrent and subsequent ordinary calls until expiry or disconnect', async () => {
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        storageSnapshot.state = { machines: { machine_1: { id: 'machine_1', daemonState: { peerMediation: { loopback: {
+            endpoint: { v: 1, routeKind: 'loopback_direct', url: 'http://127.0.0.1:46011',
+                endpointFingerprint: 'endpoint_1', expiresAt: now + 600_000 },
+        } } } } }, machineListByServerId: {} };
+        let mints = 0;
+        let admissionAvailable = true;
+        const fetchSpy = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+            if (init?.method === 'OPTIONS') return new Response(null, { status: 204 });
+            mints += 1;
+            if (!admissionAvailable) return responseJson({ ok: false, reasonCode: 'access_denied' });
+            const body = JSON.parse(String(init?.body)) as { ephemeralPublicKeyBase64Url: string };
+            const grant = createDirectRequest().grant;
+            return responseJson({ ok: true, grant: { ...grant, payload: { ...grant.payload,
+                grantId: `grant-${mints}`, iat: Date.now(), exp: Date.now() + 60_000, callerAuthority: 'present_user',
+                ephemeralPublicKeyBase64Url: body.ephemeralPublicKeyBase64Url } } });
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+        const route = await import('./productionRoute');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const resolve = () => route.resolveProductionMachineRpcDirectRoute({
+            serverId: 'server-a', machineId: 'machine_1', method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+        });
+        try {
+            const initial = await Promise.all(Array.from({ length: 8 }, resolve));
+            expect(initial.every(result => result.kind === 'selected')).toBe(true);
+            expect(mints).toBe(1);
+            expect(await resolve()).toMatchObject({ kind: 'selected', grant: { payload: { grantId: 'grant-1' } } });
+            expect(mints).toBe(1);
+            vi.mocked(Date.now).mockReturnValue(now + 60_000);
+            expect(await resolve()).toMatchObject({ kind: 'selected', grant: { payload: { grantId: 'grant-2' } } });
+            expect(mints).toBe(2);
+            apiSocket.disconnect();
+            expect(await resolve()).toMatchObject({ kind: 'selected', grant: { payload: { grantId: 'grant-3' } } });
+            expect(mints).toBe(3);
+            getCredentialsForServerUrlSpy.mockResolvedValue({ token: DATA_KEY_TOKEN, secret: Buffer.alloc(32, 7).toString('base64') });
+            expect(await resolve()).toMatchObject({ kind: 'selected', grant: { payload: { grantId: 'grant-4' } } });
+            expect(mints).toBe(4);
+            admissionAvailable = false;
+            expect(await resolve()).toMatchObject({ kind: 'selected', grant: { payload: { grantId: 'grant-4' } } });
+            expect(mints).toBe(4);
+            apiSocket.disconnect();
+            expect(await resolve()).toMatchObject({ kind: 'fallback', reasonCode: 'access_denied' });
+            expect(mints).toBe(5);
+        } finally { apiSocket.disconnect(); vi.mocked(Date.now).mockRestore(); }
+    });
 
     it('rejects an expired advertisement before minting a grant, even with fresh Machine presence', async () => {
         storageSnapshot.state = {
@@ -460,14 +531,16 @@ describe('production peer mediation machine RPC route adapter', () => {
 
     it('forwards the caller abort signal to the direct loopback request', async () => {
         const controller = new AbortController();
-        controller.abort();
+        const entered = createDeferred<void>();
         let capturedSignal: AbortSignal | undefined;
         const fetchSpy = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
             capturedSignal = init?.signal ?? undefined;
-            if (init?.signal?.aborted) {
-                return Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
-            }
-            return Promise.resolve(responseJson({ v: 1, ok: true }));
+            entered.resolve();
+            return new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => {
+                    reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+                }, { once: true });
+            });
         });
         vi.stubGlobal('fetch', fetchSpy);
 
@@ -475,11 +548,14 @@ describe('production peer mediation machine RPC route adapter', () => {
         expect(module).toHaveProperty('postProductionMachineRpcDirect');
         if ('importError' in module) throw module.importError;
 
-        const result = await module.postProductionMachineRpcDirect({
+        const request = module.postProductionMachineRpcDirect({
             url: 'http://127.0.0.1:46021/peer-mediation/v1/machine-rpc',
             request: createDirectRequest(),
             signal: controller.signal,
         }).catch((error: unknown) => error);
+        await entered.promise;
+        controller.abort();
+        const result = await request;
 
         // The caller signal must reach the actual request transport.
         expect(capturedSignal?.aborted).toBe(true);

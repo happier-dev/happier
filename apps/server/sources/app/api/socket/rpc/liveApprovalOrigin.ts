@@ -40,7 +40,7 @@ export function createLiveApprovalOriginTargetGuard(input: Readonly<{
             }
             // The cluster receiver projection carries no credential. Its existing
             // socket revocation and CLI replay owners retain receiver currentness.
-            // Revalidate the deciding caller last, immediately before dispatch.
+            // Consume the deciding caller identity admitted at connect.
             const credential = await readCurrentSocketCredential(input.userId, input.socket);
             if (!credential || narrowCredentialAuthority(credential.authority,
                 input.socket.handshake.auth.authorityCeiling) !== 'present_user'

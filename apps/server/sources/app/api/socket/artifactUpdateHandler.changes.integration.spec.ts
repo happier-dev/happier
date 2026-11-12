@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     signAccountContentKeyBindingV1,
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -7,20 +7,9 @@ import {
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 
-import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
-import { createInTxHarness } from "../testkit/txHarness";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../testkit/dbMocks";
+import type { Tx } from "@/storage/inTx";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
-
-vi.mock("@/app/api/socket/socketCredentialCurrentness", async () => (
-    await import("../testkit/socketHarness")
-).createCurrentSocketCredentialModuleMock());
-
-const emitUpdate = vi.fn();
-vi.mock("@/app/events/eventRouter", async () => ({
-    ...await import("@/app/events/eventPayloadBuilders"),
-    eventRouter: { emitUpdate },
-}));
-vi.mock("@/app/events/connectionEventRouter", () => ({ eventRouter: { emitUpdate } }));
 
 const randomKeyNaked = vi.fn(() => "upd-id");
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
@@ -38,48 +27,61 @@ const readyE2eeAccount = {
     contentPublicKeySig: new Uint8Array(testAccountContentKeySignature),
 } as const;
 
-vi.mock("@/app/monitoring/metrics/index", () => ({
-    websocketEventsCounter: { inc: vi.fn() },
-}));
-
-vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
-
 const txDbMocks = createDbMocks({
     account: ["findUnique", "update"],
-    accountChange: ["upsert"],
+    accountChange: ["findUnique", "upsert"],
+    publicSessionShare: ["findUnique"],
     artifact: ["findFirst", "findUnique", "updateMany", "create", "delete", "deleteMany"],
     artifactRevision: ["create", "findMany", "deleteMany"],
-    artifactBlob: ["findMany"],
+    artifactBlob: ["findMany", "findUnique", "findFirst", "deleteMany"],
 } as const);
 
-vi.mock("@/storage/inTx", () => {
-    const { inTx, afterTx } = createInTxHarness(() => ({
-        account: txDbMocks.db.account,
-        accountChange: txDbMocks.db.accountChange,
-        artifactRevision: txDbMocks.db.artifactRevision,
-        artifactBlob: txDbMocks.db.artifactBlob,
-        // The persistent boundary returns joined owner/grant facts when selected.
-        artifact: { ...txDbMocks.db.artifact, findFirst: async (...args: unknown[]) => {
-            const row = await txDbMocks.db.artifact.findFirst(...args);
-            if (!row) return row;
-            const accountId = row.accountId ?? "u1";
-            return { ...row, accountId, account: row.account ?? await txDbMocks.db.account.findUnique({ where: { id: accountId } }),
-                accountGrants: row.accountGrants ?? [], teamGrants: row.teamGrants ?? [], groupGrants: row.groupGrants ?? [] };
-        } },
-    }));
+// Replace only database connections; snapshot admission and publication stay real.
+const transactions = createDbTransactionMock(() => ({
+    ...txDbMocks.db,
+    __afterTxCallbacks: [],
+    $executeRawUnsafe: async (query: string, accountId: unknown) => {
+        if (query !== 'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?'
+            || typeof accountId !== "string") throw new Error("Unexpected SQLite admission query");
+        return 1;
+    },
+    artifact: { ...txDbMocks.db.artifact, findFirst: async (...args: unknown[]) => {
+        const row = await txDbMocks.db.artifact.findFirst(...args);
+        if (!row) return row;
+        const accountId = row.accountId ?? "u1";
+        return { ...row, accountId,
+            account: row.account ?? await txDbMocks.db.account.findUnique({ where: { id: accountId } }),
+            accountGrants: row.accountGrants ?? [], teamGrants: row.teamGrants ?? [], groupGrants: row.groupGrants ?? [],
+            keyEnvelopes: row.keyEnvelopes ?? [],
+        };
+    } },
+} as unknown as Tx));
 
-    return { afterTx, inTx };
-});
+vi.mock("@/storage/prisma", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/prisma")>(),
+    withSqliteReadSnapshot: transactions.readSnapshot,
+}));
 
 const dbAccountFindUnique = txDbMocks.db.account.findUnique;
 const dbArtifactFindUnique = txDbMocks.db.artifact.findUnique;
 const dbArtifactFindFirst = txDbMocks.db.artifact.findFirst;
+const dbModule = await vi.importActual<typeof import("@/storage/db")>("@/storage/db");
 installDbModuleMock(() => ({
-    db: txDbMocks.db,
+    ...dbModule,
+    db: transactions.wrapDb(txDbMocks.db),
 }));
 
+// Observe the real publication owner without replacing its internal routing.
+const { eventRouter } = await import("@/app/events/connectionEventRouter");
+const emitUpdate = vi.spyOn(eventRouter, "emitUpdate");
+
+// Load the real handler during collection, outside each socket event's test lifetime.
+const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
+
 describe("artifactUpdateHandler (AccountChange integration)", () => {
+    afterEach(() => vi.unstubAllEnvs());
     beforeEach(() => {
+        vi.stubEnv("HAPPIER_DB_PROVIDER", "sqlite");
         process.env.HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST = "none";
         vi.clearAllMocks();
         txDbMocks.reset();
@@ -88,15 +90,22 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         dbAccountFindUnique.mockResolvedValue(readyE2eeAccount);
         txDbMocks.db.account.findUnique.mockResolvedValue(readyE2eeAccount);
         txDbMocks.db.account.update.mockResolvedValue({ seq: 555 });
+        txDbMocks.db.accountChange.findUnique.mockResolvedValue(null);
         txDbMocks.db.accountChange.upsert.mockResolvedValue({});
+        txDbMocks.db.publicSessionShare.findUnique.mockResolvedValue(null);
         // The persistence boundary includes retained revisions and exact blob custody.
         txDbMocks.db.artifactRevision.create.mockResolvedValue({});
         txDbMocks.db.artifactRevision.findMany.mockResolvedValue([]);
         txDbMocks.db.artifactRevision.deleteMany.mockResolvedValue({ count: 0 });
         txDbMocks.db.artifactBlob.findMany.mockResolvedValue([]);
+        txDbMocks.db.artifactBlob.findUnique.mockResolvedValue(null);
+        txDbMocks.db.artifactBlob.findFirst.mockResolvedValue(null);
+        txDbMocks.db.artifactBlob.deleteMany.mockResolvedValue({ count: 0 });
     });
 
-    const currentSocket = () => createFakeSocket({ data: {} });
+    const currentSocket = () => createFakeSocket({ data: {
+        userId: "u1", authTokenKind: "account", authAuthority: "present_user", tokenEpoch: 0,
+    } });
 
     it("reads a marked Artifact without a component-version declaration", async () => {
         dbAccountFindUnique.mockResolvedValue({ encryptionMode: "plain" });
@@ -113,8 +122,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
             updatedAt: new Date(1),
         });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
-        const legacySocket = createFakeSocket({ data: {} });
+        const legacySocket = currentSocket();
         artifactUpdateHandler("u1", legacySocket as any);
         const callback = vi.fn();
 
@@ -158,7 +166,6 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
             updatedAt: new Date(1),
         });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
         const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const callback = vi.fn();
@@ -195,9 +202,8 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         });
         txDbMocks.db.artifact.updateMany.mockResolvedValue({ count: 1 });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
-        const socket = createFakeSocket({ data: {} });
+        const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "artifact-update");
 
@@ -258,8 +264,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         txDbMocks.db.artifact.findFirst.mockResolvedValue(artifact);
         txDbMocks.db.artifact.updateMany.mockResolvedValue({ count: 1 });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
-        const legacySocket = createFakeSocket({ data: {} });
+        const legacySocket = currentSocket();
         artifactUpdateHandler("u1", legacySocket as any);
         const legacyCallback = vi.fn();
         await getSocketHandler(legacySocket, "artifact-update")({
@@ -306,9 +311,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
             updatedAt: new Date(1),
         });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
-
-        const socket = createFakeSocket({ data: {} });
+        const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "artifact-create");
 
@@ -341,9 +344,8 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
         txDbMocks.db.artifact.updateMany.mockResolvedValue({ count: 1 });
         txDbMocks.db.artifact.deleteMany.mockResolvedValue({ count: 1 });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
-        const socket = createFakeSocket({ data: {} });
+        const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const handler = getSocketHandler(socket, "artifact-delete");
 
@@ -367,7 +369,6 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
             ),
         });
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
         const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const callback = vi.fn();
@@ -409,8 +410,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
                 }
         ));
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
-        const socket = createFakeSocket({ data: {} });
+        const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const callback = vi.fn();
 
@@ -448,8 +448,7 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
                 }
         ));
 
-        const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
-        const socket = createFakeSocket({ data: {} });
+        const socket = currentSocket();
         artifactUpdateHandler("u1", socket as any);
         const callback = vi.fn();
 

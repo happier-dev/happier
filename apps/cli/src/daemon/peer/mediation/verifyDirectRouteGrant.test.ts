@@ -32,7 +32,6 @@ describe('verifyDirectRouteGrantV2', () => {
                 kind: 'machine_rpc',
                 rpcScopeId: 'rpc_1',
                 allowedMethods: ['daemon.memory.status'],
-                maxCalls: 1,
                 maxIdleMs: 1_000,
             },
             iat: 1_000,

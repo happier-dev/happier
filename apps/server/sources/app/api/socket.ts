@@ -12,6 +12,7 @@ import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetad
 import { Server, Socket } from "socket.io";
 import { log, warn } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
+import { verifyCurrentMaterializedRunnerPrincipal } from "@/app/ephemeralRunner/materializedRunnerPrincipalCurrentness";
 import { narrowCredentialAuthority } from "@/app/auth/effectiveCredentialAuthority";
 import { admitApiTokenSessionOperation, isRestrictedAuthTokenKind } from "@/app/api/utils/apiTokenRouteAdmission";
 import { isApiTokenRequestOriginAllowed } from "./utils/isApiTokenRequestOriginAllowed";
@@ -717,6 +718,7 @@ export function startSocket(app: Fastify) {
             socket.data.userId = verified.userId;
             socket.data.tokenEpoch = verified.tokenEpoch;
             socket.data.authTokenKind = verified.authTokenKind;
+            socket.data.authTokenLegacy = verified.legacy;
             socket.data.authAuthority = narrowCredentialAuthority(verified.authority, socket.handshake.auth.authorityCeiling);
             socket.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
             socket.data.clientType = clientType;
@@ -924,51 +926,33 @@ export function startSocket(app: Fastify) {
                 await socket.join([getApiTokenRevocationSocketRoom(principal.credentialId),
                     ...(principal.parentTokenId ? [getApiTokenRevocationSocketRoom(principal.parentTokenId)] : [])]);
             }
-            // Verify the signed token once, then close any revocation gap before
-            // room membership made this admitted Machine stream evictable.
-            if (clientType === 'machine-scoped' && !handshakeEphemeralRunnerAdmission) {
-                if (!socket.connected || !await auth.isSignedCredentialCurrent(db, userId, socket.data.tokenEpoch)) {
-                    await rejectPostConnectAdmission();
-                    return;
+            // Bearer verification belongs to the handshake. After joining the
+            // eviction rooms, close the connect-time publication gap using the
+            // existing credential row owners, without verifying the bearer again.
+            const admission = handshakeEphemeralRunnerAdmission;
+            if (admission?.kind === 'api-token-session-viewer') {
+                const principal = await auth.verifyCurrentApiTokenPrincipal(admission.principal);
+                if (!socket.connected || !principal) {
+                    await rejectPostConnectAdmission(); return;
                 }
-            } else {
-                const currentVerified = await auth.verifyTokenForRoute(token);
-                const currentEphemeralRunnerAdmission = currentVerified?.authTokenKind === "ephemeral_session_runner" || currentVerified?.authTokenKind === "api_token"
-                    ? resolveRestrictedSocketAdmission({
-                        principal: currentVerified.ephemeralSessionRunnerPrincipal,
-                        apiTokenPrincipal: currentVerified.apiTokenPrincipal,
-                        clientType,
-                        ...(sessionId ? { sessionId } : {}),
-                        ...(machineId ? { machineId } : {}),
-                    })
-                    : null;
-                if (
-                    !socket.connected
-                    || !currentVerified
-                    || (isRestrictedAuthTokenKind(currentVerified.authTokenKind) && !currentEphemeralRunnerAdmission)
-                    || currentVerified.userId !== userId
-                ) {
-                    await rejectPostConnectAdmission();
-                    return;
+                const origin = socket.handshake.headers.origin;
+                const admitted = await admitApiTokenSessionOperation({ principal,
+                    sessionId: admission.sessionId, actionId: 'session.transcript.get',
+                    capability: 'readTranscript', targetMachineId: await resolveCurrentSessionMachine({
+                        accountId: userId, sessionId: admission.sessionId,
+                    }),
+                });
+                if (!admitted.ok || (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin))) {
+                    await rejectPostConnectAdmission(); return;
                 }
-                socket.data.authTokenKind = currentVerified.authTokenKind;
-                socket.data.authAuthority = narrowCredentialAuthority(currentVerified.authority, socket.handshake.auth.authorityCeiling);
-                socket.data.authTokenAuthenticationEvidence = currentVerified.authenticationEvidence;
-                if (currentEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
-                    const principal = currentEphemeralRunnerAdmission.principal;
-                    const origin = socket.handshake.headers.origin;
-                    const admitted = await admitApiTokenSessionOperation({ principal,
-                        sessionId: currentEphemeralRunnerAdmission.sessionId, actionId: "session.transcript.get",
-                        capability: "readTranscript", targetMachineId: await resolveCurrentSessionMachine({
-                            accountId: userId, sessionId: currentEphemeralRunnerAdmission.sessionId,
-                        }),
-                    });
-                    if (!admitted.ok || (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin))) {
-                        await rejectPostConnectAdmission(); return;
-                    }
-                    socket.data.apiTokenPrincipal = principal;
-                    socket.data.ephemeralRunnerAdmission = currentEphemeralRunnerAdmission;
-                }
+                socket.data.apiTokenPrincipal = principal;
+                socket.data.ephemeralRunnerAdmission = { ...admission, principal };
+            } else if (!socket.connected || !await auth.isSignedCredentialCurrent(db, userId, socket.data.tokenEpoch)) {
+                await rejectPostConnectAdmission(); return;
+            }
+            if (admission && admission.kind !== 'api-token-session-viewer'
+                && !await verifyCurrentMaterializedRunnerPrincipal(admission.principal)) {
+                await rejectPostConnectAdmission(); return;
             }
             await socket.join(protectedRooms);
             if (!socket.connected) {

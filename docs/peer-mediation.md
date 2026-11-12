@@ -450,8 +450,8 @@ Workspace Sync's native Mutagen stream uses a V2 `iroh_peer` grant with the
 `machine_rpc` scope. Its sole `workspace.sync` method label identifies that
 carrier; it is not a dispatchable Machine RPC. In 0.3 development,
 `mintDirectRouteGrantV1.ts#validateDirectRouteGrantV2MintInput` admits only that
-exact carrier scope (Machine initiator, one call, no Session binding, and the
-matching single-use method). Ordinary RPC grants retain the canonical RPC
+exact carrier scope (Machine initiator, no Session binding, and the matching
+`workspace.sync` high-risk single-use method). Ordinary RPC grants retain the canonical RPC
 classification checks. The signed scope id must match the handshake operation
 id. For this native carrier, Home binds the authenticated requester and each
 Machine's current endpoint without repeating the admitted job's Machine-role
@@ -522,12 +522,15 @@ they physically travel).
 | Route kind | `loopback_direct`, `lan_direct`, `tailscale_serve_direct`, `server_relay`, `iroh_peer` | same |
 
 In unreleased 0.3, direct Machine RPC authenticates each request's signed grant,
-ephemeral proof, endpoint binding and method scope. The route's atomic one-use
-reservation is the grant-consumption owner. Failed verification refuses that
-request without quarantining the endpoint; no per-grant concurrency or idle
-limiter runs alongside the reservation. The wire schema retains `maxCalls`,
-`maxIdleMs` and the existing fallback reason codes for mixed-version readers.
-The UI still requests a fresh Home route grant for each physical direct call.
+ephemeral proof, endpoint binding and listed method scope. Home admits ordinary
+RPC grants only for the Machine custodian and signs the verified
+`callerAuthority`; a shared-Machine requester stays on the server route.
+The UI reuses an admitted grant and proof until its signed expiry or socket
+disconnect, segregated by Home, credential, Account, Machine, method and endpoint.
+Concurrent requests share the same mint. The ephemeral signing key is disposed
+after producing the proof; no renewal timer runs. A new mint enters current
+admission again. `maxCalls` is removed from the closed scope schema;
+`maxIdleMs` remains in the wire shape without an idle limiter.
 
 The five moving parts and their canonical owners:
 
@@ -576,7 +579,7 @@ deployed method carries one row naming its **route class**:
 | Route class | Meaning |
 | --- | --- |
 | `server_required` | Must travel the server path. The row also carries a `serverRequiredReason` — durable or transcript writes, pending-queue and sequence assignment, reconnect catch-up, cross-device fanout, auth, sharing, billing, automation, account change, destructive or recovery mutations, or simply `unclassified`. |
-| `direct_ephemeral` | May go direct under the signed method scope; the daemon consumes each grant once before dispatch. |
+| `direct_ephemeral` | May go direct under the signed method scope until its expiry; methods explicitly listed in `highRiskSingleUseMethods` reserve the grant once before dispatch. |
 
 `resolveMachineRpcRoutePolicy` **fails closed for an unknown method**: a method with no
 deployed row resolves to `server_required` with reason `unclassified`, so adding an RPC method
@@ -588,11 +591,15 @@ In unreleased 0.3, direct RPC has no command-receipt hashes, per-request replay-
 cache, per-grant concurrency/idle limiter or latched verification quarantine.
 Every request still verifies its signed grant, ephemeral proof, Account, Machine,
 endpoint and method scope; invalid or expired proofs do not prevent a later valid
-request. The route's atomic grant reservation is the single one-use replay owner.
-The grant owner retains the `maxCalls` and `maxIdleMs` wire fields. A future reusable
-connection grant cannot rely on a per-request replay primitive here; it must design
-one at its own admission owner. Matching development Protocol, UI and daemon
-readers reload together for this direct cut.
+request. Ordinary RPC calls do not enter the single-use ledger. The existing
+atomic grant reservation remains the one-use owner only when the requested
+method is listed in `highRiskSingleUseMethods`; handler failure still consumes
+that admission. Native Workspace Sync keeps its exact single-operation carrier
+scope and prepared-target owner, and finite transfers keep their distinct bounded
+scopes. The requester currently mints one listed ordinary method per cached grant;
+the receiver accepts repeated calls to every method that Home validated and listed
+at mint. Matching development Protocol, UI, server and daemon readers reload
+together for this direct cut.
 
 In 0.3 development, contribution-registry projection describes use the authenticated
 Home route. These reads admit Session creation and plugin surfaces on every client;

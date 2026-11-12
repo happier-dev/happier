@@ -22,15 +22,15 @@ const keyPair = tweetnacl.sign.keyPair.fromSeed(seed);
 
 describe("mintDirectRouteGrantV1", () => {
     it.each([
-        { name: 'exact workspace carrier', routeKind: 'iroh_peer' as const, methods: ['workspace.sync'], maxCalls: 1, expected: true },
-        { name: 'ordinary RPC route', routeKind: 'loopback_direct' as const, methods: ['workspace.sync'], maxCalls: 1, expected: false },
-        { name: 'mixed RPC methods', routeKind: 'iroh_peer' as const, methods: ['workspace.sync', 'spawn-happy-session'], maxCalls: 1, expected: false },
-        { name: 'multiple calls', routeKind: 'iroh_peer' as const, methods: ['workspace.sync'], maxCalls: 2, expected: false },
-    ])('admits only the per-operation machine/1 carrier scope ($name)', ({ routeKind, methods, maxCalls, expected }) => {
+        { name: 'exact workspace carrier', routeKind: 'iroh_peer' as const, methods: ['workspace.sync'], expected: true },
+        { name: 'ordinary RPC route', routeKind: 'loopback_direct' as const, methods: ['workspace.sync'], expected: false },
+        { name: 'mixed RPC methods', routeKind: 'iroh_peer' as const, methods: ['workspace.sync', 'spawn-happy-session'], expected: false },
+        { name: 'missing single-use method', routeKind: 'iroh_peer' as const, methods: ['workspace.sync'], singleUseMethods: [], expected: false },
+    ])('admits only the per-operation machine/1 carrier scope ($name)', ({ routeKind, methods, singleUseMethods, expected }) => {
         const minted = mintDirectRouteGrantV2({
             accountId: 'account_1', machineId: 'machine_target', flowKind: 'machine_rpc', routeKind,
             scope: { kind: 'machine_rpc', rpcScopeId: 'sync-operation', allowedMethods: methods,
-                maxCalls, maxIdleMs: 60_000, highRiskSingleUseMethods: ['workspace.sync'] },
+                maxIdleMs: 60_000, highRiskSingleUseMethods: singleUseMethods ?? ['workspace.sync'] },
             endpointFingerprint: 'b'.repeat(64),
             ...(routeKind === 'iroh_peer' ? { iroh: {
                 initiator: { kind: 'machine' as const, machineId: 'machine_source', endpointId: 'a'.repeat(64) },
@@ -56,7 +56,6 @@ describe("mintDirectRouteGrantV1", () => {
                 kind: "machine_rpc",
                 rpcScopeId: "rpc_1",
                 allowedMethods: ["daemon.memory.status"],
-                maxCalls: 1,
                 maxIdleMs: 1_000,
             },
             endpointFingerprint: "endpoint_1",
@@ -205,7 +204,6 @@ describe("mintDirectRouteGrantV1", () => {
                 kind: "machine_rpc",
                 rpcScopeId: "workspace_sync_1",
                 allowedMethods: ["daemon.memory.status"],
-                maxCalls: 1,
                 maxIdleMs: 1_000,
             },
             endpointFingerprint: "b".repeat(64),
@@ -324,7 +322,6 @@ describe("mintDirectRouteGrantV1", () => {
                 kind: "machine_rpc",
                 rpcScopeId: "rpc_1",
                 allowedMethods: ["session.write"],
-                maxCalls: 1,
                 maxIdleMs: 1000,
             },
             serverGateEnabled: true,

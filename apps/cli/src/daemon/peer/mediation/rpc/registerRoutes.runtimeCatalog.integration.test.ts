@@ -56,6 +56,7 @@ import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { mintDirectRouteGrantV2 } from '../../../../../../server/sources/app/machines/peer/mediation/mintDirectRouteGrantV1';
 
 const installationStore = vi.hoisted(() => ({ identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null }));
 // Installation key storage and Home HTTP are system boundaries; admission and dispatch remain real.
@@ -104,6 +105,8 @@ function createGrant(input: Readonly<{
     method?: string;
     accountId?: string;
     callerAuthority?: 'present_user' | 'account_automation';
+    singleUse?: boolean;
+    methods?: readonly string[];
 }> = {}): Readonly<{
     grant: SignedDirectRouteGrantV2;
     ephemeralSecretKey: Uint8Array;
@@ -124,8 +127,8 @@ function createGrant(input: Readonly<{
         scope: {
             kind: 'machine_rpc',
             rpcScopeId: `machine_1:${method}`,
-            allowedMethods: [method],
-            maxCalls: 2,
+            allowedMethods: [...input.methods ?? [method]],
+            ...(input.singleUse ? { highRiskSingleUseMethods: [method] } : {}),
             maxIdleMs: 30_000,
         },
         iat: input.iat ?? 1_000,
@@ -482,8 +485,8 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
             expect(JSON.stringify(response)).not.toContain('private-test-value');
         } finally { await app.close(); }
     });
-    // MACH-CHALLENGE-MECH M5/M6: one-shot consumption is the sole replay owner.
-    it('executes commands without receipts once per grant and keeps distinct grants independent', async () => {
+    // Approved B5: ordinary commands share their signed admission lifetime.
+    it('reuses ordinary command grants without a single-use reservation', async () => {
         const method = RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR;
         let invoked = 0;
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
@@ -500,10 +503,56 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         };
         try {
             const responses = await Promise.all([post(signed, 1), post(signed, 2), post(fresh, 3)]);
-            expect(responses.filter(response => response.ok)).toHaveLength(2);
-            expect(responses.filter(response => response.reasonCode === 'direct_call_limit_exceeded')).toHaveLength(1);
-            expect(invoked).toBe(2);
+            expect(responses.filter(response => response.ok)).toHaveLength(3);
+            expect(responses.filter(response => response.reasonCode === 'direct_call_limit_exceeded')).toHaveLength(0);
+            expect(invoked).toBe(3);
             for (const response of responses) expect(response).not.toHaveProperty('commandReceipt');
+        } finally { await app.close(); }
+    });
+
+    it('reuses a signed grant for two listed methods and refuses unlisted methods and expiry', async () => {
+        const methods = [RPC_METHODS.DAEMON_MEMORY_STATUS, RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET];
+        const fixture = createGrant({ methods, callerAuthority: 'account_automation' });
+        const mint = (binding: Readonly<{ accountId?: string; machineId?: string; endpointFingerprint?: string }> = {}) => {
+            const minted = mintDirectRouteGrantV2({
+                accountId: 'account_1', machineId: 'machine_1', callerAuthority: 'account_automation',
+                flowKind: 'machine_rpc', routeKind: 'loopback_direct', scope: fixture.grant.payload.scope,
+                endpointFingerprint: 'endpoint_1', ephemeralPublicKeyBase64Url: fixture.grant.payload.ephemeralPublicKeyBase64Url,
+                nowMs: 1_000, ttlMs: 2_000, serverGateEnabled: true,
+                signingKey: { keyId: 'server_key_1', secretKey: serverKeyPair.secretKey }, ...binding,
+            });
+            expect(minted.ok).toBe(true);
+            if (!minted.ok) throw new Error('Expected real issuer admission');
+            return { grant: minted.grant, ephemeralSecretKey: fixture.ephemeralSecretKey };
+        };
+        const signed = mint();
+        let nowMs = 2_000;
+        const invoked: string[] = [];
+        const app = createApp({ nowMs: () => nowMs, invokeLocal: async (method, _params, options) => {
+            invoked.push(method);
+            return { authority: options?.verifiedPeerAuthority };
+        } });
+        const post = async (method: string, nonceByte: number, admission = signed) => (await app.inject({ method: 'POST',
+            url: PEER_MACHINE_RPC_DIRECT_PATH_V2, payload: createRequest({ requestId: `reuse-${nonceByte}`,
+                method, grant: admission.grant, proof: createProof({ ...admission, nonceByte }),
+                params: { callerAuthority: 'present_user' } }) })).json();
+        try {
+            for (const [index, method] of [...methods, ...methods].entries()) {
+                expect(await post(method, index)).toMatchObject({ ok: true, result: { authority: 'account_automation' } });
+            }
+            expect(await post(RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, 5)).toMatchObject({ ok: false, reasonCode: 'method_not_allowed_by_grant' });
+            for (const binding of [{ accountId: 'foreign-account' }, { machineId: 'foreign-machine' }]) {
+                expect(await post(methods[0]!, 7, mint(binding))).toMatchObject({ ok: false, reasonCode: 'grant_scope_mismatch' });
+            }
+            expect(await post(methods[0]!, 8, mint({ endpointFingerprint: 'other-endpoint' })))
+                .toMatchObject({ ok: false, reasonCode: 'endpoint_mismatch' });
+            const forgedAuthority = { ...signed, grant: { ...signed.grant, payload: {
+                ...signed.grant.payload, callerAuthority: 'present_user' as const,
+            } } };
+            expect(await post(methods[0]!, 9, forgedAuthority)).toMatchObject({ ok: false, reasonCode: 'grant_bad_signature' });
+            nowMs = 3_000;
+            expect(await post(methods[0]!, 6)).toMatchObject({ ok: false, reasonCode: 'grant_expired' });
+            expect(invoked).toEqual([...methods, ...methods]);
         } finally { await app.close(); }
     });
 
@@ -527,7 +576,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
     });
 
     it('consumes one signed grant even when a replay uses an independently valid nonce and signature', async () => {
-        const signed = createGrant();
+        const signed = createGrant({ singleUse: true });
         const app = createApp({ nowMs: () => 2_000, invokeLocal: async () => ({ ok: true }) });
         const first = createRequest({
             requestId: 'request_1',
@@ -548,7 +597,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
     });
 
     it('admits exactly one concurrent winner for a signed grant', async () => {
-        const signed = createGrant();
+        const signed = createGrant({ singleUse: true });
         let invoked = 0;
         const app = createApp({
             nowMs: () => 2_000,
@@ -577,7 +626,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
     });
 
     it('returns a typed terminal response for a throwing handler and retains consumption', async () => {
-        const signed = createGrant();
+        const signed = createGrant({ singleUse: true });
         let invoked = 0;
         const app = createApp({
             nowMs: () => 2_000,
@@ -617,7 +666,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
     });
 
     it('retains consumption when the activated handler returns unavailable', async () => {
-        const signed = createGrant();
+        const signed = createGrant({ singleUse: true });
         const app = createApp({
             nowMs: () => 2_000,
             invokeLocal: async () => ({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }),
@@ -643,7 +692,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         let nowMs = 2_000;
         let invoked = 0;
         const app = createApp({ nowMs: () => nowMs, invokeLocal: async () => ({ invocation: ++invoked }) });
-        const signed = createGrant();
+        const signed = createGrant({ singleUse: true });
         const validProof = createProof({ ...signed, nonceByte: 1 });
         const invalidProof: PeerRouteEphemeralProofV2 = {
             ...validProof,

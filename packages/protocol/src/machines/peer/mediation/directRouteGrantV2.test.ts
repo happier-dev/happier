@@ -40,7 +40,6 @@ function payload() {
       kind: 'machine_rpc' as const,
       rpcScopeId: 'machine-1:daemon.getState',
       allowedMethods: ['daemon.getState'],
-      maxCalls: 1,
       maxIdleMs: 30_000,
     },
     iat: 1_000,
@@ -53,6 +52,13 @@ function payload() {
 }
 
 describe('DirectRouteGrantV2', () => {
+  it('admits a method-scoped RPC grant without a call budget and rejects the removed budget field', () => {
+    const scope = payload().scope;
+    const reusable = { ...payload(), scope };
+    expect(DirectRouteGrantPayloadV2Schema.safeParse(reusable).success).toBe(true);
+    expect(DirectRouteGrantPayloadV2Schema.safeParse({ ...reusable, scope: { ...scope, maxCalls: 1 } }).success).toBe(false);
+  });
+
   it('signs only a hiding export commitment and its exact allowed port', () => {
     const binding = TcpTunnelServiceExportBindingV1Schema.parse({
       exportKey: 'postgres',
@@ -250,8 +256,7 @@ describe('DirectRouteGrantV2', () => {
         kind: 'machine_rpc',
         rpcScopeId: 'workspace-sync-1',
         allowedMethods: ['daemon.memory.status'],
-        maxCalls: 1,
-        maxIdleMs: 1_000,
+          maxIdleMs: 1_000,
       },
       iroh: accountClientWorkspaceBinding,
     }).success).toBe(false);

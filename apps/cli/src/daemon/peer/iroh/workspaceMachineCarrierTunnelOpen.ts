@@ -120,7 +120,6 @@ export function createWorkspaceMachineCarrierTunnelOpen(input: Readonly<{
               kind: 'machine_rpc',
               rpcScopeId: request.operationId,
               allowedMethods: ['workspace.sync'],
-              maxCalls: 1,
               maxIdleMs: DIRECT_ROUTE_GRANT_TTL_MS.loopbackMachineRpcDefault,
               highRiskSingleUseMethods: ['workspace.sync'],
             },

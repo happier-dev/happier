@@ -15,6 +15,8 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 import { accessKeyHandler } from "./accessKeyHandler";
 
+const establishedConnections: ClientConnection[] = [];
+
 async function createEstablishedAccountFixture(label: string) {
     const account = await db.account.create({
         data: { publicKey: `pk-${label}-${randomUUID()}` },
@@ -33,18 +35,23 @@ async function createEstablishedAccountFixture(label: string) {
     });
     const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
 
-    // The socket is already admitted: the handshake token it presented at
-    // connect is the only credential an established socket carries.
-    const disconnect = vi.fn();
-    const socket = Object.assign(
-        createFakeSocket({ data: { clientType: "user-scoped" } }),
-        { handshake: { auth: { token } }, disconnect },
-    );
+    const verified = await auth.verifyTokenForRoute(token);
+    if (!verified) throw new Error("expected connect-time Account identity");
+    const transport = createFakeSocket({ data: {
+        clientType: "user-scoped", userId: verified.userId,
+        authTokenKind: verified.authTokenKind, authAuthority: verified.authority,
+        tokenEpoch: verified.tokenEpoch,
+    } });
+    const socket = Object.assign(transport, {
+        disconnect: vi.fn(() => { transport.connected = false; }),
+    });
     const connection: ClientConnection = {
         connectionType: "user-scoped",
         socket: socket as unknown as Socket,
         userId: account.id,
     };
+    eventRouter.addConnection(account.id, connection);
+    establishedConnections.push(connection);
     accessKeyHandler(account.id, socket as unknown as Socket, connection);
 
     return { accountId: account.id, sessionId: session.id, machineId: machine.id, socket };
@@ -76,6 +83,9 @@ describe("access-key-get currentness on an established socket", () => {
 
     afterEach(async () => {
         restoreTransaction?.();
+        for (const connection of establishedConnections.splice(0)) {
+            eventRouter.removeConnection(connection.userId, connection);
+        }
         vi.restoreAllMocks();
         harness.resetEnv({
             HANDY_MASTER_SECRET: "access-key-currentness-secret",
@@ -91,7 +101,7 @@ describe("access-key-get currentness on an established socket", () => {
         await harness.close();
     });
 
-    it("refuses and disconnects a surviving socket whose Account credential is no longer current", async () => {
+    it("closes the suspended Account socket through eviction and refuses queued access-key reads", async () => {
         const subject = await createEstablishedAccountFixture("subject");
         const control = await createEstablishedAccountFixture("control");
 
@@ -100,10 +110,7 @@ describe("access-key-get currentness on an established socket", () => {
             expect.objectContaining({ ok: true, accessKey: expect.objectContaining({ data: "encrypted-envelope" }) }),
         );
 
-        // Commit the status change with the eager eviction leg stubbed to a
-        // no-op: this is exactly the state a lost cross-node disconnect
-        // publication leaves behind, and the only state this guard exists for.
-        const eviction = vi.spyOn(eventRouter, "disconnectAccountSockets").mockImplementation(() => {});
+        // Account lifecycle publishes through the real connection eviction owner.
         const applied = await inTx(async (tx) => await setAccountStatusInTx(tx, {
             actorAccountId: subject.accountId,
             targetAccountId: subject.accountId,
@@ -111,8 +118,8 @@ describe("access-key-get currentness on an established socket", () => {
             authority: "account_erasure",
         }));
         expect(applied).toEqual({ status: "applied" });
-        expect(eviction).toHaveBeenCalledWith(subject.accountId);
-        expect(subject.socket.disconnect).not.toHaveBeenCalled();
+        expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
+        expect(subject.socket.connected).toBe(false);
 
         const refused = await readAccessKey(subject);
         expect(refused).toHaveBeenCalledWith({ ok: false, error: "Forbidden" });
@@ -125,14 +132,11 @@ describe("access-key-get currentness on an established socket", () => {
         expect(control.socket.disconnect).not.toHaveBeenCalled();
     });
 
-    it("refuses and disconnects when the credential stops being current while the envelope read is in flight", async () => {
+    it("refuses disclosure when eviction closes the socket while an envelope read is in flight", async () => {
         const subject = await createEstablishedAccountFixture("inflight");
-        const eviction = vi.spyOn(eventRouter, "disconnectAccountSockets").mockImplementation(() => {});
 
         // The database is a genuine boundary, so the read is held open there.
-        // This is the whole window the guard exists for: the credential was
-        // current when the handler started and is not current when it is about
-        // to hand back stored material.
+        // Eviction closes the admitted connection before stored material returns.
         let release: () => void = () => {};
         const gate = new Promise<void>((resolve) => { release = resolve; });
         let markReadComplete: () => void = () => {};
@@ -168,7 +172,8 @@ describe("access-key-get currentness on an established socket", () => {
                 authority: "account_erasure",
             }));
             expect(applied).toEqual({ status: "applied" });
-            expect(eviction).toHaveBeenCalledWith(subject.accountId);
+            expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
+            expect(subject.socket.connected).toBe(false);
         } finally {
             release();
         }

@@ -65,21 +65,6 @@ export function createAuthenticatedFakeSocket(overrides: FakeSocketOverrides = {
     });
 }
 
-/**
- * Admits the connect-time credential re-verification the authority-bearing
- * socket handlers run before they mutate Machine state or disclose stored
- * Artifact content.
- *
- * `socketCredentialCurrentness` is the adapter over the token verifier and the
- * Account row — a system boundary these module-mocked specs deliberately do not
- * stand up, and a fake socket carries no handshake token. The refusal itself is
- * proven against a real database in the `*.currentness.sqlite.integration.spec`
- * files, so admitting it here keeps each spec's subject its own behaviour.
- */
-export function createCurrentSocketCredentialModuleMock() {
-    return { hasCurrentSocketCredential: async () => true };
-}
-
 export function getSocketHandler(
     socket: Pick<FakeSocket, "handlers">,
     event: string,

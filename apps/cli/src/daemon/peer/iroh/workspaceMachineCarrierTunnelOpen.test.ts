@@ -83,7 +83,7 @@ describe('createWorkspaceMachineCarrierTunnelOpen', () => {
       flowKind: 'machine_rpc',
       routeKind: 'iroh_peer',
       endpointFingerprint: targetEndpointId,
-      scope: expect.objectContaining({ rpcScopeId: 'operation-1', maxCalls: 1 }),
+      scope: expect.objectContaining({ rpcScopeId: 'operation-1', highRiskSingleUseMethods: ['workspace.sync'] }),
       iroh: {
         initiator: { kind: 'machine', machineId: 'machine-source', endpointId: localEndpointId },
         target: { machineId: 'machine-target', endpointId: targetEndpointId },
@@ -126,6 +126,14 @@ describe('createWorkspaceMachineCarrierTunnelOpen', () => {
       observedPath: 'direct',
       close,
     });
+    await open({ operationId: 'operation-2', sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target', flow: 'workspace_sync' });
+    expect(mintGrant).toHaveBeenCalledTimes(3);
+    expect(mintGrant).toHaveBeenLastCalledWith(expect.objectContaining({
+      scope: expect.objectContaining({ rpcScopeId: 'operation-2', allowedMethods: ['workspace.sync'],
+        highRiskSingleUseMethods: ['workspace.sync'] }),
+    }));
+    expect(mintGrant.mock.calls[1]?.[0].scope).toEqual({ kind: 'bounded_transfer', mode: 'carrier' });
   });
 
   it('settles promptly on cancellation while a native dial is pending and closes a late tunnel handle', async () => {
