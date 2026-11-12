@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
@@ -57,6 +58,21 @@ async function checkout(t) {
 
 test('importer discovery handles changed target stems beyond the OS argument limit', async t => {
   const { repo, write, git } = await checkout(t);
+  // Observe the real Git process boundary: regex compilation must stay constant-size.
+  let grepCount = 0;
+  const run = childProcess.execFileSync;
+  t.mock.method(childProcess, 'execFileSync', (command, args, options) => {
+    if (command === 'git' && args[0] === 'grep') {
+      grepCount++;
+      const patterns = args.includes('-f')
+        ? String(options.input).trimEnd().split('\n')
+        : args.filter(arg => arg === '-e');
+      assert.equal(patterns.length, 1, 'Git must compile one import pattern regardless of changed-module count');
+    }
+    return run(command, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   // Exceed Linux's 128 KiB single-argument limit without passing the fixture through argv.
   const targets = Array.from({ length: 1500 }, (_, i) => `module${i}_${'x'.repeat(100)}.ts`);
   const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
@@ -78,6 +94,7 @@ test('importer discovery handles changed target stems beyond the OS argument lim
   assert.deepEqual(result.unowned, []);
   assert.ok(result.fresh.some(row => row.file === 'consumer.ts' && row.code === 2307),
     'the importer of the last removed target must report its missing module');
+  assert.ok(grepCount > 0, 'the bounded-pattern contract must exercise Git importer discovery');
 });
 
 test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {

@@ -42,7 +42,6 @@ const VIRTUAL_CONFIG = 'tsconfig.__commit_coherence__.json';
 const ERROR_CATEGORY = 1;
 
 const nulList = (text) => text.split('\0').filter(Boolean);
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 const redirectDist = (target) =>
   target.replace(
     /(^|\/)(packages\/[^/]+)\/dist\/(.*?)(?:\.d\.ts)?$/u,
@@ -208,8 +207,10 @@ function repository(repo) {
       ),
     ];
     if (targets.length === 0) return [];
-    const patterns = [...new Set(targets.map((target) => posix.basename(target)))]
-      .map(stem => `(from|import|require|mock)[[:space:](]*['"][^'"[:space:]]*/(${escapeRegex(stem)})(/index)?(\\.[cm]?[jt]sx?)?['"]`);
+    const stems = new Set(targets.map(target => posix.basename(target)));
+    // Compile one pattern: a regex per changed stem exhausts Git's regex engine memory
+    // on aggregate push ranges. Filter stems before loading candidate blobs instead.
+    const pattern = `(from|import|require|mock)[[:space:](]*['"][^'"[:space:]]+['"]`;
     let output = '';
     try {
       output = git([
@@ -226,13 +227,19 @@ function repository(repo) {
         '*.tsx',
         '*.mts',
         '*.cts',
-      ], { encoding: 'utf8', input: `${patterns.join('\n')}\n` });
+      ], { encoding: 'utf8', input: `${pattern}\n` });
     } catch (error) {
       if (error.status !== 1) throw error; // 1: no match
     }
     const candidates = output.split('\n').flatMap(line => {
       const [location, match] = line.split('\0');
-      return match ? [{ importer: location.slice(location.indexOf(':') + 1), match }] : [];
+      if (!match) return [];
+      const value = match.slice(match.search(/['"]/u) + 1, -1)
+        .replace(/\.[cm]?[jt]sx?$/u, '')
+        .replace(/\/index$/u, '');
+      return stems.has(posix.basename(value))
+        ? [{ importer: location.slice(location.indexOf(':') + 1), match }]
+        : [];
     });
     const entries = treeEntries(tree);
     const blobs = readBlobs([...new Set(candidates.map(({ importer }) => entries.get(importer).oid))]);
