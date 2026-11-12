@@ -63,6 +63,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     && (execution.errorCode === 'approval_stale' || execution.errorCode === 'approval_origin_unavailable')
     ? ApprovalStaleFailureDetailsSchema.safeParse(execution.details) : null;
   const failure = request.v === 2 && !execution.ok ? readApprovalExecutionFailure(request) : null;
+  const failureCause = failure?.failureCause ?? (target?.success && !execution.ok ? currentExecution?.failureCause : undefined);
   const details = failure?.details ?? (targetDetails?.success && execution.errorCode === buildApprovalOriginFailure(targetDetails.data.reason).errorCode
     ? targetDetails.data : undefined);
   return {
@@ -73,7 +74,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
     ...(execution.error === undefined ? {} : { error: execution.error }),
     ...(details === undefined ? {} : { details }),
-    ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+    ...(failureCause === undefined ? {} : { failureCause }),
     ...(operationCredentialUses?.length ? { operationCredentialUses } : {}),
   };
 }

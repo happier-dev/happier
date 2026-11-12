@@ -1,3 +1,7 @@
+import { settleTargetActionExecution } from './targetActionSettlement';
+import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
+import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { afterEach, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
@@ -67,4 +71,29 @@ it.each([
     await admitted.settleExecution({ artifactId, execution: { ok: true, effectAttempted: true } });
     expect(stored).toMatchObject({ status: 'executed', execution: { ok: true } });
   }
+});
+
+
+it('retains a contributed refusal cause and effect evidence through settlement and public receipt reads', async () => {
+  const request = TargetActionApprovalRequestV1Schema.parse({
+    v: 1, kind: 'plugin_target_action', status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', qualifiedActionId: 'acme.tunnel/actions/configure',
+    input: {}, sourceCustody: { kind: 'development', registeredRootId: 'tunnel-root' },
+    policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), summary: 'Configure',
+    decision: { kind: 'approve', decidedAtMs: 2 },
+  });
+  const failure = { ok: false as const, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+    effectAttempted: false, failureCause: { phase: 'execution_authorization', errorClass: 'RpcError',
+      errorCode: 'credential_scope_denied', httpStatus: 403 } } as const;
+  let stored = request;
+  // Artifact persistence alone is substituted; settlement, strict receipt schemas,
+  // public projection and the retained-result reader are the production owners.
+  expect(await settleTargetActionExecution({ request, result: failure, operationCredentialUses: [], executedAtMs: 3,
+    persist: async next => { stored = TargetActionApprovalRequestV1Schema.parse(next); return null; } }))
+    .toMatchObject(failure);
+  expect(stored).toMatchObject({ status: 'failed', execution: failure });
+  expect(buildActionExecuteResultFromRecordedApprovalExecution(stored)).toMatchObject(failure);
+  const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
+  expect(publicRead.execution).toMatchObject(failure);
+  expect(buildActionExecuteResultFromRecordedApprovalExecution(publicRead)).toMatchObject(failure);
 });

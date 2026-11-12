@@ -40,7 +40,7 @@ describe('recorded target Action results', () => {
       decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { ...outcome, executedAtMs: 2, effectAttempted: true, operationCredentialUses } });
     expect(buildActionExecuteResultFromRecordedApprovalExecution(request))
-      .toEqual({ ...outcome, operationCredentialUses });
+      .toEqual({ ...outcome, ...(!ok ? { effectAttempted: true } : {}), operationCredentialUses });
   });
 });
 

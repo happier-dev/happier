@@ -40,7 +40,9 @@ export async function settleTargetActionExecution(input: Readonly<{
   const terminal: TargetActionApprovalRequestV1 = { ...request,
     status: result.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
     execution: result.ok ? { executedAtMs, ok: true, result: result.result }
-      : { executedAtMs, ok: false, errorCode: result.errorCode, error: result.error } };
+      : { executedAtMs, ok: false, errorCode: result.errorCode, error: result.error,
+          ...(result.effectAttempted === undefined ? {} : { effectAttempted: result.effectAttempted }),
+          ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }) } };
   if (operationCredentialUses.length && terminal.execution) {
     terminal.execution = { ...terminal.execution, effectAttempted: true, operationCredentialUses: [...operationCredentialUses] };
   }

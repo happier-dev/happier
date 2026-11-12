@@ -60,7 +60,7 @@ import type {
   StoredApprovalRequestV2,
 } from './approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from './approvalRequestPublicRead.js';
-import type { TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
+import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { isHistoricalPublishApprovalRequestV2 } from './approvalRequestV1.js';
 import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
@@ -595,15 +595,18 @@ export function readApprovalExecutionFailure(
   const error = typeof execution.error === 'string' && execution.error.trim().length > 0
     ? execution.error
     : errorCode;
-  if (request.v !== 2 || request.actionId === RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1) {
-    return { ok: false, errorCode, error };
-  }
-  const currentExecution = request.execution!;
+  // Current contributed approvals use the V2 execution contract despite their
+  // V1 request version. Legacy generic V1 annotations remain untrusted.
+  const target = request.v !== 2 ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
+  const currentExecution = request.v === 2 && request.actionId !== RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1
+    ? request.execution : target?.success ? target.data.execution : undefined;
+  if (!currentExecution) return { ok: false, errorCode, error };
   const failureCause = ActionFailureCauseV1Schema.safeParse(currentExecution.failureCause);
   const failure: ActionExecuteFailure = { ok: false, errorCode, error,
     ...(typeof currentExecution.effectAttempted === 'boolean' ? { effectAttempted: currentExecution.effectAttempted } : {}),
     ...(failureCause.success ? { failureCause: failureCause.data } : {}),
   };
+  if (request.v !== 2) return failure;
   const details = request.execution?.details;
   if (details === undefined) return failure;
   return parseStrictApprovalFailure({
