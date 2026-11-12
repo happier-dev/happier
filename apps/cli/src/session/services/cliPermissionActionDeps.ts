@@ -201,6 +201,7 @@ export function createCliPermissionActionDeps(
           sourceRevisionOrEpoch: args.input.sourceRevisionOrEpoch,
           idempotencyKey: args.input.idempotencyKey,
           actor: args.input.actor,
+          nativeChoice: args.input.nativeChoice,
           decision: args.input.decision,
           scope: args.input.scope,
           mediator: {

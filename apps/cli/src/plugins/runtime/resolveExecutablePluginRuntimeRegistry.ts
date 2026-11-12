@@ -627,6 +627,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         currentGlobalExternalSessionsRouter?: CurrentGlobalExternalSessionsRouter;
         /** The existing daemon publication owner for retained callers' next Action. */
         runtimeRegistryController?: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
+        /** Credential materializers held by the containing operation, independently of Account Action execution. */
+        connectedAccountRuntimeRegistry?: Parameters<typeof createDeploymentTargetRoleAdmissionHost>[1]['connectedAccountRuntimeRegistry'];
         /** Invalidates projections after a same-generation lazy activation fails terminally. */
         onTerminalActivationFailure?: (pluginId: string) => void;
         /** Testable port for the canonical Account plugin-settings persistence owner. */
@@ -4421,7 +4423,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(accountExecution ? { accountExecution: { ...accountExecution, isCurrent: async () => accountExecution.isCurrent() } } : {}),
             ...(params?.acquireServiceExportForward ? { acquireServiceExportForward: params.acquireServiceExportForward } : {}),
             readCurrentMachineId: () => machineId,
-            connectedAccountRuntimeRegistry: runtimeRegistryController,
+            connectedAccountRuntimeRegistry: params?.connectedAccountRuntimeRegistry ?? runtimeRegistryController,
         });
     };
     targetActionInvocations = buildTargetActionInvocationRegistry({
@@ -4738,11 +4740,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ...contextRecord,
                 signal: composePluginConsumerSignal(resolved.pluginId, callerSignal),
             });
-            const result = await resolved.handler(event, scopedContext);
-            if (!isPluginConsumerCurrent(resolved.pluginId)) {
-                throw new Error(`Plugin '${resolved.pluginId}' hook handler is no longer active`);
-            }
-            return result;
+            return await resolved.handler(event, scopedContext);
         },
     })));
     const hookHandlersByHookId = new Map(

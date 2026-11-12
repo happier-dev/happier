@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ApprovalFieldsRequest } from './ActionApprovalFieldsCard';
 import { DiscussionReplyInputV1Schema } from '@happier-dev/protocol/discussions';
 import { CONVERSATION_CORE_PLUGIN_ID_V1, DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1,
     DiscussionReplyDestinationResultV1Schema, type DiscussionReplyDestinationResultV1 } from '@happier-dev/channels-protocol/v1';
@@ -9,7 +9,7 @@ import { t } from '@/text';
 
 /** Every approval anatomy reads destination through Channels' Account-owned reply projection. */
 export function DiscussionReplyApprovalFields(props: Readonly<{
-    request: ApprovalRequest;
+    request: ApprovalFieldsRequest;
     serverId: string | null;
     children: (presentation: ApprovalActionFieldsPresentation) => React.ReactNode;
 }>) {
@@ -43,7 +43,7 @@ export function DiscussionReplyApprovalFields(props: Readonly<{
     const current = reading?.binding === binding && reading.discussionId === discussionId && reading.messageId === messageId
         ? reading : null;
     const destination = current?.destination;
-    const missingName = t('common.unavailable');
+    const missingName = binding && !current ? t('common.loading') : t('common.unavailable');
     const presentation = React.useMemo(() => describeApprovalActionFields({ ...props.request,
         context: destination?.kind !== 'none' && discussionId && messageId ? { discussionReplyDestination: {
             discussionId, messageId, connectionName: destination?.connectionName ?? missingName,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { ApprovalFieldsRequest } from './ActionApprovalFieldsCard';
 import { MachineGuardSessionCeilingSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machineGuard';
 import { describeApprovalActionFields, type ApprovalActionFieldsPresentation } from './approvalFieldValues';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
@@ -7,7 +7,7 @@ import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/
 
 /** The existing proposal memory reader supplies Room; no caller-supplied claim becomes a Machine fact. */
 export function MachineGuardCeilingApprovalFields(props: Readonly<{
-    request: ApprovalRequest;
+    request: ApprovalFieldsRequest;
     serverId: string | null;
     children: (presentation: ApprovalActionFieldsPresentation) => React.ReactNode;
 }>) {
@@ -23,7 +23,7 @@ export function MachineGuardCeilingApprovalFields(props: Readonly<{
 }
 
 function CeilingFieldsReading(props: Readonly<{
-    request: ApprovalRequest;
+    request: ApprovalFieldsRequest;
     machineId: string;
     serverId: string | null;
     children: (presentation: ApprovalActionFieldsPresentation) => React.ReactNode;

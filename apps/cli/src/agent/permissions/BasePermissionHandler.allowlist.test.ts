@@ -5,6 +5,8 @@ import { SessionPermissionRemotePendingListOutputV1Schema } from '@happier-dev/p
 import { createDeferred } from '@/testkit/async/deferred';
 import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
+import { createCliPermissionActionDeps } from '@/session/services/cliPermissionActionDeps';
+import { registerCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';
 import type {
   PermissionMediationRecordStore,
   PermissionMediationStoredRecord,
@@ -206,6 +208,7 @@ function startBlockedRemoteSettlement(params: Readonly<{
   pauseBeforeCompletion?: boolean;
   nativeChoices?: NativePermissionChoicesV1;
   nativeChoice?: NativePermissionChoiceAnswerV1;
+  throughCliAction?: boolean;
   acknowledgeDecisionApplication?: (result: PermissionResult) => Promise<void>;
 }>) {
   const completionSession = params.pauseBeforeCompletion ? new PostClaimCompletionDeferredSession() : null;
@@ -299,7 +302,28 @@ function startBlockedRemoteSettlement(params: Readonly<{
     mediator: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
     ...(params.nativeChoice ? { nativeChoice: params.nativeChoice } : {}),
   } as const;
-  const remote = handler.respondToMediatedPendingPermission(response);
+  const remote = params.throughCliAction ? (async () => {
+    const unused = async (): Promise<never> => { throw new Error('Unexpected transport or interaction call'); };
+    const dispose = registerCurrentSessionUiBinding({ sessionId: session.sessionId, service: { interactions: { request: unused } },
+      signal: new AbortController().signal, isCurrent: () => true,
+      capabilities: { readPermissionMode: () => 'default', permissionHandler: {
+        handleToolCall: unused,
+        listMediatedPendingRequests: handler.listMediatedPendingRequests.bind(handler),
+        respondToMediatedPendingPermission: handler.respondToMediatedPendingPermission.bind(handler),
+        respondToMediatedPendingUserAction: handler.respondToMediatedPendingUserAction.bind(handler),
+        listMediatedPermissionGrants: handler.listMediatedPermissionGrants.bind(handler),
+        revokeMediatedPermissionGrant: handler.revokeMediatedPermissionGrant.bind(handler),
+      } } });
+    try {
+      const deps = createCliPermissionActionDeps({ token: 'fixture', sessionId: session.sessionId, mode: 'plain', ctx: null }, {
+        callSessionActionRpc: unused, readSessionActionRpcOrigin: unused, resolveServerRequestHeaders: unused,
+        resolveTransportForSession: unused, resumeInactiveSessionTransport: unused, withProjectHome: operation => operation(),
+      });
+      const { mediator, decision: _decision, scope: _scope, ...input } = response;
+      return await deps.sessionPermissionRemoteAction!({ actionId: 'session.permission.remote.respond', input,
+        caller: { kind: 'plugin', pluginId: mediator.pluginId, contributionLocalId: mediator.contributionLocalId } });
+    } finally { dispose(); }
+  })() : handler.respondToMediatedPendingPermission(response);
 
   return {
     session,
@@ -5518,6 +5542,23 @@ describe('remote native offered permission admission', () => {
       { id: 'save-opaque', label: 'Save locally', scope: 'localPersistent', decision: 'approved', response: { approved: true, decision: 'approved' } },
     ],
   } as const satisfies NativePermissionChoicesV1;
+
+  it.each([false, true])('settles an explicit native choice through the CLI Action seam (ambiguous offer: %s)', async ambiguous => {
+    const nativeChoice = { requirementId: choices.requirementId, choiceId: 'run-opaque' };
+    const fixture = startBlockedRemoteSettlement({ requestId: `cli-native-${ambiguous}`, throughCliAction: true,
+      nativeChoice, nativeChoices: { ...choices, choices: ambiguous
+        ? [...choices.choices, { ...choices.choices[0], id: 'another-once' }] : choices.choices } });
+    const pendingOutcome = fixture.pending.then(() => undefined, () => undefined);
+    fixture.releaseRowCreate.resolve();
+    try {
+      await expect(fixture.remote).resolves.toMatchObject({ status: 'applied' });
+      await expect(fixture.pending).resolves.toMatchObject({ decision: 'approved', nativeChoice });
+      expect(fixture.readStored()?.record).toMatchObject({ nativeChoice });
+    } finally {
+      await fixture.handler.reset();
+      await pendingOutcome;
+    }
+  });
 
   it.each([
     { requirementId: 'old-requirement', choiceId: 'run-opaque' },

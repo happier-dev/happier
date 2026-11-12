@@ -37,6 +37,9 @@ import { MachineGuardCeilingApprovalFields } from './MachineGuardCeilingApproval
 import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
 import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
 
+/** Presentation needs the carried review, not an Artifact or an approval decision record. */
+export type ApprovalFieldsRequest = Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>;
+
 const EXACT_READ = { exactRead: true } as const;
 /** The page's label column: wide enough for a short phrase ("Before it starts"), so every value shares one edge. */
 const PAGE_FIELD_LABEL_WIDTH_PX = 128;
@@ -67,7 +70,7 @@ type ApprovalValueSource = Readonly<{ reference: ApprovalReference; serverId: st
 export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFieldsCard(props: Readonly<{
     presentation: ApprovalFieldsPresentation;
     /** The original request supplies identity for domain-owned live review facts. */
-    request?: ApprovalRequest;
+    request?: ApprovalFieldsRequest;
     anatomy?: 'card' | 'page';
     /** The approval's Home: a value that is one of its sessions (or a Home) reads by its name. */
     serverId?: string | null;

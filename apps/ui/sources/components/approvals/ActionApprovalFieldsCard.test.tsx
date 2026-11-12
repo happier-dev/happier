@@ -28,7 +28,7 @@ import { presentApprovalFailureOutcome } from '@/components/tools/shell/approval
 import { DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
-it('shows unavailable destination names while an optional Account name read remains pending', async () => {
+it('shows loading destination names while an optional Account name read remains pending', async () => {
     const home = await upsertServerProfile({ name: 'Personal', serverUrl: 'https://reply-names-pending.test' });
     profiles.push(home.id);
     const accountId = 'reply-names-account';
@@ -52,8 +52,8 @@ it('shows unavailable destination names while an optional Account name read rema
     try {
         const screen = await renderScreen(<BoundApproval />);
         await vi.waitFor(() => expect(bound).toBe(true));
-        expect(screen.getTextContent()).toContain(t('common.unavailable'));
-        expect(screen.getTextContent()).not.toContain(t('common.loading'));
+        expect(screen.getTextContent()).toContain(t('common.loading'));
+        expect(screen.getTextContent()).not.toContain(t('common.unavailable'));
         await screen.unmount();
     } finally {
         vi.unstubAllGlobals();
