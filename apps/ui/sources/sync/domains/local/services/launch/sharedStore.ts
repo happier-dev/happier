@@ -154,9 +154,16 @@ const store = createSharedSubscriptionStore<
         });
         // An Action can publish during the read or after this callback returns.
         // Reconcile once, atomically at the shared owner's commit boundary.
-        return (current: LocalServiceLauncherState) => result.ok
-            ? applyLocalServiceLauncherSnapshot(current, result.snapshot)
-            : readLocalServiceLauncherSnapshotTime(current) !== receivedAt ? current : failRefresh(current, normalized, result.reason);
+        return (current: LocalServiceLauncherState) => {
+            if (!result.ok) return readLocalServiceLauncherSnapshotTime(current) !== receivedAt
+                ? current : failRefresh(current, normalized, result.reason);
+            const previousTime = readLocalServiceLauncherSnapshotTime(current);
+            const next = applyLocalServiceLauncherSnapshot(current, result.snapshot);
+            // Browser demand may outlive the launcher's scoped watch. Its first
+            // fresh read closes that gap before parking at the new cursor.
+            if (readLocalServiceLauncherSnapshotTime(next) !== previousTime) invalidateLocalServicePreviewStore(input);
+            return next;
+        };
     },
     failRefresh: (state, input) => (
         failRefresh(state, normalizeInput(input), 'request_failed')

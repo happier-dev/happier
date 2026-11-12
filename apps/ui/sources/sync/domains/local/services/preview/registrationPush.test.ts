@@ -30,6 +30,11 @@ it.each([
     let registered = true;
     const watches: Array<(value: unknown) => void> = [];
     const browserTarget = { kind: 'localServicePreview' as const, targetId: 'preview-a', machineId: 'machine-a', sessionId: 'session-a' };
+    const launcherSnapshot = () => LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: 'machine-a',
+        sessionId: 'session-a', updatedAt: generation, targets: [{ id: 'managed:preview', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'preview' }, machineId: 'machine-a', sessionId: 'session-a',
+            title: 'Preview', confidence: 'medium', state: 'available', serviceState: 'running', actions: ['start'],
+            ...(registered && launcherHadBinding ? { browserTarget } : {}) }] });
     let previewReads = 0;
     rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
         // The mounted Machine subscription also holds one observation-only request (363303bc81).
@@ -49,11 +54,7 @@ it.each([
                     resources: registered ? [resource] : [], previews: registered ? [{ previewId: resource.previewId,
                         resource, accessUrl: null, expiresAt: null, diagnostics: [] }] : [] } });
         }
-        return { protocolVersion: 1, snapshot: LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: 'machine-a',
-            sessionId: 'session-a', updatedAt: generation, targets: [{ id: 'managed:preview', source: 'managed_service',
-                sourceClass: { kind: 'managed_service', managedServiceId: 'preview' }, machineId: 'machine-a', sessionId: 'session-a',
-                title: 'Preview', confidence: 'medium', state: 'available', serviceState: 'running', actions: ['start'],
-                ...(registered && launcherHadBinding ? { browserTarget } : {}) }] }) };
+        return { protocolVersion: 1, snapshot: launcherSnapshot() };
     });
     const key = { machineId: 'machine-a', serverId: 'server-a', sessionId: 'session-a' };
     let releaseA = subscribeLocalServiceLauncherStore(key, () => {});
@@ -72,8 +73,7 @@ it.each([
             releaseA = subscribeLocalServiceLauncherStore(key, () => {});
             releaseB = subscribeLocalServiceLauncherStore(key, () => {});
         } else {
-            watches[0]!({ protocolVersion: 1, changed: true, snapshot: { v: 1, machineId: 'machine-a', generatedAt: generation,
-                refreshState: 'idle', entries: [], diagnostics: [] } });
+            watches[0]!({ protocolVersion: 1, changed: true, snapshot: launcherSnapshot() });
         }
         await vi.waitFor(() => expect(getLocalServicePreviewState(key).previewIds).toEqual([]));
         expect(previewReads).toBe(2);
