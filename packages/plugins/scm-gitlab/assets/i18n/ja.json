@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "GitLab からこの概要を再読み込み",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR と課題",
-  "plugins.gitlab.settings.sources.subtitle": "PR と課題に表示する GitLab アカウントとプロジェクトを選択します。"
+  "plugins.gitlab.settings.sources.subtitle": "PR と課題に表示する GitLab アカウントとプロジェクトを選択します。",
+  "plugins.gitlab.ui.mutations.failure.code": "コード"
 }

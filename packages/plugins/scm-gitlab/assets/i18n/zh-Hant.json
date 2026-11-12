@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "從 GitLab 重新讀取此概覽",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR 與問題",
-  "plugins.gitlab.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 GitLab 帳戶和專案。"
+  "plugins.gitlab.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 GitLab 帳戶和專案。",
+  "plugins.gitlab.ui.mutations.failure.code": "錯誤代碼"
 }

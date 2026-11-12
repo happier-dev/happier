@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Odczytaj ponownie ten przegląd z GitLab",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR-y i zgłoszenia",
-  "plugins.gitlab.settings.sources.subtitle": "Wybierz konta i projekty GitLab wyświetlane w sekcji PR-ów i zgłoszeń."
+  "plugins.gitlab.settings.sources.subtitle": "Wybierz konta i projekty GitLab wyświetlane w sekcji PR-ów i zgłoszeń.",
+  "plugins.gitlab.ui.mutations.failure.code": "Kod"
 }

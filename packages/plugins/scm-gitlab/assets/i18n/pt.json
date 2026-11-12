@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Voltar a ler esta visão geral no GitLab",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PRs e problemas",
-  "plugins.gitlab.settings.sources.subtitle": "Escolha as contas e os projetos GitLab apresentados em PRs e problemas."
+  "plugins.gitlab.settings.sources.subtitle": "Escolha as contas e os projetos GitLab apresentados em PRs e problemas.",
+  "plugins.gitlab.ui.mutations.failure.code": "Código"
 }

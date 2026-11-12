@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Rileggi questa panoramica da GitLab",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR e segnalazioni",
-  "plugins.gitlab.settings.sources.subtitle": "Scegli gli account e i progetti GitLab da mostrare in PR e segnalazioni."
+  "plugins.gitlab.settings.sources.subtitle": "Scegli gli account e i progetti GitLab da mostrare in PR e segnalazioni.",
+  "plugins.gitlab.ui.mutations.failure.code": "Codice"
 }

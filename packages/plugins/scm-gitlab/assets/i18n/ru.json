@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Повторно прочитать этот обзор из GitLab",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR и задачи",
-  "plugins.gitlab.settings.sources.subtitle": "Выберите учетные записи и проекты GitLab, которые будут отображаться в разделе PR и задач."
+  "plugins.gitlab.settings.sources.subtitle": "Выберите учетные записи и проекты GitLab, которые будут отображаться в разделе PR и задач.",
+  "plugins.gitlab.ui.mutations.failure.code": "Код"
 }

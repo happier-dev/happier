@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Torna a llegir aquest resum de GitLab",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PR i incidències",
-  "plugins.gitlab.settings.sources.subtitle": "Tria els comptes i projectes de GitLab que es mostren a PR i incidències."
+  "plugins.gitlab.settings.sources.subtitle": "Tria els comptes i projectes de GitLab que es mostren a PR i incidències.",
+  "plugins.gitlab.ui.mutations.failure.code": "Codi"
 }

@@ -386,5 +386,6 @@
   "plugins.gitlab.ui.overview.reread": "Diese Übersicht erneut aus GitLab lesen",
   "plugins.gitlab.settings.group": "GitLab",
   "plugins.gitlab.settings.sources": "PRs & Tickets",
-  "plugins.gitlab.settings.sources.subtitle": "Wähle aus, welche GitLab-Konten und -Projekte unter PRs & Tickets angezeigt werden."
+  "plugins.gitlab.settings.sources.subtitle": "Wähle aus, welche GitLab-Konten und -Projekte unter PRs & Tickets angezeigt werden.",
+  "plugins.gitlab.ui.mutations.failure.code": "Code"
 }
