@@ -355,7 +355,12 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                     const result = await lifecycle.serviceExec!(retained, request, options, invocation);
                     assertAvailable(options);
                     if (result.kind !== 'ready') throw new PluginError({ code: result.code, details: { kind: result.kind } });
-                    const authorized = await authorizePluginExecLaunchForHost(invocation.services.exec, result.launch,
+                    // Machine watches have no Workspace root. Pin the native
+                    // client's inherited host cwd before authorization so PTY
+                    // consumers receive the same complete launch as commands.
+                    const launch = machine && !result.launch.cwd
+                        ? { ...result.launch, cwd: process.cwd() } : result.launch;
+                    const authorized = await authorizePluginExecLaunchForHost(invocation.services.exec, launch,
                         { agentIsolation: null, ...(options?.signal ? { signal: options.signal } : {}) });
                     if (authorized.secretRedactionLease) return authorized;
                     // A watched resource Happier never deployed receives no service

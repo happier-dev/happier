@@ -13,7 +13,10 @@ import { MachineServiceExecInputV1Schema } from '@happier-dev/protocol/actions/s
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createMachineServiceExecAction } from '@/session/actions/cliActionDeps/machineServiceExec';
-import { createMachineServicesRuntime } from './machineServices';
+import { createMachineServicesRuntime } from '@/daemon/local/services/launch/machineServices';
+import { consumeServiceShellTerminal } from '@/terminal/pty/serviceShell';
+import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 
 describe('watched Compose project exec and shell', () => {
   it.skipIf(process.platform === 'win32')(
@@ -212,9 +215,27 @@ else process.exitCode=19;
         ).toMatchObject({ ok: false, errorCode: 'machine_access_denied' });
 
         for (const service of members) {
-          const accepted = await handle.withServiceShell!({ operation: { operationId: `member-${service}`, kind: 'machines.terminal.open' }, service },
-            async launch => ({ kind: 'not_started' as const, terminal: launch.args }));
-          expect(accepted.terminal).toContain(service === 'web' ? webId : workerId);
+          // Only forkpty is replaced; the watched launch and terminal consumer
+          // retain real admission, cwd validation, registration and exit custody.
+          const sessions = createTerminalPtySessionManager({
+            config: readDaemonTerminalPtyConfig({}).sessionManager, env: {}, platform: 'linux',
+            ptyProvider: { spawn(params) {
+              expect(params.options.cwd).toBe(process.cwd());
+              expect(params.args).toContain(service === 'web' ? webId : workerId);
+              return { pid: 0, write() {}, resize() {}, kill() {},
+                onData: () => ({ dispose() {} }),
+                onExit(listener) { queueMicrotask(() => listener({ exitCode: 0 })); return { dispose() {} }; } };
+            } },
+          });
+          try {
+            const accepted = await handle.withServiceShell!({ operation: { operationId: `member-${service}`, kind: 'machines.terminal.open' }, service },
+              launch => consumeServiceShellTerminal({ launch, terminalSessions: sessions,
+                terminalKey: `watched-${service}`, custody: { kind: 'machine', ...target,
+                  installationId: 'installation', requesterAccountId: 'owner' },
+                onRegistered() {}, onOutcomeUncertain() { throw new Error('Unexpected uncertain shell'); } }));
+            expect(accepted).toMatchObject({ kind: 'client_exit', terminal: { ok: true },
+              clientExit: { kind: 'exited', exit: { exitCode: 0 } } });
+          } finally { await sessions.dispose(); }
         }
         const shell = await handle.withServiceShell!(
           {
