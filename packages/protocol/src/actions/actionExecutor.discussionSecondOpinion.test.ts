@@ -35,6 +35,7 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
   sourceReadable?: () => boolean;
   sourceMessageCount?: number;
   interceptActionExecution?: ActionExecutorDeps['interceptActionExecution'];
+  presentUserActionConfirmation?: ActionExecutorDeps['presentUserActionConfirmation'];
   routeHostChildAction?: ActionExecutorDeps['routeHostChildAction'] } = {}) {
   const events: string[] = [];
   const creates: unknown[] = [], posts: unknown[] = [], invites: unknown[] = [];
@@ -195,8 +196,10 @@ function fixture(options: { needsGrant?: boolean; quoteOnly?: boolean; sourceRea
   };
   const executor = createActionExecutor({ ...deps, resolveServerProfileScopeId,
     ...(options.interceptActionExecution ? { interceptActionExecution: options.interceptActionExecution } : {}),
+    ...(options.presentUserActionConfirmation ? { presentUserActionConfirmation: options.presentUserActionConfirmation } : {}),
     ...(options.routeHostChildAction ? { routeHostChildAction: options.routeHostChildAction } : {}) });
   const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', bypassApprovals: true,
+    callerPermissionMode: 'default' as const,
     actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
       'discussion.second_opinion.start': ['ui'], 'discussion.create': ['ui'], 'discussion.invite': ['ui'],
       'discussion.post': ['ui'], 'session.access.grant.set': ['ui'], 'session.transcript.get': ['ui'], 'session.spawn_new': ['ui'],
@@ -235,8 +238,9 @@ describe('Second opinion canonical Action composition', () => {
     expect(f.creates).toEqual([]);
     expect(f.posts).toEqual([]);
   });
-  it('previews for a present CLI user under the default policy without weakening Ask or automation authority', async () => {
-    const f = fixture();
+  it('previews on CLI under the default policy while retaining explicit Ask and Agent/Voice approval', async () => {
+    let nativeConfirmations = 0;
+    const f = fixture({ presentUserActionConfirmation: async () => { nativeConfirmations++; return true; } });
     const context = { ...f.context, surface: 'cli' as const, bypassApprovals: false,
       actionCaller: { kind: 'host' as const }, runtimeAccountId: 'alice', actionRequestId: 'cli-preview',
       actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
@@ -244,22 +248,33 @@ describe('Second opinion canonical Action composition', () => {
     expect(outcome, JSON.stringify(outcome))
       .toMatchObject({ ok: true, result: { status: 'preview', sourceText: 'Exact source answer' } });
     expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source']);
-    for (const surface of ['cli', 'agent', 'voice'] as const) {
+    const sameAccountRead = fixture();
+    expect(await sameAccountRead.executor.execute('session.transcript.get', { sessionId: 'source', messageId: 'answer' },
+      { ...context, authority: 'account_automation' })).toMatchObject({ ok: true,
+      result: { items: [{ id: 'answer', text: 'Exact source answer' }] } });
+    expect(await f.executor.execute('discussion.second_opinion.start', request,
+      { ...context, authority: 'account_automation' })).toMatchObject({ ok: true,
+      result: { status: 'preview', sourceText: 'Exact source answer' } });
+    for (const surface of ['agent', 'voice'] as const) {
       const automation = await f.executor.execute('discussion.second_opinion.start', request,
         { ...context, surface, authority: 'account_automation' });
       expect(automation).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     }
-    expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source']);
+    expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source', 'discussion.second_opinion.start', 'read-source']);
     const ask = await f.executor.execute('discussion.second_opinion.start', { ...request, intent: 'ask', confirmedPreview: f.preview() }, context);
     expect(ask).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(f.approvals.at(-1)).toMatchObject({ actionId: 'discussion.second_opinion.start', actionArgs: { intent: 'ask' } });
-    for (const surface of ['cli', 'ui'] as const) {
-      expect(await f.executor.execute('discussion.second_opinion.start', request, { ...context, surface,
-        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
-          'discussion.second_opinion.start': { approvalRequiredSurfaces: [surface] },
-        } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    }
-    expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source']);
+    expect(await f.executor.execute('discussion.second_opinion.start', request, { ...context,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        'discussion.second_opinion.start': { approvalRequiredSurfaces: ['cli'] },
+      } }) })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(await f.executor.execute('discussion.second_opinion.start', request, { ...context, surface: 'ui',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        'discussion.second_opinion.start': { approvalRequiredSurfaces: ['ui'] },
+      } }) })).toMatchObject({ ok: true, result: { status: 'preview', sourceText: 'Exact source answer' } });
+    expect(nativeConfirmations).toBe(1);
+    expect(f.events).toEqual(['discussion.second_opinion.start', 'read-source', 'discussion.second_opinion.start', 'read-source',
+      'discussion.second_opinion.start', 'read-source']);
     expect(f.creates).toEqual([]);
   });
   it('previews a people-only Discuss source without requiring an unused reviewer question', async () => {
@@ -326,7 +341,11 @@ describe('Second opinion canonical Action composition', () => {
     let stored: ApprovalRequestV2 | null = null;
     const readStored = () => stored;
     const callers: unknown[] = [];
+    const deliveries: Array<{ sessionId: string; message: string }> = [];
     const executor = createActionExecutor({
+      sessionSendMessage: async ({ sessionId, message, localId }) => {
+        deliveries.push({ sessionId, message }); return { status: 'accepted', localId };
+      },
       discussionAction: async ({ context }) => { callers.push(context.actionCaller);
         return { ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' }; },
       approvalsCreate: async ({ request: approval }) => { stored = ApprovalRequestV2Schema.parse(approval); return { artifactId: 'agent-preview' }; },
@@ -351,6 +370,9 @@ describe('Second opinion canonical Action composition', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'failed',
       execution: { ok: false, errorCode: 'source_unavailable' } } });
     expect(callers).toEqual([{ kind: 'session', sessionId: 'source', starterDepth: 0, turnDepth: 0 }]);
+    expect(deliveries).toMatchObject([{ sessionId: 'source' }]);
+    expect(JSON.parse(deliveries[0]!.message)).toMatchObject({ artifactId: 'agent-preview', status: 'failed',
+      execution: { ok: false, errorCode: 'source_unavailable' } });
   });
   it('previews without grants or create, then explicitly grants and asks through the ordinary Discussion path', async () => {
     const f = fixture({ needsGrant: true });
