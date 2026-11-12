@@ -799,13 +799,23 @@ where
             let value = line[colon + 1..].trim_ascii_start().trim_ascii_end();
             let websocket_capability = allow_websocket && name.eq_ignore_ascii_case(b"sec-websocket-protocol")
                 && value.starts_with(MACHINE_WEBSOCKET_CAPABILITY_PROTOCOL_PREFIX.as_bytes());
+            // Provider clients send their declared standard auth header. The
+            // loopback capability is stripped before crossing the carrier.
+            // TCP/WebSocket tunnels retain their separate native contract.
+            let broker_bearer = !allow_websocket && name.eq_ignore_ascii_case(b"authorization")
+                && value.len() >= 7 && value[..7].eq_ignore_ascii_case(b"bearer ")
+                && capabilities_equal(&value[7..], expected_capability);
+            let broker_key = !allow_websocket && (name.eq_ignore_ascii_case(b"x-api-key")
+                || name.eq_ignore_ascii_case(b"x-goog-api-key"));
             if name.eq_ignore_ascii_case(IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER.as_bytes())
-                || websocket_capability {
+                || websocket_capability || broker_bearer || broker_key {
                 if capability_line.is_some() {
                     return Err(invalid_http_request());
                 }
                 let capability = if websocket_capability {
                     &value[MACHINE_WEBSOCKET_CAPABILITY_PROTOCOL_PREFIX.len()..]
+                } else if broker_bearer {
+                    &value[7..]
                 } else { value };
                 if !capabilities_equal(capability, expected_capability) {
                     return Err(invalid_http_request());
@@ -1677,6 +1687,38 @@ mod handshake_tests {
                 .expect("runner broker readiness handshake"),
             MachineTunnelPurpose::ProviderBroker,
         );
+    }
+
+    #[tokio::test]
+    async fn provider_broker_bearer_capability_is_authenticated_and_stripped() {
+        use super::{read_capability_gated_http_request_head, IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER};
+        let capability = "c".repeat(64);
+        for header in [format!("Authorization: Bearer {capability}"),
+            format!("x-api-key: {capability}"), format!("x-goog-api-key: {capability}"),
+            format!("{IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER}: {capability}")] {
+            let request = format!("POST /v1/responses HTTP/1.1\r\nHost: localhost\r\n{header}\r\nContent-Length: 2\r\n\r\n{{}}");
+            let mut socket = request.as_bytes();
+            let mut buffered = Vec::new();
+            let head = read_capability_gated_http_request_head(&mut socket, &mut buffered, capability.as_bytes(), false)
+                .await.expect("valid broker capability").expect("request head");
+            assert_eq!(String::from_utf8(head.sanitized).unwrap(),
+                "POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n");
+            assert_eq!(buffered, b"{}");
+        }
+        // Host-private control calls retain their distinct signed authorization.
+        let request = format!("GET /control HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer signed-authority\r\n{IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER}: {capability}\r\n\r\n");
+        let head = read_capability_gated_http_request_head(&mut request.as_bytes(), &mut Vec::new(), capability.as_bytes(), false)
+            .await.unwrap().unwrap();
+        assert_eq!(String::from_utf8(head.sanitized).unwrap(),
+            "GET /control HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer signed-authority\r\n\r\n");
+        for headers in ["Authorization: Bearer wrong".to_owned(),
+            format!("Authorization: Bearer {capability}\r\n{IROH_MACHINE_HTTP_LOCAL_CAPABILITY_HEADER}: {capability}")] {
+            let request = format!("GET / HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n\r\n");
+            let mut socket = request.as_bytes();
+            assert!(read_capability_gated_http_request_head(&mut socket, &mut Vec::new(), capability.as_bytes(), false).await.is_err());
+        }
+        let request = format!("GET / HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {capability}\r\n\r\n");
+        assert!(read_capability_gated_http_request_head(&mut request.as_bytes(), &mut Vec::new(), capability.as_bytes(), true).await.is_err());
     }
 
     #[test]

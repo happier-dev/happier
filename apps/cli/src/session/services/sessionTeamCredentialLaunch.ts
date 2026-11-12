@@ -110,6 +110,9 @@ export async function normalizeSessionTeamCredentialLaunch(input: Readonly<{
       }) !== null)
     )) ? [selection.resourceId] : []
   )));
+  if (input.applications.length === 0 && (explicitModelBinding?.resourceId || modelSourceResources.size > 0)) {
+    throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent', 'agent_requirements');
+  }
   if (!explicitModelBinding && (!fresh || modelSourceResources.size === 0)) {
     return { options: normalizedOptions, teamModelRow: null };
   }

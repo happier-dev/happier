@@ -15,6 +15,7 @@ import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protoc
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import {
+  readLeasedAgentProviderRequirements,
   materializeLeasedAgentProviderBinding,
   prepareLeasedAgentProviderBinding,
   readLeasedAgentProviderNativeHome,
@@ -266,8 +267,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
     input.signal.throwIfAborted();
     const endpointUrl = await discovery.readEndpointUrl({
       localOrigin: `http://127.0.0.1:${tunnel.localPort}`,
-      headers: { authorization: `Bearer ${tunnel.localCapability}`,
-        [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
+      headers: { [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
         [PROVIDER_BROKER_MODEL_ID_HEADER]: selection.modelId },
       signal: input.signal,
     });
@@ -283,7 +283,8 @@ export async function openExactSessionTeamCredentialProviderBinding(
     // local capability through the carrier's credential header. The Home-signed cross-Account authority
     // was admitted by the trusted transport owner during the machine/1
     // handshake and never enters Agent configuration, environment or requests.
-    const credentialTransport = teamCredentialBrokerLocalCredentialTransport(selection.application.protocol);
+    const credentialTransport = teamCredentialBrokerLocalCredentialTransport(selection.application.protocol,
+      readLeasedAgentProviderRequirements(input)!);
     const materialization = await materializeLeasedAgentProviderBinding({
       lease: input.lease,
       agentId: input.agentId,

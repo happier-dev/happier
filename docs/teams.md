@@ -81,6 +81,18 @@ the initiator Account need not equal the custodian Account. Home remains the
 resource, membership and consumer-currentness authority, and the source
 credential stays with its custodian.
 
+For the worker's loopback endpoint, the Team delivery owner selects a local
+capability header from the Agent's declared credential transports, preferring
+standard Bearer authorization and using a declared raw API-key header where
+required. The native carrier authenticates and strips that capability before
+forwarding the request; it is never the custodian's upstream credential.
+Agents without a Provider delivery application, including the Muse Agent,
+refuse a shared model source with `provider_incompatible_with_agent` before
+asking for a model. Their Team model chooser has no launchable Provider rows.
+The managed vendor-native placeholder route still requires a Provider adapter;
+it does not materialize Muse's native account login on a member's Machine.
+These are development-source contracts; loaded Team launch replay is separate.
+
 The same development resource update Action accepts a custodian-only
 `replacement.custodian` containing the source, disclosure ceiling and broker
 placement. Omitted manager-owned fields retain their stored values; a custodian
@@ -438,8 +450,12 @@ redirects the selected daemon or creates a preset. Unlocked placement defaults r
 selection before that exact-target request. File-policy locks retain their machine-local owner.
 
 Home, Team and Group Machine defaults share one eligibility owner: saving requires
-the Machine to be usable by every active member receiving that layer. If access later
-changes, New Session falls back to a Machine in the member's own usable inventory.
+the Machine to be usable by every active member receiving that layer. In unreleased
+0.3, a refused save returns `managed_default_machine_not_member_usable` through the
+policy route and Action. The defaults editor asks the administrator to share the
+Machine with the members or choose another. Sharing with the administrator alone
+does not establish member access. If access later changes, New Session falls back
+to a Machine in the member's own usable inventory.
 
 ### Accepted authentication
 

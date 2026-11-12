@@ -1,7 +1,8 @@
 import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
-import type { ProviderCredentialTransportV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { AgentProviderRequirementsV1, ProviderCredentialTransportV1, ProviderWireProtocol } from '@happier-dev/protocol';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
@@ -14,9 +15,20 @@ export { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 /** The worker authenticates to the carrier, independently of upstream auth. */
-export function teamCredentialBrokerLocalCredentialTransport(protocol: ProviderWireProtocol): ProviderCredentialTransportV1 {
-  return { id: 'team-provider-broker-local-capability-v1', protocols: [protocol], uses: ['runtime'],
-    destination: { kind: 'httpHeader', name: MACHINE_HTTP_LOCAL_CAPABILITY_HEADER, format: 'raw' } };
+export function teamCredentialBrokerLocalCredentialTransport(protocol: ProviderWireProtocol, agent: AgentProviderRequirementsV1): ProviderCredentialTransportV1 {
+  // Prefer standard Bearer auth. Raw-key-only native clients use their declared
+  // header; the carrier authenticates and removes all these local credentials.
+  const destinations = [
+    { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+    { kind: 'httpHeader', name: 'x-api-key', format: 'raw' },
+    { kind: 'httpHeader', name: 'x-goog-api-key', format: 'raw' },
+  ] as const;
+  for (const destination of destinations) {
+    const transport = selectProviderRuntimeCredentialTransportV1({ agent, protocol,
+      transports: [{ id: 'team-provider-broker-local-capability-v1', protocols: [protocol], uses: ['runtime'], destination }] });
+    if (transport) return transport;
+  }
+  throw new SessionTeamCredentialLaunchUnavailableError('provider_incompatible_with_agent');
 }
 
 /** Host-private members of the existing signed broker application. They are not

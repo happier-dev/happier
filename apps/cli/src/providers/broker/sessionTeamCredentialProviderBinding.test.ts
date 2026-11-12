@@ -54,7 +54,7 @@ const materializeNullBrokerAuthoritySpawnEnv: ProviderAdapter['materialize'] = (
   env: [{ name: 'BROKER_AUTHORITY', value: null, source: 'provider' }],
 });
 
-function lease(adapter: ProviderAdapter, protocol = 'openai-responses'): PluginRuntimeRegistryLease {
+function lease(adapter: ProviderAdapter, protocol = 'openai-responses', credentialHeader?: string): PluginRuntimeRegistryLease {
   const registry = {
     contributes: {
       agentDefinitionsById: new Map([['codex', { definition: {
@@ -63,7 +63,7 @@ function lease(adapter: ProviderAdapter, protocol = 'openai-responses'): PluginR
           acceptsProtocols: [protocol], required: { streaming: true, toolRoundTrips: true },
           credentialSupport: { supportsNoAuth: false, apiKeyTransports: [{
             protocol,
-            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+            destination: { kind: 'httpHeader', names: credentialHeader ? [credentialHeader] : 'anyValidated', formats: credentialHeader ? [credentialHeader === 'authorization' ? 'bearer' : 'raw'] : ['raw', 'bearer'] },
           }] },
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['BROKER_AUTHORITY'] },
           materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: false,
@@ -123,6 +123,30 @@ const authority = {
 
 describe('Session Team credential Provider binding', () => {
   afterEach(() => resetActiveAccountSettingsSnapshotForTests());
+
+  it.each(['authorization', 'x-api-key', 'x-goog-api-key'])('delivers a Team broker capability through the worker declared %s transport across owner and member Accounts', async header => {
+    const worker = lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv,
+      materialize(input) {
+        expect(input.credential).toMatchObject({ kind: 'apiKey', transport: {
+          destination: { kind: 'httpHeader', name: header, format: header === 'authorization' ? 'bearer' : 'raw' },
+        } });
+        return materializeBrokerAuthoritySpawnEnv(input);
+      } }, 'openai-responses', header);
+    const opened = await openExactSessionTeamCredentialProviderBinding({
+      sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+      selection: { ...row.selection, descriptor: row.descriptor, application: row.application,
+        sourceRevision: row.sourceRevision, sourceFacts: row.sourceFacts, brokerMachineId: 'broker-1' },
+      lease: worker, materializationBaseDir: '/tmp/happier-team-bearer', signal: new AbortController().signal,
+      openBroker: async () => ({ ok: true, authority, target: { custodianAccountId: 'account-2',
+        brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
+      openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'relay',
+        retire: async () => undefined, close: async () => undefined }),
+    });
+    try {
+      expect(opened.environmentOverlay).toContainEqual({ name: 'BROKER_AUTHORITY', value: 'c'.repeat(64), source: 'provider' });
+      expect(opened.additionalRedactionValues).toContain('c'.repeat(64));
+    } finally { await opened.cleanup(); }
+  });
 
   it.each(['brokered', 'direct', 'vendor-native'] as const)('admits an experimental Team pairing without anyone confirming (%s)', async deliveryMode => {
     const sourceFacts = { ...row.sourceFacts, compatibilityOverrides: row.sourceFacts.compatibilityOverrides!.map(override => ({
@@ -604,12 +628,12 @@ describe('Session Team credential Provider binding', () => {
       upstream: { normalizedUrl: 'http://127.0.0.1:43123/v1' },
     });
     // The Agent receives only its loopback endpoint and the tunnel's local
-    // capability through its raw credential header. Home-signed authority stays
+    // capability through its declared credential header. Home-signed authority stays
     // with the trusted transport owner and never enters Agent configuration.
     expect(adapter.materialize).toHaveBeenCalledWith(expect.objectContaining({
       binding: expect.objectContaining({ endpoint: expect.objectContaining({ publicHeaders: {} }) }),
       credential: { kind: 'apiKey', transport: expect.objectContaining({
-        destination: { kind: 'httpHeader', name: 'x-happier-machine-local-capability', format: 'raw' },
+        destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
       }), value: 'c'.repeat(64) },
     }));
     expect(JSON.stringify(vi.mocked(adapter.materialize).mock.calls)).not.toContain(authority.signature.valueBase64Url);

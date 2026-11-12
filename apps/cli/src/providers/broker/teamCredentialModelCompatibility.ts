@@ -22,12 +22,12 @@ export async function resolveTeamCredentialModelCompatibility(input: Readonly<{
     || facts.data.endpoint.protocol !== input.model.application.protocol) {
     throw Object.assign(new Error('provider_incompatible_with_agent'), createProviderErrorV1('provider_incompatible_with_agent'));
   }
-  const brokerCredential = { kind: 'apiKey' as const, required: true, slotId: 'apiKey',
-    transports: [teamCredentialBrokerLocalCredentialTransport(input.model.application.protocol)] } satisfies NonNullable<ProviderModelBindingSourceV1['credential']>;
+  const credential = input.model.deliveryMode === 'brokered' ? { kind: 'apiKey' as const, required: true, slotId: 'apiKey',
+    transports: [teamCredentialBrokerLocalCredentialTransport(input.model.application.protocol, adapter.support)] } satisfies NonNullable<ProviderModelBindingSourceV1['credential']> : facts.data.credential;
   const compatibility = resolveProviderBindingCompatibilityFromSourceFactsV1({
     agentTargetKey: input.model.application.agentTargetKey, agent: adapter.support,
     adapterVersion: adapter.adapter.adapterVersion, endpoints: [facts.data.endpoint],
-    credential: input.model.deliveryMode === 'brokered' ? brokerCredential : facts.data.credential,
+    credential,
     compatibilityOverrides: facts.data.compatibilityOverrides, model: input.model.descriptor,
   });
   return { ...compatibility, confirmed: compatibility.result.status !== 'incompatible' };

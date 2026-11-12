@@ -143,7 +143,6 @@ export async function openAccountConnectionProviderBrokerAccess(input: Parameter
     const localOrigin = `http://127.0.0.1:${tunnel.localPort}`;
     let cleanupInFlight: Promise<void> | null = null;
     const headers = Object.freeze({
-      authorization: `Bearer ${tunnel.localCapability}`,
       [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
     });
     const cleanup = () => {

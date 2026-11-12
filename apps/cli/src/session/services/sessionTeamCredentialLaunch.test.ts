@@ -40,6 +40,20 @@ const options: SpawnSessionOptions = {
 const applications = resource.providerModels.map(entry => entry.application);
 
 describe('Session Team launch composition', () => {
+  it.each([undefined, 'native-model'])('refuses a shared native source without a delivery application before model selection (%s)', async modelId => {
+    const museTarget = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'muse', sourceKind: 'built_in' });
+    const failure = await normalizeSessionTeamCredentialLaunch({
+      options: { directory: '/tmp/team-muse', connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.muse/muse-account': selection,
+      } }, ...(modelId ? { modelSelection: { v: 1, updatedAt: 1,
+        ref: { agentTargetKey: museTarget, providerConnectionId: null, modelId } } } : {}) },
+      agentId: 'muse', agentTargetKey: museTarget, contributions: readCurrentContributionRegistry(),
+      applications: [], readCatalog: async () => [{ ...resource, providerModels: [],
+        sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' } },
+      }],
+    }).catch(error => error);
+    expect(failure).toMatchObject({ code: 'provider_incompatible_with_agent', phase: 'agent_requirements' });
+  });
   it.each([false, true])('preserves an explicit Team-only model tuple emitted by the V2 authoring owner (profile default: %s)', async profileDefault => {
     const selected = { v: 2, updatedAt: 1, ref: { source: 'team_resource',
       ...resource.providerModels[0]!.selection } } as const;

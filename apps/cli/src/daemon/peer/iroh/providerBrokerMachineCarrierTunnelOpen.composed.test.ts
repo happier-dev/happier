@@ -581,7 +581,8 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     const openHttpTunnel: DaemonMachineIrohRuntime['openHttpTunnel'] = async () => {
       const localCapability = (listeners.length === 0 ? 'c' : 'd').repeat(64);
       const server = createServer(async (request, response) => {
-        if (request.headers['x-happier-machine-local-capability'] !== localCapability) {
+        if (request.headers.authorization !== `Bearer ${localCapability}`
+          && request.headers['x-happier-machine-local-capability'] !== localCapability) {
           response.writeHead(403).end();
           return;
         }
@@ -607,7 +608,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
       resolveTrustRoots: () => [root], nowMs: () => 200 });
     const tunnel = await open({ brokerOpen: brokerOpen() });
     const endpointUrl = `http://127.0.0.1:${tunnel.localPort}/v1`;
-    const headers = { authorization: `Bearer ${tunnel.localCapability}`, 'x-happier-machine-local-capability': tunnel.localCapability };
+    const headers = { authorization: `Bearer ${tunnel.localCapability}` };
     let retiring: Promise<void> | null = null;
     try {
       expect(await (await fetch(endpointUrl, { headers })).text()).toBe('reachable');
