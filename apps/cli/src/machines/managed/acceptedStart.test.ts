@@ -49,9 +49,10 @@ async function setup(root: string, kind: 'lume' | 'lima' = 'lume') {
     const plugin = kind === 'lume' ? LUME_PLUGIN : LIMA_PLUGIN;
     const manifest = normalizePluginManifestV2(plugin.manifest);
     const provider = { pluginId: manifest.id, localId: kind };
-    const choices = kind === 'lume' ? lumeLaunch : limaLaunch;
+    const fixtureLimaLaunch = { ...limaLaunch, store: join(root, 'lima-store') };
+    const choices = kind === 'lume' ? lumeLaunch : fixtureLimaLaunch;
     const value = kind === 'lume' ? { storage: 'home', vmName: `happier-${managedId}` }
-        : limaAcquisitionResource(limaLaunch, managedId);
+        : limaAcquisitionResource(fixtureLimaLaunch, managedId);
     const resource = { contributionRef: provider, schemaVersion: 1, value };
     const reference = { kind: 'shared_resource' as const, resourceId: 'accepted-start-key' };
     const key = generateKeyPairSync('rsa', { modulusLength: 1024, privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
