@@ -19,12 +19,13 @@ import { t } from '@/text';
  */
 export const HubStatusLine = React.memo(function HubStatusLine(props: Readonly<{
     home: (detail: 'full' | 'name') => React.ReactNode;
+    inboxPresented?: boolean;
 }>) {
     const summary = useActivityOverviewSummary();
     const inbox = useSharedInboxSummary();
     const router = useRouter();
     const openInbox = React.useCallback(() => router.push('/inbox'), [router]);
-    return <HubStatusLineView working={summary.workingCount} inbox={inbox.count} onOpenInbox={openInbox} isDataReady={summary.isDataReady} home={props.home} />;
+    return <HubStatusLineView working={summary.workingCount} inbox={inbox.count} inboxPresented={props.inboxPresented} onOpenInbox={openInbox} isDataReady={summary.isDataReady} home={props.home} />;
 });
 
 /**
@@ -36,6 +37,8 @@ export function HubStatusLineView(props: Readonly<{
     working: number;
     /** The Inbox's count; `null` while it is still being read. */
     inbox: number | null;
+    /** The attention section or open brief already presents the Inbox count. */
+    inboxPresented?: boolean;
     onOpenInbox?: () => void;
     isDataReady?: boolean;
     home: (detail: 'full' | 'name') => React.ReactNode;
@@ -56,7 +59,7 @@ export function HubStatusLineView(props: Readonly<{
                     <Text style={styles.text}>{t('homeIndex.sessionsWorking', { count: working })}</Text>
                 </View>
             ) : null}
-            {inbox > 0 ? (
+            {inbox > 0 && !props.inboxPresented ? (
                 <HappierPressable
                     testID="home-hub.status.inbox"
                     accessibilityRole="link"

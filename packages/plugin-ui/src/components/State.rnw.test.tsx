@@ -769,6 +769,35 @@ describe('a host sentence about a part that cannot run now', () => {
     mount.unmount();
   });
 
+  it.each([
+    <SurfaceState kind="loading" title="Reading sources" body={<Status label="pending rows" />} />,
+    <LoadingState title="Reading sources" rows={3} />,
+    <ErrorState title="Could not read sources" />,
+  ])('settles a loading placeholder as the host notice, without a warning glyph or a pending body (%#)', (placeholder) => {
+    const notice = { sentence: 'No machine can run this yet.', claim: () => () => undefined };
+    const mount = mountInHost(
+      <PluginUiSurfaceNoticeContext.Provider value={notice}>
+        {placeholder}
+      </PluginUiSurfaceNoticeContext.Provider>,
+      { renderIcon: (input) => <span data-testid={`glyph-${input.name}`} /> },
+    );
+    expect(mount.container.textContent).toContain(notice.sentence);
+    expect(mount.container.textContent).not.toContain('pending rows');
+    expect(mount.container.querySelector('[role="progressbar"]')).toBeNull();
+    expect(mount.container.querySelector('[data-testid="glyph-warning"]')).toBeNull();
+    mount.unmount();
+  });
+
+  it('leaves the recovery to the surrounding surface when the host explicitly owns it there', () => {
+    const notice = { sentence: 'Add a Machine to run this.', action: null, claim: () => () => undefined };
+    const mount = mountSurface(<PluginUiSurfaceNoticeContext.Provider value={notice}>
+      <SurfaceState kind="error" title="Failed" action={{ label: 'Add a Machine', onPress: () => undefined }} />
+    </PluginUiSurfaceNoticeContext.Provider>);
+    expect(mount.container.textContent).toContain(notice.sentence);
+    expect(mount.container.querySelector('[role="button"]')).toBeNull();
+    mount.unmount();
+  });
+
   it('leaves a non-failure state and every state outside such a host untouched', () => {
     const mount = mountSurface(
       <>

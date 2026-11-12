@@ -155,6 +155,7 @@ export function PluginSurfaceInteractionBoundary(
                 <SurfaceStateCard
                     testID={`plugin-surface-offline-state:${props.surfaceId}`}
                     kind={offlineNotice.kind}
+                    size="line"
                     replacesContent
                     title={offlineNotice.title}
                     reason={offlineNotice.reason}

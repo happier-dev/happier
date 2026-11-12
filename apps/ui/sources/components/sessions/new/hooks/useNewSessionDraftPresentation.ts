@@ -54,15 +54,18 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-/** Whether the draft holds typed text, for a surface that stands in for its folded composer (Docked's pill). */
-export function useNewSessionDraftHasText(scope: ServerAccountScope | null, draftId: string | null): boolean {
+/** The folded composer's identity and text marker, without subscribing it to every draft edit. */
+export function useNewSessionDraftDockPresentation(scope: ServerAccountScope | null, draftId: string | null): Readonly<{ hasText: boolean; isBot: boolean }> {
     const subscribe = React.useCallback((listener: () => void) => (
         scope && draftId ? subscribeSessionDraft(scope, { kind: 'newSession', draftId }, listener) : () => undefined
     ), [draftId, scope]);
-    const getSnapshot = React.useCallback(() => {
-        const snapshot = scope && draftId ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null;
+    const selectPresentation = useShallow((snapshot: SessionDraftSnapshot | null) => {
         const text = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'composer', field: 'text' }) : null;
-        return typeof text === 'string' && text.trim().length > 0;
-    }, [draftId, scope]);
+        const facts = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'initialSessionFacts' }) : null;
+        return { hasText: typeof text === 'string' && text.trim().length > 0,
+            isBot: Boolean(facts && typeof facts === 'object' && 'bot' in facts && facts.bot) };
+    });
+    const getSnapshot = React.useCallback(() => selectPresentation(scope && draftId
+        ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null), [draftId, scope, selectPresentation]);
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

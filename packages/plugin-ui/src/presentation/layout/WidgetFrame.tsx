@@ -437,6 +437,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
   // An item card stacks its description under its title; a widget's source stands beside the title (under it
   // on a phone, when asked), so a glance keeps one identity line.
   const below = item || row || props.sourcePlacement === 'below';
+  const sourceBelowHeader = below && !item && !row;
   // Stacked under the title, the source never competes for the title's width.
   let source: ReactNode;
   if (isHappierWidgetFrameSourceDescriptor(props.source)) {
@@ -454,7 +455,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
           ? props.renderSourceGlyph(bound.binding)
           : <DefaultSourceGlyph binding={bound.binding} color={environmentTheme?.colors.secondaryText ?? DISCLOSURE_FALLBACK_INK} testID={`${testID}.source.glyph`} />}
         <View style={{ flexShrink: 1, minWidth: 0 }}>
-          {renderText({ role: 'source', text, testID: `${testID}.source.text` })}
+          {renderText({ role: 'source', text, testID: `${testID}.source.text`, ...(sourceBelowHeader ? { numberOfLines: 2 } : {}) })}
         </View>
       </View>
     );
@@ -465,7 +466,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
       && props.source.trim() === props.title.trim();
     const plain: ReactNode = repeatsTitle ? null
       : below ? props.source : resolveHappierWidgetFrameSource({ widthPx, source: props.source });
-    source = renderSlot(plain, 'source', `${testID}.source`, renderText);
+    source = renderSlot(plain, 'source', `${testID}.source`, renderText, sourceBelowHeader ? 2 : undefined);
   }
   if (below && props.sourceHeld && isEmptySlot(source))
     source = (
@@ -548,7 +549,8 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
             testID={`${testID}.header`}
             style={{
               flexDirection: stacked ? 'column-reverse' : 'row',
-              ...(controlsBelow ? { flexWrap: 'wrap' } as const : {}),
+              ...(controlsBelow || sourceBelowHeader ? { flexWrap: 'wrap' } as const : {}),
+              ...(sourceBelowHeader ? { rowGap: 1 } : {}),
               alignItems: stacked ? 'stretch' : previewItem || controlsBelow || onTitleLine ? 'flex-start' : 'center',
               gap: stacked ? HAPPIER_WIDGET_FRAME_METRICS.cardTitleGapPx : HAPPIER_WIDGET_FRAME_METRICS.headerGapPx,
               minHeight: plain ? HAPPIER_WIDGET_FRAME_METRICS.plainHeaderMinHeightPx : HAPPIER_WIDGET_FRAME_METRICS.headerMinHeightPx,
@@ -649,7 +651,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   props.frameStyle,
                 )}
               </View>
-              {source ? (
+              {source && !sourceBelowHeader ? (
                 <View pointerEvents={typeof props.source === 'string' || typeof props.source === 'number' || isHappierWidgetFrameSourceDescriptor(props.source) ? 'none' : 'box-none'}
                   style={{ flexShrink: 1, minWidth: 0 }}>{source}</View>
               ) : null}
@@ -669,6 +671,7 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
                   ? ACCESSORY_OVERLAY_STYLE : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View> : null}
               </View>
             </View> : null}
+            {sourceBelowHeader && source ? <View pointerEvents="box-none" style={{ width: '100%', minWidth: 0 }}>{source}</View> : null}
           </View>
         }
       >

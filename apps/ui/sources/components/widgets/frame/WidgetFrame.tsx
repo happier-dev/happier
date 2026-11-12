@@ -375,14 +375,14 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         // A card spanning the whole band has a drawer's room: its state reads at that measure, not a side pane's.
         : props.widgetPresentation?.footprint.width === 'full' ? 'details' : 'pane';
 
-    // A source names what the widget is bound to ("devbox · 3ad2"): a narrow header gives up its middle, never the
-    // suffix that tells near-identical names apart. A title keeps its tail ellipsis.
+    // A single-line source preserves the suffix that tells near-identical names apart. A stacked phone source
+    // uses the frame's full-width two-line measure; a title keeps its tail ellipsis.
     const pageSection = props.pageSection === true;
-    const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => input.role !== 'title' && input.text.includes(' · ') ? (
+    const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => input.role !== 'title' && (input.numberOfLines ?? 1) === 1 && input.text.includes(' · ') ? (
         <MiddleEllipsisText testID={input.testID} style={styles.source} value={input.text} />
     ) : (
         <Text testID={input.testID} style={input.role !== 'title' ? styles.source : input.frameStyle === 'plain' && !pageSection ? styles.sectionLabel : styles.title}
-            numberOfLines={1} accessibilityRole={input.role === 'title' ? 'header' : undefined} aria-level={input.role === 'title' ? input.headingLevel ?? 2 : undefined}>{input.text}</Text>
+            numberOfLines={input.numberOfLines ?? 1} accessibilityRole={input.role === 'title' ? 'header' : undefined} aria-level={input.role === 'title' ? input.headingLevel ?? 2 : undefined}>{input.text}</Text>
     ), [styles.sectionLabel, styles.source, styles.title, pageSection]);
     // A bound source's glyph from the app's icon family: the pin it is set by, or the link it follows.
     const renderSourceGlyph = React.useCallback((binding: HappierWidgetFrameSourceBinding) => (

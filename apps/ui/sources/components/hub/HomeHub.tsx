@@ -58,6 +58,7 @@ import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
 import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentation, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import { WidgetMachineAddRecoveryContext } from '@/components/widgets/surface/WidgetMachineNotice';
 import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
 import { HomeBotFaces } from './HomeBotFaces';
@@ -609,6 +610,8 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Horizon, glass pills over a Wallpaper and Rise), wherever the composer sits; tiles only on the plain page.
     // With no machine yet no suggestion could run, so the composer stands alone until the first one joins (58d AF1).
     const firstRun = guidance.kind === 'connect_machine';
+    const firstRunLeadId = firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null;
+    const inboxPresented = briefOpen || layout.sections.some(section => section.id === HOME_HUB_ATTENTION_SECTION_ID && !section.hidden);
     const wallpaper = atmosphere.source === 'picture' && atmosphere.picture.layout === 'wallpaper';
     const atmosphereSuggestions = firstRun ? 'none' as const : wallpaper || (planetSource && placement === 'rise') ? 'pills' as const : 'links' as const;
     const composerSuggestions = heroActive || firstRun ? atmosphereSuggestions : 'tiles' as const;
@@ -655,7 +658,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         && !(briefOpen && section.id === HOME_HUB_ATTENTION_SECTION_ID))
                     : layout.sections}
                 // With no machine yet, where agents will run is the one question: Machines leads the cards (58d AF1).
-                leadCardId={firstRun ? resolveHomeHubFirstRunLeadId(layout.sections) : null}
+                leadCardId={firstRunLeadId}
                 renderSection={(section, index, placement) => section.kind === 'builtin' ? (
                     <HubSectionSlot key={section.id} section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
                 ) : (
@@ -672,6 +675,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     );
 
     return framed(
+        <WidgetMachineAddRecoveryContext.Provider value={firstRunLeadId !== null}>
             <View ref={heroFrame.paneRef} style={styles.pane} onLayout={heroFrame.measure} collapsable={false}>
                 <ItemList
                     ref={homeListRef}
@@ -731,7 +735,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         <HomeHubReadingColumn>
                             <ItemGroup surface="none">
                                 <View style={styles.statusRow}>
-                                    <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} /></View>
+                                    <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} inboxPresented={inboxPresented} /></View>
                                     {headerActions}
                                 </View>
                             </ItemGroup>
@@ -747,7 +751,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                                 <PageHeader
                                     title={title}
                                     alwaysShowTitle
-                                    details={<HubStatusLine home={renderHomeLine} />}
+                                    details={<HubStatusLine home={renderHomeLine} inboxPresented={inboxPresented} />}
                                     actions={headerActions}
                                 />
                             </NavigationLargeTitleProvider>
@@ -756,6 +760,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     <React.Fragment key="sections">{sections}</React.Fragment>
                 </ItemList>
             </View>
+        </WidgetMachineAddRecoveryContext.Provider>
     );
 });
 

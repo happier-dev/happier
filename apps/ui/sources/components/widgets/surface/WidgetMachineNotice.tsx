@@ -24,7 +24,11 @@ import { t } from '@/text';
  * one line above the body, with one action, Retry, which asks the body afresh. When no Machine exists at
  * all, retrying cannot help, so the one action is the way forward — adding a machine, or opening the plugin when machines exist but none runs it — in either place.
  */
+/** The surrounding surface already presents the Machines card's add recovery. */
+export const WidgetMachineAddRecoveryContext = React.createContext(false);
+
 export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; children: React.ReactNode }>): React.ReactElement {
+    const surroundingAddRecovery = React.useContext(WidgetMachineAddRecoveryContext);
     const [source, setSource] = React.useState<WidgetFrameBodyNoticeSource | null>(null);
     const [attempt, setAttempt] = React.useState(0);
     const lend = React.useCallback((next: WidgetFrameBodyNoticeSource | null) => setSource(() => next), []);
@@ -37,23 +41,24 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     const sentence = storage(() => source?.()?.sentence ?? null, MACHINE_NOTICE_INPUTS);
     const addMachine = storage(() => source?.()?.addMachine === true, MACHINE_NOTICE_INPUTS);
     const managePluginId = storage(() => source?.()?.managePluginId ?? null, MACHINE_NOTICE_INPUTS);
-    const action = React.useMemo(() => addMachine
+    const suppressedAdd = addMachine && surroundingAddRecovery;
+    const action = React.useMemo(() => suppressedAdd ? null : addMachine
         ? { label: t('settings.addMachine'), onPress: () => { runGuardedNavigation(() => router.push(MACHINES_ADD_ROUTE as never)); } }
         : managePluginId
             ? { label: t('settingsPlugins.managePlugin'), onPress: () => { runGuardedNavigation(() => router.push(buildPluginDetailRoute('settings', managePluginId) as never)); } }
-            : undefined, [addMachine, managePluginId, router]);
+            : undefined, [suppressedAdd, addMachine, managePluginId, router]);
     // A failure state that claims the sentence says it in its own place, and the body is then that one line.
-    const content = React.useMemo(() => (sentence === null ? null : { sentence, ...(action ? { action } : {}) }), [sentence, action]);
+    const content = React.useMemo(() => (sentence === null ? null : { sentence, ...(action !== undefined ? { action } : {}) }), [sentence, action]);
     const { notice: surfaceNotice, claimed } = useClaimableSurfaceNotice(content);
     return (
         <WidgetFrameBodyNoticeContext.Provider value={lend}>
             {sentence === null || claimed ? null : (
                 <SurfaceStateCard
                     testID={`${props.testID}-machine-notice`}
-                    kind="warning"
+                    kind="unavailable"
                     size="line"
                     title={sentence}
-                    action={action ?? { label: t('common.retry'), onPress: retry }}
+                    action={suppressedAdd ? undefined : action ?? { label: t('common.retry'), onPress: retry }}
                     accessibilitySemantics="status"
                 />
             )}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginUiSurfaceNoticeContext } from '../presentationHost/surfaceNotice.js';
 import { DragSource } from './EntityDragDrop.js';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -509,6 +510,7 @@ function Harness(props: HarnessProps): ReactElement {
 
 function mount(
   options: Readonly<{
+    surfaceNotice?: React.ContextType<typeof PluginUiSurfaceNoticeContext>;
     renderDestinationRow?: PluginUiPresentationHost['renderDestinationRow'];
     renderPopover?: PluginUiPresentationHost['renderPopover'];
     motion?: HappierCollectionMotionDriver;
@@ -554,6 +556,7 @@ function mount(
         context={context}
         presentationHost={host}
       >
+        <PluginUiSurfaceNoticeContext.Provider value={options.surfaceNotice ?? null}>
         <PluginUiScrollActivityProvider tracker={options.scrollTracker ?? null}>
           <Harness
             {...harness}
@@ -563,6 +566,7 @@ function mount(
             }}
           />
         </PluginUiScrollActivityProvider>
+        </PluginUiSurfaceNoticeContext.Provider>
       </PluginUiProviderInternal>
       <Slot />
     </>
@@ -7064,5 +7068,21 @@ describe('an ungrouped page list (a phone)', () => {
     unsorted.measure(390);
     expect(unsorted.query('procs:sheet-header')).toBeNull();
     unsorted.unmount();
+  });
+});
+
+
+describe('a Collection on an unavailable execution surface', () => {
+  it('settles an empty loading window as one host notice while retaining cached rows', () => {
+    const surfaceNotice = { sentence: 'No machine can run this yet.', claim: () => () => undefined };
+    const loading = mount({ items: [], grouped: false, loading: true, footer: <Text>Reading sources</Text>, surfaceNotice });
+    expect(loading.container.textContent).toContain(surfaceNotice.sentence);
+    expect(loading.container.textContent).not.toContain('Reading sources');
+    expect(loading.container.querySelector('[data-testid="collection:skeleton-row"]')).toBeNull();
+    loading.unmount();
+    const cached = mount({ loading: true, surfaceNotice });
+    expect(cached.query('row:a')).not.toBeNull();
+    expect(cached.container.textContent).not.toContain(surfaceNotice.sentence);
+    cached.unmount();
   });
 });

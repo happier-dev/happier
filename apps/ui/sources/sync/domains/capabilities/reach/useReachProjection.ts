@@ -8,6 +8,7 @@ import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind'
 import { useActiveServerAccountScope, useMachineDisplayById } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { filterVisibleMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
@@ -114,11 +115,11 @@ export function useReachMachines(): Readonly<{
   // Primitive inputs keep both subscriptions fact-local, including newly allocated
   // but unchanged installed-Agent publications. Name disambiguation runs below,
   // only when its actual inputs change, rather than on every root-store publication.
-  const displayNames = useMachineDisplayById(displays => admitted ? Object.values(displays)
+  const displayNames = useMachineDisplayById(displays => admitted ? filterVisibleMachines(Object.values(displays))
     .filter(isPersistentMachine).sort((left, right) => left.id.localeCompare(right.id))
     .flatMap(machine => [machine.id, machine.metadata?.displayName ?? null, machine.metadata?.host ?? null,
       machine.metadata !== null, machine.availability?.kind ?? null]) : []);
-  const capabilityInputs = useMachineDisplayById(displays => admitted ? Object.values(displays)
+  const capabilityInputs = useMachineDisplayById(displays => admitted ? filterVisibleMachines(Object.values(displays))
     .filter(isPersistentMachine).sort((left, right) => left.id.localeCompare(right.id))
     .flatMap(machine => [machine.id, machine.metadata?.platform ?? null, machine.metadata?.arch ?? null,
       machine.metadata?.agentInventory?.installedAgentIds.length ?? null,

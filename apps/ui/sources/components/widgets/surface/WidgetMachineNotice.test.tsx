@@ -13,7 +13,7 @@ import { WidgetFrameBodyNoticeContext, type WidgetFrameBodyNoticeSource } from '
 
 import { useClaimedPluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
-import { WidgetMachineNoticeBoundary } from './WidgetMachineNotice';
+import { WidgetMachineAddRecoveryContext, WidgetMachineNoticeBoundary } from './WidgetMachineNotice';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,10 +77,10 @@ describe('WidgetMachineNoticeBoundary', () => {
             await flushHookEffects({ cycles: 2 });
             const noticeCard = () => screen.tree.root.findAllByType(SurfaceStateCard)
                 .find(node => node.props.testID === 'widget-machine-notice');
-            expect(noticeCard()?.props).toMatchObject({ kind: 'warning', title: notice()?.sentence });
+            expect(noticeCard()?.props).toMatchObject({ kind: 'unavailable', title: notice()?.sentence });
             const named = { ...machine, metadata: { ...machine.metadata!, displayName: 'resolved-machine-name' } };
             await act(async () => { storage.setState(state => ({ machines: { ...state.machines, [machine.id]: named } })); });
-            expect(noticeCard()?.props).toMatchObject({ kind: 'warning', title: named.metadata.displayName });
+            expect(noticeCard()?.props).toMatchObject({ kind: 'unavailable', title: named.metadata.displayName });
             await act(async () => { storage.setState(state => ({ machines: { ...state.machines, [machine.id]: { ...named, active: true } } })); });
             expect(noticeCard()).toBeUndefined();
         } finally {
@@ -168,4 +168,17 @@ describe('WidgetMachineNoticeBoundary', () => {
         await act(async () => { action.props.onPress(); });
         expect(routerMock.pushed).toEqual(['/settings/machines/add']);
     });
+});
+
+
+it('leaves adding a Machine to the surrounding Machines card', async () => {
+    const screen = await renderScreen(<WidgetMachineAddRecoveryContext.Provider value>
+        <WidgetMachineNoticeBoundary testID="widget">
+            <Lending notice={() => ({ sentence: 'Add a Machine to run this.', addMachine: true })} />
+        </WidgetMachineNoticeBoundary>
+    </WidgetMachineAddRecoveryContext.Provider>);
+    await flushHookEffects({ cycles: 2 });
+    expect(screen.getTextContent()).toContain('Add a Machine to run this.');
+    expect(screen.findByTestId('widget-machine-notice-action')).toBeNull();
+    await screen.unmount();
 });

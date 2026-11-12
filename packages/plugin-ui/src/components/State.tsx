@@ -177,7 +177,8 @@ function useResolvedCopy({ title, titleKey, description, descriptionKey }: State
  * screen-reader user learns WHAT is loading rather than only that something is.
  */
 export function LoadingState(props: LoadingStateProps): ReactElement {
-  if (props.rows !== undefined) return <SkeletonRowsLoadingState {...props} rows={props.rows} />;
+  const hostNotice = useContext(PluginUiSurfaceNoticeContext);
+  if (props.rows !== undefined && hostNotice === null) return <SkeletonRowsLoadingState {...props} rows={props.rows} />;
   return <SpinnerLoadingState {...props} />;
 }
 
@@ -522,11 +523,12 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
   // While the host has one sentence about a part that cannot run now (its Machine cannot be reached), a
   // failure state says that sentence in its own place, with its own action, instead of its own copy:
   // the cause is said once, where it failed, and the host draws nothing of its own beside it.
-  const hostSentence = useClaimedPluginUiSurfaceNotice(authored.kind === 'error' || authored.kind === 'unavailable');
+  const hostSentence = useClaimedPluginUiSurfaceNotice(authored.kind === 'loading' || authored.kind === 'error' || authored.kind === 'unavailable');
   const hostAction = useContext(PluginUiSurfaceNoticeContext)?.action;
   const props = hostSentence === null ? authored : {
-    ...authored, kind: 'warning' as const, title: hostSentence, titleKey: undefined,
-    ...(hostAction ? { action: { label: hostAction.label, onPress: hostAction.onPress }, actionSlot: undefined } : {}),
+    ...authored, kind: 'unavailable' as const, size: 'line' as const, title: hostSentence, titleKey: undefined,
+    ...(hostAction === null ? { action: undefined, actionSlot: undefined }
+      : hostAction ? { action: { label: hostAction.label, onPress: hostAction.onPress }, actionSlot: undefined } : {}),
     description: undefined, descriptionKey: undefined, note: undefined, noteKey: undefined, details: undefined, icon: undefined,
     body: undefined, live: undefined, actionCaption: undefined, secondaryAction: undefined, learnMore: undefined,
   };

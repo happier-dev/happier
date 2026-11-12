@@ -262,7 +262,7 @@ describe('HappierWidgetFrame', () => {
     const line = byId(held.container, 'frame.source.held');
     expect(line).not.toBeNull();
     expect(line!.getAttribute('aria-hidden')).toBe('true');
-    expect(byId(held.container, 'frame.titleBlock')!.children).toHaveLength(2);
+    expect(byId(held.container, 'frame.titleBlock')!.children).toHaveLength(1);
     // Once named, the source takes that line; beside the title (wide) nothing is held, since the title line holds it.
     const named = mount({ sourcePlacement: 'below', source: 'Last 7 days', sourceHeld: true });
     expect(byId(named.container, 'frame.source.held')).toBeNull();

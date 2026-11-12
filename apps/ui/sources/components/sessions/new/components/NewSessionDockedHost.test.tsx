@@ -563,4 +563,23 @@ describe('web shell Docked composer', () => {
     expect(clearance()).toBe(60);
     await act(async () => screen.unmount());
   });
+
+  it('names a Bot draft in both the open instrument strip and its folded dock', async () => {
+    const { screen, state } = await openDockedDraft('Make a helpful Bot');
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { writeNewSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { NEW_BOT_SEED } = await import('@/components/sessions/bots/newBotDraft');
+    const { t } = await import('@/text');
+    const scope = getActiveServerAccountScope();
+    if (!scope) throw new Error('Expected the restored Account scope');
+    await act(async () => { writeNewSessionDraft({ scope, draftId: state().draftId, materializationIntent: 'seeded', patch: { authoring: NEW_BOT_SEED } }); });
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('bots.new')));
+    expect(screen.getTextContent()).not.toContain(t('sessionDrafts.new.action'));
+    await act(async () => iconButton(screen, 'new-session-docked-collapse')[0]!.props.onPress());
+    await vi.waitFor(() => expect(screen.findAllHostsByTestId('new-session-docked-pill')).toHaveLength(1));
+    expect(screen.findAllHostsByTestId('new-session-docked-pill')[0]!.props.accessibilityLabel).toBe(t('bots.new'));
+    expect(screen.getTextContent()).toContain(t('bots.new'));
+    await screen.unmount();
+  });
+
 });

@@ -483,3 +483,13 @@ describe('PluginMachineExecutionOriginSelector', () => {
         expect(capturedGroupTitleProps).toContainEqual({ title: 'settingsProviders.detail.targetMachine' });
     });
 });
+
+
+it('keeps an unavailable chip as the Run-on control while the body owns the failure sentence', async () => {
+    const fixture = selection({ candidates: [], state: { kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['offline'] } });
+    const screen = await renderScreen(<PluginMachineExecutionOriginSelectorView selection={fixture.value} presentation="chip" testIDPrefix="run-on" />);
+    const filter = screen.root.findAll(node => node.props.filter?.id === 'plugin-execution')[0]?.props.filter;
+    expect(filter?.valueLabel).toBeNull();
+    expect(filter?.label).toBeTruthy();
+    await screen.unmount();
+});

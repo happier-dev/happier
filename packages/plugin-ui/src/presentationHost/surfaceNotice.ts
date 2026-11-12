@@ -12,8 +12,8 @@ import { createContext, useContext, useId, useLayoutEffect } from 'react';
  */
 export type PluginUiSurfaceNotice = Readonly<{
   sentence: string;
-  /** The way forward when the plugin's own retry cannot help; replaces the failure state's action. */
-  action?: Readonly<{ label: string; onPress(): void }>;
+  /** Replaces the state's recovery; null means the surrounding surface already presents it. */
+  action?: Readonly<{ label: string; onPress(): void }> | null;
   /** Keep stable for the host's lifetime: a failure state claims once and releases on unmount. */
   claim(id: string): () => void;
 }>;

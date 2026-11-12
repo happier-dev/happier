@@ -15,6 +15,13 @@ describe('Home status observation', () => {
         expect(screen.getTextContent()).toContain('Nothing running');
     });
 
+    it('leaves Inbox to the attention section when Home already presents it', async () => {
+        const screen = await renderScreen(<HubStatusLineView working={2} inbox={8} inboxPresented home={() => <>Home A</>} />);
+        expect(screen.findByTestId('home-hub.status.inbox')).toBeNull();
+        expect(screen.findByTestId('home-hub.status.working')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Home A');
+    });
+
     it('says what waits in the Inbox at the fold and opens the Inbox, leaving out a count still being read', async () => {
         const home = () => <>{'Home A'}</>;
         const openInbox = vi.fn();

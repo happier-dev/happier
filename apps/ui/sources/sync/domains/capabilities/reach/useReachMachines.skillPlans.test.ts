@@ -113,6 +113,24 @@ it('ignores unrelated raw Machine activity while keeping real capability facts c
     } finally { nameProjections.mockRestore(); await hook.unmount(); }
 });
 
+it('uses the visible-machine owner for Reach machine totals and destinations', async () => {
+    const serverUrl = 'https://visible-reach.test';
+    await network.addHome(serverUrl, 'visible-reach-account');
+    const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
+        homeServerIdentityId: 'srv_visible_reach', canonicalServerUrl: serverUrl, revision: 1,
+        endpoints: [{ kind: 'https', url: serverUrl }] } });
+    await setActiveServerId(home.id);
+    const scope = { serverId: 'srv_visible_reach', accountId: 'visible-reach-account' };
+    const machines = [createMachineFixture({ id: 'visible' }), createMachineFixture({ id: 'revoked', revokedAt: 1 })];
+    storage.setState({ settingsScope: scope, profileScope: scope });
+    storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    const hook = await renderHook(() => useReachMachines());
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().machines.map(machine => machine.machineId)).toEqual(['visible']));
+        expect(hook.getCurrent().placeMachines.map(machine => machine.machineId)).toEqual(['visible']);
+    } finally { await hook.unmount(); }
+});
+
 it('keeps withdrawn capability places unknown until their exact Account observes each machine again', async () => {
     const serverUrl = 'https://capability-presence.test';
     await network.addHome(serverUrl, 'capability-presence-account');

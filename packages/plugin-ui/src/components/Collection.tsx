@@ -13,6 +13,8 @@ import {
 } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { CollectionRowVisibility } from './collectionRowVisibility.js';
+import { SurfaceState } from './State.js';
+import { PluginUiSurfaceNoticeContext } from '../presentationHost/surfaceNotice.js';
 
 import {
   resolveHappierUiPalette,
@@ -2719,6 +2721,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // The first window is still arriving: the table already stands (its column titles, its enclosure) so the rows
   // land exactly where their skeleton rows stood.
   const loadingFirstWindow = props.loading === true && !hasRows;
+  const hostNotice = useContext(PluginUiSurfaceNoticeContext);
+  const loadingNotice = loadingFirstWindow ? hostNotice : null;
   const cardsWide = composition === 'cards';
   // The key line names `open` and `back`, which only a collection with a detail has. One that opens nothing
   // (`detail: 'none'`), or a collection on another section's sheet (a preview among a page's sections), is read
@@ -3025,7 +3029,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
                 {...(pageSections ? { leadingGapPx: HAPPIER_PAGE_METRICS.sectionHeaderGapPx } : {})}>
                 {headerPlacesSearch ? null : search.tokenLine}
               </ListCollectionHeader>
-              {cards && presentation === 'board' && loadingFirstWindow ? (
+              {loadingNotice ? (
+                <SurfaceState kind="unavailable" size="line" title={loadingNotice.sentence} />
+              ) : cards && presentation === 'board' && loadingFirstWindow ? (
                 // A board that is still reading stands in the same skeleton rows as the table: nothing is
                 // known yet about its columns, and "empty" would be a lie.
                 <CollectionSkeletonRows
@@ -3148,7 +3154,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         </View>
         </PageColumn>
         {/* Page sections in a caller's footer own their insets, just like its header. */}
-        {pageSections ? props.footer : null}
+        {pageSections && loadingNotice === null ? props.footer : null}
         </PageScroller>
         {pane ? (
           // The page's app details pane: the same detail, beside the page with the pane's own motion, width and
@@ -3190,7 +3196,10 @@ function CollectionOrderHeader(props: Readonly<{
   const orders = orderKeys === undefined
     ? (props.sort.orders ?? [])
     : (props.sort.orders ?? []).filter((order) => orderKeys.includes(order.key));
-  const current = orders.find((order) => order.key === props.sort.key);
+  const selected = orders.find((order) => order.key === props.sort.key);
+  const mappedElsewhere = orderKeys === undefined && Object.entries(props.sort.orderColumns ?? {})
+    .some(([column, keys]) => column !== props.column.key && keys.includes(props.sort.key));
+  const current = mappedElsewhere ? undefined : selected;
   const title = props.column.title;
   const radioGroup = 'order';
   return (
@@ -3204,7 +3213,7 @@ function CollectionOrderHeader(props: Readonly<{
         triggerAccessibilityLabel={current === undefined ? title : `${title}: ${current.label}`}
         {...(props.testID === undefined ? {} : { testID: props.testID })}
         items={orders.map((order) => ({ id: order.key, label: order.label, kind: 'radio' as const, radioGroupId: radioGroup }))}
-        radioGroups={[{ id: radioGroup, accessibilityLabel: title, selectedId: current?.key ?? null }]}
+        radioGroups={[{ id: radioGroup, accessibilityLabel: title, selectedId: selected?.key ?? null }]}
         onSelect={props.sort.onChange}
       />
       {current === undefined ? null : <CollectionSortArrow sort={props.sort} testID={props.testID} />}

@@ -171,6 +171,8 @@ export function useHomeHeroFrame(
   const keepOut = React.useMemo<readonly HomeOrbitRect[]>(() => {
     if (!frame) return [];
     const content = [frame.headline, frame.composer, frame.suggestions].filter((box): box is Measured => box !== null);
+    if (frame.next) content.push({ x: 0, y: frame.next.y, width: frame.rect.width,
+      height: Math.max(frame.next.height, frame.rect.height - frame.next.y) });
     return input.phone ? [{ x: 0, y: 0, width: frame.rect.width, height: headerTop + headerHeight }, ...content] : content;
   }, [frame, headerHeight, headerTop, input.phone]);
   const onScroll = React.useCallback(

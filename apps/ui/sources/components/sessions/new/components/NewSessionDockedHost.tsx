@@ -40,7 +40,7 @@ import { ResizableDockedPane } from '@/components/ui/panels/ResizableDockedPane'
 import { AgentInputPopoverWidthContext } from '@/components/sessions/agentInput/selection/useAgentInputPopoverLayout';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { NewSessionComposerCloseButton } from './NewSessionComposerCloseButton';
-import { useNewSessionDraftHasText } from '../hooks/useNewSessionDraftPresentation';
+import { useNewSessionDraftDockPresentation } from '../hooks/useNewSessionDraftPresentation';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { t } from '@/text';
@@ -128,12 +128,13 @@ function DockedPill() {
     const { pane, pillBottom } = useDockSeat();
     const scope = useActiveServerAccountScope() ?? null;
     const draftId = typeof shell.host.params.draftId === 'string' ? shell.host.params.draftId : null;
-    const hasText = useNewSessionDraftHasText(scope, draftId);
+    const { hasText, isBot } = useNewSessionDraftDockPresentation(scope, draftId);
+    const label = isBot ? t('bots.new') : t('sessionDrafts.new.action');
     const { open } = shell;
     const restore = React.useCallback(() => open(), [open]);
     return <View pointerEvents="box-none" style={[styles.pillSeat, { left: pane.left, width: pane.width, bottom: pillBottom }]}>
-        <OverlayCapsuleButton testID="new-session-docked-pill" icon="caret-up" label={t('sessionDrafts.new.action')} dot={hasText}
-            accessibilityLabel={t('sessionDrafts.new.action')} accessibilityValue={hasText ? { text: t('sessionDrafts.badge') } : undefined}
+        <OverlayCapsuleButton testID="new-session-docked-pill" icon="caret-up" label={label} dot={hasText}
+            accessibilityLabel={label} accessibilityValue={hasText ? { text: t('sessionDrafts.badge') } : undefined}
             onPress={restore} />
     </View>;
 }

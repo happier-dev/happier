@@ -4282,9 +4282,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // A docked card has no page around it: with nothing to report, its status row names it (the folded pill's
     // name), so the draft actions beside it read as the card's header row, as a Session's status row does.
     const dockedComposer = embeddedHost?.kind === 'docked';
+    const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
     const composerConnectionStatus = React.useMemo(() => {
         if (!connectionStatus && !launchStatus.line && dockedComposer) {
-            return { text: t('sessionDrafts.new.action'), color: theme.colors.text.secondary,
+            return { text: isBotDraft ? t('bots.new') : t('sessionDrafts.new.action'), color: theme.colors.text.secondary,
                 dotColor: theme.colors.text.tertiary, isPulsing: false };
         }
         if (connectionStatus || !launchStatus.line) return connectionStatus;
@@ -4294,7 +4295,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 detail: launchStatus.line.detail, action: launchStatus.line.action, secondaryAction: launchStatus.line.secondaryAction }
             : { text: launchStatus.line.text, color: theme.colors.text.secondary,
                 dotColor: theme.colors.status.connecting, isPulsing: true };
-    }, [connectionStatus, dockedComposer, launchStatus.line, theme]);
+    }, [connectionStatus, dockedComposer, isBotDraft, launchStatus.line, theme]);
     const composerStatusBadges = React.useMemo(
         () => [...launchStatus.badges, ...(input?.statusBadges ?? [])],
         [input?.statusBadges, launchStatus.badges],
@@ -4303,7 +4304,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // Instructions before the first input (plans 60 §2, 61 I61-1) are one setup-rail chip (owner 2026-10-30):
     // a Bot draft invites them; any draft that already carries a document or retained authoring shows it,
     // so nothing is sent unseen.
-    const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
     const botDraftFace = effectiveCurrentAuthoringDraft.initialSessionFacts?.botFace ?? null;
     const onBotFaceChange = React.useMemo(() => draftScope
         ? (botFace: SessionBotFaceV1 | null) => writeNewSessionBotFaceToRepository({ scope: draftScope, draftId, botFace })
