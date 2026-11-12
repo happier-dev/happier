@@ -28,6 +28,23 @@ import {
 
 type State = ReturnType<typeof createWorkflowRunsDomain>;
 
+it('keeps review edits with the exact Home, Account and Run until that Run is removed', () => {
+    const h = createHarness();
+    const scope = { serverId: 'home-a', accountId: 'account-a' };
+    const buffers = h.get().getWorkflowRunReviewBuffers('run-a', scope);
+    buffers.drafts.set('invocation', { text: 'unsaved', contentRevision: '7' });
+    expect(h.get().getWorkflowRunReviewBuffers('run-a', scope).drafts.get('invocation')?.text).toBe('unsaved');
+    for (const [runId, otherScope] of [
+        ['run-b', scope],
+        ['run-a', { ...scope, accountId: 'account-b' }],
+        ['run-a', { ...scope, serverId: 'home-b' }],
+    ] as const) {
+        expect(h.get().getWorkflowRunReviewBuffers(runId, otherScope).drafts.size).toBe(0);
+    }
+    h.get().removeWorkflowRun('run-a', scope);
+    expect(h.get().getWorkflowRunReviewBuffers('run-a', scope).drafts.size).toBe(0);
+});
+
 it('FIN selected hold projects the newest exact sibling from shared facts outside history', () => {
     const old = createWorkflowInvocationIndexFixture({ id: 'old', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', attempt: '0' });
     const current = createWorkflowInvocationIndexFixture({ id: 'current', parentRecordId: 'root', memberOrdinal: '0', sequence: '3', attempt: '1' });

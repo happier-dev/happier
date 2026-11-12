@@ -1,6 +1,6 @@
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, mergeWorkflowNotificationConditionV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, type WorkflowNotificationConditionV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowRunPrivateMetadataV1, WorkflowRunGetResultV1, WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 
@@ -68,6 +68,13 @@ export type WorkflowRunRow = Readonly<{
 
 export type WorkflowRunsById = Record<string, WorkflowRunRow>;
 
+export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string; editedAt?: number }>;
+export type WorkflowReviewReading = Readonly<{ value: JsonValue | undefined; revision: string }>;
+export type WorkflowInvocationReviewBuffers = Readonly<{
+    drafts: Map<string, WorkflowReviewDraft>;
+    readings: Map<string, WorkflowReviewReading>;
+}>;
+
 /**
  * The one Account-scoped map of workflow Run bodies. Every transport that reads
  * Runs normalizes into it and keeps only its own ordered `runId` window beside
@@ -75,6 +82,9 @@ export type WorkflowRunsById = Record<string, WorkflowRunRow>;
  */
 export type WorkflowRunsDomain = {
     workflowRunsById: WorkflowRunsById;
+    /** Unsaved review values live with their Account/Run, across Discuss and Back. */
+    workflowRunReviewBuffers: Map<string, WorkflowInvocationReviewBuffers>;
+    getWorkflowRunReviewBuffers: (runId: string, scope?: ServerAccountScope | null) => WorkflowInvocationReviewBuffers;
     workflowRunListWindows: Partial<Record<WorkflowRunListWindowStoreId, WorkflowRunListWindow>>;
     /** Per Run: the one invocation fact map plus the windows and evidence that reference it. */
     workflowRunInvocationsByRunId: Record<string, WorkflowRunInvocations>;
@@ -85,6 +95,18 @@ export type WorkflowRunsDomain = {
      */
     upsertWorkflowRuns: (runs: readonly WorkflowRunRow[], scope?: ServerAccountScope | null) => void;
     removeWorkflowRun: (runId: string, scope?: ServerAccountScope | null) => void;
+    /**
+     * Restate one loaded window's membership after a row-level change: the entered rows' bodies
+     * merge into the Run map and the window keeps its cursor and traversed frontier, so a Run
+     * entering or leaving a paged window never re-reads the span the person already loaded.
+     */
+    applyWorkflowRunListMembershipPatch: (input: Readonly<{
+        scope?: ServerAccountScope | null;
+        windowId: WorkflowRunListWindowStoreId;
+        runIds: readonly string[];
+        entered: readonly WorkflowRunRow[];
+        sourceArtifactIdsByRunId: Readonly<Record<string, string>>;
+    }>) => void;
     applyWorkflowRunListPage: (input: Readonly<{
         scope?: ServerAccountScope | null;
         windowId: WorkflowRunListWindowStoreId;
@@ -859,12 +881,24 @@ export function resolveAutomationRunProjections(
 
 export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
     set,
+    get,
 }: {
     set: StoreSet<S>;
     get: StoreGet<S>;
 }): WorkflowRunsDomain {
     return {
         workflowRunsById: {},
+        workflowRunReviewBuffers: new Map(),
+        getWorkflowRunReviewBuffers: (runId, scope = getActiveServerAccountScope()) => {
+            const owner = get().workflowRunReviewBuffers;
+            const key = workflowRunStoreKey(runId, scope);
+            let buffers = owner.get(key);
+            if (!buffers) {
+                buffers = { drafts: new Map(), readings: new Map() };
+                owner.set(key, buffers);
+            }
+            return buffers;
+        },
         workflowRunListWindows: {},
         workflowRunInvocationsByRunId: {},
         upsertWorkflowRuns: (runs, scope = getActiveServerAccountScope()) =>
@@ -875,8 +909,30 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 if (workflowRunsById === state.workflowRunsById && workflowRunInvocationsByRunId === state.workflowRunInvocationsByRunId) return state;
                 return { ...state, workflowRunsById, workflowRunInvocationsByRunId };
             }),
+        applyWorkflowRunListMembershipPatch: ({ scope = getActiveServerAccountScope(), windowId, runIds, entered, sourceArtifactIdsByRunId }) =>
+            set((state) => {
+                const previous = state.workflowRunListWindows[windowId];
+                if (!previous) return state;
+                const workflowRunsById = mergeWorkflowRunBodies(state.workflowRunsById, entered, scope);
+                const kept = new Set(runIds);
+                const sources = Object.fromEntries(Object.entries({ ...previous.sourceArtifactIdsByRunId, ...sourceArtifactIdsByRunId })
+                    .filter(([id]) => kept.has(id)));
+                const window: WorkflowRunListWindow = { ...previous,
+                    runIds: sameStrictJsonValue(previous.runIds, runIds) ? previous.runIds : [...runIds],
+                    ...(previous.sourceArtifactIdsByRunId || Object.keys(sources).length > 0 ? {
+                        sourceArtifactIdsByRunId: previous.sourceArtifactIdsByRunId && sameStrictJsonValue(previous.sourceArtifactIdsByRunId, sources)
+                            ? previous.sourceArtifactIdsByRunId : sources,
+                    } : {}) };
+                const unchangedWindow = sameStrictJsonValue(previous, window);
+                const workflowRunInvocationsByRunId = reconcileRunInvocationObservations(state.workflowRunInvocationsByRunId,
+                    entered.flatMap((row) => workflowRunsById[workflowRunStoreKey(row.id, scope)] ?? []), scope);
+                if (unchangedWindow && workflowRunsById === state.workflowRunsById && workflowRunInvocationsByRunId === state.workflowRunInvocationsByRunId) return state;
+                return { ...state, workflowRunsById, workflowRunInvocationsByRunId,
+                    workflowRunListWindows: unchangedWindow ? state.workflowRunListWindows : { ...state.workflowRunListWindows, [windowId]: window } };
+            }),
         removeWorkflowRun: (runId, scope = getActiveServerAccountScope()) => set((state) => {
             const key = workflowRunStoreKey(runId, scope);
+            state.workflowRunReviewBuffers.delete(key);
             if (!(key in state.workflowRunsById)) return state;
             const workflowRunsById = { ...state.workflowRunsById };
             delete workflowRunsById[key];

@@ -604,6 +604,15 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         }
         expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
     });
+    it('retains the review draft and its reading after the Run route unmounts for Discussion', async () => {
+        routerMock.module.router.setParams({ invocationId: heldId });
+        const h = await harness({ runScreen: true, wait: true });
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')).not.toBeNull());
+        await change(h.screen, 'workflow-review-field-summary', 'Unsaved before Discuss');
+        await h.reopen();
+        await vi.waitFor(() => expect(h.screen.findByTestId('workflow-review-field-summary')?.props.value).toBe('Unsaved before Discuss'));
+        expect(h.operations.filter(op => op.operation === 'invocations.complete_review' || op.operation === 'invocations.publish_draft')).toHaveLength(0);
+    });
     it('continues a newly added Wait without requiring a result value', async () => {
         const h = await harness({ wait: true, fieldlessWait: true });
         expect(h.screen.findHostByTestId('workflow-review-editor')).toBeNull();

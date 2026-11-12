@@ -35,8 +35,8 @@ import { useWorkflowCardModal } from './useWorkflowCardModal';
 import { readWorkflowResultRows } from '../presentation/workflowResultReading';
 import { describeWorkflowInvocationLifecycle } from '../presentation/workflowLifecyclePresentation';
 
-export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string; editedAt?: number }>;
-export type WorkflowReviewReading = Readonly<{ value: JsonValue | undefined; revision: string }>;
+import type { WorkflowReviewDraft, WorkflowReviewReading } from '@/sync/store/domains/workflowRuns';
+export type { WorkflowReviewDraft, WorkflowReviewReading } from '@/sync/store/domains/workflowRuns';
 export type WorkflowReviewChoice = Readonly<{ expectedContentRevision: string }> & (
     | Readonly<{ mode: 'use_result'; value?: JsonValue }>
     | Readonly<{ mode: 'generate' }>

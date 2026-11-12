@@ -26,10 +26,8 @@ import { WorkflowReviewCard, decodeWorkflowReviewDraft, serializeWorkflowReviewV
     type WorkflowReviewCardProps, type WorkflowReviewDraft, type WorkflowReviewReading } from './WorkflowReviewCard';
 import { resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
 
-export type WorkflowInvocationReviewBuffers = Readonly<{
-    drafts: Map<string, WorkflowReviewDraft>;
-    readings: Map<string, WorkflowReviewReading>;
-}>;
+import type { WorkflowInvocationReviewBuffers } from '@/sync/store/domains/workflowRuns';
+export type { WorkflowInvocationReviewBuffers } from '@/sync/store/domains/workflowRuns';
 
 /** The selected exact-attempt UI owner. Typing stays here, not in the run/flow host. */
 export function WorkflowInvocationReview(props: Readonly<{

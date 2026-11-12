@@ -3,6 +3,7 @@ import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organiz
 import { readSessionOrganizationWorkspaceLabel } from '@/sync/domains/session/organization/viewState';
 import { requireSessionOrganizationMutationScope, writeSessionOrganizationWorkspaceLabels } from '@/sync/ops/sessionOrganization';
 import { registerSyncRuntime } from './sync';
+import { ViewDemandSync, type PeripheralFeed } from './engine/viewDemandSync';
 import { readAutomationRunHistoryDemand } from './domains/automations/automationRunHistoryDemand';
 import { type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
@@ -1510,11 +1511,11 @@ class Sync {
       private artifactBodyHydrations = createScopedBatchResolutionSingleFlight<PromiseSettledResult<void>>();
     private settingsSync: InvalidateSync;
     private profileSync: InvalidateSync;
-    private purchasesSync: InvalidateSync;
+    private purchasesSync: ViewDemandSync;
     private machinesSync: InvalidateSync;
     // Selection belongs to the incumbent invalidation queue; null demands discovery.
     private machineRefreshIds: Set<string> | null = null;
-    private nativeUpdateSync: InvalidateSync;
+    private nativeUpdateSync: ViewDemandSync;
     private artifactsSync: InvalidateSync;
     // Exact repairs and mounted censuses are independent demands on this queue:
     // a narrow census does not cover an arbitrary changed Artifact id.
@@ -1540,11 +1541,11 @@ class Sync {
     private artifactInventoryRefreshes: readonly Readonly<{
         controller: AbortController; selection: ArtifactInventorySelection | undefined;
     }>[] = [];
-    private friendsSync: InvalidateSync;
-    private feedSync: InvalidateSync;
+    private friendsSync: ViewDemandSync;
+    private feedSync: ViewDemandSync;
     private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private pendingOutboxOperationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    private todosSync: InvalidateSync;
+    private todosSync: ViewDemandSync;
     private automationsSync: InvalidateSync;
     // Stronger demand survives status-only arrivals, awaits and the queue's retry.
     private automationRunRefreshPending = false;
@@ -1553,7 +1554,7 @@ class Sync {
     // each in-flight reader so an older response cannot overwrite it later.
     private automationDefinitionTraversalToken: number | null = null;
     private automationRunTraversalTokensByAutomationId = new Map<string, number>();
-    private accountPetsSync: InvalidateSync;
+    private accountPetsSync: ViewDemandSync;
     private pluginAvailabilitySync: InvalidateSync;
     private readonly pluginAvailabilityProjectionHydrator =
         createActivePluginAccountAvailabilityProjectionHydrator();
@@ -1594,6 +1595,7 @@ class Sync {
     private lastRecalculationTime = 0;
     private machinesRefreshInFlight: Promise<void> | null = null;
     private lastMachinesRefreshAt = 0;
+    private fullMachinesReadInFlight: Promise<void> | null = null;
 
         constructor() {
         syncPerformanceTelemetry.configure({
@@ -1815,7 +1817,7 @@ class Sync {
                 shouldRetry,
             });
             this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
-            this.purchasesSync = new InvalidateSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
+            this.purchasesSync = new ViewDemandSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
             this.machinesSync = new InvalidateSync(async () => {
                 const ids = this.machineRefreshIds;
                 const generation = this.serverScopeGeneration;
@@ -1826,13 +1828,13 @@ class Sync {
                     throw error;
                 }
             }, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
-            this.nativeUpdateSync = new InvalidateSync(this.fetchNativeUpdate, { pause, backoff, shouldRetry });
+            this.nativeUpdateSync = new ViewDemandSync(this.fetchNativeUpdate, { pause, backoff, shouldRetry });
             this.artifactsSync = new InvalidateSync(this.refreshArtifacts, { pause, backoff, shouldRetry });
-            this.friendsSync = new InvalidateSync(this.fetchFriends, { pause, backoff, shouldRetry });
-            this.feedSync = new InvalidateSync(this.fetchFeed, { pause, backoff, shouldRetry });
-            this.todosSync = new InvalidateSync(this.fetchTodos, { pause, backoff, shouldRetry });
+            this.friendsSync = new ViewDemandSync(this.fetchFriends, { pause, backoff, shouldRetry });
+            this.feedSync = new ViewDemandSync(this.fetchFeed, { pause, backoff, shouldRetry });
+            this.todosSync = new ViewDemandSync(this.fetchTodos, { pause, backoff, shouldRetry });
             this.automationsSync = new InvalidateSync(this.fetchAutomations, { pause, backoff, shouldRetry });
-            this.accountPetsSync = new InvalidateSync(this.fetchAccountPets, { pause, backoff, shouldRetry });
+            this.accountPetsSync = new ViewDemandSync(this.fetchAccountPets, { pause, backoff, shouldRetry });
             this.pluginAvailabilitySync = new InvalidateSync(
                 () => refreshPluginAccountAvailabilityProjection(this.pluginAvailabilityProjectionHydrator),
                 { onError, onSuccess, onRetry, pause, backoff, shouldRetry },
@@ -2788,7 +2790,6 @@ class Sync {
         await Promise.all([
             this.settingsSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
             this.profileSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
-            this.purchasesSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
         ]);
         fireAndForget(
             refreshAuthenticatedServerFeaturesSnapshot({
@@ -3711,6 +3712,7 @@ class Sync {
             // retired together, so a new Account can never resolve a stale
             // private row through a window this reset forgot.
             workflowRunsById: {},
+            workflowRunReviewBuffers: new Map(),
             workflowRunListWindows: {},
             workflowRunInvocationsByRunId: {},
             automationRunIdsByAutomationId: {},
@@ -4548,7 +4550,11 @@ class Sync {
         await this.pluginAvailabilitySync.invalidateAndAwait({ settleOnFirstAttempt: true });
     };
 
-    public invalidateSessionListSnapshot = (serverId?: string | null): void => {
+    /** Content-addressed declaration bodies a consumer demands; the projection keeps identities only. */
+    public readPluginAccountDeclarationBodies = (pluginId: string, digests: readonly string[]) =>
+        this.pluginAvailabilityProjectionHydrator.readDeclarationBodies(pluginId, digests);
+
+    public invalidateSessionListSnapshot =(serverId?: string | null): void => {
         // Membership or deletion changes need a fresh list even when no read was in flight.
         if (this.retireSessionListSnapshot(serverId) === 'idle') this.sessionsSync.invalidate();
     };
@@ -7139,6 +7145,13 @@ class Sync {
         });
     }
 
+    /** Every reader joins the one queue; the Account lifetime hook releases mounted demand. */
+    acquirePeripheralFeed = (feed: PeripheralFeed): (() => void) => {
+        const queues = { friends: this.friendsSync, feed: this.feedSync, todos: this.todosSync,
+            accountPets: this.accountPetsSync, purchases: this.purchasesSync, nativeUpdate: this.nativeUpdateSync };
+        return queues[feed].acquire();
+    };
+
     refreshPurchases = () => {
         this.purchasesSync.invalidate();
     }
@@ -7157,6 +7170,8 @@ class Sync {
 
     purchaseProduct = async (productId: string): Promise<{ success: boolean; error?: string }> => {
         const shouldContinue = this.createServerScopeGuard();
+        try { await this.purchasesSync.read(); }
+        catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
         return await purchaseProductEngine({
             revenueCatInitialized: this.revenueCatInitialized,
             productId,
@@ -7166,11 +7181,15 @@ class Sync {
     }
 
     getOfferings = async (): Promise<{ success: boolean; offerings?: any; error?: string }> => {
+        try { await this.purchasesSync.read(); }
+        catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
         return await getOfferingsEngine({ revenueCatInitialized: this.revenueCatInitialized });
     }
 
     presentPaywall = async (): Promise<{ success: boolean; purchased?: boolean; error?: string }> => {
         const shouldContinue = this.createServerScopeGuard();
+        try { await this.purchasesSync.read(); }
+        catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
         return await presentPaywallEngine({
             revenueCatInitialized: this.revenueCatInitialized,
             trackPaywallPresented,
@@ -8643,16 +8662,13 @@ class Sync {
               };
           }
 
-          // Each peripheral publishes its own loading/error state. These queues
-          // and independent lists never wait for whole-Account draft recovery.
+          // Home and runtime inventories remain eager. Peripheral views acquire
+          // their existing queues only while they consume them.
           this.selectMachineRefresh();
           this.selectArtifactRefresh(undefined, 'load');
           this.pluginAvailabilityProjectionHydrator.requireFullRefresh();
           for (const syncUnit of [
-              this.accountPetsSync, this.machinesSync, this.artifactsSync,
-              this.pluginAvailabilitySync, this.purchasesSync,
-              this.todosSync, this.friendsSync,
-              this.feedSync, this.nativeUpdateSync,
+              this.machinesSync, this.artifactsSync, this.pluginAvailabilitySync,
           ]) syncUnit.invalidateCoalesced();
           this.requestAutomationsRefresh();
 
@@ -8768,11 +8784,15 @@ class Sync {
           return { status: isCurrent() && remaining.every(outcome => outcome.status === 'completed') ? 'complete' : 'error' };
       };
 
-    public refreshMachinesThrottled = async (params?: { staleMs?: number; force?: boolean }) => {
+    /**
+     * `asOf` is when the caller's demand began (a focus whose refresh waited for interactions):
+     * a full read completed within `staleMs` of that moment already answers it.
+     */
+    public refreshMachinesThrottled = async (params?: { staleMs?: number; force?: boolean; asOf?: number }) => {
         if (!this.credentials) return;
         const staleMs = params?.staleMs ?? 30_000;
         const force = params?.force ?? false;
-        const now = Date.now();
+        const now = Math.min(params?.asOf ?? Date.now(), Date.now());
 
         if (!force && (now - this.lastMachinesRefreshAt) < staleMs) {
             return;
@@ -8781,11 +8801,13 @@ class Sync {
         if (this.machinesRefreshInFlight) {
             return this.machinesRefreshInFlight;
         }
+        // An unforced refresh joins a full list read already in flight (the bootstrap census):
+        // its answer is newer than the demand, so a second full read adds nothing.
+        if (!force && this.fullMachinesReadInFlight) {
+            return this.fullMachinesReadInFlight;
+        }
 
         this.machinesRefreshInFlight = this.fetchMachines()
-            .then(() => {
-                this.lastMachinesRefreshAt = Date.now();
-            })
             .finally(() => {
                 this.machinesRefreshInFlight = null;
             });
@@ -9747,7 +9769,16 @@ class Sync {
         else if (this.machineRefreshIds !== null) for (const id of machineIds) this.machineRefreshIds.add(id);
     }
 
-    private fetchMachines = async (machineIds?: readonly string[]) => {
+    private fetchMachines = (machineIds?: readonly string[]): Promise<void> => {
+        if (machineIds) return this.fetchMachinesOnce(machineIds);
+        const read = this.fetchMachinesOnce().finally(() => {
+            if (this.fullMachinesReadInFlight === read) this.fullMachinesReadInFlight = null;
+        });
+        this.fullMachinesReadInFlight = read;
+        return read;
+    };
+
+    private fetchMachinesOnce = async (machineIds?: readonly string[]) => {
         if (!await this.awaitBootstrapForegroundAcquisition()) return;
         if (!this.credentials) return;
         const credentials = this.credentials;
@@ -9810,6 +9841,8 @@ class Sync {
             sourceServerId,
             onListComplete: () => {
                 if (!shouldContinue()) return;
+                // Every completed full list read is the throttle's last read, whoever issued it.
+                if (!machineIds) this.lastMachinesRefreshAt = Date.now();
                 storage.getState().markMachineListSettled(sourceServerId);
             },
             onListUnavailable: () => {
@@ -9899,6 +9932,7 @@ class Sync {
     }
 
     private applyTodoSocketUpdates = async (changes: any[]) => {
+        if (!this.todosSync.hasDemand()) return;
         const target = this.getAppliedTransportTarget();
         if (!this.credentials || !target) return;
         await applyTodoSocketUpdatesEngine({

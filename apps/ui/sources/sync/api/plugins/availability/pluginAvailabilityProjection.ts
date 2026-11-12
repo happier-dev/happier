@@ -4,6 +4,7 @@ import {
     PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAvailabilityMaterializationsReadActionOutputV1Schema,
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
+    type PluginAccountDeclarationBodyV1,
 } from '@happier-dev/protocol/plugins/availability';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
 
@@ -75,6 +76,12 @@ export type ActivePluginAccountAvailabilityProjectionHydrator = Readonly<{
     refresh: (options?: Readonly<{
         canMergePlugins?: (scope: ServerAccountScope) => boolean;
     }>) => Promise<ActivePluginAccountAvailabilityRefresh | null>;
+    /**
+     * Content-addressed release-less declaration bodies for the named digests,
+     * each admitted once by this read; empty after scope retirement. Currentness
+     * stays with the projection: a digest names immutable content.
+     */
+    readDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<readonly PluginAccountDeclarationBodyV1[]>;
 }>;
 
 function scopesEqual(left: ServerAccountScope | null, right: ServerAccountScope): boolean {
@@ -128,26 +135,25 @@ function defaultDependencies(): ActivePluginAccountAvailabilityProjectionHydrato
     };
 }
 
+/** Returns the unadmitted page body: the caller admits it only while its read is still current. */
 async function postIntentList(
     authority: ProjectionRequestAuthority,
     knownPluginIds: readonly string[],
     signal: AbortSignal,
     scope: ServerAccountScope,
     cursor?: string,
-): Promise<ReturnType<typeof PluginAvailabilityIntentsListActionOutputV1Schema.parse>> {
+): Promise<unknown> {
     const path = PluginAvailabilityActionHttpPathsV1[
         'account.plugins.availability.intents.list'
     ];
-    return parsePluginAvailabilityResponse(PluginAvailabilityIntentsListActionOutputV1Schema,
-        await postJson(authority, path, {
-            // The server merges these identities with its own next page. One
-            // lookahead identity lets it own continuation without resending
-            // the entire materialized/remembered inventory on every request.
-            knownPluginIds: knownPluginIds.filter(pluginId => !cursor || pluginId > cursor)
-                .slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
-            ...(cursor ? { cursor } : {}),
-        }, signal, 'intent_census', scope), 'intent_census', scope,
-    );
+    return await postJson(authority, path, {
+        // The server merges these identities with its own next page. One
+        // lookahead identity lets it own continuation without resending
+        // the entire materialized/remembered inventory on every request.
+        knownPluginIds: knownPluginIds.filter(pluginId => !cursor || pluginId > cursor)
+            .slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1),
+        ...(cursor ? { cursor } : {}),
+    }, signal, 'intent_census', scope);
 }
 
 /**
@@ -262,16 +268,19 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         intentOutcomes: ReturnType<typeof readNamedIntents>,
     ): Promise<ActivePluginAccountAvailabilityRefresh | 'incomplete' | null> => {
         const scope = lifetime.scope;
-        const materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema, await postJson(
+        const materializationsBody = await postJson(
             authority,
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             { pluginIds },
             signal,
             'materializations',
             scope,
-        ), 'materializations', scope);
+        );
         const outcomes = await intentOutcomes;
+        // Admission (manifest validation) is the cost of a read: a superseded body is dropped unread.
         if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
+        const materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+            materializationsBody, 'materializations', scope);
         if (materializations.inventoryComplete === false) return 'incomplete';
         const failedPluginIds: string[] = [];
         const intentReads: PluginAccountAvailabilitySnapshot['intentReads'][number][] = [];
@@ -350,15 +359,18 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                 // An omitted Machine cannot be merged row-level: read everything.
             }
 
-            const materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema, await postJson(
+            const materializationsBody = await postJson(
                 capturedAuthority,
                 PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
                 {},
                 controller.signal,
                 'materializations',
                 lifetime.scope,
-            ), 'materializations', lifetime.scope);
+            );
+            // Admission (manifest validation) is the cost of a read: a superseded body is dropped unread.
             if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
+            const materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+                materializationsBody, 'materializations', lifetime.scope);
 
             const pluginIds = new Set(knownPluginIds);
             for (const snapshot of materializations.snapshots) {
@@ -379,14 +391,16 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
             do {
                 let page: ReturnType<typeof PluginAvailabilityIntentsListActionOutputV1Schema.parse>;
                 try {
-                    page = await postIntentList(capturedAuthority, sortedPluginIds, controller.signal, lifetime.scope, cursor);
+                    const body = await postIntentList(capturedAuthority, sortedPluginIds, controller.signal, lifetime.scope, cursor);
+                    if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
+                    page = parsePluginAvailabilityResponse(PluginAvailabilityIntentsListActionOutputV1Schema, body,
+                        'intent_census', lifetime.scope);
                 } catch (error) {
                     if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
                     if (isPluginAvailabilityResponseFailure(error)) terminalFailure = error;
                     intentCensusIncomplete = true;
                     break;
                 }
-                if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
                 for (const pluginId of page.pluginIds) pluginIds.add(pluginId);
                 for (const pluginId of page.failedPluginIds) {
                     pluginIds.add(pluginId);
@@ -471,5 +485,31 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         }
     };
 
-    return Object.freeze({ invalidate, requestPlugins, requireFullRefresh, reset, refresh });
+    const readDeclarationBodies = async (pluginId: string, digests: readonly string[]): Promise<readonly PluginAccountDeclarationBodyV1[]> => {
+        const lifetime = dependencies.captureLifetime();
+        if (!lifetime || !lifetime.isCurrent() || digests.length === 0) return [];
+        const controller = new AbortController();
+        const retirement = lifetime.onRetire(() => controller.abort());
+        let authority: ProjectionRequestAuthority | null = null;
+        try {
+            authority = await dependencies.captureRequestAuthority(lifetime.scope);
+            const body = await postJson(authority, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
+                { pluginId, declarationDigests: digests }, controller.signal, 'intent_census', lifetime.scope);
+            if (!lifetime.isCurrent()) return [];
+            const response = parsePluginAvailabilityResponse(PluginAvailabilityIntentReadActionOutputV1Schema, body,
+                'intent_census', lifetime.scope);
+            assertIntentResponseIdentity({ pluginId, response }, lifetime.scope);
+            const requested = new Set(digests);
+            return Object.freeze((response.declarationBodies ?? []).filter(entry => requested.has(entry.declarationDigestSha256)
+                && entry.manifest.id === pluginId));
+        } catch (error) {
+            if (!lifetime.isCurrent()) return [];
+            throw error;
+        } finally {
+            await authority?.release?.();
+            retirement.dispose();
+        }
+    };
+
+    return Object.freeze({ invalidate, requestPlugins, requireFullRefresh, reset, refresh, readDeclarationBodies });
 }

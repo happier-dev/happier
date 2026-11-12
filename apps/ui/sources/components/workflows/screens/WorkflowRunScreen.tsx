@@ -409,7 +409,11 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         [mountedRef],
     );
     const [contentScopeKey, setContentScopeKey] = React.useState<string | null>(null);
-    const reviewBuffers = React.useMemo<WorkflowInvocationReviewBuffers>(() => ({ drafts: new Map(), readings: new Map() }), [contentIdentity]);
+    const reviewBufferOwner = getStorage()((state) => state.workflowRunReviewBuffers);
+    const reviewBuffers = React.useMemo<WorkflowInvocationReviewBuffers>(
+        () => getStorage().getState().getWorkflowRunReviewBuffers(runId ?? '', activeAccountScope),
+        [contentIdentity, reviewBufferOwner],
+    );
     // The review card retires after Use; its confirmation belongs to the Run.
     const [acceptedReview, setAcceptedReview] = React.useState<Readonly<{ contentIdentity: string; invocationId: string }> | null>(null);
     const contentScopeKeyRef = React.useRef(contentScopeKey);
