@@ -1,5 +1,6 @@
-import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
+import { requireExternalActionHeaders, createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDefaults';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
 import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
@@ -109,7 +110,7 @@ import { createPrepareEnvironmentContentForHost } from '@/deployments/prepareEnv
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { isDeploymentReadActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -256,9 +257,14 @@ function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOpti
 }
 
 export type ControllerDeploymentMutationActionId =
-  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1;
+  'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 | typeof DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
 
 export function isControllerDeploymentMutationAction(actionId: string, input: unknown): actionId is ControllerDeploymentMutationActionId {
+  if (actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
+    const parsed = DeploymentActionInputSchemasV1[DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1].safeParse(input);
+    return parsed.success && 'set' in parsed.data
+      && parsed.data.set.some(binding => binding.purpose === 'dataRole' && 'service' in binding);
+  }
   return actionId === 'deployments.deploy' || actionId === 'deployments.rollback'
     || actionId === 'deployments.promote' || actionId === 'deployments.teardown'
     || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
@@ -1155,6 +1161,28 @@ export function createCliActionDeps(params: CliActionDepsParams,
         // custody instead of re-entering controller placement from the SDK.
         const execution = await authorization.requesterAccountExecutor.execute(actionId, input, context);
         return execution.ok ? DeploymentActionOutputSchemasV1[actionId].parse(execution.result) : execution;
+      }
+      if (actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 && 'mode' in input && input.mode === 'preview'
+        && input.defaultsFor === 'alerts' && getActionSpec(actionId).safetyForInput?.(input) === 'safe') {
+        if (!params.credentials) return executionRunActionFailure('client_required');
+        try {
+          return await prepareCliDeploymentAlertDefaults(input, context, {
+            credentials: params.credentials, serverId: input.serverId, serverHttpBaseUrl: todoHomeBaseUrl,
+            ...(params.savedSecretOperationContext ? { savedSecretOperationContext: params.savedSecretOperationContext } : {}),
+            readEnvironment: () => deploymentStorage('deployments.environments.get', {
+              serverId: input.serverId, environmentId: input.environmentId,
+            }, context),
+            assertCurrent: assertDeploymentReadCurrent, open: openDeploymentArtifact,
+            async headers(readContext, actionId, request) {
+              const headers = await resolveAccountStorageHeaders(readContext, actionId, request);
+              if (!headers) throw createExternalActionHeaderRefusalError();
+              return headers;
+            },
+          });
+        } catch (error) {
+          return projectDeploymentFailure(error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'deployment_content_unavailable', error);
+        }
       }
       if (actionId === 'deployments.publish.prepare') {
         const selected = DeploymentActionInputSchemasV1[actionId].parse(input);

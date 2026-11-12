@@ -2,7 +2,6 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
-import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -16,6 +15,9 @@ import { updateSettings } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionDeps } from './createCliActionDeps';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -31,13 +33,12 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
         } }));
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: 'srv_home', owner: { kind: 'account', accountId: 'owner' } }) });
         const environment = detail.environment;
-        const defaults = resolveDeploymentCreationDefaultsV1({ projectSourceId: environment.projectSourceId,
-            projectOwner: { kind: 'account', accountId: 'owner' },
-            projectDefaults: { projectSourceId: environment.projectSourceId, deploymentDefaults: { alertChannels: [] } },
-            account: { accountId: 'owner', defaults: { alertChannels: [{ channelId: 'account-channel' }] } },
-            target: { kind: 'ownServer', machines: [environment.controllerMachineId] } });
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://home.test',
+            snapshot: { source: 'network', settings: accountSettingsParse({ deploymentDefaultsV1: { alertChannels: [{ channelId: 'account-channel' }] } }),
+                settingsVersion: 1, loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] },
+            isCurrent: async () => true });
         const updates: unknown[] = [];
         // Only Home HTTP is replaced: Account admission, opened Environment
         // content preparation and the canonical deployment router remain real.
@@ -66,15 +67,20 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
             const path = new URL(request.url!).pathname;
             if (request.method?.toUpperCase() === 'GET' && path === `/v1/deployments/environments/${environment.id}`)
                 return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+            if (path === `/v1/projects/sources/${environment.projectSourceId}`) return { status: 200, data: { ok: true, canManage: true,
+                source: { id: environment.projectSourceId, revision: 1, name: 'Project', owner: environment.owner,
+                    audience: [], createdByAccountId: 'owner' } } };
+            if (path === `/v1/projects/${environment.projectSourceId}/deployment-defaults`) return { status: 200, data: { ok: true,
+                projectSourceId: environment.projectSourceId, sourceRevision: 1, revision: 0, content: null } };
             if (request.method?.toUpperCase() === 'PATCH' && path === `/v1/deployments/environments/${environment.id}`) {
                 updates.push(request.data);
-                return { status: 200, data: { ok: true, environmentId: environment.id, revision: environment.revision,
-                    creationDefaults: defaults } };
+                return { status: 200, data: { ok: true, environmentId: environment.id, revision: environment.revision } };
             }
             throw new Error(`Unexpected defaults request ${request.method} ${path}`);
         });
         const deps = createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
-            serverId: profileId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test' });
+            serverId: profileId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
+            savedSecretOperationContext: operationContext });
         const context = { surface: 'plugin', authority: 'account_automation', runtimeAccountId: 'owner',
             actionRequestId: 'health-defaults', actionCaller: { kind: 'plugin', pluginId: 'happier.machine.services',
                 contribution: { id: 'health/setup', qualifiedId: 'happier.machine.services/health/setup' }, occurrenceId: 'current' },
@@ -84,22 +90,23 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
             contentBodyVersion: environment.contentBodyVersion, defaultsFor: 'alerts' as const };
         const preview = await deps.deploymentAction!('deployments.environments.update', { ...input, mode: 'preview' }, context);
         expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true, creationDefaults: {
-            values: { alertChannels: [] } } });
-        expect(updates).toEqual([expect.objectContaining({ mode: 'preview', defaultsFor: 'alerts' })]);
+            values: { alertChannels: [{ channelId: 'account-channel' }] } } });
+        expect(updates).toEqual([]);
         expect(creates).toEqual([]);
         expect(await deps.deploymentAction!('deployments.environments.update', { ...input, mode: 'apply' }, context))
             .toMatchObject({ ok: false, errorCode: 'deployment_executor_unavailable' });
         expect(await deps.deploymentAction!('deployments.environments.update', { ...input, mode: 'preview', expectedRevision: -1 }, context))
             .toMatchObject({ ok: false, errorCode: 'deployment_executor_unavailable' });
-        expect(updates).toHaveLength(1);
+        expect(updates).toHaveLength(0);
         expect(creates).toEqual([]);
 
         const pluginId = HEALTH_CHECK_EVENT_REFS_V1.failed.pluginId;
         const machineId = environment.controllerMachineId;
         const origin = { serverIdentityId: 'srv_home', machineId };
         const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [pluginId],
+            externalActionHomeBinding: { serverId: profileId, serverIdentityId: 'srv_home' },
             resolveCurrentMachineId: () => machineId, resolveCurrentMachineExecutionOriginContext: () => origin,
-            scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
+            scopedActionRuntime: { credentials, savedSecretOperationContext: operationContext, actionsSettingsProvider: createActionSettingsProvider({
                 getAccountSettings: () => null, allowEnvironmentOverride: false }) },
         } });
         try {
@@ -121,9 +128,9 @@ it('serves Environment alert-defaults preview for a plugin caller while retainin
             }, { signal: new AbortController().signal, callerAuthority: 'present_user' });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { mode: 'preview',
                 sourceConfig: { subject: { kind: 'environment', environmentId: environment.id },
-                    alerts: { channels: [], phases: ['open', 'recovered'] } },
+                    alerts: { channels: [{ channelId: 'account-channel' }], phases: ['open', 'recovered'] } },
                 destinationSelectionContext: { serverId: profileId, machineId } } });
-            expect(updates).toHaveLength(2);
+            expect(updates).toHaveLength(0);
             expect(creates).toEqual([]);
         } finally { await runtime.dispose(); }
     });
