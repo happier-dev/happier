@@ -15,7 +15,7 @@ describe('machine guard Action front door', () => {
       expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'agent' })).toBe(false);
       const spec = getActionSpec(actionId);
       expect(spec.surfaces).toMatchObject({ ui: true, cli: true, mcp: true, agent: true, rpc: true });
-      expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: id.endsWith('get') || id.endsWith('list') ? 'use' : 'custodian_only' });
+      expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: id === 'machines.guard.activity.undo' ? 'manage' : 'use' });
     }
     const calls: unknown[] = [];
     // The Machine RPC transport is a system boundary; the Action dispatcher and admission remain real.
@@ -38,7 +38,7 @@ describe('machine guard Action front door', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'agent' })).toBe(true);
     expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'cli' })).toBe(false);
-    expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: 'custodian_only' });
+    expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: 'manage' });
     expect(spec.inputSchema.parse({ machineId: 'machine', sessionId: 'session', bytes: Number.MAX_SAFE_INTEGER })).toMatchObject({ bytes: Number.MAX_SAFE_INTEGER });
     expect(spec.inputSchema.parse({ machineId: 'machine', sessionId: 'session', bytes: null })).toMatchObject({ bytes: null });
     for (const bytes of [0, -1, 1.5, Infinity]) expect(spec.inputSchema.safeParse({ machineId: 'machine', sessionId: 'session', bytes }).success).toBe(false);

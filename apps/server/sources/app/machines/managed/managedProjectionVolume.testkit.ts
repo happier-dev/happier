@@ -6,7 +6,7 @@ import fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { expect, vi } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
-import { ManagedAdmissionOutputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { db } from '@/storage/db';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import * as prisma from '@/storage/prisma';
@@ -246,9 +246,11 @@ export async function exerciseManagedProjectionVolume() {
     app.setSerializerCompiler(serializerCompiler);
     // Authentication is the substituted system boundary; all managed authority checks remain real.
     app.decorate('authenticate', async (request: FastifyRequest) => {
+        const actionId = request.url === managedMachineActionEndpointPathV1('machines.managed.cancel')
+            ? 'machines.managed.cancel' : 'machines.managed.acquire';
         Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
             externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
-            externalActionEffectActionId: 'machines.managed.acquire', externalActionExecutionRequestId: 'volume-create',
+            externalActionEffectActionId: actionId, externalActionExecutionRequestId: 'volume-create',
             externalActionExecutionRequestEnvelopeDigest: 'volume-admitted-envelope',
             externalActionExecutionCustodianAccountId: account.id }),
         { headers: request.headers, params: request.params, query: request.query });
@@ -290,17 +292,18 @@ export async function exerciseManagedProjectionVolume() {
             .toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent', intentRevision: 1 });
         // Observable resource contract: unrelated plugin manifests must never enter a managed projection.
         // This distinguishes query pushdown from merely discarding unrelated results after loading them.
-        for (const result of [...lists, create, cancel]) {
-            const fetchedPluginIds = result.queries.flatMap(query => query.pluginIds);
-            expect(fetchedPluginIds.length).toBeGreaterThan(0);
-            expect([...new Set(fetchedPluginIds)]).toEqual([manifest.id]);
-        }
-        // Declaration transfer depends on the distinct provider/controller pair, not retained row count.
+        const fetchedPluginIds = create.queries.flatMap(query => query.pluginIds);
+        expect(fetchedPluginIds.length).toBeGreaterThan(0);
+        expect([...new Set(fetchedPluginIds)]).toEqual([manifest.id]);
+        // Listing and unsubmitted cancellation use retained row state alone.
+        expect(lists.map(list => list.queries.flatMap(query => query.pluginIds)))
+            .toEqual(lists.map(() => []));
+        expect(cancel.queries.flatMap(query => query.pluginIds)).toEqual([]);
+        // Retained listing transfers no declarations, regardless of row count.
         const declarationBytes = (queries: QueryMeasurement[]) => queries
             .filter(query => query.model === 'accountPluginIntent' || query.model === 'accountPluginRelease')
             .reduce((sum, query) => sum + query.bytes, 0);
-        expect(lists.map(list => declarationBytes(list.queries)))
-            .toEqual(lists.map(() => declarationBytes(lists[0].queries)));
+        expect(lists.map(list => declarationBytes(list.queries))).toEqual(lists.map(() => 0));
         // A retained row from an old installation must not inherit the current
         // installation's declared schema merely because its provider is the same.
         const orphan = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,

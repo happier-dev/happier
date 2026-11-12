@@ -55,6 +55,41 @@ describe('Machine current access (real SQLite)', () => {
         return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
     };
 
+    it('shares batch facts while preserving operation-specific Manage refusals and requester identity', async () => {
+        const f = await fixture();
+        const requester = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const actor = { actorAccountId: requester.id, machineId: f.machine.id };
+        const request = { actorAccountId: requester.id, machineIds: [f.machine.id], requiredRole: 'manage' as const };
+        const batch = await inTx(tx => access.resolveMachineAdmissionsInTx(tx, request));
+        expect(batch.get(f.machine.id)).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        expect(batch.get(f.machine.id)).toEqual(await inTx(tx => access.resolveMachineAdmissionInTx(tx, { ...actor, requiredRole: 'manage' })));
+        expect((await inTx(tx => access.resolveMachineAdmissionsInTx(tx, { ...request, requiredRole: 'use' }))).get(f.machine.id))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use' });
+        await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        expect((await inTx(tx => access.resolveMachineAdmissionsInTx(tx, request))).get(f.machine.id))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'manage' });
+    });
+
+    it('acquires encrypted recipient material once for a batch while refusing missing envelopes', async () => {
+        const first = await fixture('e2ee');
+        const second = await fixture('e2ee');
+        const recipient = await account('e2ee');
+        for (const f of [first, second]) await grant(f.owner.id, f.machine.id, recipient.id);
+        await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machine', 'account', 'machineKeyEnvelope']);
+            const decisions = await access.resolveMachineAdmissionsInTx(observed.tx, {
+                actorAccountId: recipient.id, machineIds: [first.machine.id, second.machine.id],
+            });
+            expect([...decisions.values()]).toEqual([
+                { kind: 'denied', code: 'recipient_key_pending' }, { kind: 'denied', code: 'recipient_key_pending' },
+            ]);
+            expect(observed.reads.filter(read => read === 'account.findUnique')).toHaveLength(1);
+            expect(observed.reads.filter(read => read === 'machineKeyEnvelope.findMany')).toHaveLength(1);
+            expect(observed.reads.filter(read => read === 'machine.findMany')).toHaveLength(2);
+        });
+    });
+
     it('admits Machine storage administration and skill installation for Manage, refusing Use and foreign Accounts', async () => {
         const f = await fixture();
         const viewer = await account();
@@ -333,12 +368,12 @@ describe('Machine current access (real SQLite)', () => {
             actionId: 'localServices.actions.copyUrl' })).toMatchObject({ kind: 'admitted', role: 'use' });
     });
 
-    it('distinguishes custodian-only policy from a daemon upgrade requirement', async () => {
+    it('admits requester-scoped sync reads while distinguishing a daemon upgrade requirement', async () => {
         const f = await fixture();
         const requester = await account();
         await grant(f.owner.id, f.machine.id, requester.id);
         expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
-            rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST })).toEqual({ kind: 'denied', code: 'custodian_only' });
+            rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST })).toMatchObject({ kind: 'admitted', role: 'use' });
         await db.machine.update({ where: { id: f.machine.id }, data: { operationProtocolCapabilities: {} } });
         expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
             actionId: 'session.spawn_new' })).toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
@@ -427,10 +462,10 @@ describe('Machine current access (real SQLite)', () => {
                     actionId })).toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
             }
         }
-        for (const actorAccountId of [viewer.id, manager.id]) {
-            expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id,
-                actionId: 'plugins.npm_registry_profiles.list' })).toEqual({ kind: 'denied', code: 'custodian_only' });
-        }
+        expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id,
+            actionId: 'plugins.npm_registry_profiles.list' })).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id,
+            actionId: 'plugins.npm_registry_profiles.list' })).toMatchObject({ kind: 'admitted', role: 'manage' });
         expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id,
             actionId: 'plugins.npm_registry_profiles.list' })).toMatchObject({ kind: 'admitted', role: 'manage' });
     });
@@ -664,9 +699,10 @@ describe('Machine current access (real SQLite)', () => {
             }));
             expect(foreign.emitWithAck).not.toHaveBeenCalled();
         }
-        expect(await foreign.call(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, { transferRouting: true })).toHaveBeenCalledWith(
-            expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(foreign.emitWithAck).not.toHaveBeenCalled();
+        expect(await foreign.call(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, { transferRouting: true })).toHaveBeenCalledWith({
+            ok: true, result: { status: 'predecessor-session-effect' },
+        });
+        foreign.emitWithAck.mockClear();
         expect(await foreign.call(RPC_METHODS.CAPABILITIES_DESCRIBE)).toHaveBeenCalledWith({
             ok: true, result: { status: 'predecessor-session-effect' },
         });
@@ -804,7 +840,8 @@ describe('Machine current access (real SQLite)', () => {
         expect(admitted.get(owned.machine.id)).toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: owned.owner.id });
         expect(admitted.get(shared.machine.id)).toMatchObject({ kind: 'admitted', role: 'use', custodianAccountId: shared.owner.id });
         expect(admitted.get(hidden.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
-        expect(admitted.get(revoked.id)).toEqual({ kind: 'denied', code: 'machine_unavailable' });
+        expect(admitted.get(revoked.id)).toEqual({ kind: 'denied', code: 'machine_unavailable',
+            diagnostic: { reason: 'machine_revoked', requiredFact: 'machine_registration', remedy: 'register_machine' } });
         expect(admitted.get(missingId)).toEqual({ kind: 'denied', code: 'access_denied' });
         await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: shared.owner.id,
             machineId: shared.machine.id, principal: { kind: 'account', accountId: owned.owner.id } }));
@@ -952,7 +989,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await access.resolveMachineAdmission({ ...actor, actionId: 'template.instantiate', requiredRole: 'manage' }))
             .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         expect(await access.resolveMachineAdmission({ ...actor, actionId: 'plugins.npm_registry_profiles.list' }))
-            .toEqual({ kind: 'denied', code: 'custodian_only' });
+            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
             principal: { kind: 'account', accountId: requester.id } }));
         for (const actionId of ['session.spawn_new', 'template.instantiate']) {
@@ -1050,7 +1087,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: { status: 'source-result' } });
     });
 
-    it('delivers Machine-wide run inventory only for the owner and current Manage grantees', async () => {
+    it('delivers requester-scoped run inventory at Use and refuses a withdrawn grant', async () => {
         const f = await fixture();
         const requester = await account();
         await grant(f.owner.id, f.machine.id, requester.id);
@@ -1072,12 +1109,11 @@ describe('Machine current access (real SQLite)', () => {
             return reply;
         };
         expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: inventory });
-        const ownedReads = emitWithAck.mock.calls.length;
-        expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(emitWithAck).toHaveBeenCalledTimes(ownedReads);
+        expect(await call(requester.id)).toHaveBeenCalledWith({ ok: true, result: inventory });
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');
         expect(await call(requester.id)).toHaveBeenCalledWith({ ok: true, result: inventory });
-        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
+            principal: { kind: 'account', accountId: requester.id } }));
         const managedReads = emitWithAck.mock.calls.length;
         expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).toHaveBeenCalledTimes(managedReads);
