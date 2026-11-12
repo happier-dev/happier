@@ -50,6 +50,7 @@ import { DeploymentBackupAnotherMachineSetupV1Schema, type DeploymentBackupAnoth
 import { sourceWord } from './DeploymentCreationDefaultsRows';
 import { formatAutomationScheduleLabel } from '@/components/automations/list/automationListFormatting';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
@@ -131,6 +132,7 @@ export function DeploymentBackupControls(props: Readonly<{
           <SectionActionButton testID={`${props.testID}.verify`} title={t('projects.deployments.backupVerify')}
             disabled={change.running} onPress={inspect} />
         } />
+      <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
       {change.running ? <Item title={t('projects.deployments.loading')} mode="info" /> : null}
       {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
       {change.outcome ? <DeployOutcomeBanner controller={change.banner}
@@ -401,7 +403,7 @@ const destinationFieldOptions = buildSessionActionFieldOptionsResolver({});
 
 type BackupDestination = NonNullable<NonNullable<ReturnType<typeof usePluginUiProjectionCurrentness>['pluginUiProjection']>['backupDestinationsById']>[string];
 
-type BackupConfigurePreparation = Exclude<DeploymentBackupConfigureInputV1, { intent: 'markNotNeeded' }>;
+type BackupConfigurePreparation = Exclude<DeploymentBackupConfigureInputV1, { intent: 'markNotNeeded' | 'rekeyAndSave' }>;
 type BackupConfigureDraft = Omit<BackupConfigurePreparation, 'serverId' | 'environmentId' | 'expectedRevision'>;
 type BackupDefaults = Awaited<ReturnType<ActionsFactory['prepareConfigurationDefaults']>>;
 
@@ -709,7 +711,7 @@ export function DeploymentBackupConfigurationResult(props: Readonly<{
       title={t(`projects.deployments.settingsSections.${result.review.capacity.status === 'known' ? 'setupCapacityKnown' : 'setupCapacityUnknown'}`)}
       detail={result.review.capacity.status === 'known' ? formatMachineBytes(result.review.capacity.freeBytes, 'storage') : undefined}
       subtitle={result.review.capacity.status === 'known' ? [props.machine, result.review.capacity.volume?.label,
-        result.review.capacity.volume?.mount ?? result.review.capacity.path, formatAsOfTime(result.review.capacity.observedAt)].filter(Boolean).join(' · ')
+        result.review.capacity.volume?.mountPath ?? result.review.capacity.path, formatAsOfTime(result.review.capacity.observedAt)].filter(Boolean).join(' · ')
         : `${props.machine} · ${result.review.capacity.path} · ${result.review.capacity.reason}`} /> : null}
     {result?.kind === 'tested' ? <Item testID={`${id}.tested`} title={testOutcome(result.test).line} mode="info" /> : null}
     {result?.kind === 'needsBinding' ? <Item testID={`${id}.needsBinding`} title={t('projects.deployments.settingsSections.credentialMissing')}
@@ -772,6 +774,17 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
   );
 }
 
+/** The starter editor owns destination/check selection, grants and scheduling; opening it has no effects. */
+function DeploymentRestoreDrillRow(props: Readonly<{ serverId: string; testID: string }>) {
+  const router = useRouter();
+  const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'restore-drill');
+  if (!starter) return null;
+  return <Item title={t(starter.titleKey)} subtitle={t(starter.descriptionKey)} mode="info"
+    rightElement={<SectionActionButton testID={props.testID} title={t('common.open')}
+      onPress={() => router.push({ pathname: WORKFLOWS_NEW_ROUTE,
+        params: { example: starter.key, serverId: props.serverId } })} />} />;
+}
+
 /**
  * Backup schedules for the stable Environment, read and added through the trigger owner.
  */
@@ -820,6 +833,7 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
   const status = schedules === undefined ? t('common.unavailable') : schedules.length > 0
     ? schedules.join(' · ') : t('projects.deployments.settingsSections.scheduleOff');
   return (
+    <>
     <Item
       testID={`${props.testID}.schedule`}
       title={t('projects.deployments.settingsSections.scheduleTitle')}
@@ -830,6 +844,8 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
           title={t('projects.deployments.settingsSections.scheduleTurnOn')} disabled={adding} onPress={turnOn} />
       ) : undefined}
     />
+    <DeploymentRestoreDrillRow serverId={props.detail.environment.serverId} testID={`${props.testID}.drill`} />
+    </>
   );
 }
 

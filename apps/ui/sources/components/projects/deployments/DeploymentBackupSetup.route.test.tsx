@@ -27,9 +27,10 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 const modal = vi.hoisted(() => ({ show: vi.fn(() => 'backup-setup') }));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: modal }).module);
-const route = vi.hoisted(() => ({ environmentId: 'environment-staging' }));
+const route = vi.hoisted(() => ({ environmentId: 'environment-staging', push: vi.fn() }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
   params: () => ({ deploymentEnvironment: route.environmentId, deploymentSetup: 'backups' }),
+  router: { push: route.push },
 }).module);
 const transport = vi.hoisted(() => ({ read: vi.fn() }));
 // The daemon RPC is the only substituted producer; catalog admission and setup remain real.
@@ -49,6 +50,23 @@ const { MachineSetupRecipeInputs } = await import('@/components/settings/machine
 const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
 afterEach(() => { standardCleanup(); modal.show.mockClear(); transport.read.mockReset(); });
 
+it('opens the canonical restore-drill starter for this Home without starting a restore', async () => {
+  const detail = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
+    destinationRef: SFTP_BACKUP_DESTINATION_REF_V1, occurrenceId: 'sftp', config: {}, credentialBindings: [],
+    sources: [{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }],
+    ownership: { environmentId: detail.environment.id, prefix: '' }, retention: { kind: 'keepEverything' } });
+  const screen = await renderScreen(<DeploymentBackupScheduleRow detail={detail} configuration={configuration}
+    actions={null} testID="backups" />);
+  try {
+    await screen.pressByTestIdAsync('backups.drill');
+    expect(route.push).toHaveBeenCalledWith({ pathname: '/workflows/new', params: {
+      example: 'restore-drill', serverId: detail.environment.serverId,
+    } });
+    expect(transport.read).not.toHaveBeenCalled();
+  } finally { await screen.unmount(); route.push.mockClear(); }
+});
+
 it('shows unknown local capacity before effects and keeps zero capacity eligible for Keep everything', async () => {
   const initial = createDeploymentEnvironmentDetailV1();
   const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
@@ -58,7 +76,8 @@ it('shows unknown local capacity before effects and keeps zero capacity eligible
     pluginVersion: PLUGIN_MANIFEST.version, definition };
   const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async input => input.intent === 'test'
     ? { kind: 'tested', test: { kind: 'reachable', repositoryId: 'a'.repeat(64) },
-      review: { capacity: { status: 'known', path: '/backups', freeBytes: 0, observedAt: 1794300000000 } } }
+      review: { capacity: { status: 'known', path: '/backups/repository', freeBytes: 0, observedAt: 1794300000000,
+        volume: { volumeId: 'archive', mountPath: '/archive-disk', label: 'Archive' } } } }
     : { kind: 'configured', environmentId: detail.environment.id, revision: 2,
       configuration: DeploymentBackupConfigurationV1Schema.parse(input.configuration) });
   const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}
@@ -72,6 +91,8 @@ it('shows unknown local capacity before effects and keeps zero capacity eligible
     await act(async () => screen.findAllByType(HappierInputField).find(field => field.props.field.path === 'path')!.props.onChange('/backups'));
     await screen.pressByTestIdAsync('local-setup.test');
     expect(screen.getTextContent()).toContain(formatMachineBytes(0, 'storage'));
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'local-setup.capacity')?.props.subtitle)
+      .toContain('/archive-disk');
     await screen.pressByTestIdAsync('local-setup.save');
     expect(configure).toHaveBeenLastCalledWith(expect.objectContaining({ intent: 'save',
       configuration: expect.objectContaining({ retention: { kind: 'keepEverything' } }) }));
