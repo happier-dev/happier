@@ -664,10 +664,9 @@ describe('New Session purpose catalog authority', () => {
         };
         const connection = await restoreServerAccountForTest({ serverUrl: focusedUrl, accountId: focusedAccountId, request });
         const target = await upsertServerProfileOnly({ serverUrl: targetUrl, name: 'Target Home' });
-        let targetSignedIn = true;
-        // Device credential storage is the external boundary; credential resolution and retirement remain real.
-        const credentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) =>
-            url === targetUrl ? targetSignedIn ? targetCredentials : null : url === focusedUrl ? connection.credentials : null);
+        // A profile notification may start a shared credential read (53135463ad00).
+        // Publish the real storage mutation so an earlier absent read is retired.
+        expect(await TokenStorage.setCredentialsForServerUrl(targetUrl, { serverId: target.id }, targetCredentials)).toBe(true);
         setRuntimeFetch(request);
         const focusedScope = { serverId: connection.home.id, accountId: focusedAccountId };
         storage.setState({ profileScope: focusedScope, profile: AccountProfileSchema.parse({ id: focusedAccountId }) });
@@ -703,7 +702,6 @@ describe('New Session purpose catalog authority', () => {
                 expect(() => admitted()).not.toThrow();
             }
             await act(async () => {
-                targetSignedIn = false;
                 expect(await TokenStorage.removeCredentialsForServerUrl(targetUrl, { serverId: target.id })).toBe(true);
             });
             expect(() => admitted()).toThrow();
@@ -713,7 +711,7 @@ describe('New Session purpose catalog authority', () => {
                 expect(hook.getCurrent().defaults.connectedServicesBindingsPayload).toBeNull();
             }
             expect(getActiveServerAccountScope()).toEqual(focusedScope);
-        } finally { await hook.unmount(); credentialRead.mockRestore(); await connection.dispose(); bridge.dispose(); }
+        } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
     });
 
     it('retires an optimistic authored authentication choice when its mounted Account scope changes before controlled echo', async () => {
