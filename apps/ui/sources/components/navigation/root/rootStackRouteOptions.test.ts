@@ -72,6 +72,12 @@ describe('root route identity ownership', () => {
         expect(bots).toBe(options['plugins/index']);
         expect(bots).toMatchObject({ headerShown: true, headerBackTitle: 'common.back' });
     });
+    it('gives the secret requirement picker the same way back as the other New pickers', () => {
+        // Its page header titles it; the stack bar carries Back (which cancels through the route), as on the profile picker.
+        const options = createRootStackRouteOptions('auto');
+        expect(options['new/pick/secret-requirement'].headerShown).not.toBe(false);
+        expect(options['new/pick/secret-requirement']).toMatchObject({ headerTitle: '', headerBackTitle: 'common.back' });
+    });
     it('hides the shell header on terminal connect', () => {
         expect(createRootStackRouteOptions('auto')['terminal/connect']).toMatchObject({ headerShown: false });
         // A `happier://terminal` link lands on the index route; its surface titles itself (the welcome

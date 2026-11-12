@@ -371,6 +371,10 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         variant,
     ]);
 
+    const helpText = variant !== 'requirement' ? null : activeEnvVarName
+        ? t('profiles.requirements.modalHelpWithEnv', { env: activeEnvVarName })
+        : t('profiles.requirements.modalHelpGeneric');
+
     return (
         <View style={layoutVariant === 'screen' ? styles.containerScreen : styles.containerChrome}>
             <View style={styles.scrollWrap}>
@@ -389,17 +393,17 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                     onScroll={wheelScrollHandlers.onScroll}
                     {...(Platform.OS === 'web' ? ({ onWheel: wheelScrollHandlers.onWheel } as any) : {})}
                 >
-                {/* A route screen is a page: its title and Back are the page header's (Back cancels through the route). */}
+                {/* A route screen is a page: the header carries its title, what it needs and the profile it is for,
+                    and Back (which cancels through the route). The card keeps its own title band and help line. */}
                 {layoutVariant === 'screen' ? (
-                    <PageHeader title={modalTitle} description={modalSubtitle} />
-                ) : null}
-                {variant === 'requirement' ? (
+                    <PageHeader
+                        title={modalTitle}
+                        description={helpText ?? undefined}
+                        meta={modalSubtitle ? [{ key: 'profile', text: modalSubtitle }] : undefined}
+                    />
+                ) : helpText ? (
                     <View style={styles.helpContainer}>
-                        <Text style={styles.helpText}>
-                            {activeEnvVarName
-                                ? t('profiles.requirements.modalHelpWithEnv', { env: activeEnvVarName })
-                                : t('profiles.requirements.modalHelpGeneric')}
-                        </Text>
+                        <Text style={styles.helpText}>{helpText}</Text>
                     </View>
                 ) : null}
 

@@ -198,8 +198,9 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
             },
             userId: visibleBlankBack,
             blankBack,
+            // Its page header titles it; the stack bar carries Back, like the other New pickers.
             newPickSecretRequirement: {
-                headerShown: false,
+                ...blankBack,
                 presentation: resolveNewSessionSecretRequirementRoutePresentation({
                     mode: newSessionPresentationMode,
                     platformOs: Platform.OS,

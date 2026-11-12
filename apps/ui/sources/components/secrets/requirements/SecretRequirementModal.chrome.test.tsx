@@ -272,7 +272,10 @@ describe('SecretRequirementModal', () => {
         );
         expect(submit?.props.role ?? submit?.props.accessibilityRole).toBe('button');
         // The page header titles the screen with the profile it is for; leaving is the navigation's Back, not a close of its own.
-        expect(screen.tree.findByType(PageHeader).props).toMatchObject({ title: 'profiles.requirements.modalTitle', description: 'Profile' });
+        expect(screen.tree.findByType(PageHeader).props).toMatchObject({
+            title: 'profiles.requirements.modalTitle',
+            meta: [{ key: 'profile', text: 'Profile' }],
+        });
         expect(screen.tree.findAll((node) => node.props.accessibilityLabel === 'common.close')).toHaveLength(0);
     });
 
