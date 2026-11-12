@@ -33,10 +33,10 @@ export async function executeNotificationPermissionAction(
         const { sessionId, requestId, occurrenceId } = response;
         const action = parsed.questionAction ? { answers: parsed.questionAction.answers } : parsed.permissionAction!.action;
         const serverUrl = parsed.serverUrl;
-        if (!sessionId.trim() || !requestId.trim() || context.signal.aborted) return { status: 'not_sent' };
+        if (!sessionId.trim() || !requestId.trim() || lifetime.signal.aborted) return { status: 'not_sent' };
 
         const { resolveNotificationPermissionTarget } = await (options.importTarget ?? (() => import('./resolveNotificationPermissionTarget')))();
-        if (context.signal.aborted) return { status: 'not_sent' };
+        if (lifetime.signal.aborted) return { status: 'not_sent' };
         const scope = await resolveNotificationPermissionTarget(serverUrl, parsed.accountId, { onTargetIdentified: context.onTargetResolved });
         if (!scope || lifetime.signal.aborted) return { status: 'not_sent' };
         context.onTargetResolved(scope);
