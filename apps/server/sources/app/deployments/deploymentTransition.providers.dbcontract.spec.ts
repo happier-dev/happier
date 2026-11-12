@@ -358,7 +358,10 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         expect(readerChanges.map(readDeploymentAccountChangeV1)).toContainEqual(expect.objectContaining({
             environmentId: environment.id, deploymentId: receipt.id,
         }));
-        expect(await readArtifactForCaller({ actorAccountId: reader.id, artifactId: artifact.artifact.id })).toMatchObject({ ok: false });
+        // A Source audience reader opens the Source's receipt content as view (Plan 40 reader role; bccba30f4cd),
+        // without owning it.
+        expect(await readArtifactForCaller({ actorAccountId: reader.id, artifactId: artifact.artifact.id }))
+            .toMatchObject({ ok: true, artifact: { access: 'view' } });
 
         if (provider !== 'postgres') return;
         const settleBody: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId, environmentId: environment.id,

@@ -1,7 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
 import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
@@ -42,11 +45,19 @@ it.each(['create', 're-enable'] as const)('serializes preview-role %s with Sourc
     const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
         requestKey: crypto.randomUUID(), name: 'Preview repository', audience: [], repository }));
     if (!source.ok) throw new Error(source.error);
+    // Machine content matches the Account mode, as Machine admission requires (92c476ae054).
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-        metadata: '{}', installationId: crypto.randomUUID() } });
+        installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'Preview', platform: 'linux',
+            happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+        dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+    const composeDocument = '{"services":{"app":{"image":"app:1"}}}';
     const artifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
         header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Preview' })),
-        body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+        // Environment create opens plain content through its canonical schema (717576ac290).
+        body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(DeploymentEnvironmentContentV1Schema.parse({
+            name: 'Preview', retainPreviousDeployments: 1, bindings: [], definition: { kind: 'stored', contentRevision: 1,
+                document: composeDocument, profiles: [], services: ['app'],
+                composeDigest: `sha256:${createHash('sha256').update(composeDocument).digest('hex')}` } })) })),
         dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
     if (!artifact.ok) throw new Error(artifact.error);
     const parent = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
