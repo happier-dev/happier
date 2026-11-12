@@ -9,6 +9,7 @@ import {
   TriageEntryLocatorV1Schema,
   TriageEntryRefV1Schema,
   TriageSourceInstanceIdV1Schema,
+  TriageSourceFailureV1Schema,
   TriageTaskFieldChoicesV1Schema,
   TriageTaskFieldsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
@@ -40,7 +41,7 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
     taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
     detailData: defineProtocolJsonValue().optional(),
   }, { policy: 'closed' }),
-  defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), failure: TriageSourceFailureV1Schema.optional() }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('rejected') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('invalidCaller') }, { policy: 'closed' }),
 ]);

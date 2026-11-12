@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react';
+import { invokeSourcePanelFixtureAction } from './sourcePanelActions.test-support.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../actions/mountedUiProtocol.js';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -139,7 +141,7 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
             nowMs: () => Date.now(),
         });
@@ -168,7 +170,9 @@ async function mountShell(harness: Harness): Promise<Readonly<{
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                executeAction: async ({ action, input }) => action === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1
+                    ? await invokeSourcePanelFixtureAction(ephemeralSharedScope, action, input, fixture.context, new AbortController().signal)
+                    : await harness.executeAction({ action, input }),
                 // The host owns history and settlement; the surface only writes
                 // the lens and consumes what settles.
                 replacePageLocation: ({ subPath }) => {
@@ -254,13 +258,12 @@ describe('opening a PRs & Issues row', () => {
     it('does not claim every source answered when a source failed', async () => {
         const { shell } = await mountShell(createHarness({ scanFails: true }));
 
-        // Named, not "some sources": the reader has to know which connection to
-        // go and fix, and the source's own words are quoted rather than the
-        // published classification word (`REQ-01`).
-        await expect(shell.getByText('example/repository could not be read'))
-            .resolves.toEqual({ content: 'example/repository could not be read' });
-        await expect(shell.getByText('Example forge is not answering.'))
-            .resolves.toEqual({ content: 'Example forge is not answering.' });
+        // The status names the failed connection and keeps the loaded list's incompleteness explicit.
+        // The source's diagnostic detail belongs to Manage sources, rather than a second failure banner.
+        const failure = [...document.querySelectorAll('[role="status"]')].find(node =>
+            node.textContent?.includes('example/repository could not be reached'));
+        expect(failure?.textContent).toContain('example/repository could not be reached');
+        expect(failure?.textContent).toContain('Their entries may be missing or out of date.');
         // The old shell said this under a failure banner, which told a reader
         // that nothing needed them while a source was down.
         await expect(shell.queryByText(

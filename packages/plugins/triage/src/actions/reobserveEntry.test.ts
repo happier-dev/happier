@@ -13,6 +13,34 @@ import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from '../
 const fixture = createTriageSourceV1Fixture();
 
 describe('reobserveTriageEntry', () => {
+  it.each(['plugin_manifest_invalid', 'plugin_disabled'])(
+    'retains source admission cause %s through exact-read failure', async (code) => {
+      const { collections, control } = createTestkitCorpusCollections();
+      const source = fixture.detailInput.observation.entryRef.source;
+      control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: `a${'0'.repeat(42)}`,
+        sourceQualifiedId: `${source.pluginId}/${source.localId}`, lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
+        configuredAtMs: 1, configured: fixture.configuredInstance,
+      }));
+      const context = { surface: 'cli', services: {
+        storage: { account: { collection: () => collections.sourceInstances } },
+        targetedContributions: { observeForSelf: () => ({
+          readCurrent: async () => ({ contributions: [], unavailablePlugins: [{ pluginId: source.pluginId, code }] }),
+          dispose: () => {},
+        }) },
+        actions: { executeAdmittedTargetedOperation: async () => { throw new Error('Unavailable source invoked'); } },
+      } } as unknown as PluginInvocationContext;
+      const onReadFailure = vi.fn();
+      const row = await reobserveTriagePostMutationRow({
+        executeAction: async (_action, input) => createTriageReobserveEntryActionHandler()(
+          TriageReobserveEntryInputV1Schema.parse(input), context),
+      }, { entryRef: fixture.detailInput.observation.entryRef }, [], fixture.configuredInstance.instance.sourceInstanceId,
+      { onReadFailure });
+      expect(row).toBeNull();
+      expect(onReadFailure).toHaveBeenCalledWith(expect.objectContaining({ code, message: source.pluginId }));
+      expect(onReadFailure.mock.calls[0]?.[0]).not.toHaveProperty('details.requestId');
+    },
+  );
+
   it.each([undefined, {}, { assigneeIds: [] }, {
     assigneeIds: Array.from({ length: 250 }, (_, i) => ({ id: `person-${i}`, label: `Person ${i}` })),
     labelIds: Array.from({ length: 250 }, (_, i) => ({ id: `label-${i}`, label: `Label ${i}` })),
@@ -143,7 +171,7 @@ describe('reobserveTriageEntry', () => {
       ...(includeTaskFieldChoices === undefined ? {} : { includeTaskFieldChoices }),
     }, {
       readConfiguredInstance: async () => fixture.configuredInstance,
-      readAdmittedSources: async () => [{
+      readSourceSnapshot: async () => ({ contributions: [{
         contributor: {
           pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
           contributionId: fixture.detailInput.observation.entryRef.source.localId,
@@ -153,7 +181,7 @@ describe('reobserveTriageEntry', () => {
         descriptor: fixture.descriptor,
         operations: { get: {} as never },
         surfaces: {},
-      }],
+      }] }),
       executeGet,
       nowMs: () => 1_760_000_800_000,
     });
@@ -174,7 +202,7 @@ describe('reobserveTriageEntry', () => {
       lastKnownLocator: fixture.detailInput.observation.locator,
     }, {
       readConfiguredInstance: async () => fixture.configuredInstance,
-      readAdmittedSources: async () => [{
+      readSourceSnapshot: async () => ({ contributions: [{
         contributor: {
           pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
           contributionId: fixture.detailInput.observation.entryRef.source.localId,
@@ -184,7 +212,7 @@ describe('reobserveTriageEntry', () => {
         descriptor: fixture.descriptor,
         operations: { get: {} as never },
         surfaces: {},
-      }],
+      }] }),
       executeGet,
       nowMs: () => 1_760_000_800_000,
     });
@@ -209,7 +237,7 @@ describe('reobserveTriageEntry', () => {
       lastKnownLocator: fixture.detailInput.observation.locator,
     }, {
       readConfiguredInstance: async () => fixture.configuredInstance,
-      readAdmittedSources: async () => [{
+      readSourceSnapshot: async () => ({ contributions: [{
         contributor: {
           pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
           contributionId: fixture.detailInput.observation.entryRef.source.localId,
@@ -219,7 +247,7 @@ describe('reobserveTriageEntry', () => {
         descriptor: fixture.descriptor,
         operations: { get: {} as never },
         surfaces: {},
-      }],
+      }] }),
       executeGet: async () => ({
         ...fixture.getResult,
         localRef: { ...fixture.getResult.localRef, entryId: '18' },
@@ -243,7 +271,7 @@ describe('reobserveTriageEntry', () => {
       lastKnownLocator: fixture.detailInput.observation.locator,
     }, {
       readConfiguredInstance: async () => fixture.configuredInstance,
-      readAdmittedSources: async () => [{
+      readSourceSnapshot: async () => ({ contributions: [{
         contributor: {
           pluginId: fixture.detailInput.observation.entryRef.source.pluginId,
           contributionId: fixture.detailInput.observation.entryRef.source.localId,
@@ -253,7 +281,7 @@ describe('reobserveTriageEntry', () => {
         descriptor: fixture.descriptor,
         operations: { get: {} as never },
         surfaces: {},
-      }],
+      }] }),
       executeGet: async (_operation, _input, options) => {
         sourceSignal = options?.signal;
         return await new Promise<TriageGetResultV1>((resolve, reject) => {
@@ -287,7 +315,7 @@ describe('reobserveTriageEntry', () => {
       readConfiguredInstance: async (_id, options) => await new Promise<null>((_resolve, reject) => {
         options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
       }),
-      readAdmittedSources: async () => [],
+      readSourceSnapshot: async () => ({ contributions: [] }),
       executeGet,
       nowMs: () => 1_760_000_800_000,
       signal: caller.signal,

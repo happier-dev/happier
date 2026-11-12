@@ -172,7 +172,8 @@ function listLaneFields(sourceSchemas: TriageListResultSourceSchemasV1) {
 }
 type ListLaneSchemaV1 = ClosedSchemaV1<ReturnType<typeof listLaneFields>>;
 
-function configuredSourceFields<TScope>(fieldBytes: number, configuredScope: ProtocolComposableSchema<TScope>) {
+function configuredSourceFields<TScope>(fieldBytes: number, configuredScope: ProtocolComposableSchema<TScope>,
+    sourceSchemas: TriageListResultSourceSchemasV1) {
     const triageIdentifier = TriageIdentifierV1ProtocolSchema;
     const triageText = defineTriageSingleLineStringV1(fieldBytes);
     return {
@@ -194,6 +195,8 @@ function configuredSourceFields<TScope>(fieldBytes: number, configuredScope: Pro
         projectionTruncated: defineProtocolLiteral(true).optional(),
         scope: configuredScope.optional(),
         sortFields: TriageListSortFieldsV1Schema.optional(),
+        /** Supplied upstream admission cause; omission never manufactures an inventory diagnosis. */
+        availabilityFailure: sourceSchemas.TriageSourceFailureV1Schema.optional(),
         /** Whether an admitted V1 source contribution can currently be invoked for it. */
         available: defineProtocolUnion([
             defineProtocolLiteral(true),
@@ -280,7 +283,7 @@ export function createTriageListResultSchemasV1<TScope, TTaskProjection>(
         listLaneFields(sourceSchemas), { policy: 'closed' },
     );
     const TriageConfiguredSourceSummaryV1Schema: ConfiguredSourceSchemaV1<TScope> = defineProtocolObject(
-        configuredSourceFields<TScope>(fieldBytes, configuredScope), { policy: 'closed' },
+        configuredSourceFields<TScope>(fieldBytes, configuredScope, sourceSchemas), { policy: 'closed' },
     );
     const TriageListEntriesResultV1Schema: ListResultSchemaV1<TScope, TTaskProjection> = defineProtocolObject(
         listResultFields<TScope, TTaskProjection>(TriageConfiguredSourceSummaryV1Schema, TriageListRowV1Schema, TriageListLaneV1Schema,

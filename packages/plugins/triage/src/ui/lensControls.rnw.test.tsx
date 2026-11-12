@@ -125,7 +125,7 @@ function createHarness() {
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
             nowMs: () => Date.now(),
         });

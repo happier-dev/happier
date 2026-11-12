@@ -260,7 +260,7 @@ function createHarness(options: Readonly<{
                 listActionCalls.push(action);
                 return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
                     sourceInstances: collections.sourceInstances,
-                    readAdmittedSources: async () => admitted,
+                    readSourceSnapshot: async () => ({ contributions: admitted }),
                     executeScan,
                     nowMs: () => Date.now(),
                 }) as never;

@@ -1,5 +1,5 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
 import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
 import {
     admitTriageSourceDescriptorV1,
@@ -10,6 +10,7 @@ import {
     type TriageListScopeUnitsResultV1,
     type TriageScanInputV1,
     type TriageScanResultV1,
+    type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
@@ -69,6 +70,16 @@ import {
 export type TriageAdmittedSourceV1 =
     NonNullable<(typeof TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1)['__targetedContribution']>;
 
+/** Keep admission diagnostics beside the contributions that share their snapshot. */
+export type TriageSourceSnapshotV1 = Pick<TargetedContributionSnapshot<TriageAdmittedSourceV1>,
+    'contributions' | 'unavailablePlugins'>;
+
+export function indexTriageSourceAvailabilityFailuresV1(snapshot: TriageSourceSnapshotV1): ReadonlyMap<string, TriageSourceFailureV1> {
+    return new Map((snapshot.unavailablePlugins ?? []).map(cause => [cause.pluginId, {
+        class: 'unknown' as const, code: cause.code, detail: cause.pluginId,
+    }]));
+}
+
 /**
  * The host-owned execution of one admitted operation handle. Only the original
  * host-created handle carries authority, so it is passed through untouched.
@@ -108,7 +119,7 @@ export type TriageListEntriesDepsV1 = Readonly<{
     /** The `source-instances` Collection. This Action never writes it. */
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query' | 'get' | 'identityTag'>;
     /** The current admitted view of this target's own sources point. */
-    readAdmittedSources: (options?: PluginCancellationOptions) => Promise<readonly TriageAdmittedSourceV1[]>;
+    readSourceSnapshot: (options?: PluginCancellationOptions) => Promise<TriageSourceSnapshotV1>;
     executeScan: TriageAdmittedOperationExecutorV1;
     readInternalTasks?: () => Promise<TaskList | null>;
     executeScopeUnits?: (
@@ -208,7 +219,7 @@ export async function assembleTriageListPass(
     const sources = input.sources;
     // Own both rejections before yielding: admission can fail during plugin
     // retirement while Account storage is pending, and either read can fail first.
-    const [configured, admitted] = await Promise.all([
+    const [configured, sourceSnapshot] = await Promise.all([
         sources.kind === 'allConfigured'
             ? input.sort !== undefined && input.limit > 0
                 ? readActiveConfiguredSourceRows(deps.sourceInstances, options)
@@ -223,7 +234,7 @@ export async function assembleTriageListPass(
                 const active = records.filter(record => record !== null);
                 return { rows: active.map(record => record.value), records: active, status: 'complete' as const };
             }),
-        deps.readAdmittedSources(options),
+        deps.readSourceSnapshot(options),
     ]);
     const configuredRows = configured.rows;
     const selectedSortSourceIds = input.sort === undefined ? undefined : new Set(selectTriageListSourcesV1(
@@ -233,7 +244,8 @@ export async function assembleTriageListPass(
     const configuredSourcesStatus = configured.status;
     const configuredSourcesNextCursor = 'nextCursor' in configured ? configured.nextCursor : undefined;
 
-    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
+    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions);
+    const availabilityFailures = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot);
 
     const configuredSources: TriageListEntriesResultV1['configuredSources'][number][] = [];
     /** Every instance this request set out to cover, invocable or not. */
@@ -305,6 +317,7 @@ export async function assembleTriageListPass(
         // A failed projection cannot establish a configured capability.
         const sortFields = configuredScope?.projection.kind === 'failed' ? undefined
             : configuredScope?.projection.sortFields ?? contribution?.descriptor.sortFields;
+        const availabilityFailure = available ? undefined : availabilityFailures.get(source.pluginId);
         configuredSources.push({
             sourceInstanceId: row.configured.instance.sourceInstanceId,
             configurationRowId: configuration.rowId,
@@ -314,6 +327,7 @@ export async function assembleTriageListPass(
                 ? {}
                 : { displayLabel: displayLabel.value, ...(displayLabel.truncated ? { projectionTruncated: true as const } : {}) }),
             available,
+            ...(availabilityFailure === undefined ? {} : { availabilityFailure }),
             ...(sortFields === undefined ? {} : { sortFields }),
             ...(configuredScope === undefined ? {} : { scope: configuredScope }),
         });
@@ -533,14 +547,13 @@ export function createTriageListEntriesDeps(
     return {
         sourceInstances: bindCorpusCollections(requireTriageAccountStorage(context)).sourceInstances,
         readInternalTasks: () => readInternalTaskList(context),
-        readAdmittedSources: async (options) => {
+        readSourceSnapshot: async (options) => {
             const observation = context.services.targetedContributions.observeForSelf(
                 TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
                 { onInvalidated: () => {} },
             );
             try {
-                const snapshot = await observation.readCurrent(options);
-                return snapshot.contributions;
+                return await observation.readCurrent(options);
             } finally {
                 observation.dispose();
             }

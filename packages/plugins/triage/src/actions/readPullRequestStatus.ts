@@ -14,7 +14,7 @@ import { sameConfiguredSourceAuthority } from '../corpus/configuration/configure
 import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../targetedContributions.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { indexTriageAdmittedSourcesV1, type TriageAdmittedSourceV1 } from './listEntries.js';
+import { indexTriageAdmittedSourcesV1, indexTriageSourceAvailabilityFailuresV1, type TriageAdmittedSourceV1 } from './listEntries.js';
 import type { TriageReobserveEntryActionInputV1 } from './reobserveEntryProtocol.js';
 
 async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionInputV1, context: TriageDataActionContext,
@@ -31,9 +31,14 @@ async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionIn
     const source = indexTriageAdmittedSourcesV1(admitted.contributions).get(renderSourceQualifiedId(input.entryRef.source));
     const operation = source?.operations.readPullRequestStatus;
     if (configured === null || row === null || configured.instance.sourceInstanceId !== input.sourceInstanceId
-        || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source) || operation === undefined
-        || source?.descriptor.kinds.find(kind => kind.id === input.entryRef.kindId)?.workflowSubject !== 'pullRequest') return null;
-    return { row, sourceInstances, operation, input: { v: 1 as const, instance: configured,
+        || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source)) return null;
+    if (source === undefined) {
+        const failure = indexTriageSourceAvailabilityFailuresV1(admitted).get(input.entryRef.source.pluginId);
+        return failure === undefined ? null : { kind: 'unavailable' as const, failure };
+    }
+    if (operation === undefined
+        || source.descriptor.kinds.find(kind => kind.id === input.entryRef.kindId)?.workflowSubject !== 'pullRequest') return null;
+    return { kind: 'available' as const, row, sourceInstances, operation, input: { v: 1 as const, instance: configured,
         localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
         ...(input.lastKnownLocator === undefined ? {} : { lastKnownLocator: input.lastKnownLocator }),
     } };
@@ -54,6 +59,7 @@ export function createTriageReadPullRequestStatusActionHandler(): TriageDataActi
             if (source === null) {
                 return { kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'statusUnavailable' } };
             }
+            if (source.kind === 'unavailable') return { kind: 'unavailable', failure: source.failure };
             const result = await context.services.actions.executeAdmittedTargetedOperation(source.operation, source.input, options);
             throwIfAborted(context.signal);
             return TriagePullRequestStatusResultV1Schema.parse(result);
@@ -105,7 +111,7 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
             const resolving = Promise.resolve().then(() => resolveConfiguredStatusSource(input, context, admitted));
             const recheck = async () => {
                 const source = await resolving;
-                if (source === null) return;
+                if (source === null || source.kind === 'unavailable') return;
                 const current = await rows.get(source.row.rowId, { signal: context.signal });
                 if (disposed || context.signal.aborted) return;
                 if (!sameConfiguredSourceAuthority(source.row.value, current === null ? null
@@ -116,6 +122,10 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
             }
             const source = await resolving;
             if (source === null) throw new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'The configured PR source cannot be observed.' });
+            if (source.kind === 'unavailable') throw new PluginError({ code: source.failure.code,
+                ...(source.failure.detail === undefined ? {} : { message: source.failure.detail }),
+                ...(source.failure.requestId === undefined ? {} : { details: { requestId: source.failure.requestId } }),
+            });
             selectedIdentity = source.operation.identity;
             throwIfAborted(context.signal);
             const attached = await context.services.actions.observeAdmittedTargetedOperation(source.operation, source.input, notify, { signal: context.signal });

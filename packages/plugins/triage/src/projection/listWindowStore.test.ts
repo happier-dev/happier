@@ -590,9 +590,9 @@ function createHarness(options: Readonly<{
     const readAdmittedEntries = async (input: TriageListEntriesInputV1) => await listTriageEntries(
         options.wholeCatalog ? input : await selectTestkitExternalSourceInput(input, collections.sourceInstances), {
         sourceInstances: collections.sourceInstances,
-        readAdmittedSources: async () => admitted.filter((source) => (
+        readSourceSnapshot: async () => ({ contributions: admitted.filter((source) => (
             source.contributor.pluginId !== SOURCE_A.pluginId || state.sourceAContributionAvailable
-        )),
+        )) }),
         executeScan,
         nowMs: () => clock.nowMs,
     });

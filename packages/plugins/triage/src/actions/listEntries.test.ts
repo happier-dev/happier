@@ -55,6 +55,39 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 const INTERNAL_INSTANCE_ID = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
 
 describe('the aggregate list Action handler', () => {
+    it.each(['plugin_source_missing', 'plugin_manifest_invalid', 'plugin_disabled'])(
+        'retains upstream %s for a cold unavailable source without a Request ID', async (code) => {
+            const { collections, control } = createTestkitCorpusCollections();
+            control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+                instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
+            })));
+            // The host snapshot is the genuine admission boundary. No plugin inventory is reconstructed here.
+            const context = {
+                signal: new AbortController().signal,
+                services: {
+                    storage: { account: { collection: () => collections.sourceInstances } },
+                    targetedContributions: { observeForSelf: () => ({
+                        readCurrent: async () => ({ occurrenceId: 'cold-admission', contributions: [],
+                            unavailablePlugins: [{ pluginId: SOURCE.pluginId, code }] }),
+                        dispose: () => {},
+                    }) },
+                    actions: { executeAdmittedTargetedOperation: async () => {
+                        throw new Error('An unavailable source must not be invoked');
+                    } },
+                },
+            } as unknown as PluginAccountActionContext;
+            // Metadata-only discovery must carry the same cause as a selected list read.
+            for (const limit of [0, 10]) {
+                const result = TriageListEntriesResultV1Schema.parse(await createTriageListEntriesActionHandler()({
+                    v: 1, sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
+                    limit, order: 'newest',
+                }, context));
+                expect(result.configuredSources).toMatchObject([{ available: false,
+                    availabilityFailure: { class: 'unknown', code, detail: SOURCE.pluginId } }]);
+                expect(result.configuredSources[0]).not.toHaveProperty('availabilityFailure.requestId');
+            }
+        },
+    );
     it('reads the configured Collection and the admitted source through the invocation context', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue({
@@ -367,7 +400,7 @@ describe('the aggregate list coverage claim', () => {
         const sort = { field: 'created', direction: 'asc' } as const;
         const admitted = { ...ADMITTED_SOURCE, descriptor: { ...ADMITTED_SOURCE.descriptor,
             sortFields: ['created'] as const } };
-        const deps = { sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+        const deps = { sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: [admitted] }),
             nowMs: () => 1000, executeScan: (async (_operation, input) => {
                 requests.push(input);
                 const initial = input.page.kind === 'initial';
@@ -399,7 +432,7 @@ describe('the aggregate list coverage claim', () => {
         const result = await listTriageEntries({ v: 1,
             sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
             limit: 2, order: 'newest', sort: { field: 'due', direction: 'asc' } }, {
-            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [ADMITTED_SOURCE],
+            sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: async () => { queries += 1; return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } }; }, nowMs: () => 1000,
         });
         expect(queries).toBe(0);
@@ -430,7 +463,7 @@ describe('the aggregate list coverage claim', () => {
             sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
             limit: 1, order: 'newest', sort: { field: testCase.field, direction: 'asc' },
         }, {
-            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+            sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: [admitted] }),
             // The host transport can return malformed external metadata; the Action must parse it.
             executeScopeUnits: async () => testCase.projection as unknown as TriageListScopeUnitsResultV1,
             executeScan: async () => { scans += 1; return { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [{
@@ -463,7 +496,7 @@ describe('the aggregate list coverage claim', () => {
             sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
             limit: 0, order: 'newest',
         }, {
-            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+            sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: [admitted] }),
             executeScopeUnits: async () => { throw new PluginError({ code, details: { requestId } }); },
             executeScan: finishedWalk, nowMs: () => 1000,
         }));
@@ -487,8 +520,8 @@ describe('the aggregate list coverage claim', () => {
         let queries = 0;
         const result = TriageListEntriesResultV1Schema.parse(await listTriageEntries(input, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [{ ...ADMITTED_SOURCE,
-                descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'] } }],
+            readSourceSnapshot: async () => ({ contributions: [{ ...ADMITTED_SOURCE,
+                descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'] } }] }),
             executeScan: async (_operation, request) => {
                 queries += 1;
                 const index = ids.indexOf(request.instance.instance.sourceInstanceId);
@@ -516,10 +549,10 @@ describe('the aggregate list coverage claim', () => {
             filters: { ...TRIAGE_LIST_NO_FILTERS_V1, sources: [{ source: SOURCE }, { source: OTHER_SOURCE }] },
             order: 'newest', sort: { field: 'created', direction: 'asc' } }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [
+            readSourceSnapshot: async () => ({ contributions: [
                 { ...ADMITTED_SOURCE, descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'] } },
                 { ...ADMITTED_SOURCE, contributor: { ...ADMITTED_SOURCE.contributor, pluginId: OTHER_SOURCE.pluginId, contributionId: OTHER_SOURCE.localId } },
-            ],
+            ] }),
             executeScan: async () => { queries += 1; return { kind: 'complete', observations: [], evidence: { kind: 'walkFinished' } }; },
             nowMs: () => 1000,
         });
@@ -556,7 +589,7 @@ describe('the aggregate list coverage claim', () => {
             v: 1, sources: { kind: 'selected', sourceInstances: [source] },
             limit: 1, order: 'newest',
         }, {
-            sourceInstances, readAdmittedSources: async () => [ADMITTED_SOURCE],
+            sourceInstances, readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: async (_handle, input) => {
                 scanned.push(input.instance.instance.sourceInstanceId);
                 return { kind: 'complete', observations: [{ kind: 'present',
@@ -577,7 +610,7 @@ describe('the aggregate list coverage claim', () => {
         control.sourceInstances.seed(toCorpusStoredValue(row));
         const result = await listTriageEntries({ v: 1, sources: { kind: 'allConfigured' }, limit: 0, order: 'newest' }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE], executeScan: finishedWalk, nowMs: () => 1000,
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }), executeScan: finishedWalk, nowMs: () => 1000,
         });
         expect(result.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)?.displayLabel)
             .toBe('Example forge · alice');
@@ -592,7 +625,7 @@ describe('the aggregate list coverage claim', () => {
         control.sourceInstances.seed(toCorpusStoredValue(row));
         const result = await listTriageEntries({ v: 1, sources: { kind: 'allConfigured' }, limit: 0, order: 'newest' }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE], executeScan: finishedWalk, nowMs: () => 1000,
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }), executeScan: finishedWalk, nowMs: () => 1000,
         });
         expect(result.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)).toMatchObject({
             displayLabel: `Example forge · ${'x'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 - new TextEncoder().encode('Example forge · ').length)}`, projectionTruncated: true,
@@ -640,7 +673,7 @@ describe('the aggregate list coverage claim', () => {
                 return TriageListEntriesResultV1Schema.parse(await listTriageEntries({ ...input,
                     sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances) }, {
                     sourceInstances: collections.sourceInstances,
-                    readAdmittedSources: async () => [admitted],
+                    readSourceSnapshot: async () => ({ contributions: [admitted] }),
                     executeScopeUnits: async () => {
                         scopeReads += 1;
                         if (unavailable) throw refusal;
@@ -713,7 +746,7 @@ describe('the aggregate list coverage claim', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: async () => {
                 started = true;
                 await held;
@@ -777,7 +810,7 @@ describe('the aggregate list coverage claim', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [duplicateDescriptor],
+            readSourceSnapshot: async () => ({ contributions: [duplicateDescriptor] }),
             executeScan,
             nowMs: () => 1_760_000_000_000,
         });
@@ -813,7 +846,7 @@ describe('the aggregate list coverage claim', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: finishedWalk,
             nowMs: () => 1_760_000_000_000,
         });
@@ -846,7 +879,7 @@ describe('the aggregate list coverage claim', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: finishedWalk,
             nowMs: () => 1_760_000_000_000,
         });
@@ -867,7 +900,7 @@ describe('the aggregate list coverage claim', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: finishedWalk,
             nowMs: () => 1_760_000_000_000,
         });
@@ -952,8 +985,8 @@ describe('the aggregate list continuation set', () => {
         const submitted: number[] = [];
         const deps = {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [{ ...ADMITTED_SOURCE,
-                descriptor: { ...ADMITTED_SOURCE.descriptor, minimumScanPageSize: minimum } }],
+            readSourceSnapshot: async () => ({ contributions: [{ ...ADMITTED_SOURCE,
+                descriptor: { ...ADMITTED_SOURCE.descriptor, minimumScanPageSize: minimum } }] }),
             executeScan: async (_operation, input): Promise<TriageScanResultV1> => {
                 const offset = input.page.kind === 'initial' ? 0 : minimum;
                 if (input.page.kind === 'initial') submitted.push(input.page.limit);
@@ -1003,7 +1036,7 @@ describe('the aggregate list continuation set', () => {
         const submitted: { id: string; limit: number }[] = [];
         const deps = {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [native, ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [native, ADMITTED_SOURCE] }),
             executeScan: async (_operation, input): Promise<TriageScanResultV1> => {
                 const id = input.instance.instance.sourceInstanceId;
                 const nativePage = id === INSTANCE_ID;
@@ -1054,7 +1087,7 @@ describe('the aggregate list continuation set', () => {
                 configurationReads++;
                 return collections.sourceInstances.get(...args);
             } },
-            readAdmittedSources: async () => { admissionReads++; return [ADMITTED_SOURCE]; },
+            readSourceSnapshot: async () => { admissionReads++; return ({ contributions: [ADMITTED_SOURCE] }); },
             executeScan: async (): Promise<TriageScanResultV1> => {
                 providerPages++;
                 if (providerPages === 1) control.sourceInstances.tombstone(paddedInstanceTag('s000'));
@@ -1094,7 +1127,7 @@ describe('the aggregate list continuation set', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: pagingScan({ tokenFor: (id) => `next:${id}`, limit: 10 }),
             nowMs: () => 1_760_000_000_000,
         });
@@ -1128,7 +1161,7 @@ describe('the aggregate list continuation set', () => {
             ],
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan: pagingScan({ tokenFor: (id) => `next:${id}`, seen, limit: 10 }),
             nowMs: () => 1_760_000_000_000,
         });
@@ -1190,7 +1223,7 @@ describe('the aggregate list continuation set', () => {
             order: 'newest',
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan,
             nowMs: () => 1_760_000_000_000,
         });
@@ -1208,7 +1241,7 @@ describe('the aggregate list continuation set', () => {
             resume: firstPage.window.continuations,
         }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => [ADMITTED_SOURCE],
+            readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
             executeScan,
             nowMs: () => 1_760_000_000_001,
         });
@@ -1303,7 +1336,7 @@ describe('the aggregate list continuation set', () => {
                 ...(resume === undefined ? {} : { resume }),
             }, {
                 sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => [ADMITTED_SOURCE],
+                readSourceSnapshot: async () => ({ contributions: [ADMITTED_SOURCE] }),
                 executeScan,
                 nowMs: () => 1_760_000_000_000,
             });

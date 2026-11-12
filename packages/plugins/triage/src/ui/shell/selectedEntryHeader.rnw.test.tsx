@@ -346,7 +346,7 @@ describe('the selected entry once the window stops holding it', () => {
         listProducerOverride = async input => await listTriageEntries(
             TriageListEntriesInputV1Schema.parse(input), {
                 sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => admitted,
+                readSourceSnapshot: async () => ({ contributions: admitted }),
                 executeScan: async (_operation, _scanInput: TriageScanInputV1): Promise<TriageScanResultV1> => ({
                     kind: 'complete',
                     observations: [{ kind: 'present', localRef: { kindId: 'pull-request', collisionScope: ENTRY_REF.collisionScope,
@@ -629,8 +629,8 @@ describe('the selected entry once the window stops holding it', () => {
         await evictTheRow(shell, ephemeralSharedScope);
 
         await act(async () => {
-            // Pushed: the platform's Back is the detail's one way back.
-            await shell.press(await shell.getByRole('button', { name: 'Back' }));
+            // Pushed: the return control names the page it returns to.
+            await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' }));
         });
 
         // Back on the list, which no longer holds the entry at all. A retained

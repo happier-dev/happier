@@ -167,7 +167,7 @@ it.each([
             executeAction: async ({ action, input }) => {
             if (action === 'tasks/create-v1') { writes.push(action); throw new Error('Opening a draft must not create a task'); }
             if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
-              sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [],
+              sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: [] }),
               executeScan: async () => { throw new Error('No source has been configured'); },
             });
             if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return await listTriagePinnedEntries(

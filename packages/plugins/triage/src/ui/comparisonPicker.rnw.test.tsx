@@ -81,7 +81,7 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
         executeAction: async ({ action: requested, input }) => {
           if (requested === 'sessions/read-source-links-v1') return await readTestkitSourceSessionLinks(input, { collections, contributions: admitted });
           if (requested === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
-            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => admitted,
+            sourceInstances: collections.sourceInstances, readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan: async (_operation, input) => {
               reads.scans += 1;
               if (!options.paged) return native.scanResult;

@@ -34,7 +34,7 @@ function nativeOperation(occurrenceId = 'selected-source-a') {
 }
 
 async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boolean; unsupported?: boolean; foreignCaller?: boolean; hostAgent?: boolean;
-    unrelatedSources?: number;
+    unrelatedSources?: number; unavailableSourceCode?: string;
     replaceDuringRead?: boolean; removeDuringRead?: boolean; invalidateDuringRead?: boolean; unrelatedSourceChurnDuringRead?: boolean;
     removeSelectedDuringRead?: boolean; relabelDuringRead?: boolean; replaceBeforeWatch?: boolean; disposeNative?: () => Promise<void> }> = {}) {
     const { collections, control, watchableCollections } = createTestkitCorpusCollections();
@@ -74,7 +74,7 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     let operationDisposed = false;
     let selectedOperation = nativeOperation();
     let unrelatedSourcePresent = false;
-    let selectedSourcePresent = true;
+    let selectedSourcePresent = options.unavailableSourceCode === undefined;
     // Host-stamped context, Account persistence, admission and dispatch are genuine system boundaries.
     const context = {
         signal: controller.signal,
@@ -85,7 +85,7 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
             targetedContributions: { observeForSelf: (_point: unknown, observer: { onInvalidated(): void }) => {
                 invalidate = observer.onInvalidated;
                 return {
-                readCurrent: async () => ({ contributions: [...(selectedSourcePresent ? [{
+                readCurrent: async () => ({ ...(options.unavailableSourceCode === undefined ? {} : { unavailablePlugins: [{ pluginId: configured.instance.source.pluginId, code: options.unavailableSourceCode }] }), contributions: [...(selectedSourcePresent ? [{
                     contributor: { pluginId: configured.instance.source.pluginId, contributionId: configured.instance.source.localId },
                     descriptor: fixture.descriptor,
                     operations: options.unsupported ? {} : { readPullRequestStatus: { ...selectedOperation,
@@ -126,6 +126,20 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
 }
 
 describe('the mounted PR-status action', () => {
+    it.each(['plugin_manifest_invalid', 'plugin_disabled'])('keeps supplied %s in status readiness and observation failures', async code => {
+        const actual = await boundary({ unavailableSourceCode: code });
+        const pluginId = fixture.configuredInstance.instance.source.pluginId;
+        expect(TriagePullRequestStatusResultV1Schema.parse(actual.result)).toEqual({ kind: 'unavailable',
+            failure: { class: 'unknown', code, detail: pluginId } });
+        await expect(createTriageReadPullRequestStatusObserver()({ v: 1,
+            entryRef: fixture.detailInput.observation.entryRef,
+            sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            sourceInstanceRowId: actual.sourceInstanceRowId,
+        }, Object.assign(vi.fn(), { retire: vi.fn() }), actual.context)).rejects.toMatchObject({ code, message: pluginId });
+        expect(actual.requests).toEqual([]);
+        expect(actual.observed).toEqual([]);
+        expect(actual.inventoryPages()).toBe(0);
+    });
     it.each([0, 4])('reads one exact fresh row per PR refresh with %s unrelated configured-source pages', async unrelatedSources => {
         const actual = await boundary({ unrelatedSources });
         expect(actual.result).toEqual(status);

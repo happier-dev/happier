@@ -1,15 +1,17 @@
-import { deriveTriageListFieldUtf8BytesV1 } from './listFieldAllocation.js';
 import { triagePagingTokenUtf8BytesForFieldBytesV1 } from './listSourceSchemas.js';
 
 export * from './constants.js';
 
 /**
  * Shared finite 56-row/32-lane presentation and control allocation, derived
- * from the same pure schemas the sources and aggregate instantiate and the
- * canonical public Action response envelope. Provider-sized collections retain
- * the host envelope as their governor; configured-instance storage stays stable.
+ * by `deriveTriageListFieldUtf8BytesV1` from the same pure schemas the sources
+ * and aggregate instantiate and the canonical public Action response envelope.
+ * Provider-sized collections retain the host envelope as their governor;
+ * configured-instance storage stays stable. The derivation builds two maximal
+ * list values, so every importing process (daemon, server, runners, UI) would
+ * pay it at import; `bounds.test.ts` re-derives it and fails on any drift.
  */
-const listFieldUtf8Bytes = deriveTriageListFieldUtf8BytesV1();
+const listFieldUtf8Bytes = 3226;
 
 /** Display truncation sets the existing row-local `projectionTruncated` marker. */
 export const MAX_TRIAGE_TEXT_UTF8_BYTES_V1 = listFieldUtf8Bytes;

@@ -203,7 +203,7 @@ describe('one opened GitHub issue read owner', () => {
           if (id === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
             const input = TriageReobserveEntryInputV1Schema.parse(request.input);
             const result = await reobserveTriageEntry({ ...input, lastKnownLocator: { v: 1, routingToken: route } }, {
-              readConfiguredInstance: async () => instance, readAdmittedSources: async () => admitted, signal: request.signal,
+              readConfiguredInstance: async () => instance, readSourceSnapshot: async () => ({ contributions: admitted }), signal: request.signal,
               executeGet: async (_operation, getInput, options) => github.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, getInput,
                 { surface: 'ui', signal: options?.signal }), nowMs: () => Date.now() });
             if (result.kind !== 'observed') return result;
@@ -296,7 +296,7 @@ describe('one opened GitHub issue read owner', () => {
         const http = transports[entryGets++ % transports.length]!;
         const input = TriageReobserveEntryInputV1Schema.parse(request.input);
         const result = await reobserveTriageEntry({ ...input, lastKnownLocator: { v: 1, routingToken: route } }, {
-          readConfiguredInstance: async () => instance, readAdmittedSources: async () => admitted,
+          readConfiguredInstance: async () => instance, readSourceSnapshot: async () => ({ contributions: admitted }),
           signal: request.signal,
           executeGet: async (_operation, getInput, options) => getGithubTriageEntry(getInput,
             { ...http.context, signal: options?.signal ?? http.context.signal }), nowMs: () => Date.now(),

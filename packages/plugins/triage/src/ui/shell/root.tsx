@@ -1,3 +1,4 @@
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { readTriageListSortFieldsV1, selectTriageListSourcesV1 } from '../../projection/listSort.js';
 import * as React from 'react';
 import { createTriageListPublicationV1 } from '../list/publication.js';
@@ -7,7 +8,7 @@ import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
-import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1, TriageSourceInstanceIdV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import { buildTriageActionEditorLaunchInputV1, formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageActionEditorLaunchInputV1 } from '@happier-dev/triage-protocol/v1';
 import { openTriageActionEditorV1 } from '../actions/openActionEditor.js';
 import {
@@ -881,7 +882,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * qualify carries no instance. An explicit off-window open admits a current active
    * connection through the same Corpus selector; rendering pins performs no read.
    */
-  const [entryOpenFailure, setEntryOpenFailure] = React.useState<Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> | null>(null);
+  const [entryOpenFailure, setEntryOpenFailure] = React.useState<(Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> & { failure?: TriageSourceFailureV1 }) | null>(null);
   const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection });
   openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection };
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
@@ -893,14 +894,18 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       const current = openAdmission.current;
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
-      const active = current.configuredSources.filter(source => source.available
-        && sameTriageSourceIdentity(source.source, entryRef.source)).map(source => source.sourceInstanceId);
+      const candidates = current.configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
+      const active = candidates.filter(source => source.available).map(source => source.sourceInstanceId);
       const selected = selectObservationInstance([], active, null, {
         allowUnobserved: true,
         ...(current.selection !== null && sameTriageEntryRefV1(current.selection.entryRef, entryRef)
           ? { overrideSourceInstanceId: current.selection.sourceInstanceId } : {}),
       });
-      if (selected.kind === 'none') { setEntryOpenFailure(selected); return selected; }
+      if (selected.kind === 'none') {
+        const failure = candidates.find(source => source.availabilityFailure !== undefined)?.availabilityFailure;
+        setEntryOpenFailure({ ...selected, ...(failure === undefined ? {} : { failure }) });
+        return selected;
+      }
       sourceInstanceId = selected.sourceInstanceId;
     }
     if (sourceInstanceId === null) return null;
@@ -1226,14 +1231,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (!pinsByEntry.has(key)) return;
     setExactPinReads((current) => current.get(key) === selectedRow ? current : new Map(current).set(key, selectedRow));
   }, [pinsByEntry, selectedRow, selectedWindowRow]);
-  const selectedConnectionLabel = React.useMemo(() => {
+  const selectedSourceSummary = React.useMemo(() => {
     const selection = surface.selection;
     if (selection === null) return null;
     const summary = window.snapshot.configuredSources.find(
       (candidate) => candidate.sourceInstanceId === selection.sourceInstanceId,
     );
-    return summary?.displayLabel ?? null;
+    return summary ?? null;
   }, [surface.selection, window.snapshot.configuredSources]);
+  const selectedConnectionLabel = selectedSourceSummary?.displayLabel ?? null;
 
   /**
    * The last row this window published for the selection the reader is holding
@@ -2466,6 +2472,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         lanes={listWindow?.window.lanes ?? []}
         rows={windowRows}
         connectionLabel={selectedConnectionLabel}
+        availabilityFailure={selectedSourceSummary?.availabilityFailure}
         // The ONE aggregate action target (`ui/state/actionTarget.ts`), resolved
         // where the reducer state lives and passed down. The detail region holds
         // the source descriptor a control set needs but no `sectionId`, so
@@ -2585,10 +2592,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   return (
     <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
       <Stack gap="small" style={TRIAGE_FILL_STYLE_V1}>
-      {entryOpenFailure === null ? null : <Banner tone="warning"
-        title={text('plugins.triage.surface.detail.noConnection.title', 'No connection to open this through')}
-        description={text('plugins.triage.surface.detail.noActiveConnection', 'No active connection is available for this entry’s source. Configure or reconnect a source, then open the entry again.')}
-      />}
+      {entryOpenFailure === null ? null : <>
+        <Banner tone="warning"
+          title={text('plugins.triage.surface.detail.noConnection.title', 'No connection to open this through')}
+          description={text('plugins.triage.surface.detail.noActiveConnection', 'No active connection is available for this entry’s source. Configure or reconnect a source, then open the entry again.')}
+        />
+        {entryOpenFailure.failure === undefined ? null : <ActionFailureDetails
+          code={entryOpenFailure.failure.code} detail={entryOpenFailure.failure.detail}
+          requestId={entryOpenFailure.failure.requestId} showReason={false} />}
+      </>}
       {routeWriteFailure === null ? null : (
         <Banner
           tone="warning"

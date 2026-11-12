@@ -411,7 +411,7 @@ function createHarness(options: Readonly<{
                     const row = await findConfiguredSourceInstanceRow(collections.sourceInstances, sourceInstanceId, options);
                     return row?.value.lifecycle === CORPUS_SOURCE_INSTANCE_LIFECYCLE.active ? row.value.configured : null;
                 },
-                readAdmittedSources: async () => admitted,
+                readSourceSnapshot: async () => ({ contributions: admitted }),
                 executeGet: async () => ({
                     kind: 'present',
                     localRef: { kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
@@ -508,7 +508,7 @@ function createHarness(options: Readonly<{
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
             nowMs: () => Date.now(),
         });
@@ -1492,6 +1492,9 @@ describe('selecting several PRs & Issues rows', () => {
         });
         await settle();
 
+        // Prompt resolution crosses an additional host round trip. Wait for
+        // the real sequence's terminal boundary rather than a fixed tick count.
+        await expect.poll(() => harness.lifecycle.at(-1)).toBe('session.open');
         expect(harness.lifecycle.filter((step) => step === 'session.spawn_new')).toHaveLength(1);
         expect(harness.lifecycle.filter((step) => step === 'session.message.send')).toHaveLength(1);
         expect(harness.lifecycle.at(-1)).toBe('session.open');

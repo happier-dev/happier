@@ -180,16 +180,17 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
     .filter((source) => !source.available).map((source) => source.sourceInstanceId));
   // Every distinct connection is kept. A reader with three broken ones needs
   // all three names, not the first.
+  const projectFailure = (sourceInstanceId: string, displayName: string,
+    failure: TriageSourceFailureV1): TriageListSourceFailureV1 => Object.freeze({
+      sourceInstanceId, displayName,
+      reason: listReadFailureMessage(failure.code, failure.detail ?? SOURCE_FAILURE_COPY_V1[failure.class]),
+      code: failure.code,
+      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+      ...(failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(failure.code, SOURCE_FAILURE_COPY_V1[failure.class]) }),
+      needsConnectionChange: failure.class === 'authentication' || failure.class === 'permission',
+    });
   const sources: TriageListSourceFailureV1[] = projectTriageFailedSourceHealth(snapshot)
-    .map((entry) => Object.freeze({
-      sourceInstanceId: entry.sourceInstance.sourceInstanceId,
-      displayName: entry.displayName,
-      reason: listReadFailureMessage(entry.failure.code, entry.failure.detail ?? SOURCE_FAILURE_COPY_V1[entry.failure.class]),
-      code: entry.failure.code,
-      ...(entry.failure.requestId === undefined ? {} : { requestId: entry.failure.requestId }),
-      ...(entry.failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(entry.failure.code, SOURCE_FAILURE_COPY_V1[entry.failure.class]) }),
-      needsConnectionChange: entry.failure.class === 'authentication' || entry.failure.class === 'permission',
-    }));
+    .map(entry => projectFailure(entry.sourceInstance.sourceInstanceId, entry.displayName, entry.failure));
   // A connection the pass could not read at all is the same kind of fact as one
   // that failed with provider evidence — one named connection the reader can go
   // and look at. Only the reason differs, and neither is the aggregate read.
@@ -226,10 +227,15 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       sourceInstanceId: configured.sourceInstanceId,
     };
     const existingIndex = failureIndexBySource.get(configured.sourceInstanceId);
-    const existing = existingIndex === undefined ? undefined : sources[existingIndex];
-    if (existing !== undefined && existingIndex !== undefined) {
-      sources[existingIndex] = Object.freeze({ ...existing,
+    const existing = configured.availabilityFailure === undefined
+      ? existingIndex === undefined ? undefined : sources[existingIndex]
+      : projectFailure(configured.sourceInstanceId, readTriageSourceDisplayName(snapshot, sourceInstance),
+        configured.availabilityFailure);
+    if (existing !== undefined) {
+      const unavailable = Object.freeze({ ...existing,
         lineReason: SOURCE_UNAVAILABLE_COPY_V1, needsConnectionChange: true });
+      if (existingIndex === undefined) sources.push(unavailable);
+      else sources[existingIndex] = unavailable;
       continue;
     }
     sources.push(Object.freeze({

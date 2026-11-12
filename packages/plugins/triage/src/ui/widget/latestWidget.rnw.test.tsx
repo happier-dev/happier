@@ -148,7 +148,7 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
                 ? await selectTestkitConfiguredSources([INSTANCE,
                     ...(withPersonal ? [INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId] : [])], collections.sourceInstances) : parsed.sources }, {
                 sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => admitted,
+                readSourceSnapshot: async () => ({ contributions: admitted }),
                 executeScan,
                 nowMs: () => Date.now(),
             });
@@ -258,7 +258,7 @@ describe('the New for you widget', () => {
         const { collections } = createTestkitCorpusCollections();
         const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => listTriageEntries(
             TriageListEntriesInputV1Schema.parse(input), { sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => [], executeScan: async () => { throw new Error('No source should be scanned'); },
+                readSourceSnapshot: async () => ({ contributions: [] }), executeScan: async () => { throw new Error('No source should be scanned'); },
                 nowMs: () => 3_000,
             }));
         await expect(widget.getByText('No sources connected yet')).resolves.toBeDefined();
@@ -272,7 +272,7 @@ describe('the New for you widget', () => {
         const { collections } = createTestkitCorpusCollections();
         const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => listTriageEntries(
             TriageListEntriesInputV1Schema.parse(input), { sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => [], executeScan: async () => { throw new Error('No source should be scanned'); },
+                readSourceSnapshot: async () => ({ contributions: [] }), executeScan: async () => { throw new Error('No source should be scanned'); },
                 nowMs: () => 3_000,
             }), undefined, { machine: { machineExecutionReady: false } });
         await expect(widget.getByText('The latest entries could not be read')).resolves.toBeDefined();

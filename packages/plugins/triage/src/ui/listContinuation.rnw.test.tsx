@@ -201,7 +201,7 @@ function createEntriesHarness(): Harness {
             if (state.sourceUnreachable) throw new Error('No machine is reachable for these sources.');
             return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
                 sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => admittedSources,
+                readSourceSnapshot: async () => ({ contributions: admittedSources }),
                 executeScan,
                 nowMs: () => Date.now(),
             });
@@ -272,7 +272,7 @@ function createPinsHarness(pinCount: number): Harness {
             // section's continuation row is the only one on screen.
             return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
                 sourceInstances: collections.sourceInstances,
-                readAdmittedSources: async () => admittedSources,
+                readSourceSnapshot: async () => ({ contributions: admittedSources }),
                 executeScan: async () => ({
                     kind: 'complete',
                     observations: [],

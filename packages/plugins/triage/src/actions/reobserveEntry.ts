@@ -7,6 +7,7 @@ import type {
   TriageEntryRefV1,
   TriageTaskFieldChoicesV1,
   TriageTaskFieldsV1,
+  TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -24,7 +25,8 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { toTriageWireObservation } from '../projection/listWindowWire.js';
 import {
   indexTriageAdmittedSourcesV1,
-  type TriageAdmittedSourceV1,
+  indexTriageSourceAvailabilityFailuresV1,
+  type TriageSourceSnapshotV1,
 } from './listEntries.js';
 import type {
   TriageReobserveEntryActionInputV1,
@@ -41,7 +43,7 @@ export type TriageReobserveEntryInputV1 = Readonly<{
 
 export type TriageReobserveEntryResultV1 =
   | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; taskFieldChoices?: TriageTaskFieldChoicesV1; detailData?: JsonValue }>
-  | Readonly<{ kind: 'unavailable' }>
+  | Readonly<{ kind: 'unavailable'; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
 export type TriageReobserveEntryDepsV1 = Readonly<{
@@ -50,7 +52,7 @@ export type TriageReobserveEntryDepsV1 = Readonly<{
     sourceInstanceId: string,
     options?: PluginCancellationOptions,
   ): Promise<TriageConfiguredSourceInstanceV1 | null>;
-  readAdmittedSources(options?: PluginCancellationOptions): Promise<readonly TriageAdmittedSourceV1[]>;
+  readSourceSnapshot(options?: PluginCancellationOptions): Promise<TriageSourceSnapshotV1>;
   executeGet: TriageAdmittedGetExecutorV1;
   nowMs(): number;
   signal?: AbortSignal;
@@ -85,18 +87,21 @@ export async function reobserveTriageEntry(
     signal: invocationSignal,
   };
   const invocation = (async (): Promise<TriageReobserveEntryResultV1> => {
-    const [configured, admitted] = await Promise.all([
+    const [configured, sourceSnapshot] = await Promise.all([
       deps.readConfiguredInstance(input.sourceInstanceId, options),
-      deps.readAdmittedSources(options),
+      deps.readSourceSnapshot(options),
     ]);
     throwIfAborted(invocationSignal);
     if (configured === null || !sameSource(configured, input.entryRef)) {
       return { kind: 'unavailable' };
     }
 
-    const contribution = indexTriageAdmittedSourcesV1(admitted)
+    const contribution = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions)
       .get(renderSourceQualifiedId(input.entryRef.source));
-    if (contribution === undefined) return { kind: 'unavailable' };
+    if (contribution === undefined) {
+      const failure = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot).get(input.entryRef.source.pluginId);
+      return { kind: 'unavailable', ...(failure === undefined ? {} : { failure }) };
+    }
 
     const observed = await deps.executeGet(contribution.operations.get, {
       v: 1,
@@ -151,13 +156,13 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
           ? row.value.configured
           : null;
       },
-      readAdmittedSources: async (options) => {
+      readSourceSnapshot: async (options) => {
         const observation = context.services.targetedContributions.observeForSelf(
           TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
           { onInvalidated: () => {} },
         );
         try {
-          return (await observation.readCurrent(options)).contributions;
+          return await observation.readCurrent(options);
         } finally {
           observation.dispose();
         }
@@ -175,7 +180,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
         ...(result.detailData === undefined ? {} : { detailData: result.detailData }) };
     }
     return result.kind === 'unavailable'
-      ? { kind: 'unavailable' }
+      ? result
       : { kind: 'rejected' };
   };
 }

@@ -192,7 +192,7 @@ export function createTriageReadFixPullRequestsActionHandler(): TriageDataAction
                         }, {
                             readConfiguredInstance: async (sourceInstanceId) =>
                                 (await sourceRelations.findConfiguredInstance(sourceInstanceId, entryRef))?.value.configured ?? null,
-                            readAdmittedSources: async () => admitted,
+                            readSourceSnapshot: async () => ({ contributions: admitted }),
                             executeGet: async (operation, getInput, getOptions) => await context.services.actions
                                 .executeAdmittedTargetedOperation(operation, getInput, getOptions ?? {}),
                             nowMs: () => Date.now(),

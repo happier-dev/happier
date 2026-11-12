@@ -102,7 +102,11 @@ export async function reobserveTriagePostMutationRow(
     return null;
   }
   if (result.kind !== 'observed') {
-    onReadFailure?.(new PluginError({ code: result.kind === 'rejected' ? 'denied' : result.kind }));
+    const failure = result.kind === 'unavailable' ? result.failure : undefined;
+    onReadFailure?.(new PluginError({ code: failure?.code ?? (result.kind === 'rejected' ? 'denied' : result.kind),
+      ...(failure?.detail === undefined ? {} : { message: failure.detail }),
+      ...(failure?.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
+    }));
     return null;
   }
   const observation: CorpusQualifiedObservationV1 = {

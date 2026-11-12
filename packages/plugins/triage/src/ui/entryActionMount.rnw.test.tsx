@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
+import * as React from 'react';
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { Button } from '@happier-dev/plugin-ui';
+import { createPluginUiTestkit, createPluginUiActionControlTestHost, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
+import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import type {
     PluginUiSessionServerStartDraftV1,
@@ -363,7 +367,7 @@ function createHarness(options: Readonly<{
         if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
             const result = await reobserveTriageEntry(TriageReobserveEntryInputV1Schema.parse(request.input), {
                 readConfiguredInstance: async () => configuredInstance(),
-                readAdmittedSources: async () => admitted,
+                readSourceSnapshot: async () => ({ contributions: admitted }),
                 // The external source's authoritative get can carry revision facts absent from its scan.
                 executeGet: async (_operation, input) => ({
                     kind: 'present', localRef: input.localRef, locator: testkitLocator(),
@@ -442,7 +446,7 @@ function createHarness(options: Readonly<{
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
             nowMs: () => Date.now(),
         });
@@ -492,6 +496,7 @@ function createHarness(options: Readonly<{
 }
 
 const mounted: PluginUiTestkit[] = [];
+const mountedActionControls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 const refreshMountedShell = new WeakMap<PluginUiTestkit, (trigger?: 'view' | 'manual') => Promise<unknown>>();
 
 /** How many times this mount opened the host's New Session surface. */
@@ -505,11 +510,35 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
     page?: Readonly<{ launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; opens?: PluginUiTestkitOpenSurfaceInput[] }>): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
+    const controls = createPluginUiActionControlTestHost(async ({ action, input, signal }) => {
+        const id = testkitTriageActionId(action);
+        if (id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
+            // This replaces the external host executor only; the configured Action and its inner owners stay real.
+            const result = await createTriageRunConfiguredActionHandler()(input, {
+                plugin: { id: 'happier.triage', version: '0.0.0' },
+                contribution: { id, qualifiedId: 'happier.triage/actions/' + id },
+                invocationSurface: 'ui', signal: signal ?? fixture.context.signal, ui: fixture.context.hostApi,
+            } as unknown as PluginAccountActionContext);
+            return { ok: true, result };
+        }
+        return { ok: true, result: await harness.executeAction({ action, input }) as import('@happier-dev/plugin-sdk').JsonValue };
+    });
+    function HostSlots() {
+        const slots = React.useSyncExternalStore(controls.subscribe, controls.getSnapshot, controls.getSnapshot);
+        return <>{slots.map(({ id, presentation }) => <Button key={id}
+            title={presentation.title} accessibilityLabel={presentation.accessibilityLabel ?? presentation.title}
+            disabled={presentation.disabled} variant={presentation.variant}
+            onPress={() => controls.pressById(id)} />)}</>;
+    }
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-176', mountNonce: 'fixture-mount-176' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: renderShellSurface,
+            surface: context => {
+                const root = renderShellSurface(context);
+                if (!React.isValidElement<{ children?: React.ReactNode }>(root)) throw new Error('Expected the public UI surface provider.');
+                return React.cloneElement(root, undefined, <>{root.props.children}<HostSlots /></>);
+            },
             ...(page?.launchInput === undefined ? {} : { launchInput: page.launchInput }),
             surfaceContext: createSurfaceContextFixture({
                 targetedContributions: {
@@ -538,12 +567,13 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                 },
             }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
-                ephemeralSharedScope, overlays: true,
+                ephemeralSharedScope, overlays: true, actionBindings: controls,
                 ...(hostedDetail ? { detailsPane: typeof hostedDetail === 'boolean' ? { available: true } : hostedDetail } : {}),
                 // The native/web focus adapter is a genuine host boundary, as in the review chooser harness.
                 physicalFocus(target) { target.focus(); return true; },
             }),
             handlers: {
+                actionControl: controls.handler,
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input, signal }) => {
                     // The host routes this addressed Action back to this mount's real dispatcher;
@@ -617,6 +647,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
         });
     });
     mounted.push(fixture);
+    mountedActionControls.set(fixture, controls);
     refreshMountedShell.set(fixture, (trigger = 'view') => refreshTriageListWindow(trigger, fixture.context.hostApi, ephemeralSharedScope));
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
@@ -641,7 +672,9 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
 
 async function pressAction(shell: PluginUiTestkit, name: string): Promise<void> {
     await act(async () => {
-        await shell.press(await shell.getByRole('button', { name }));
+        const controls = mountedActionControls.get(shell);
+        if (controls?.presentation(name)) await controls.press(name);
+        else await shell.press(await shell.getByRole('button', { name }));
     });
     await settle();
 }
@@ -952,7 +985,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(footer).not.toBeNull();
         await expect(pushedShell.getByRole('button', { name: 'Fix' })).resolves.toBeDefined();
         expect(footer!.textContent).toContain('Fix');
-        expect(footer!.textContent).toContain('Ask');
+        expect(footer!.querySelector('[aria-label="Ask"]')).not.toBeNull();
         await pushedShell.dispose();
 
         // Why the entry is here is a fact about it, not an action: on the pushed page it stays with the title and

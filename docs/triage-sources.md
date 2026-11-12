@@ -22,6 +22,24 @@ label at its display boundary and sets `projectionTruncated` when shortened.
 This correction is development source;
 an already-loaded declaration requires the normal producer reload.
 
+## Unavailable source diagnostics (0.3 development source)
+
+Plugin admission and loading own unavailable-plugin causes. Registration carries
+their supplied plugin id and code through the targeted-contribution snapshot.
+The aggregate list retains that cause as a configured source's optional
+`availabilityFailure`, using the existing source-failure schema. Metadata-only
+reads retain it too. Missing diagnostics remain unknown; Triage does not infer a
+cause by comparing inventories.
+
+Source management and shared source Settings use their existing Details
+disclosures for codes, safe reasons and actual request ids. Losing source
+admission preserves a known read diagnostic until a supplied admission cause
+replaces it. An admission cause without a request id stays without one.
+Pinned-entry refusal and exact reobservation carry the same supplied failure to
+the existing detail disclosure when no source connection can run the read.
+Native PR-status reads and their dependency observation preserve it too, before
+the existing Forge readiness projection and failure disclosure consume it.
+
 ## Universal Search (0.3 development source)
 
 The `entry-search` provider binds the Account-target `entries/search-v1` Action

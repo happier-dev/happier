@@ -453,7 +453,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         return await listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
             ? await selectTestkitConfiguredSources([INSTANCE_A, INSTANCE_B, ...(options.mixedFailureScale ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
             sourceInstances: collections.sourceInstances,
-            readAdmittedSources: async () => admitted,
+            readSourceSnapshot: async () => ({ contributions: admitted }),
             executeScan,
             taskOnly,
             nowMs: () => Date.now(),
@@ -868,7 +868,7 @@ describe('the mounted PRs & Issues surface', () => {
                 ui: page.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
             })).toEqual({ status: 'applied' });
         });
-        await expect(page.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        await expect(page.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         await expect(page.queryByText('These details are unavailable')).resolves.toBeUndefined();
         await expect(page.queryByRole('button', { name: 'Open on GitHub' })).resolves.toBeUndefined();
         expect(harness.actionCalls.filter(action => action === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1)).toHaveLength(2);
@@ -1260,27 +1260,21 @@ describe('the mounted PRs & Issues surface', () => {
             throw new Error('Expected mounted list Action address');
         }
         const mountId = address.mountId;
-        let release!: () => void;
-        harness.state.scanGate = new Promise<void>(resolve => { release = resolve; });
         const scansBefore = harness.scanCalls.count;
-        try {
-            await act(async () => {
-                expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, mountId, {
-                    kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'oldest',
-                }, new AbortController().signal)).toEqual({ status: 'applied' });
-            });
-            await vi.waitFor(() => expect(harness.scanCalls.count).toBeGreaterThan(scansBefore));
-            await visibleTexts(shell, ['Replace the duplicated normalizer', 'Older change', 'Middle change']);
-            expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'oldest' });
-            // Projection/order updates reached the real shell, but no new
-            // acquisition pass or relationship selection has answered yet.
-            expect(relationReads() - initialReads).toBe(0);
-        } finally {
-            release();
-            harness.state.scanGate = null;
-            await settleWindow('view', shell);
-        }
-        // A genuine completed acquisition still asks for fresh relationships.
+        await act(async () => {
+            expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, mountId, {
+                kind: 'setLens', query: '', filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, order: 'oldest',
+            }, new AbortController().signal)).toEqual({ status: 'applied' });
+        });
+        await settleWindow('view', shell);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Older change', 'Middle change']);
+        expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'oldest' });
+        // A named-order edit projects the retained rows, without a provider
+        // acquisition or another relationship demand (263c6dea36b).
+        expect(harness.scanCalls.count).toBe(scansBefore);
+        expect(relationReads()).toBe(initialReads);
+        // Explicit Refresh still acquires fresh relationships once.
+        await settleWindow('manual', shell);
         expect(relationReads() - initialReads).toBe(1);
     });
 
@@ -1379,7 +1373,7 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         expect(document.body.textContent).toContain('Ready');
         await expect(shell.queryByText('Unlinked maintenance task')).resolves.toBeUndefined();
-        await expect(shell.getByText(`${LABEL_B} could not be read. Not installed or enabled on this machine.`)).resolves.toBeDefined();
+        await expect(shell.getByText(`${LABEL_B} could not be read. Their entries may be missing or out of date. Not installed or enabled on this machine.`)).resolves.toBeDefined();
         expect(harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1))
             .toHaveLength(relationReads);
     });
@@ -1420,7 +1414,11 @@ describe('the mounted PRs & Issues surface', () => {
             if (readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope).loadMore?.kind === 'available') {
                 await loadRemainingPage(shell);
             }
-            expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'smart', smartPolicy, filters });
+            // Shared routes carry source identity; configured-instance
+            // narrowing remains local (999bafadf14e).
+            expect(parseTriageRouteSubPathV1(harness.settledLocations.at(-1))).toMatchObject({ order: 'smart', smartPolicy,
+                filters: { ...filters, sources: [{ source: SOURCE_A }],
+                    scopes: [{ source: SOURCE_A, unitId: 'unit-a', collisionScope: 'example/repository' }] } });
             await visibleTexts(shell, ['Replace the duplicated normalizer', 'Older change']);
             await expect(shell.queryByText('Middle change')).resolves.toBeUndefined();
         }
@@ -1556,7 +1554,7 @@ describe('the mounted PRs & Issues surface', () => {
             // read" is health without attribution: with two connections
             // configured it leaves the reader guessing, and with six it is
             // useless.
-            `${LABEL_B} could not be read. Could not be reached just now.`,
+            `${LABEL_B} could not be reached. Their entries may be missing or out of date.`,
         ]);
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
         // One cause, one voice: the notice names the connection and why, so the toolbar does not repeat it as
@@ -1634,7 +1632,9 @@ describe('the mounted PRs & Issues surface', () => {
 
     it('names one shared cause once when every connection fails for it, still naming each connection', async () => {
         const harness = createHarness();
-        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
+        const connectionA = `Example forge · ${LABEL_A}`;
+        const connectionB = `Example forge · ${LABEL_B}`;
         await settleWindow('view', shell);
         await loadRemainingPage(shell);
 
@@ -1645,8 +1645,10 @@ describe('the mounted PRs & Issues surface', () => {
             retryable: true, diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
         await settleWindow('manual', shell);
 
-        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change',
-            `${LABEL_A} and ${LABEL_B} could not be read. ${offline}`]);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+        const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
+        expect(statusLines, JSON.stringify(statusLines))
+            .toContain(`${connectionA} and ${connectionB} could not be read. Their entries may be missing or out of date. ${offline}`);
         // REQ-01 holds: both connections are still named, in the one heading.
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
             .find(element => element.textContent?.includes(offline));
@@ -1658,14 +1660,18 @@ describe('the mounted PRs & Issues surface', () => {
         // Diagnostics live where the reader manages the failed sources, leaving one compact line on the list.
         await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
         await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
-        expect(document.body.textContent).toContain(`${LABEL_A} — unavailable · retryable=true`);
-        expect(document.body.textContent).toContain(`${LABEL_B} — unavailable · retryable=true`);
+        for (const label of [LABEL_A, LABEL_B]) {
+            await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Details');
+            expect(document.body.textContent).toContain('For support: unavailable');
+            await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Hide details');
+        }
     });
 
     it('keeps different connection causes in Manage sources behind the compact failure line', async () => {
         const harness = createHarness();
-        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
+        const connectionA = `Example forge · ${LABEL_A}`;
+        const connectionB = `Example forge · ${LABEL_B}`;
         await settleWindow('view', shell);
         await loadRemainingPage(shell);
 
@@ -1676,17 +1682,29 @@ describe('the mounted PRs & Issues surface', () => {
             diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
         await settleWindow('manual', shell);
 
-        await visibleTexts(shell, [`${LABEL_A} and ${LABEL_B} could not be read.`]);
+        const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
+        expect(statusLines, JSON.stringify(statusLines))
+            .toContain(`${connectionA} and ${connectionB} could not be read. Their entries may be missing or out of date.`);
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes(`${LABEL_A} and ${LABEL_B} could not be read.`));
+            .find(element => element.textContent?.includes(`${connectionA} and ${connectionB} could not be read.`));
         expect(warning).toBeDefined();
         expect(warning?.textContent).not.toContain(offlineA);
         expect(warning?.textContent).not.toContain(offlineB);
         await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
         await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
-        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
-        expect(document.body.textContent).toContain(`${LABEL_A} — ${offlineA}`);
-        expect(document.body.textContent).toContain(`${LABEL_B} — ${offlineB}`);
+        // Each connection owns its cause in its health row; technical codes
+        // remain behind that row's own Details menu.
+        for (const [label, reason, otherReason] of [[LABEL_A, offlineA, offlineB], [LABEL_B, offlineB, offlineA]]) {
+            // Find the row from its own accessible menu and title, preserving
+            // attribution without depending on a fixed DOM nesting depth.
+            let row = document.querySelector<HTMLElement>(`[aria-label="More actions for ${label}"]`);
+            while (row !== null && !row.textContent?.includes(label)) row = row.parentElement;
+            expect(row?.textContent).toContain(reason);
+            expect(row?.textContent).not.toContain(otherReason);
+            await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Details');
+            expect(document.body.textContent).toContain('For support: unavailable');
+            await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Hide details');
+        }
     });
 
     it.each(['ui', 'agent'] as const)('discloses and hides the same source diagnostic (%s)', async route => {
@@ -1719,24 +1737,30 @@ describe('the mounted PRs & Issues surface', () => {
         }
     });
 
-    it.each([false, true])('offers source management on the list-owned source warning (Tasks=%s)', async (tasks) => {
+    it.each([false, true])('offers source management on the source recovery status (Tasks=%s)', async (tasks) => {
         const harness = createHarness({ tasks, sourceBUnavailable: true });
-        const surface = tasks ? defineUiSurface(context => <TriageListShell tasksPage subPath={context.subPath} />) : renderShellSurface;
+        const surface = tasks ? renderTasksSurface : renderShellSurface;
         const shell = await mountSurface(surface, harness, `source-warning-${tasks}`, sourceContextFixture(harness),
-            tasks ? { subPath: 'tasks,everyone' } : {});
+            { directAccountData: true, ...(tasks ? { subPath: 'tasks,everyone' } : {}) });
         await settleWindow('view', shell);
-        // One partially unread source is a polite status line under the toolbar, not an alert card over every page.
+        // View health partitions failures once (6861b0f0d1fd). An unadmitted
+        // source has no declared task kinds, so Tasks sends its recovery to the
+        // outside-source status while PRs & Issues names it in the list status.
+        const warningText = tasks ? '1 other source needs attention' : `${LABEL_B} could not be read`;
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes(`${LABEL_B} could not be read`));
+            .find(element => element.textContent?.includes(warningText));
         expect(document.querySelector('[role="alert"]')?.textContent ?? '').not.toContain(`${LABEL_B} could not be read`);
         expect(warning).toBeDefined();
-        expect(warning?.textContent).toContain('Not installed or enabled on this machine.');
+        if (!tasks) expect(warning?.textContent).toContain('Not installed or enabled on this machine.');
         // The fix sits beside the announced sentence, outside its live region (the shared Status owns that split).
         const manage = warning?.parentElement?.querySelector<HTMLElement>('[role="button"]');
-        expect(manage?.textContent).toContain('Manage sources');
+        expect(manage?.textContent).toContain(tasks ? 'Review' : 'Manage sources');
         await act(async () => { manage!.click(); });
         await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
-        expect(document.body.textContent?.split(`${LABEL_B} could not be read`)).toHaveLength(2);
+        expect(document.body.textContent).toContain(LABEL_B);
+        expect(document.body.textContent).toContain('Not installed or enabled on this machine.');
+        if (tasks) await expect(shell.queryByText('1 other source needs attention')).resolves.toBeUndefined();
+        else expect(document.body.textContent?.split(`${LABEL_B} could not be read`)).toHaveLength(2);
     });
 
     it('never claims a last known list when no source has listed anything', async () => {
@@ -1749,7 +1773,7 @@ describe('the mounted PRs & Issues surface', () => {
         // Nothing was ever listed, so the body's own failure state is the whole answer. A toolbar line saying
         // the reader is looking at "the last known list" over zero rows would be false, and a second voice for
         // one cause.
-        await visibleTexts(shell, ['Some sources could not be read']);
+        await visibleTexts(shell, [`${LABEL_A} and ${LABEL_B} could not be reached. Their entries may be missing or out of date.`]);
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
     });
 

@@ -5,6 +5,7 @@ import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/Pull
 
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 import {
+  Action,
   Banner,
   Button,
   DetailsPaneFooter,
@@ -36,9 +37,11 @@ import type {
   TriageLinkedSessionProjectionV1,
   TriageSourceWorkflowSubjectV1,
   TriageSourceEntrySnapshotV1,
+  TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 import { readTriageComparisonSource } from './readComparison.js';
-import type { PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControlController, PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } from '../../actions/configuredActionRunProtocol.js';
 import { applyTriageActionLaunchModeV1, type TriageActionV1 } from '../../settings/actions.js';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import { renderSessionInputContextPromptV1 } from '@happier-dev/plugin-sdk/sessions';
@@ -135,6 +138,7 @@ export type TriageDetailRegionProps = Readonly<{
   /** Opening and subsequent exact reads belong to the shell's one read owner. */
   exactRead?: import('./postMutationReobservation.js').TriageExactEntryReadV1 | null;
   exactReadFailure?: Readonly<{ failure?: PluginError }>;
+  availabilityFailure?: TriageSourceFailureV1;
   sourcePanelActions?: TriageSourcePanelActionsV1;
   tabSelection: TriageDetailTabSelectionV1;
   sessionSelection: Readonly<{
@@ -363,8 +367,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       }] },
     }));
   };
-  const startOrchestration = () => {
-    if (props.target.kind !== 'entry' || orchestrationPrompt === null || !orchestrationPrompt.trim()) return;
+  const prepareOrchestration: PluginUiActionControlController['prepare'] = (options) => {
+    if (props.target.kind !== 'entry' || orchestrationPrompt === null || !orchestrationPrompt.trim()) return null;
     const target = props.target;
     // A transient prompt feeds the incumbent controller; it is not Account action configuration.
     const action: TriageActionV1 = {
@@ -372,14 +376,14 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       appliesTo: ['issue'], profileId: null, workspaceMode: 'repository',
       target: { kind: 'agent', promptInvocationId: null, delivery: 'send' },
     };
-    controller.start({
+    return controller.prepareAction({
       action, orchestrationPrompt: pendingPrompt ?? orchestrationPrompt,
       entryRef: target.entryRef, display: props.display,
       sourceInstance: { source: target.entryRef.source, sourceInstanceId: target.sourceInstanceId },
       presentation: props.presentation,
       ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
       ...(props.repository === undefined ? {} : { repository: props.repository }),
-    });
+    }, options);
   };
   const [comparisonFailed, setComparisonFailed] = React.useState(false);
   const [readingComparison, setReadingComparison] = React.useState(false);
@@ -482,6 +486,10 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     controller.reset();
   }, [controller]);
   const notice = describeTriageEntrySessionPhaseV1(controller.phase);
+  const sessionFailure = controller.phase.kind === 'unavailable' ? controller.phase.failure : controller.configuredResult?.failure;
+  const retainedNotice = controller.phase.kind === 'unavailable' && controller.phase.reason === 'handoffOutcomeUnknown'
+    && controller.configuredResult !== null
+    ? describeTriageEntrySessionPhaseV1({ kind: 'handoffSettled', result: controller.configuredResult }) : null;
 
   return props.children(
     <Stack gap="small">
@@ -553,9 +561,10 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           <Text tone="muted" variant="micro" valueKey="plugins.triage.surface.orchestrate.attached"
             fallback="The issue stays attached even if you replace the prompt." />
           <Row gap="small" wrap>
-            <Button titleKey={pendingPrompt === null ? 'plugins.triage.surface.orchestrate.start' : 'plugins.triage.surface.orchestrate.resume'}
+            <Action.Control action={{ pluginId: 'happier.triage', localId: TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 }}
+              titleKey={pendingPrompt === null ? 'plugins.triage.surface.orchestrate.start' : 'plugins.triage.surface.orchestrate.resume'}
               title={pendingPrompt === null ? 'Start orchestration' : 'Resume orchestration'} variant="primary"
-              disabled={busy || !orchestrationPrompt.trim()} onPress={startOrchestration} />
+              disabled={busy || !orchestrationPrompt.trim()} controller={{ prepare: prepareOrchestration, onSettled: controller.settleAction }} />
             {/* One filled action: leaving the prompt is the quiet way out, not a second slab. */}
             <Button titleKey="plugins.triage.surface.actions.cancel" title="Cancel" variant="plain"
               disabled={busy || pendingPrompt !== null} onPress={() => setOrchestrationPrompt(null)} />
@@ -571,8 +580,9 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       {notice === null ? null : (
         <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
       )}
-      {controller.phase.kind !== 'unavailable' || controller.phase.failure === undefined ? null : (
-        <PullRequestFailureDetails codes={controller.phase.failure.codes} requestId={controller.phase.failure.requestId} />
+      {retainedNotice === null ? null : <Status tone={retainedNotice.tone} labelKey={retainedNotice.labelKey} label={retainedNotice.label} />}
+      {sessionFailure === undefined ? null : (
+        <PullRequestFailureDetails codes={sessionFailure.codes} requestId={sessionFailure.requestId} />
       )}
       {comparisonFailed ? <Status tone="warning"
         labelKey="plugins.triage.surface.comparisonUnavailable"
@@ -1035,12 +1045,17 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             detail={readFailure.detail} showReason={false} />
         </Stack>
       ) : observation === null ? (
-        header.presence === 'absent' ? null : <EmptyState
-          titleKey="plugins.triage.surface.detail.noConnection.title"
-          title="No connection to open this through"
-          descriptionKey="plugins.triage.surface.detail.noConnection.description"
-          description="No configured connection currently observes this entry, so there is nothing to read it with."
-        />
+        header.presence === 'absent' ? null : <Stack gap="small">
+          <EmptyState
+            titleKey="plugins.triage.surface.detail.noConnection.title"
+            title="No connection to open this through"
+            descriptionKey="plugins.triage.surface.detail.noConnection.description"
+            description="No configured connection currently observes this entry, so there is nothing to read it with."
+          />
+          {props.availabilityFailure === undefined ? null : <ActionFailureDetails
+            code={props.availabilityFailure.code} detail={props.availabilityFailure.detail}
+            requestId={props.availabilityFailure.requestId} showReason={false} />}
+        </Stack>
       ) : detail === null || detail.kind === 'reading' ? (
         // Lines of reading text where the story will start (the same lines the source holds while its own
         // first read settles), announced in the source's own noun; the row above it stays put.
@@ -1149,6 +1164,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
               )}
               {...(header.linkedSessions.length === 0 ? {} : {
                 session: <TriageSessionPanel sessions={header.linkedSessions} entryRef={row.entryRef} onUnlinked={completeUnlink}
+                  sourceInstanceId={selected?.sourceInstanceId}
                   selectedSessionId={selectedSessionId} onSelectSession={selectPanelSession} />,
               })}
               fallback={(

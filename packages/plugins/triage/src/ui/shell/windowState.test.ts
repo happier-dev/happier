@@ -50,6 +50,21 @@ function snapshot(overrides: Partial<TriageListWindowSnapshotV1> = {}): TriageLi
 }
 
 describe('resolveTriageListShellState', () => {
+  it.each(['plugin_source_missing', 'plugin_manifest_invalid', 'plugin_disabled'])(
+    'discloses supplied cold availability cause %s through source Details', (code) => {
+      const state = resolveTriageListShellState(snapshot({ window: window(),
+        configuredSources: [{ sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE,
+          available: false, availabilityFailure: { class: 'unknown', code, detail: SOURCE.pluginId } }],
+      }));
+      if (state.kind !== 'window' || state.failure === null) throw new Error('Expected a source failure');
+      expect(state.failure.sources).toHaveLength(1);
+      const details = readTriageListFailureNotice(state.failure).details;
+      expect(details).toContain(code);
+      expect(details).toContain(SOURCE.pluginId);
+      expect(details).not.toContain('Request ID');
+    },
+  );
+
   it.each([
     { class: 'unsupportedContract' as const, code: 'plugin_manifest_invalid', detail: 'happier.scm.forge.github: Non-safe plugin actions must declare host confirmation metadata.' },
     { class: 'authentication' as const, code: 'credential_reconnect_required', detail: 'Reconnect the GitHub account.', requestId: 'read-availability-17' },
@@ -68,19 +83,22 @@ describe('resolveTriageListShellState', () => {
     else expect(details).not.toContain('Request ID');
   });
 
-  it('keeps one diagnostic per unavailable connection at the canonical source batch scale', () => {
+  it.each([false, true])('keeps one diagnostic per unavailable connection at source batch scale (cold: %s)', (cold) => {
     const configuredSources = Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }, (_, index) => ({
       source: SOURCE, sourceInstanceId: `connection-${index}`, configurationRowId: `connection-${index}`, available: false,
+      ...(cold ? { availabilityFailure: { class: 'unknown' as const, code: 'plugin_manifest_invalid', detail: SOURCE.pluginId } } : {}),
     }));
     const state = resolveTriageListShellState(snapshot({ configuredSources, window: window({
-      lanes: configuredSources.map(source => ({ source: source.source, sourceInstanceId: source.sourceInstanceId,
+      lanes: cold ? [] : configuredSources.map(source => ({ source: source.source, sourceInstanceId: source.sourceInstanceId,
         exhausted: false, health: { kind: 'failed' as const, failure: { class: 'authentication' as const,
           code: 'credential_reconnect_required', requestId: `read-${source.sourceInstanceId}` } } })),
     }) }));
     if (state.kind !== 'window' || state.failure === null) throw new Error('Expected source failures');
     expect(state.failure.sources).toHaveLength(configuredSources.length);
     expect(new Set(state.failure.sources.map(source => source.sourceInstanceId)).size).toBe(configuredSources.length);
-    expect(state.failure.sources.every(source => source.requestId === `read-${source.sourceInstanceId}`)).toBe(true);
+    expect(state.failure.sources.every(source => cold
+      ? source.code === 'plugin_manifest_invalid' && source.requestId === undefined
+      : source.requestId === `read-${source.sourceInstanceId}`)).toBe(true);
   });
 
   it('retains the exact provider Request ID on an admitted source failure', () => {

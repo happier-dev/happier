@@ -131,7 +131,7 @@ async function readWorkItems(request: PluginWorkItemsResolveRequestV1, context: 
             entryRef: task.entryRef, sourceInstanceId: row.configured.instance.sourceInstanceId,
         }, {
             readConfiguredInstance: async id => view.configured.rows.find(row => row.configured.instance.sourceInstanceId === id)?.configured ?? null,
-            readAdmittedSources: async () => [...view.sources.values()],
+            readSourceSnapshot: async () => ({ contributions: [...view.sources.values()] }),
             executeGet: async (operation, input, options) => native.get(task)?.observation
                 ?? context.services.actions.executeAdmittedTargetedOperation(operation, input, options),
             nowMs: () => context.invokedAtMs, signal: context.signal,
