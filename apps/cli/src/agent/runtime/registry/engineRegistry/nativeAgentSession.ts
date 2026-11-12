@@ -1289,6 +1289,7 @@ export function applyNativeAgentConfigurationUpdate(
     current: AgentSessionConfigurationSnapshot,
     update: RuntimeTurnConfigUpdate,
     getWorkspaceWrites?: () => 'allow' | 'deny' | undefined,
+    currentProviderBinding?: AgentSessionOpenRequest['providerBinding'],
 ): Readonly<{
     snapshot: AgentSessionConfigurationSnapshot;
     request: AgentSessionConfigurationUpdate;
@@ -1325,7 +1326,7 @@ export function applyNativeAgentConfigurationUpdate(
                 [configOptionId]: { value: configOptionValue, updatedAtMs },
             }
             : current.options,
-    }), update.providerBinding);
+    }), update.providerBinding ?? currentProviderBinding);
     return {
         snapshot,
         request: {
@@ -1410,6 +1411,7 @@ type NativeAgentSessionDirectFacets = Readonly<{
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
+    providerBinding?: AgentSessionOpenRequest['providerBinding'];
     projectModelId?: (modelId: AgentSessionModelsSnapshot['currentModelId']) => AgentSessionModelsSnapshot['currentModelId'];
     getWorkspaceWrites?: () => 'allow' | 'deny' | undefined;
     resolveMcpToolPolicy?: HostSessionRuntimeFactoryParams['resolveMcpToolPolicy'];
@@ -2182,6 +2184,7 @@ export function createNativeAgentSessionOperations(
     let nativeTurnOrdinal = 0;
     let runtimeEndedIssue: SessionRuntimeIssueV1 | null = null;
     let configuration = initialConfiguration;
+    let providerBinding = directFacets.providerBinding;
     const projectModelSnapshot = (snapshot: AgentSessionModelsSnapshot): AgentSessionModelsSnapshot =>
         directFacets.projectModelId
             ? { ...snapshot, currentModelId: directFacets.projectModelId(snapshot.currentModelId) }
@@ -4018,7 +4021,7 @@ export function createNativeAgentSessionOperations(
             const mcpToolPolicy = typeof update.permissionMode === 'string' ? directFacets.resolveMcpToolPolicy?.(update.permissionMode) : undefined;
             const nextConfiguration = applyNativeAgentConfigurationUpdate(configuration, {
                 ...update, ...(mcpToolPolicy ? { mcpToolPolicy } : {}),
-            }, directFacets.getWorkspaceWrites);
+            }, directFacets.getWorkspaceWrites, providerBinding);
             if (isNativeAgentSessionModeUnavailable(nextConfiguration.snapshot, publications)) {
                 return reportOutcome({ status: 'failed', reason: 'native_agent_session_mode_unavailable' }, 'native_agent_session_mode_unavailable');
             }
@@ -4030,6 +4033,7 @@ export function createNativeAgentSessionOperations(
             );
             if (result.status === 'applied' || result.status === 'deferred') {
                 configuration = nextConfiguration.snapshot;
+                providerBinding = update.providerBinding ?? providerBinding;
             }
             return reportOutcome(toHostConfigurationOutcome(result), 'diagnostic' in result ? result.diagnostic.code : undefined, result.status);
         },
@@ -6034,6 +6038,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     scmCommandRunner: params.scmCommandRunner,
                     ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                     openedWithoutConnectedServices: () => openedWithoutConnectedServices,
+                    providerBinding: openRequest.providerBinding,
                     projectModelId: modelId => openRequest.providerBinding && modelId === openRequest.providerBinding.model.id
                         ? modelSelection?.ref.modelId ?? modelId : modelId,
                     ...(params.prepareTeamCredentialProviderBinding

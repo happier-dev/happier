@@ -105,8 +105,13 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
             expect(created.operations.models?.read().currentModelId).toBe(observedModelId);
             expect(subscribedModelId).toBe(observedModelId);
             subscription?.dispose();
-            const outcome = await created.operations.updateSessionRuntimeConfig?.({ modelId: selection.modelId, providerBinding });
+            // Turn preparation re-applies durable intent without repeating the open binding.
+            const outcome = await created.operations.updateSessionRuntimeConfig?.({ modelId: selection.modelId });
             expect(outcome?.status).toBe('applied');
+            const permissionOutcome = await created.operations.updateSessionRuntimeConfig?.({ permissionMode: 'default' });
+            expect(permissionOutcome?.status).toBe('applied');
+            const rebound = await created.operations.updateSessionRuntimeConfig?.({ modelId: selection.modelId, providerBinding });
+            expect(rebound?.status).toBe('applied');
         }
         return AgentSessionConfigurationSnapshotV1Schema.parse(opens[0]!.configuration);
     } finally {
