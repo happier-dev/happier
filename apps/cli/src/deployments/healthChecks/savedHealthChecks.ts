@@ -23,7 +23,6 @@ import { admitSavedEndpointCheck, readSavedEndpointCheck } from './savedEndpoint
 import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
 import { resolveDeploymentCreationDefaultsV1, deploymentDomainProbeVantageV1 } from '@happier-dev/deployments';
-import { readTriageSessionHandoffChoicesV1 } from '@happier-dev/triage-sources/runtime';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 
@@ -62,7 +61,10 @@ export type SavedMachineServiceHealthResult = Readonly<{
 
 /** One finite admission over the existing adopted source and live service read. */
 export function createSavedHealthChecksHost(input: Readonly<{
+    /** Local profile for client contexts and service-result publication. */
     serverId: string;
+    /** Exact portable Home identity for deployment Actions. */
+    homeServerIdentityId: string | null;
     resolveAdoptedDefinitionSet: ResolveAutomationEventAdoptedDefinitionSetV1;
     readKinds?(): HealthCheckKindCatalogV1;
     readSavedSource?(sourceInstanceId: string, signal: AbortSignal): Promise<SavedHealthCheckSourceRead>;
@@ -92,8 +94,9 @@ export function createSavedHealthChecksHost(input: Readonly<{
         bind(seed: PluginInvocationServicesSeed, services: Readonly<{ actions: ActionsService; http: HttpService }>): HealthChecksService | null {
             if (!seed.resolveCurrentPluginMaterializationRef) return null;
             const readEnvironment = async (environmentId: string, signal: AbortSignal) => {
+                if (!input.homeServerIdentityId) return unavailable('server_scope_mismatch');
                 const loaded = await services.actions.execute('deployments.environments.get',
-                    { serverId: input.serverId, environmentId }, { signal });
+                    { serverId: input.homeServerIdentityId, environmentId }, { signal });
                 signal.throwIfAborted();
                 const detail = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
                 if (!detail.ok) return unavailable(detail.error);
@@ -111,7 +114,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     return unavailable('health_check_subject_mismatch');
                 }
                 const loaded = await services.actions.execute('deployments.domains.get',
-                    { serverId: input.serverId, environmentId: environment.environment.id, domainId }, { signal }).catch(error => {
+                    { serverId: environment.environment.serverId, environmentId: environment.environment.id, domainId }, { signal }).catch(error => {
                     if (isPluginError(error) && error.code === 'deployment_unavailable') return missingDomainServingAddress(error);
                     throw error;
                 });
@@ -156,7 +159,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         if (environment) {
                             const header = environment.environment;
                             const prepared = DeploymentEnvironmentUpdateResultV1Schema.parse(await services.actions.execute('deployments.environments.update', {
-                                serverId: input.serverId, environmentId: header.id, expectedRevision: header.revision,
+                                serverId: header.serverId, environmentId: header.id, expectedRevision: header.revision,
                                 contentArtifactId: header.contentArtifactId, contentHeaderVersion: header.contentHeaderVersion,
                                 contentBodyVersion: header.contentBodyVersion, mode: 'preview', defaultsFor: 'alerts',
                             }, { signal }));
@@ -191,6 +194,10 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     const kinds = input.readKinds?.() ?? [];
                     for (const check of request.sourceConfig.checks) if (!builtin(check)) contributed(check, kinds);
                     if (request.sourceConfig.investigation?.mode === 'auto_start') {
+                        // Triage sources derive their field allocation from the full list schemas at
+                        // import; only an auto-start investigation needs them, so every process
+                        // that hosts plugin runtimes (each Runner) does not pay that at start.
+                        const { readTriageSessionHandoffChoicesV1 } = await import('@happier-dev/triage-sources/runtime');
                         const choices = await readTriageSessionHandoffChoicesV1({ executeAction: (ref, args, options) =>
                             services.actions.execute(ref, args, options) }, { task: 'investigate', signal });
                         signal.throwIfAborted();

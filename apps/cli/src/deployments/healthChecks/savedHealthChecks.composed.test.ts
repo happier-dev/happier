@@ -1,7 +1,7 @@
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
-import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { Resolver } from 'node:dns/promises';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -87,7 +87,7 @@ describe('saved source finite native producer binding', () => {
             checks: [definition('uptime-kuma', { monitorId: '7' })] };
         const f = await adopted(sourceConfig);
         const enroll = vi.fn(async () => ({ webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' }));
-        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+        const service = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
             readObserver: () => f.observer, openDomainArtifact: async () => null, now: () => 400,
             readKinds: () => [{ pluginId: f.seed.plugin.id, id: 'uptime-kuma', title: 'Uptime Kuma',
                 action: 'health/uptime-kuma', configSchema: monitorDefinitions['uptime-kuma'].configSchema.jsonSchema }],
@@ -109,7 +109,7 @@ describe('saved source finite native producer binding', () => {
         const execute = vi.fn(async () => ({ v: 1, kind: 'choices', defaultActionId: null,
             actions: available ? [{ label: 'Investigate production', selection: { configuredActionId: 'investigate-production',
                 sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } }] : [] }));
-        const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+        const service = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
             readObserver: () => f.observer, openDomainArtifact: async () => null,
         }).bind(f.seed, { actions: { execute } as unknown as ActionsService, http: {} as HttpService })!;
         await expect(service.setup({ sourceInstanceId: 'health:subject', sourceConfig,
@@ -134,7 +134,7 @@ describe('saved source finite native producer binding', () => {
                 author: { kind: 'process' as const }, text: 'Healthy' }] } };
         const configSchema = { type: 'object' as const, additionalProperties: false,
             properties: { monitorId: { type: 'string' as const } }, required: ['monitorId'] };
-        const host = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: (caller, occurrence) =>
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: (caller, occurrence) =>
             caller.pluginId === f.seed.plugin.id && occurrence === f.seed.occurrenceId ? f.owner : null,
             readObserver: () => f.observer, openDomainArtifact: async () => null,
             resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
@@ -192,7 +192,7 @@ describe('saved source finite native producer binding', () => {
                 request: async () => ({ status: 204, finalUrl: 'https://app.example.test/ready', headers: {}, body: new Uint8Array(),
                     tlsPeer: { url: 'https://app.example.test/ready', notBefore: 0, notAfter: 5000, fingerprint256: 'aa' } }),
             } as unknown as HttpService;
-            const service = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+            const service = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
                 readObserver: () => f.observer, now: () => 1000,
                 openDomainArtifact: async () => { throw new Error('Generic checks have no Domain'); },
             }).bind(f.seed, { actions: { execute } as unknown as ActionsService, http })!;
@@ -226,7 +226,7 @@ describe('saved source finite native producer binding', () => {
                 },
                 async stop() { return { status: 'stopped' }; },
             } });
-        const serviceFor = (adoption: typeof f) => createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => adoption.owner,
+        const serviceFor = (adoption: typeof f) => createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => adoption.owner,
             readObserver: () => adoption.observer, now: () => 1000, openDomainArtifact: async () => null,
             onServiceResult: value => publishSavedServiceHealthResult(owner, value),
         }).bind(adoption.seed, { actions: {
@@ -295,7 +295,7 @@ describe('saved source finite native producer binding', () => {
                 const changes: unknown[] = [];
                 const subscription = owner.machineServiceRows.subscribe(machineId, [handle], change => changes.push(change.row?.health));
                 const published: SavedMachineServiceHealthResult[] = [];
-                const service = createSavedHealthChecksHost({ serverId: profile.id, resolveAdoptedDefinitionSet: () => f.owner,
+                const service = createSavedHealthChecksHost({ serverId: profile.id, homeServerIdentityId: await resolveServerProfileHomeIdentityId(profile.id), resolveAdoptedDefinitionSet: () => f.owner,
                     readObserver: () => f.observer, now: () => now, openDomainArtifact: async () => null,
                     onServiceResult: async value => { await publishSavedServiceHealthResult(owner, value); published.push(value); },
                 }).bind(f.seed, { actions: { execute: async () => ({ kind: 'service', service: owner.machineServiceRows.read(handle) }) } as unknown as ActionsService,
@@ -418,7 +418,7 @@ describe('saved source finite native producer binding', () => {
         let time = 2200;
         const receipts = vi.fn(async () => ({ kind: 'ready' as const, lastAcceptedAt }));
         const execute = vi.fn(async () => ({ ok: true as const, environment, targetLinks: [] }));
-        const host = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
             readObserver: () => f.observer, now: () => time, readHeartbeatReceipt: receipts,
             openDomainArtifact: async () => { throw new Error('Heartbeat has no Domain content'); } });
         const service = host.bind(f.seed, { actions: { execute } as unknown as ActionsService,
@@ -434,7 +434,7 @@ describe('saved source finite native producer binding', () => {
         expect(receipts).toHaveBeenLastCalledWith({ caller: f.seed.resolveCurrentPluginMaterializationRef!(),
             sourceInstanceId: 'health:subject', checkId: 'heartbeat', webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA' }, expect.any(AbortSignal));
         const other = await adopted(sourceConfig, 'other-controller');
-        const retired = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => other.owner,
+        const retired = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => other.owner,
             readObserver: () => other.observer, readHeartbeatReceipt: receipts, openDomainArtifact: async () => null })
             .bind(other.seed, { actions: { execute } as unknown as ActionsService, http: {} as HttpService });
         await expect(retired!.read({ sourceInstanceId: 'health:subject', checkIds: ['heartbeat'] }))
@@ -512,19 +512,25 @@ describe('saved source finite native producer binding', () => {
                     await runWithServerHttpBaseUrl(home.baseUrl, () => artifacts.read(artifactId, {
                         signal, prepareRecipients: false, includeSharedAudience: false })));
                 const currentDomain = createCurrentDomainEdgeObservation();
-                const host = createSavedHealthChecksHost({ serverId: profile.id,
+                const host = createSavedHealthChecksHost({ serverId: profile.id, homeServerIdentityId: await resolveServerProfileHomeIdentityId(profile.id),
                     resolveAdoptedDefinitionSet: () => f.owner, readObserver: () => f.observer, openDomainArtifact,
                     onDomainResult: value => currentDomain.publish(value) });
                 const actionsFor = (token: string) => createPluginInvocationActionsService({ seed: actionSeed,
                     actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
                         ...createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
-                            serverId: profile.id, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+                            serverId: home.serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
                             resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
                             runtime: { async acquire() { throw new Error('No native role in saved health admission'); } },
                         }),
                     }), invokeContributedAction: async () => { throw new Error('No contributed Action in saved health admission'); } });
                 const ownerService = host.bind(actionSeed, { actions: actionsFor(home.token), http });
                 if (!ownerService) throw new Error('Owner service must bind');
+                expect(profile.id).not.toBe(home.serverId);
+                expect(await ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig: {
+                    ...sourceConfig, mode: 'preview', alerts: { channels: [], phases: ['open', 'recovered'] },
+                } })).toMatchObject({ mode: 'preview', destinationSelectionContext: {
+                    serverId: profile.id, machineId: home.machineId,
+                } });
                 await expect(ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig: {
                     ...sourceConfig, checks: [{ ...sourceConfig.checks[0]!, binding: { kind: 'domain',
                         domainId: 'not-deployed-domain', targetLinkId: link.id, condition: 'domain_probe_failed' } }],
@@ -613,7 +619,7 @@ describe('saved source finite native producer binding', () => {
             const actions = { execute } as unknown as ActionsService;
             const http = createPluginHttpService({ adapter: createGlobalFetchRuntime() });
             const receipts = vi.fn(async () => ({ kind: 'ready' as const, lastAcceptedAt: 1000 }));
-            const host = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
+            const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => f.owner,
                 readObserver: () => f.observer, now: () => 2200, readHeartbeatReceipt: receipts,
                 openDomainArtifact: async () => null });
             const service = host.bind(f.seed, { actions, http });
@@ -628,7 +634,7 @@ describe('saved source finite native producer binding', () => {
             expect(dns).toHaveBeenCalledWith('private.example.test', 'A');
             expect(JSON.stringify(results)).not.toContain('private.example.test');
             const remote = await adopted(sourceConfig, 'outside-observer');
-            const remoteHost = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => remote.owner,
+            const remoteHost = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => remote.owner,
                 readObserver: () => remote.observer, now: () => 2200, readHeartbeatReceipt: receipts,
                 openDomainArtifact: async () => null }).bind(remote.seed, { actions, http });
             await expect(remoteHost!.read({ sourceInstanceId: 'health:subject', checkIds: ['tcp', 'dns', 'heartbeat'] }))

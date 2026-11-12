@@ -219,7 +219,7 @@ describe('finite heartbeat Home client', () => {
       signal: occurrenceSignal.signal, resolveCurrentPluginMaterializationRef: () => caller, isOccurrenceCurrent: () => true };
     const installation = await readCurrentMachineInstallation();
     if (!installation) throw new Error('Missing isolated installation');
-    const host = createSavedHealthChecksHost({ serverId: 'server', resolveAdoptedDefinitionSet: () => owner,
+    const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server', resolveAdoptedDefinitionSet: () => owner,
       readObserver: () => ({ machineId: caller.machineId, installationId: installation.identity.installationId }), now: () => time,
       enrollHeartbeat: transport.enroll, readHeartbeatReceipt: transport.read, openDomainArtifact: async () => null });
     // The machine-detail Action crosses the remote Machine boundary. It names

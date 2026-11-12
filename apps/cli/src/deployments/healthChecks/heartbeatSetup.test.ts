@@ -17,7 +17,7 @@ describe('explicit saved heartbeat enrollment', () => {
         let settingsReads = 0;
         const channels = [{ channelId: 'saved-provider', destination: { connectionId: 'production' } }];
         let enrollments = 0;
-        const host = createSavedHealthChecksHost({ serverId: 'server',
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
             resolveAdoptedDefinitionSet() { throw new Error('Setup must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null,
             readAccountSettings: async () => { settingsReads++; return { accountId: 'owner', settings: {
@@ -61,7 +61,7 @@ describe('explicit saved heartbeat enrollment', () => {
             config: { host: 'web.example', port: 443 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
         let sourceReads = 0;
         let configured = true;
-        const host = createSavedHealthChecksHost({ serverId: 'profile-home',
+        const host = createSavedHealthChecksHost({ serverId: 'profile-home', homeServerIdentityId: 'profile-home',
             resolveAdoptedDefinitionSet() { throw new Error('Preview must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null,
             // Only the saved-source list transport is substituted; canonical source parsing stays real.
@@ -94,7 +94,7 @@ describe('explicit saved heartbeat enrollment', () => {
 
     it('uses the Environment P40 preview once and preserves Project Off over Account alert defaults', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
-        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', controllerMachineId: 'controller' });
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', serverId: 'portable-home', controllerMachineId: 'controller' });
         const requests: unknown[] = [];
         const defaults = resolveDeploymentCreationDefaultsV1({ projectSourceId: environment.projectSourceId, projectOwner: { kind: 'account', accountId: 'owner' },
             projectDefaults: { projectSourceId: environment.projectSourceId, deploymentDefaults: { alertChannels: [] } },
@@ -108,7 +108,7 @@ describe('explicit saved heartbeat enrollment', () => {
                 revision: environment.revision, creationDefaults: defaults };
             throw new Error('Preview must not request Domain content or mutate a source');
         } } as unknown as ActionsService;
-        const host = createSavedHealthChecksHost({ serverId: 'profile-home',
+        const host = createSavedHealthChecksHost({ serverId: 'profile-home', homeServerIdentityId: 'portable-home',
             resolveAdoptedDefinitionSet() { throw new Error('Preview must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => { throw new Error('Preview must not open Domain artifacts'); },
             readAccountSettings: async () => { throw new Error('Environment preview must reuse P40 defaults admission'); },
@@ -125,8 +125,8 @@ describe('explicit saved heartbeat enrollment', () => {
                 .toMatchObject({ mode: 'preview', sourceConfig: { alerts: { channels: [], phases: ['open', 'recovered'] } },
                     destinationSelectionContext: { serverId: 'profile-home', machineId: 'controller' } });
             expect(requests).toEqual([
-                { action: 'deployments.environments.get', input: { serverId: 'profile-home', environmentId: environment.id } },
-                { action: 'deployments.environments.update', input: expect.objectContaining({ serverId: 'profile-home',
+                { action: 'deployments.environments.get', input: { serverId: 'portable-home', environmentId: environment.id } },
+                { action: 'deployments.environments.update', input: expect.objectContaining({ serverId: 'portable-home',
                     environmentId: environment.id, mode: 'preview', defaultsFor: 'alerts', expectedRevision: environment.revision }) },
             ]);
         } finally { await kit.dispose(); }
@@ -135,7 +135,7 @@ describe('explicit saved heartbeat enrollment', () => {
     it('manages an exact saved heartbeat through the agent Action without exposing the capability URL', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
         const requests: unknown[] = [];
-        const host = createSavedHealthChecksHost({ serverId: 'server',
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
             resolveAdoptedDefinitionSet() { throw new Error('Endpoint management must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null,
             async manageHeartbeat(request, signal) {
@@ -162,7 +162,7 @@ describe('explicit saved heartbeat enrollment', () => {
     it('enrolls exact heartbeat checks through the setup Action and persists only nonsecret endpoint identities', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
         const requests: unknown[] = [];
-        const host = createSavedHealthChecksHost({ serverId: 'server',
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
             resolveAdoptedDefinitionSet() { throw new Error('Setup must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null,
             async enrollHeartbeat(request, signal) {
@@ -191,7 +191,7 @@ describe('explicit saved heartbeat enrollment', () => {
 
     it('settles heartbeat setup visibly unavailable when its enrollment producer is absent', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
-        const host = createSavedHealthChecksHost({ serverId: 'server',
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
             resolveAdoptedDefinitionSet() { throw new Error('Unavailable setup must not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null });
         const seed = { plugin: { id: caller.pluginId, version: '0.0.0' }, occurrenceId: 'active', correlationId: 'health-setup',
@@ -212,7 +212,7 @@ describe('explicit saved heartbeat enrollment', () => {
 
     it('executes the real setup Action with a valid saved config and validates its declared result schema', async () => {
         const caller = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
-        const host = createSavedHealthChecksHost({ serverId: 'server',
+        const host = createSavedHealthChecksHost({ serverId: 'server', homeServerIdentityId: 'server',
             resolveAdoptedDefinitionSet() { throw new Error('Setup does not scan adopted sources'); },
             readObserver: () => null, openDomainArtifact: async () => null });
         const seed = { plugin: { id: caller.pluginId, version: '0.0.0' }, occurrenceId: 'active', correlationId: 'health-setup',
