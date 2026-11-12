@@ -78,14 +78,7 @@ describe('Antigravity agent definition', () => {
 
     const agent = PLUGIN_MANIFEST.contributes.agents[0];
     expect(agent?.runtime).toMatchObject({
-      kind: 'acp',
-      transport: {
-        kind: 'stdio',
-        executable: { kind: 'managedDependency', id: 'agy-acp-server' },
-      },
-      definition: {
-        auth: { methodId: 'gemini-api-key' },
-      },
+      kind: 'custom',
     });
     expect(agent?.runtime).not.toHaveProperty('definition.models');
     expect(agent?.runtime).not.toHaveProperty('definition.defaultModel');

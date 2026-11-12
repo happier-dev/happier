@@ -50,7 +50,6 @@ function response(status: number, body: unknown, finalUrl = 'https://oauth2.goog
 describe('Antigravity qualified Connected Account', () => {
   it('declares the shared Gemini API-key account for native ACP authentication', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents.find(({ id }) => id === ANTIGRAVITY_AGENT_ID);
-    expect(agent?.runtime).toMatchObject({ definition: { auth: { methodId: 'gemini-api-key' } } });
     expect(agent?.connectedAccounts).toContainEqual({
       purpose: 'gemini-api-key', service: GEMINI_CONNECTED_ACCOUNT_SERVICE,
       required: false, materializationKinds: ['environment'], credentialKinds: ['token'],

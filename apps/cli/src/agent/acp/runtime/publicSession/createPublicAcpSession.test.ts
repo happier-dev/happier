@@ -32,7 +32,6 @@ import { handleGrokPromptComplete, GROK_PROMPT_COMPLETE_METHOD } from '../../../
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { buildGrokAcpRuntimeDefinition } from '../../../../../../../packages/plugins/grok/src/agent/acp/definition';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { applyAcpBackendUpsertV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
 import { openAcpCatalogContentV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -342,14 +341,9 @@ function writePublicComposerAgent(dir: string): string {
             });
           } else if (request.method === 'authenticate') {
             lifecycleMethods.push('authenticate');
-            if (scenario.startsWith('agy-select-')) {
-              const expected = scenario === 'agy-select-key' ? 'gemini-api-key' : 'oauth-personal';
-              if (scenario === 'agy-select-missing' || request.params.methodId !== expected) {
-                send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'Authentication required' } });
-                continue;
-              }
-            }
-            authenticated = request.params.methodId === 'cursor_login'
+            authenticated = (scenario.startsWith('agy-select-') && scenario !== 'agy-select-missing'
+              && request.params.methodId === (scenario === 'agy-select-key' ? 'gemini-api-key' : 'oauth-personal'))
+              || request.params.methodId === 'cursor_login'
               || (scenario === 'grok-interject' && request.params.methodId === 'cached_token')
               || ((scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')) && request.params.methodId === 'oauth-personal');
             if (scenario === 'auth-dynamic') {
@@ -377,7 +371,7 @@ function writePublicComposerAgent(dir: string): string {
 
             lifecycleMethods.push('session/new');
             newSessionMetadata = request.params._meta ?? null;
-            if ((scenario === 'auth' || scenario === 'grok-interject' || scenario.startsWith('agy-quota-')) && !authenticated) {
+            if ((scenario === 'auth' || scenario === 'grok-interject' || scenario.startsWith('agy-quota-') || scenario.startsWith('agy-select-')) && !authenticated) {
               send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'auth required' } });
               continue;
             }
@@ -2798,7 +2792,7 @@ describe('createPublicAcpSession', () => {
       const { definition } = buildAntigravityAcpRuntimeOptions(values);
       const opened = createPublicAcpSession({ kind: 'create', sessionId: 'agy-select', cwd: dir,
         launchEnvironment: { values, unset: [] } }, { ...fixture.options, definition }, fixture.dependencies);
-      if (mode === 'missing') { await expect(opened).rejects.toThrow(); return; }
+      if (mode === 'missing') { await expect(opened).rejects.toMatchObject({ code: -32000 }); return; }
       const session = await opened;
       try { expect(session.getProviderSessionId()).toBe('provider-created'); }
       finally { await session.dispose(); }
@@ -3372,6 +3366,7 @@ describe('createPublicAcpSession', () => {
   it('opens the Antigravity ACP transport with its native MCP servers', async () => {
     await withTempDir('happier-public-acp-antigravity-mcp-', async (dir) => {
       const fixture = createFixture(dir, 'vb4');
+      const agent = PluginAgentContributionV2Schema.parse(ANTIGRAVITY_PLUGIN_MANIFEST.contributes.agents?.[0]);
       const options = buildAntigravityAcpRuntimeOptions({});
       const runtimeOptions: AgentAcpRuntimeOptions = {
         transport: options.transport, definition: { mcp: options.definition?.mcp },

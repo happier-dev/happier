@@ -1,3 +1,4 @@
+import { createAntigravityAgentRuntime } from './agent/runtime/factory.js';
 import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
 import { antigravityConnectedAccountRuntime } from './connectedAccounts/antigravityNativeRuntime.js';
 import { antigravityAccountAuthentication } from './connectedAccounts/account.js';
@@ -10,7 +11,6 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { antigravityConnectedAccountLaunch } from './agent/connectedServices/continuity.js';
 import { ANTIGRAVITY_ACP_SERVER_INSTALL_ID, ANTIGRAVITY_ACP_SERVER_VERSION, ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
-import { createAntigravityNativeTerminalSurface } from './agent/terminal/nativeSurface.js';
 import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
 
 export const ANTIGRAVITY_PLUGIN = definePlugin({
@@ -94,25 +94,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
     [ANTIGRAVITY_BACKEND_ID]: {
       declaration: {
         title: 'Antigravity',
-        runtime: {
-          kind: 'acp',
-          transport: {
-            kind: 'stdio',
-            executable: { kind: 'managedDependency', id: 'agy-acp-server' },
-          },
-          definition: {
-            auth: { methodId: 'gemini-api-key',
-              // ACP 1.3.0 marks failed refresh/onboarding separately from generic missing authentication.
-              setupFailure: { requestErrorCode: -32000, dataReason: 'onboarding_failed' },
-            },
-            mcp: { policy: 'pass_through' },
-            // Rendered diagnostic in the pinned ACP 1.3.0 quota_errors.py; advisory reset prose never creates a reset instant.
-            usageLimitDiagnostic: {
-              pattern: String.raw`^Usage Limit Reached\n\nYou have reached your current quota for this period\.(?: Your limit will reset (?:in \d+ (?:days?|hours?|minutes?|seconds?)(?:, \d+ (?:days?|hours?|minutes?|seconds?))?|on [A-Z][a-z]{2} \d{1,2}, \d{4} \d{2}:\d{2} UTC)\.)?$`,
-              connectedAccountService: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' },
-            },
-          },
-        },
+        runtime: { kind: 'custom' },
         cli: {
           displayName: 'Antigravity CLI',
           executable: {
@@ -204,10 +186,14 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
           },
         },
       },
+      factory: createAntigravityAgentRuntime,
+      sessionRunnerFactory: {
+        module: './agent/runtime/factory', export: 'createAntigravityAgentRuntime',
+        runtimeApiVersion: 1, externalSessionsExport: 'antigravityExternalSessionsContribution',
+      },
       connectedAccountLaunch: antigravityConnectedAccountLaunch,
       externalSessions: antigravityExternalSessionsContribution,
       externalSessionObservation: antigravityExternalSessionObservationContribution,
-      terminal: createAntigravityNativeTerminalSurface(),
     },
   },
   managedDependencies: {

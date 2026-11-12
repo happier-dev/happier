@@ -2573,7 +2573,11 @@ is pinned to ACP server 1.3.0. An optional `auth.setupFailure` declaration match
 numeric request code and exact error-data reason before the ACP peer strips arbitrary provider data.
 The canonical request failure log retains only the numeric code and `authenticationSetupFailure: true`
 for that match; generic missing authentication remains distinct. Antigravity declares the pinned
-onboarding failure match. This describes development behavior, not released availability.
+onboarding failure match. Its plugin-owned runtime selects ACP authentication per launch:
+a nonempty materialized `GEMINI_API_KEY` selects `gemini-api-key`; Google OAuth,
+native-import and native-login launches select `oauth-personal`. Sessions and finite Runs
+share the SDK `auth.selectMethod` contract; missing credentials remain a provider refusal.
+This describes development behavior, not released availability.
 
 In development, Antigravity declares `connectedAccountLaunch.environmentUnsetUses` for
 `AGY_ACP_CCPA_BASE_URL` and `AGY_ACP_CCPA_PROJECT`, bound to its `model_upstream` purpose.
