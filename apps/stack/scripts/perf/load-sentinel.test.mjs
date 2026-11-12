@@ -164,8 +164,8 @@ test('source changes renew the confirmation quiet window and a transient watcher
 
 test('sentinel subset consumes the canonical graph declarations', () => {
   assert.deepEqual(sentinelGraphs().map(graph => graph.id).sort(),
-    ['daemon', 'protocol-import-cycles', 'server', 'ui-catalog']);
-  for (const graph of sentinelGraphs()) assert.ok(ENTRY_GRAPHS.includes(graph));
+    ['daemon', 'protocol-import-cycles', 'server', 'ui-catalog', 'ui-web-bundle']);
+  for (const graph of sentinelGraphs().filter(graph => graph.id !== 'ui-web-bundle')) assert.ok(ENTRY_GRAPHS.includes(graph));
 });
 
 test('loader source text and credential-shaped messages never enter board output', async t => {
@@ -285,4 +285,79 @@ test('a missing exported binding reports its symbol through the real loader', as
   assert.equal(posts.length, 1);
   assert.match(posts[0], /symbol=absentBinding/);
   assert.match(posts[0], /importing module=apps\/cli\/scripts\/importCycleGuard.mjs/);
+});
+
+// OS-temp source, real Expo Babel transform, real HTTP; no shared source mutation.
+test('web bundle catches Metro-only declare failure, deduplicates, and clears repair', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const { createServer } = await import('node:http');
+  const { createRequire } = await import('node:module');
+  const { fileURLToPath } = await import('node:url');
+  const uiDir = fileURLToPath(new URL('../../../ui/', import.meta.url));
+  const { once } = await import('node:events');
+  const source = fixture.path('packages/cli-common/controllerErrors.ts');
+  await writeFile(source, 'export class ControllerError extends Error {\n declare readonly cause?: Error;\n}');
+  const require = createRequire(new URL('../../../ui/package.json', import.meta.url));
+  const config = require('./metro.config.js');
+  const transformer = require(config.transformer.babelTransformerPath);
+  let requests = 0;
+  let mode = 'bundle';
+  const server = createServer(async (req, res) => {
+    if (req.url === '/status') return res.end('packager-status:running');
+    if (req.url === '/') return res.end('<script src="/fixture.bundle?platform=web&amp;dev=true"></script>');
+    requests++;
+    if (mode === 'malformed') { res.writeHead(500); return res.end('invalid'); }
+    try {
+      await transformer.transform({ filename: source, src: await readFile(source, 'utf8'), plugins: [],
+        options: { ...config.transformer, projectRoot: uiDir, platform: 'web',
+          dev: true, type: 'module', experimentalImportSupport: false,
+          customTransformOptions: { routerRoot: './sources/app' } } });
+      res.end('/* bundle */');
+    } catch (error) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      // Babel omits loc for this exact incident. Metro's generic wrapper then
+      // publishes lineNumber=0 and puts the filename/code frame in description.
+      const WorkerFarm = require('metro/private/DeltaBundler/WorkerFarm').default;
+      const format = require('metro/private/lib/formatBundlingError').default;
+      res.end(JSON.stringify(format(WorkerFarm.prototype._formatGenericError(error, source))));
+    }
+  });
+  server.listen(0);
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_STACK: 'main' };
+  await mkdir(fixture.path('stacks/main'), { recursive: true });
+  await writeFile(fixture.path('stacks/main/stack.runtime.json'), JSON.stringify({
+    expo: { port: server.address().port, webEnabled: true } }));
+  const { pathToFileURL } = await import('node:url');
+  await writeFile(entry, `await import(${JSON.stringify(pathToFileURL(source).href)});`);
+  // Exercise the four existing loader branches on the same temporary source.
+  const oldGraphs = sentinelGraphs().filter(g => g.id !== 'ui-web-bundle')
+    .map(g => ({ ...graph, id: g.id, args: [] }));
+  const posts = [], results = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, env,
+    graphs: [...oldGraphs, ...sentinelGraphs().filter(g => g.id === 'ui-web-bundle')],
+    signal: t.signal, waitForQuiet: async () => {},
+    post: async value => posts.push(value), onResult: result => results.push(result) });
+  await sentinel.request();
+  assert.deepEqual(results.slice(0, 4).map(result => result.status), Array(4).fill('passed'));
+  assert.equal(posts.length, 1, 'Metro-only syntax failure was missed');
+  assert.match(posts[0], /packages\/cli-common\/controllerErrors.ts:2/);
+  assert.doesNotMatch(posts[0], /declare readonly/);
+  assert.equal(requests, 2, 'only the failed bundle is confirmed');
+  await sentinel.request();
+  assert.equal(posts.length, 1);
+  await writeFile(source, 'export class ControllerError extends Error { cause?: Error; }');
+  await sentinel.request();
+  assert.equal(posts.length, 2);
+  assert.match(posts[1], /cleared/);
+  assert.equal(requests, 4, 'a healthy pass fetches one bundle without retries');
+  const { loadWebBundle } = await import('./web-bundle.mjs');
+  mode = 'malformed';
+  assert.equal((await loadWebBundle({ repoDir: fixture.root, env })).loadError.code, 'expo_http_500');
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(loadWebBundle({ repoDir: fixture.root, env, signal: controller.signal }));
+  await writeFile(fixture.path('stacks/main/stack.runtime.json'), '{}');
+  assert.equal((await loadWebBundle({ repoDir: fixture.root, env })).loadError.code, 'expo_unavailable');
 });

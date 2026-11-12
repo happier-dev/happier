@@ -1,3 +1,4 @@
+import { WEB_BUNDLE_GRAPH, loadWebBundle } from './web-bundle.mjs';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -8,7 +9,7 @@ import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../..
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
   const ids = ['protocol-import-cycles', 'ui-catalog', 'server', 'daemon'];
-  return ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH];
 }
 
 export function isSentinelSource(filename) {
@@ -68,9 +69,13 @@ async function recentImportFiles(repoDir, graph, result) {
     complete: Boolean(result.failureImportPath) || parents.has(target) };
 }
 
-export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, post, onResult = () => {},
+export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal, env = process.env, post, onResult = () => {},
   waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
+  async function load(graph) {
+    if (graph.id === WEB_BUNDLE_GRAPH.id) return loadWebBundle({ repoDir, signal, env });
+    return loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+  }
   let pending = false;
   let running;
   let notice = 0;
@@ -92,7 +97,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
       pending = false;
       for (const graph of graphs) {
         signal?.throwIfAborted();
-        let result = await loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+        let result = await load(graph);
         await onResult(result);
         const previous = failures.get(graph.id);
         if (result.status !== 'passed') {
@@ -103,7 +108,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
             // after a fresh quiet window before waking every lead.
             await waitForQuiet();
             signal?.throwIfAborted();
-            result = await loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+            result = await load(graph);
             await onResult(result);
           }
         }
@@ -121,7 +126,8 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
         const key = JSON.stringify([module, code, symbol]);
         if (previous?.has(key)) continue;
         const recent = await recentImportFiles(repoDir, graph, result);
-        const details = `graph=${graph.id}; importing module=${module}; code=${code}; symbol=${symbol}\n`
+        const location = result.failureLine ? `${module}:${result.failureLine}` : module;
+        const details = `graph=${graph.id}; importing module=${location}; code=${code}; symbol=${symbol}\n`
           + recent.files.map(file => `- ${file.path} — ${new Date(file.mtimeMs).toISOString()}`).join('\n')
           + (recent.complete ? '' : '\n- Import trace incomplete; only the observed failing module is attributed.');
         if (!await announce(graph.id, 'broken', details)) continue;
