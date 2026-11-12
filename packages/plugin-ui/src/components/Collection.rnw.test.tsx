@@ -4267,6 +4267,54 @@ describe('board', () => {
     } finally { view.unmount(); }
   });
 
+  it("scrolls a board that does not fit to bring the keyboard-focused card's whole column into view", () => {
+    const items: readonly Entry[] = [
+      { id: 'a', title: 'Retry idempotent payment intents', group: 'needs', repo: 'payments-api', reason: 'Review requested', age: '18m' },
+      { id: 'z', title: 'Rotate staging service principals', group: 'rest', repo: 'ops', reason: '', age: '2d' },
+    ];
+    const view = mount({
+      presentation: 'board',
+      boardLayout: 'columns',
+      detail: 'none',
+      items,
+      minCardWidth: 280,
+      grouping: {
+        axis: [
+          { key: 'needs', title: 'Needs you' },
+          { key: 'agent', title: 'With an agent' },
+          { key: 'review', title: 'In review' },
+          { key: 'rest', title: 'Everything else' },
+        ],
+        groupOf: (entry) => entry.group,
+        retainEmpty: true,
+      },
+    });
+    try {
+      view.measure(700);
+      const column = view.query('collection:column:rest')!;
+      const columnWidth = Number.parseFloat(getComputedStyle(column).width);
+      const scrolls: Array<Readonly<{ node: Element; left: number }>> = [];
+      const original = Object.getOwnPropertyDescriptor(Element.prototype, 'scroll');
+      Object.defineProperty(Element.prototype, 'scroll', { configurable: true, writable: true,
+        value(this: Element, options?: ScrollToOptions) { scrolls.push({ node: this, left: options?.left ?? 0 }); } });
+      try {
+        act(() => { view.query('row:a')!.focus(); });
+        act(() => {
+          view.query('row:a')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+        });
+        expect(document.activeElement).toBe(view.query('row:z'));
+      } finally {
+        if (original === undefined) delete (Element.prototype as { scroll?: unknown }).scroll;
+        else Object.defineProperty(Element.prototype, 'scroll', original);
+      }
+      // Focus alone (no detail opens) moves the horizontal scroller so the last column's far edge is on screen.
+      const reveal = scrolls.filter((call) => call.node.contains(column) && call.left > 0).at(-1);
+      expect(reveal).toBeDefined();
+      const columnEnd = ([...column.parentElement!.children].indexOf(column) + 1) * columnWidth;
+      expect(reveal!.left + 700).toBeGreaterThanOrEqual(columnEnd);
+    } finally { view.unmount(); }
+  });
+
   it("puts a board card's state word on its facts line even beside its own control, so the title keeps the width", () => {
     const view = mount({
       presentation: 'board',

@@ -416,14 +416,12 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
   const pageKey = page !== null && columnKeys.includes(page) ? page
     : columnKeys[sections.findIndex(section => section.items.length > 0)] ?? columnKeys[0] ?? null;
   const focusRequest = props.focusRequest ?? model.focusRequest;
-  // The open card stays on screen when its detail narrows the board (the host's pane opens beside it): a board that
-  // no longer fits scrolls the open card's column into view, once per open or width change, never on data refresh.
-  const openColumn = props.selectedKey === null ? -1
-    : sections.findIndex(section => section.items.some(item => model.keyOf(item) === props.selectedKey));
-  useEffect(() => {
-    if (fits || narrow || stacked || openColumn < 0 || columnWidth === null || props.width === null) return;
+  // A board that does not fit scrolls sideways to show one whole column, edge and focus ring included; the
+  // nearest edge moves, and a column already on screen stays put.
+  const revealColumn = (column: number) => {
+    if (fits || narrow || stacked || column < 0 || columnWidth === null || props.width === null) return;
     const edge = GUTTER - card.boardCardInsetX;
-    const start = edge + openColumn * columnWidth;
+    const start = edge + column * columnWidth;
     const end = start + columnWidth;
     const offset = boardViewport.horizontalOffsetRef.current;
     const next = start - edge < offset ? Math.max(0, start - edge)
@@ -431,6 +429,13 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
     if (next === offset) return;
     boardViewport.horizontalOffsetRef.current = next;
     horizontalScroll.current?.scrollTo({ x: next, animated: !reducedMotion });
+  };
+  // The open card stays on screen when its detail narrows the board (the host's pane opens beside it): its column
+  // comes into view once per open or width change, never on data refresh.
+  const openColumn = props.selectedKey === null ? -1
+    : sections.findIndex(section => section.items.some(item => model.keyOf(item) === props.selectedKey));
+  useEffect(() => {
+    revealColumn(openColumn);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openColumn, fits, columnWidth, props.width]);
   useEffect(() => {
@@ -438,6 +443,8 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
     const column = sections.findIndex(section => section.items.some(item => model.keyOf(item) === focusRequest.key));
     const key = columnKeys[column];
     if (key !== undefined) model.actions.showColumn(key);
+    // Keyboard focus moving across columns brings the focused card's column into view.
+    revealColumn(column);
     // A request moves the page once; refreshing data must not undo a reader's pager choice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest]);

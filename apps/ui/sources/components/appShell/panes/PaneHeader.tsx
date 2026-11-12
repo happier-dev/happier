@@ -329,6 +329,11 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const height = useHeaderHeight();
     const testID = props.testID ?? 'pane-header';
     const large = props.size === 'large';
+    // The name's readable room beside a large header's controls, at the reader's text size.
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const { metricScale } = useHappierTextPresentation({ textScale: uiFontScale });
+    const { fontScale } = usePresentationWindowDimensions();
+    const nameRoomPx = HAPPIER_PAGE_METRICS.sectionTextMinWidthPx * metricScale * (Platform.OS === 'web' ? 1 : fontScale);
     const line = props.line ?? (props.subtitle ? { segments: [props.subtitle] } : null);
     const chipVisible = usePaneMainRestoreChipVisible() && props.mainRestoreChip === true;
     const insets = useChromeSafeAreaInsets();
@@ -432,10 +437,12 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                 />
             ) : null}
             {/* One identity block. In the band the mark stands beside the text and the overline, title and live
-                line all start on the title's own text edge (lab cshead H1). A large header hangs the mark from the
-                title's line and runs the facts beneath at the identity's full width, from the mark's edge, as
-                `PageHeader`'s `hang` does: a long facts line never leaves an empty gutter under the mark. */}
-            {large ? <View style={styles.largeIdentity}>{identity}{lineView}</View> : identity}
+                line all start on the title's own text edge (lab cshead H1). A large header hangs the mark and its
+                controls from the title's line; the name keeps a readable room (`nameRoomPx`) beside them, and where
+                it cannot (a narrow phone, a large text size) the controls take their own line above it, so the name
+                wraps between words, never inside one. */}
+            {large ? <View style={[styles.largeIdentity, { flexBasis: nameRoomPx }]}>{identity}</View> : identity}
+            {large ? <View style={styles.largeTrailing}>
             {props.actions ? <View style={styles.actions}>{props.actions}</View> : null}
             {props.onClose ? (
                 <IconButton
@@ -447,6 +454,19 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     onPress={props.onClose}
                 />
             ) : null}
+            </View> : <>
+            {props.actions ? <View style={styles.actions}>{props.actions}</View> : null}
+            {props.onClose ? (
+                <IconButton
+                    testID={`${testID}.close`}
+                    iconName="x"
+                    accessibilityLabel={t('common.close')}
+                    tooltip={props.size === 'large' ? undefined : t('common.close')}
+                    variant="plain"
+                    onPress={props.onClose}
+                />
+            ) : null}
+            </>}
         </>
     );
     return (
@@ -455,7 +475,9 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
             columnMaxWidthPx === null ? null : styles.bandOverColumn,
             // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.
             { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
-            {columnMaxWidthPx === null ? contents : (
+            {/* The facts run beneath the title and its controls at the header's full width, from the mark's edge:
+                a long facts line never leaves a gutter under the mark or the controls. */}
+            {large ? <><View style={styles.largeTop}>{contents}</View>{lineView}</> : columnMaxWidthPx === null ? contents : (
                 <View testID={`${testID}.column`} style={[styles.column, { maxWidth: columnMaxWidthPx }]}>{contents}</View>
             )}
             {props.shade === false ? null : <PaneHeaderShade />}
@@ -508,8 +530,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingLeft: HEADER_BAND_HORIZONTAL_PADDING_PX / 2,
     },
     large: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
         flexShrink: 0,
         position: 'relative',
         zIndex: 1,
@@ -518,12 +538,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
         paddingTop: theme.space.s12,
         paddingBottom: theme.space.s12,
-        gap: theme.space.s8,
         backgroundColor: theme.colors.surface.base,
     },
+    // The title row and its controls. Wrapping in reverse puts controls that leave the name too little room on a
+    // line above it; `flex-end` is the line's top edge here, so inline controls hang from the title's first line.
+    largeTop: {
+        flexDirection: 'row',
+        flexWrap: 'wrap-reverse',
+        alignItems: 'flex-end',
+        columnGap: theme.space.s8,
+        rowGap: theme.space.s4,
+    },
+    largeTrailing: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2, marginLeft: 'auto' },
     identity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     // A large header's identity: the mark and title on one row, the facts beneath at its full width.
-    largeIdentity: { flex: 1, minWidth: 0 },
+    largeIdentity: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
     largeIdentityRow: { minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     titleBlock: {
         flex: 1,
