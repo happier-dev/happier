@@ -5,22 +5,18 @@ import test from 'node:test';
 
 import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mjs';
 
-test('retains unused implemented manifest families as Preview author capabilities', () => {
+test('publishes manifest-family availability from the canonical metadata owner', async () => {
   const families = CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies;
-  const preview = Object.entries(families)
-    .filter(([, row]) => row.availabilityDisposition === 'preview')
-    .map(([id]) => id)
-    .sort();
-  assert.deepEqual(preview, [
-    'atmospherePictures', 'botTemplates', 'captureSources', 'daemonDatabases', 'mcp.servers',
-    'notificationChannels', 'openableContentViewers', 'skills', 'voiceModelPacks',
-    'workItems', 'workflows',
-  ]);
-  // Notifications have current Channels and SCM GitHub category declarations.
-  assert.equal(families.notifications.availabilityDisposition, 'available');
-  for (const [family, declaration] of Object.entries(families)) {
-    if (!preview.includes(family)) assert.equal(declaration.availabilityDisposition, 'available', family);
-  }
+  const matrix = JSON.parse(await readFile(
+    resolve(import.meta.dirname, '..', 'capability-matrix.json'),
+    'utf8',
+  ));
+  // Availability is authored once. Check the published artifact, including
+  // Preview families, without maintaining another classification inventory.
+  assert.deepEqual(
+    Object.fromEntries(matrix.manifestFamilies.map(row => [row.manifestFamily, row.availabilityDisposition])),
+    Object.fromEntries(Object.entries(families).map(([id, row]) => [id, row.availabilityDisposition])),
+  );
 });
 
 test('records only availability and exceptional lifecycle facts', () => {
