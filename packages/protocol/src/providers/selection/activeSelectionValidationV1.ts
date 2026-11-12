@@ -28,6 +28,8 @@ export function readExactSessionActiveModelSelection(params: Readonly<{
   ) {
     return null;
   }
+  // Catalog confidence controls selectable rows, not evidence from an admitted
+  // runner. Private Provider catalogs may be empty after a successful model open.
   const active = SessionActiveModelSelectionSchema.safeParse(
     catalogRecord.activeSelectionV1,
   );
@@ -35,12 +37,6 @@ export function readExactSessionActiveModelSelection(params: Readonly<{
     !active.success
     || active.data.selection.agentTargetKey !== params.agentTargetKey
     || active.data.selection.modelId !== catalogRecord.currentModelId
-    || !catalogRecord.availableModels.some((model) => (
-      model !== null
-      && typeof model === 'object'
-      && !Array.isArray(model)
-      && (model as Record<string, unknown>).id === active.data.selection.modelId
-    ))
   ) {
     return null;
   }

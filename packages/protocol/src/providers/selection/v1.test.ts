@@ -356,6 +356,15 @@ describe('provider model selection contracts', () => {
       });
 
     expect(read(providerBindingV1)).toEqual(activeSelectionV1);
+    // Private Provider catalogs can be unverified while an admitted runner has
+    // already observed its exact model. Membership is not execution evidence.
+    for (const availableModels of [[], [{ id: 'other-model', name: 'Other model' }]]) {
+      expect(readExactSessionActiveModelSelectionV1({
+        metadata: { ...metadata, sessionModelsV1: { ...metadata.sessionModelsV1, availableModels } },
+        agentId: 'codex', agentTargetKey: 'backend:codex',
+        currentRunnerProcessIdentity: activeSelectionV1.runner,
+      })).toEqual(activeSelectionV1);
+    }
     for (const incoherent of [
       { ...providerBindingV1, contributionKey: null },
       { ...providerBindingV1, protocol: 'anthropic' },
@@ -850,5 +859,17 @@ describe('provider model selection contracts', () => {
   it('rejects malformed and non-canonical child argv payloads', () => {
     expect(() => deserializeSessionModelSelectionV1('not-a-selection')).toThrow(/model selection/i);
     expect(() => deserializeSessionModelSelectionV1('sms1:eyJ2IjoyfQ')).toThrow();
+  });
+});
+
+describe('readAgentDefaultModelSelectionV1', () => {
+  it('reads the Account default model for an Agent target by its canonical key, and nothing for others', async () => {
+    const { readAgentDefaultModelSelectionV1 } = await import('./v1.js');
+    const key = 'agent:happier.agent.codex/codex';
+    const selection = { v: 1, updatedAt: 3, ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'gpt-5.5' } };
+    const defaults = { [key]: selection };
+    expect(readAgentDefaultModelSelectionV1(defaults, { kind: 'backend', backendId: 'codex' })).toEqual(selection);
+    expect(readAgentDefaultModelSelectionV1(defaults, { kind: 'backend', backendId: 'claude' })).toBeNull();
+    expect(readAgentDefaultModelSelectionV1(undefined, { kind: 'backend', backendId: 'codex' })).toBeNull();
   });
 });

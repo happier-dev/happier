@@ -40,6 +40,30 @@ function appliedConnectedClaudeMetadata() {
 }
 
 describe('resolveSessionModelSelectionDisposition', () => {
+    it('settles the OpenCode launch selection when its private catalog is withheld', () => {
+        const selection = {
+            agentTargetKey: 'agent:happier.agent.opencode/opencode',
+            providerConnectionId: null,
+            modelId: 'openai/gpt-4.1-mini',
+        };
+        const runner = { pid: 2358024, processStartTimeMs: 945567640 };
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project', host: 'localhost',
+            modelSelectionIntentV1: { v: 1, updatedAt: 11, selection },
+            sessionModelsV1: {
+                v: 1, agentId: 'opencode', updatedAt: 12,
+                currentModelId: selection.modelId, availableModels: [],
+                activeSelectionV1: { v: 1, source: 'runtime_apply', selection, runner },
+            },
+        });
+        expect(resolveSessionModelSelectionDisposition({
+            metadata, agentId: 'opencode', agentTargetKey: selection.agentTargetKey,
+            sessionActive: true, currentRunnerProcessIdentity: runner,
+        })).toMatchObject({
+            activeSelection: selection, contextSelection: selection,
+            selectionTransitionPending: false, reportedSelectionStatus: 'running',
+        });
+    });
     it('projects the applied Team source for the picker and chip when launch retained only V1 intent', () => {
         const selection = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna' });
         const active = createSessionActiveModelSelection({ selection, source: 'runtime_apply',
@@ -224,7 +248,7 @@ describe('resolveSessionModelSelectionDisposition', () => {
         const metadata = appliedConnectedClaudeMetadata();
         expect(resolveSessionModelSelectionDisposition({
             agentId: 'claude', agentTargetKey: 'agent:happier.agent.claude/claude',
-            metadata: { ...metadata, sessionModelsV1: { ...metadata.sessionModelsV1!, availableModels: [] } },
+            metadata: { ...metadata, sessionModelsV1: { ...metadata.sessionModelsV1!, currentModelId: 'different-model' } },
             sessionActive: true, currentRunnerProcessIdentity: null,
         }).selectionTransitionPending).toBe(true);
     });
@@ -479,6 +503,12 @@ describe('resolveSessionModelSelectionDisposition', () => {
                 }),
             },
         };
+        expect(resolveSessionModelSelectionDisposition({ metadata: { ...coherent,
+            sessionModelsV1: { ...coherent.sessionModelsV1, availableModels: [] } },
+            agentId: 'claude', agentTargetKey: selection.agentTargetKey, sessionActive: true,
+            currentRunnerProcessIdentity: { pid: 42, processStartTimeMs: 10 },
+        })).toMatchObject({ activeSelection: selection, selectionTransitionPending: false,
+            reportedSelectionStatus: 'running' });
         const native = { label: 'Native', authSource: 'native' as const, connectedCount: 0 };
         for (const sessionActive of [true, false]) {
             const disposition = resolveSessionModelSelectionDisposition({ agentId: 'claude', agentTargetKey: basis.agentTargetKey,
