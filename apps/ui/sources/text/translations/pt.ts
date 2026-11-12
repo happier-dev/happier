@@ -7578,7 +7578,7 @@ export const pt: TranslationStructure = {
         dismiss: 'Descartar pergunta',
         dismissed: 'Pergunta descartada',
         submissionFailures: {
-            unconfirmed: "As respostas foram enviadas ao Claude, mas a confirmação ainda está pendente. Tente novamente para verificar ou abra o terminal do Claude.",
+            unconfirmed: "O Happier não conseguiu confirmar sua resposta. Tente novamente ou abra o terminal do Claude para revisá-la.",
             update: "Atualize o Happier CLI e tente novamente.",
             reconnect: "Reconecte esta sessão e tente novamente.",
             retry: "Não foi possível aceitar a resposta. Revise-a e tente novamente.",

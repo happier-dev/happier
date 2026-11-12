@@ -7026,7 +7026,7 @@ deps: {
             dismiss: 'Descarta la pregunta',
             dismissed: 'Pregunta descartada',
             submissionFailures: {
-                unconfirmed: "Les respostes s’han enviat a Claude, però la confirmació encara està pendent. Torna-ho a provar per comprovar-ho o obre el terminal de Claude.",
+                unconfirmed: "Happier no ha pogut confirmar la teva resposta. Torna-ho a provar o obre el terminal de Claude per revisar-la.",
                 update: 'Actualitza el CLI de Happier i torna-ho a provar.',
                 reconnect: 'Torna a connectar aquesta sessió i torna-ho a provar.',
                 retry: 'No s’ha pogut acceptar la resposta. Revisa-la i torna-ho a provar.',

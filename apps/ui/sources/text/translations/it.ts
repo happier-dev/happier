@@ -7728,7 +7728,7 @@ export const it: TranslationStructure = {
         dismiss: 'Ignora la domanda',
         dismissed: 'Domanda ignorata',
         submissionFailures: {
-            unconfirmed: "Le risposte sono state inviate a Claude, ma la conferma è ancora in attesa. Riprova per verificare oppure apri il terminale Claude.",
+            unconfirmed: "Happier non ha potuto confermare la tua risposta. Riprova oppure apri il terminale Claude per verificarla.",
             update: "Aggiorna Happier CLI e riprova.",
             reconnect: "Riconnetti questa sessione e riprova.",
             retry: "La risposta non è stata accettata. Controllala e riprova.",

@@ -7657,7 +7657,7 @@ localTailscale: {
         dismiss: '質問を閉じる',
         dismissed: '質問を閉じました',
         submissionFailures: {
-            unconfirmed: "Claude に回答の送信操作を行いましたが、確認はまだ届いていません。再試行して確認するか、Claude ターミナルを開いてください。",
+            unconfirmed: "Happier は回答を確認できませんでした。再試行するか、Claude ターミナルを開いて回答を確認してください。",
             update: "Happier CLI を更新して、もう一度お試しください。",
             reconnect: "このセッションに再接続して、もう一度お試しください。",
             retry: "回答を受け付けられませんでした。内容を確認して、もう一度お試しください。",

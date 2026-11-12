@@ -7010,7 +7010,7 @@ export const de: TranslationStructure = {
             dismiss: 'Frage verwerfen',
             dismissed: 'Frage verworfen',
             submissionFailures: {
-                unconfirmed: "Die Antworten wurden an Claude gesendet, die Bestätigung steht aber noch aus. Versuche es erneut, um dies zu prüfen, oder öffne das Claude-Terminal.",
+                unconfirmed: "Happier konnte deine Antwort nicht bestätigen. Versuche es erneut oder öffne das Claude-Terminal, um sie zu prüfen.",
                 update: 'Aktualisiere die Happier-CLI und versuch es dann noch einmal.',
                 reconnect: 'Verbinde diese Session neu und versuch es dann noch einmal.',
                 retry: 'Die Antwort konnte nicht angenommen werden. Prüf sie und versuch es noch einmal.',

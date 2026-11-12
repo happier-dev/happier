@@ -392,6 +392,32 @@ describe('permission RPC routing', () => {
     });
   });
 
+  it('keeps a failed answer delivery distinct from a missing receiver and allows retry', async () => {
+    const registered = new Map<string, (payload: unknown) => unknown>();
+    const router = new ClaudePermissionRpcRouter({
+      registerHandler: (method, handler) => registered.set(method, handler),
+    });
+    let deliveryFails = true;
+    router.registerConsumer({
+      name: 'terminal-answer',
+      tryHandlePermissionRpc: () => {
+        if (deliveryFails) throw new Error('private terminal failure');
+        return true;
+      },
+    });
+    const respond = registered.get(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1)!;
+    const answer = { id: 'question', structuredAnswersV1: { q1: ['answer'] } };
+
+    await expect(respond(answer)).rejects.toMatchObject({
+      rpcErrorCode: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED',
+    });
+    await expect(registered.get('permission')!({ id: 'question', approved: true })).resolves.toMatchObject({
+      ok: false, errorCode: 'permission_response_failed',
+    });
+    deliveryFails = false;
+    await expect(respond(answer)).resolves.toEqual({ ok: true });
+  });
+
   it('treats a handled object outcome like a boolean true and continues past unhandled outcomes', async () => {
     const registered = new Map<string, (payload: PermissionRpcPayload) => unknown>();
     const router = new ClaudePermissionRpcRouter({

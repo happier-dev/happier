@@ -349,6 +349,10 @@ rendered transition instead of treating the first stale capture as a failed writ
 After final Submit, it retains the submitted answers and waits for the exact
 provider result. A retry checks confirmation without typing or submitting again;
 delayed confirmation remains pending and the app offers terminal recovery.
+The session permission router also reports a live receiver's answer-delivery
+failure as unconfirmed, preserving retry. Reconnect guidance is reserved for a
+missing or expired receiver; unconfirmed guidance does not claim final Submit
+was sent.
 Long reviews may clip earlier questions above the viewport. The same parser
 recognizes complete visible entries as a suffix of the hook-owned questions;
 the answer driver submits only after visiting every question page and matching
