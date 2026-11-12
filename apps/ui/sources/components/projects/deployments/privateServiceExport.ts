@@ -15,13 +15,6 @@ export type PrivateServiceExportSelection = Readonly<{
 
 type ServiceExport = NonNullable<NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports']>[number];
 
-/**
- * Whether people can choose the Happier network when sharing. It stays pending until NET-FWD-1110's native-transport
- * and security validation passes (O-DEPLOY 2026-11-10 08:36Z); until then the sheet shows it as not yet available and
- * shares only through joined networks. Saved Happier network exports are listed and kept either way.
- */
-export const HAPPIER_NETWORK_SHARING_READY: boolean = false;
-
 /** A private export is shared through a joined network or the Happier network; every surface reads it here. */
 export function isPrivateServiceExport(entry: ServiceExport): boolean {
   return entry.exposure === 'privateNetwork' || entry.transport?.kind === 'iroh';

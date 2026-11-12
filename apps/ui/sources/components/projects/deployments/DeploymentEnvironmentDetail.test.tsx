@@ -484,6 +484,41 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
+  it('opens Move from the serving Environment and requires an explicit stateless choice before admission', async () => {
+    const { ModalProvider } = await import('@/modal');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { Switch } = await import('@/components/ui/forms/Switch');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const { controller, detail } = controllerFor({});
+    storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'destination', installationId: 'destination-install' })], true,
+      { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.move');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.move');
+      await waitForContent(screen, 'project-deployments.move');
+      const confirm = () => screen!.findAllByType(RoundButton).find(button => button.props.testID === 'project-deployments.move.confirm')!;
+      expect(confirm().props.disabled).toBe(true);
+      const picker = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.move.destination')!;
+      await act(async () => { picker.props.onSelect('destination'); });
+      expect(confirm().props.disabled).toBe(true);
+      const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
+      await act(async () => { choice.props.onValueChange(true); });
+      expect(confirm().props.disabled).toBe(false);
+      await screen.pressByTestIdAsync('project-deployments.move.cancel');
+      expect(screen.findByTestId('project-deployments.move')).toBeNull();
+    } finally { await screen?.unmount(); await act(async () => { controller.retire(); }); }
+  });
+
   it('offers Duplicate from the loaded Environment without opening another editor owner', async () => {
     const { ModalProvider } = await import('@/modal');
     const { controller, detail } = controllerFor({});
@@ -1507,7 +1542,7 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { controller.retire(); }); }
   });
 
-  it('shares a stored service through a joined network after review, showing the Happier network as not yet available', async () => {
+  it('shares through the Happier network without joining another network and preserves an explicit joined-network choice', async () => {
     scope.serverId = await homes.addHome({ name: 'Private sharing', serverUrl: 'https://private-sharing.test',
       serverIdentityId: 'srv_private-sharing', accountId: scope.accountId, currentAccount: true });
     const base = environmentDetailForHome();
@@ -1563,29 +1598,39 @@ describe('Project deployments page', () => {
             .map(node => node.props.diagnosticCode).filter(Boolean) })).toHaveLength(count)); };
       const document = (index: number) => { const definition = updates[index]!.patch?.definition;
         return definition && 'document' in definition ? definition.document : ''; };
-      // No joined network: the joined-network step leads, and the Happier network is shown but cannot be chosen yet.
+      // The deployed forwarding owner supports Happier-network exports without a joined network.
       await screen.pressByTestIdAsync(`${id}.add`);
-      expect(screen.findByTestId(`${id}.networkMissing`)).not.toBeNull();
-      expect(screen.findByTestId(`${id}.reach:happierNetwork`)).not.toBeNull();
-      await screen.pressByTestIdAsync(`${id}.reach:happierNetwork`);
-      expect(screen.findByTestId(`${id}.review`)).toBeNull();
-      expect(screen.findByTestId(`${id}.hostPort`)).toBeNull();
-      // A joined network arrives: it becomes the choice, with its concrete address.
+      expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
+      expect(screen.findByTestId(`${id}.reach:happierNetwork`)?.props.accessibilityState)
+        .toMatchObject({ disabled: false, selected: true });
+      expect(screen.findByTestId(`${id}.address`)).toBeNull();
+      await fill('15432');
+      await screen.pressByTestIdAsync(`${id}.review`);
+      expect(updates).toHaveLength(0);
+      expect(screen.findByTestId(`${id}.reviewAddress`)).toBeNull();
+      await saved(1);
+      expect(updates[0]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
+        containerPort: 5432, scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }]);
+      expect(document(0)).toContain('127.0.0.1');
+      await screen.pressByTestIdAsync(`${id}.add`);
+      // A joined network arrives without replacing the default; it remains an explicit choice.
       await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
         daemonState: { status: 'running', reachability } })], true,
         { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }); });
       expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
+      expect(screen.findByTestId(`${id}.address`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.reach:network:shop-net`);
       expect(screen.findByTestId(`${id}.address`)).not.toBeNull();
       await fill('15432');
       await screen.pressByTestIdAsync(`${id}.review`);
-      expect(updates).toHaveLength(0);
+      expect(updates).toHaveLength(1);
       expect(screen.getTextContent()).toContain('100.80.0.12');
       expect(screen.getTextContent()).toContain('15432');
-      await saved(1);
-      expect(updates[0]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
+      await saved(2);
+      expect(updates[1]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
         containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' }]);
-      expect(updates[0]!.patch?.definition).toMatchObject({ from: 'compose' });
-      expect(document(0)).toContain('100.80.0.12');
+      expect(updates[1]!.patch?.definition).toMatchObject({ from: 'compose' });
+      expect(document(1)).toContain('100.80.0.12');
       expect(deploy).not.toHaveBeenCalled();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); }
   });

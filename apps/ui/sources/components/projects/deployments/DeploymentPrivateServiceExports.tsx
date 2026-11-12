@@ -21,7 +21,7 @@ import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettin
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { buildPrivateServiceExportPatch, HAPPIER_NETWORK_SHARING_READY, listPrivateServiceExportServices, privateServiceExportAuthoring,
+import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
   type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
 const id = 'project-deployments.environment.privateSharing';
@@ -103,21 +103,18 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const [reviewed, setReviewed] = React.useState<Readonly<{ patch: ReturnType<typeof buildPrivateServiceExportPatch>;
     hostAddress: string | null; networkName: string }> | null>(null);
   const [invalid, setInvalid] = React.useState(false);
-  // Once ready, the Happier network needs no setup on either Machine, so it leads and is the starting choice. While it
-  // is pending, the first joined network is; a chosen network that stops being observed leaves nothing to share through.
-  const chosen = reachId ?? (HAPPIER_NETWORK_SHARING_READY ? HAPPIER_NETWORK : networks[0] ? networkReachId(networks[0]) : null);
+  // Happier forwarding needs no joined network; an explicitly chosen network retains its observed identity.
+  const chosen = reachId ?? HAPPIER_NETWORK;
   const selectedNetwork: MachinePrivateNetworkObservationV1 | undefined = networks.find(network => networkReachId(network) === chosen);
-  const happier = HAPPIER_NETWORK_SHARING_READY && chosen === HAPPIER_NETWORK;
+  const happier = chosen === HAPPIER_NETWORK;
   const canShare = happier || selectedNetwork !== undefined;
   const hostAddress = selectedNetwork ? address ?? selectedNetwork.addresses[0] ?? null : null;
   const reachOptions = React.useMemo(() => {
     const happierNetwork = { id: HAPPIER_NETWORK, title: t('projects.deployments.settingsSections.privateSharingHappierNetwork'),
-      subtitle: t('projects.deployments.settingsSections.privateSharingHappierNetworkBody'),
-      ...(HAPPIER_NETWORK_SHARING_READY ? {} : { disabled: true,
-        badge: t('projects.deployments.settingsSections.privateSharingHappierNetworkPending') }) };
+      subtitle: t('projects.deployments.settingsSections.privateSharingHappierNetworkBody') };
     const joined = networks.map(network => ({ id: networkReachId(network), title: network.displayName ?? network.networkIdentity!,
       subtitle: t('projects.deployments.settingsSections.privateSharingJoinedNetworkBody') }));
-    return HAPPIER_NETWORK_SHARING_READY ? [happierNetwork, ...joined] : [...joined, happierNetwork];
+    return [happierNetwork, ...joined];
   }, [networks]);
   const { onClose, editing, setChrome } = props;
   const change = useDeploymentChangePress({ request: artifactId => { onClose(); editing.review.request(artifactId); } }, () => {
@@ -180,7 +177,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     </ItemGroup> : <>
       {services.length === 0 ? <SurfaceStateCard size="line" kind="unavailable"
           title={t('projects.deployments.settingsSections.privateSharingInvalid')} />
-        // Nothing to share through yet: the joined-network step leads, and the Happier network says it isn't ready.
+        // A selected joined network can disappear; the person can choose Happier forwarding instead.
         : !canShare ? <>
           <SurfaceStateCard testID={`${id}.networkMissing`} size="line" kind="unavailable"
             title={t('projects.deployments.settingsSections.privateSharingNetworkMissing')} />
