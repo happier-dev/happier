@@ -132,8 +132,14 @@ model or feature.
 happier actions invoke connectedServices.accounts.testConnection --input-json '{"account":{"service":{"pluginId":"your-plugin-id","localId":"your-service-id"},"accountId":"your-account-id"}}' --json
 ```
 
-Use the saved account's qualified identity. If its sign-in method requires a
-Machine, include `machineId` in the input with the Machine you selected.
+Use the saved account's qualified identity. If the test requires a Machine,
+include `machineId` in the input with the Machine you selected. Importing a login
+from a Machine does not by itself require that Machine for later tests.
+
+Muse subscription accounts with an inference key use the models endpoint for
+this check. A valid shared Muse login containing only an access token can still
+run native sessions; its connection test reports unsupported with a reason.
+Testing never acquires another credential to enable the check.
 
 ## GitHub CLI import in 0.3 development
 

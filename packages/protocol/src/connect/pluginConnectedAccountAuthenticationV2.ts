@@ -15,6 +15,7 @@ import {
 } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 import { ProviderAccountUsageRecordKeyV1Schema } from './providerAccountUsagePrimitives.js';
+import type { ConnectedServiceCredentialKind } from './connectedServiceCredentialKind.js';
 import { QualifiedConnectedAccountCredentialKeyV1Schema } from './qualifiedConnectedAccountCredentialKeyV1.js';
 
 const PluginConnectedAccountAuthenticationFieldV2Schema =
@@ -188,6 +189,13 @@ export const ConnectedAccountDirectExportContractV1Schema = lazyZodSchema(() => 
 ]));
 export type ConnectedAccountDirectExportContractV1 = z.infer<typeof ConnectedAccountDirectExportContractV1Schema>;
 
+/** Public declaration projection carried by the incumbent credential-health publication. */
+export const ConnectedAccountDirectExportProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  directExportContract: z.nullable(ConnectedAccountDirectExportContractV1Schema),
+  contributionContractVersion: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+}));
+export type ConnectedAccountDirectExportProjectionV1 = z.infer<typeof ConnectedAccountDirectExportProjectionV1Schema>;
+
 /** The plugin declares public metadata explicitly; all other credential/configuration fields remain private. */
 export const PluginConnectedAccountAccessOnlyExportV1Schema = lazyZodSchema(() => z.strictObject({
   contractVersion: z.literal(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1),
@@ -332,6 +340,15 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
 export type PluginConnectedAccountAuthenticationModeV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationModeV2Schema>;
 
+/** Current mode plus observed credential kind owns export eligibility; unknown legacy kinds use the establishing mode. */
+export function resolveConnectedAccountDirectExportContractV1(
+  mode: PluginConnectedAccountAuthenticationModeV2,
+  credentialKind?: ConnectedServiceCredentialKind,
+): ConnectedAccountDirectExportContractV1 | null {
+  if (mode.accessOnlyExport && credentialKind !== 'token') return mode.accessOnlyExport.contractVersion;
+  return mode.kind === 'manual' && credentialKind !== 'oauth' ? mode.directExport?.contractVersion ?? null : null;
+}
+
 /** Only the selected mode's explicit declaration identifies an API-key account. */
 export function isConnectedAccountApiKeyModeV1(mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined): boolean {
   return mode?.kind === 'manual' && mode.apiKey === true;
@@ -456,8 +473,9 @@ export function resolveConnectedAccountPlanLabel(
 export function resolveConnectedAccountAuthenticationModeMachineRequirement(
   mode: PluginConnectedAccountAuthenticationModeV2 | undefined,
   browser = false,
+  operation: 'authentication' | 'testConnection' = 'authentication',
 ): 'native_import' | 'browser_unreachable' | null {
-  if (mode?.kind === 'manual' && mode.credentialOrigin === 'native_import') return 'native_import';
+  if (operation === 'authentication' && mode?.kind === 'manual' && mode.credentialOrigin === 'native_import') return 'native_import';
   if (browser && mode?.browserReachability === 'unreachable') return 'browser_unreachable';
   return null;
 }

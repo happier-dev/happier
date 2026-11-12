@@ -86,12 +86,12 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     // This is the one placement policy for presentation and start. Once begun,
     // the addressed attempt record, rather than the current platform, routes work.
-    const modePlacement = async (service: Service) => {
+    const modePlacement = async (service: Service, operation: 'authentication' | 'testConnection' = 'authentication') => {
         const authentication = authenticationDeclaration(service);
         const modes = authentication?.account ? authentication.modes : [];
         const browser = modes.length > 0 && await readRuntimeFetchHost(account.endpointUrl) === 'browser';
-        const machineRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser)).map(mode => mode.id);
-        const browserRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser) === 'browser_unreachable').map(mode => mode.id);
+        const machineRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser, operation)).map(mode => mode.id);
+        const browserRequiredModeIds = modes.filter(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, browser, operation) === 'browser_unreachable').map(mode => mode.id);
         return { status: 'available' as const,
             ...(browserRequiredModeIds.length ? { browserRequiredModeIds: Object.freeze(browserRequiredModeIds) } : {}),
             modeIds: Object.freeze(modes.filter(mode => !machineRequiredModeIds.includes(mode.id)).map(mode => mode.id)),
@@ -196,7 +196,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 : unavailable('connected_account_authentication_mode_unavailable');
             const saved = await persistence.accounts.readExact(command.account);
             if (!saved) return unavailable('connected_account_not_found');
-            const placement = await modePlacement(service);
+            const placement = await modePlacement(service, 'testConnection');
             if (!saved.authenticationModeId || !placement.modeIds.includes(saved.authenticationModeId)) {
                 return machineId ? nativeControl(machineId, command)
                     : unavailable(placement.machineUnavailableCode ?? 'connected_account_authentication_mode_unavailable');

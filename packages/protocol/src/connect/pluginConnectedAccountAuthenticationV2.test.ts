@@ -432,6 +432,10 @@ it('keeps native import Machine-local while portable modes and native browser ex
     .toEqual([null, null, 'native_import', null]);
   expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true)))
     .toEqual([null, null, 'native_import', 'browser_unreachable']);
+  expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false, 'testConnection')))
+    .toEqual([null, null, null, null]);
+  expect(descriptor.authentication.modes.map(mode => resolveConnectedAccountAuthenticationModeMachineRequirement(mode, true, 'testConnection')))
+    .toEqual([null, null, null, 'browser_unreachable']);
 });
 
 it('admits an explicit access-only projection for OAuth and imported native subscriptions', () => {

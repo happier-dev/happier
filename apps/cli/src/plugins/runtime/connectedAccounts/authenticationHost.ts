@@ -54,9 +54,10 @@ export function resolveCredentialedConnectedAccountAuthenticationPlacement(
     authentication: PluginConnectedAccountAuthenticationV2 | undefined,
     machineId?: string,
     modeId?: string,
+    operation: 'authentication' | 'testConnection' = 'authentication',
 ): Readonly<{ kind: 'account' } | { kind: 'machine'; machineId: string } | { kind: 'unavailable'; code: string }> {
     const mode = authentication?.modes.find(candidate => candidate.id === modeId);
-    if (authentication?.account && !resolveConnectedAccountAuthenticationModeMachineRequirement(mode)) return { kind: 'account' as const };
+    if (authentication?.account && !resolveConnectedAccountAuthenticationModeMachineRequirement(mode, false, operation)) return { kind: 'account' as const };
     if (machineId) return { kind: 'machine' as const, machineId };
     return { kind: 'unavailable' as const, code: 'connected_account_authentication_mode_unavailable' };
 }
@@ -114,7 +115,6 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                 },
                 isCurrent: () => selected.isCurrent(),
                 invoke: invocation => input.invoker.invokeAuthentication({ ...invocation, lease: selected,
-                    isConfigurationCurrent: configuration.isCurrent,
                     configurationRevocationSignal: configuration.currentnessSignal }),
             },
             oauth: transactions.oauth, deviceTransactions: transactions.device,
@@ -239,7 +239,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         const declared = input.contributions.describe(command.account.service);
                         const credential = await persistence.attempts.accounts.readExact(command.account);
                         const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(
-                            declared?.descriptor.authentication, machineId, credential?.authenticationModeId);
+                            declared?.descriptor.authentication, machineId, credential?.authenticationModeId, 'testConnection');
                         if (placement.kind !== 'account') return machineId
                             ? options.native(machineId, command) : unavailable('connected_account_authentication_mode_unavailable');
                         const selected = await select(command.account.service);

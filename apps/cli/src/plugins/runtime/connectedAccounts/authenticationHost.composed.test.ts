@@ -1,4 +1,8 @@
+import { mutateQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { PLUGIN_MANIFEST as MUSE_MANIFEST } from '@happier-dev/plugins-muse/manifest';
+import { PLUGIN_MANIFEST as GEMINI_MANIFEST } from '@happier-dev/plugins-gemini/manifest';
 import * as undici from 'undici';
 import { expect, it, vi } from 'vitest';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
@@ -58,6 +62,34 @@ it('agrees with begin admission when the catalog lists daemon-only Slack authent
             expect(native).toHaveBeenCalledOnce();
         });
     } finally { native.mockRestore(); await fixture.close(); }
+});
+
+it.each(['native-import', 'device'] as const)('tests a saved Muse subscription without repeating its %s sign-in placement', async authenticationModeId => {
+    const origin = 'http://muse-saved-subscription-test.test';
+    const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+    const projectRoot = resolve(import.meta.dirname, '../../../../../../packages/plugins/muse');
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { additional: [{
+        manifest: MUSE_MANIFEST, projectRoot, artifactId: 'connected-account-authentication',
+        entryPath: resolve(projectRoot, 'src/connectedAccounts/account.ts'), activateExport: 'activate', manifestExport: null,
+    }] });
+    const vendor = vi.mocked(undici.fetch).mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const account = { service, accountId: 'saved-subscription' };
+            await mutateQualifiedConnectedAccountCredentialV4({ token: fixture.credentials.token, mutation: {
+                ref: account, authenticationModeId, expectedCredentialRevision: null,
+                content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', inferenceKey: 'synthetic-muse-key', accountToken: 'synthetic-account-token', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' } } },
+                metadata: { kind: 'oauth', scopes: [] },
+            } });
+            await ensureCliActionPolicySettings(fixture.credentials, origin);
+            const executor = createCliActionExecutorFromCredentials({ credentials: fixture.credentials, serverHttpBaseUrl: origin, pluginActionExecutionOwner: 'current_process' });
+            const tested = await executor.execute('connectedServices.accounts.testConnection', { account }, { surface: 'cli', actionRequestId: randomUUID() });
+            if (!tested.ok) throw new Error(`Connection test refused: ${tested.errorCode}`);
+            expect(tested).toMatchObject({ ok: true, result: { status: 'ok' } });
+            expect(fixture.machineRequests).toBe(0);
+            expect(fixture.directCredentialWrites).toBe(1);
+        });
+    } finally { vendor.mockRestore(); await fixture.close(); }
 });
 
 it('continues a refused manual Account attempt in a fresh host', async () => {
@@ -171,7 +203,12 @@ it('retains a Linear provider-refused attempt through the CLI host for corrected
 it('retains a Gemini provider-refused attempt through the CLI host for corrected submission', async () => {
     const origin = 'http://gemini-provider-refusal.test';
     const service = { pluginId: 'happier.agent.gemini', localId: 'gemini-account' };
-    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
+    const projectRoot = resolve(import.meta.dirname, '../../../../../../packages/plugins/gemini');
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { additional: [{
+        manifest: GEMINI_MANIFEST, projectRoot, artifactId: 'connected-account-authentication',
+        entryPath: resolve(projectRoot, 'src/connectedAccounts/portableAuthentication.ts'),
+        activateExport: 'activate', manifestExport: null,
+    }] });
     let registry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | undefined;
     try {
         await runWithServerHttpBaseUrl(origin, async () => {

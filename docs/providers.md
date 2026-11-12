@@ -31,6 +31,16 @@ The result distinguishes `ok`, `needsReauth`, `networkUnavailable` and
 characterized no-usage probe returns `unsupported`. ProviderConnection catalog
 tests and Channel transport tests retain their distinct resource owners.
 
+Testing saved credentials uses the same placement owner with a connection-test
+operation: a native-import requirement applies to acquiring a login, while an
+explicit browser reachability restriction still routes the test to a Machine.
+Muse subscriptions with an inference key use the existing authenticated models
+GET. MSP usage/read returns cached observations; usage/refresh acquires a key,
+so neither is substituted for that explicit no-usage test. Valid access-only
+Muse snapshots retain connected health and native delivery; their remote test
+returns unsupported because no read-only account-token probe is characterized.
+Expired access-only snapshots require reauthentication.
+
 ### Passive managed gateway families (0.3 development)
 
 The gateway chooser Action preserves matching passive declarations in
