@@ -51,7 +51,12 @@ describe('commitConnectedServiceQuotaLifecycleSessionEvents', () => {
     vi.resetModules();
     const { commitConnectedServiceQuotaLifecycleSessionEvents } = await import('./commitConnectedServiceQuotaLifecycleSessionEvents');
 
-    vi.spyOn(axios, 'get').mockResolvedValue(PLAIN_SESSION_RESPONSE);
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => ({
+      ...PLAIN_SESSION_RESPONSE,
+      data: { session: { ...PLAIN_SESSION_RESPONSE.data.session,
+        id: decodeURIComponent(new URL(String(url)).pathname.split('/').pop() ?? ''),
+      } },
+    }));
     const postSpy = vi.spyOn(axios, 'post').mockResolvedValue(COMMIT_RESPONSE);
 
     await commitConnectedServiceQuotaLifecycleSessionEvents({
@@ -282,7 +287,12 @@ describe('commitConnectedServiceQuotaLifecycleSessionEvents', () => {
     vi.resetModules();
     const { commitConnectedServiceQuotaLifecycleSessionEvents } = await import('./commitConnectedServiceQuotaLifecycleSessionEvents');
 
-    vi.spyOn(axios, 'get').mockResolvedValue(PLAIN_SESSION_RESPONSE);
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => ({
+      ...PLAIN_SESSION_RESPONSE,
+      data: { session: { ...PLAIN_SESSION_RESPONSE.data.session,
+        id: decodeURIComponent(new URL(String(url)).pathname.split('/').pop() ?? ''),
+      } },
+    }));
     const postSpy = vi.spyOn(axios, 'post')
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValue(COMMIT_RESPONSE);

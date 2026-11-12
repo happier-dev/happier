@@ -109,18 +109,18 @@ describe('connected-service recovery operation lifecycle', () => {
     const secondPending = harness.coordinator.consumeRecoveryCreditForProfile({ serviceId, profileId,
       idempotencyKey: 'competing-new-observation', ...(overlap === 'aggregate' ? {} : { providerCreditId: overlap === 'same' ? 'promo' : 'other' }),
     });
-    // Claude's fresh next_grant_id vetoes the other grant. Its own no-effect receipt
-    // must settle independently rather than inherit the pending promo debit.
-    if (overlap === 'distinct') await expect(secondPending).resolves.toMatchObject({
-      receipt: { providerCreditId: 'other', status: 'not_available' },
-    });
+    // Every usable grant can be redeemed, including a non-default grant. Distinct
+    // selections own independent debits; overlapping selections share the first.
+    if (overlap === 'distinct') await vi.waitFor(() => expect(harness.posts).toHaveLength(2));
     releasePost();
     const [first, second] = await Promise.all([firstPending, secondPending]);
     expect(first).toMatchObject({ ok: true, receipt: { providerCreditId: 'promo', idempotencyKey: 'manual-original' } });
     if (overlap === 'distinct') {
-      expect(second.receipt).toMatchObject({ providerCreditId: 'other', idempotencyKey: 'competing-new-observation' });
+      expect(second).toMatchObject({ ok: true, receipt: { providerCreditId: 'other',
+        idempotencyKey: 'competing-new-observation', status: 'consumed' } });
+      expect(harness.posts.map((post) => post.grant_id)).toEqual(['promo', 'other']);
     } else expect(second).toEqual(first);
-    expect(harness.posts).toHaveLength(1);
+    expect(harness.posts).toHaveLength(overlap === 'distinct' ? 2 : 1);
   });
 
   it('leaves an irrelevant automatic credit available to manual redemption and replays a spent targeted action', async () => {
