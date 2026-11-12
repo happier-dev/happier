@@ -518,6 +518,7 @@ async function startAdmittedExecutionRun(
       lifecycle,
       modelId: originalParams.commitModelId === 'default' ? undefined : originalParams.commitModelId,
       modelSelection: originalParams.commitModelId === 'default' ? null : voiceInput.commitModelSelection,
+      teamCredentialModel: originalParams.commitModelId === 'default' ? undefined : voiceInput.commitTeamCredentialModel,
       connectedServices: originalParams.connectedServices,
       connectedServicesDefaultServiceIds: originalParams.connectedServicesDefaultServiceIds,
     } : null;
@@ -554,11 +555,6 @@ async function startAdmittedExecutionRun(
         ...voiceCommitSelectionInput,
         parent,
       });
-      if (childSelection.teamCredentialModel || voiceCommit.teamCredentialModel) {
-        throw Object.assign(new Error('Choose a credential route supported by the Voice chat and commit roles.'), {
-          code: 'execution_run_child_choice_required',
-        });
-      }
     }
     args = { ...args, params: {
       ...originalParams,
@@ -569,7 +565,8 @@ async function startAdmittedExecutionRun(
       ...(voiceCommit ? {
         chatModelId: childSelection.modelId,
         commitModelId: voiceCommit.modelId,
-        intentInput: { ...readRecord(originalParams.intentInput), commitModelSelection: voiceCommit.modelSelection },
+        intentInput: { ...readRecord(originalParams.intentInput), commitModelSelection: voiceCommit.modelSelection,
+          commitTeamCredentialModel: voiceCommit.teamCredentialModel },
       } : {}),
     } };
   } catch (error) {
@@ -989,6 +986,8 @@ async function startAdmittedExecutionRun(
       }
       const chatModelSelection = args.params.modelSelection;
       const commitModelSelection = voiceIntentInput.data.commitModelSelection;
+      const chatTeamCredentialModel = childSelection.teamCredentialModel;
+      const commitTeamCredentialModel = voiceCommit?.teamCredentialModel;
       const voicePolicy = voiceIntentInput.data.voicePolicy;
       const commitIsolation = args.params.commitIsolation === true;
       const idleTtlSeconds = typeof args.params.idleTtlSeconds === 'number' ? args.params.idleTtlSeconds : 600;
@@ -1038,6 +1037,8 @@ async function startAdmittedExecutionRun(
         commitModelId,
         ...(chatModelSelection ? { chatModelSelection } : {}),
         ...(commitModelSelection ? { commitModelSelection } : {}),
+        ...(chatTeamCredentialModel ? { chatTeamCredentialModel } : {}),
+        ...(commitTeamCredentialModel ? { commitTeamCredentialModel } : {}),
         ...(args.params.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
           : {}),
@@ -1072,6 +1073,7 @@ async function startAdmittedExecutionRun(
           backendId: runtimeBackendId,
           modelId,
           modelSelection,
+          teamCredentialModel,
           modelRole,
           sessionConfigOptionOverrides,
           permissionIntent,
@@ -1090,6 +1092,7 @@ async function startAdmittedExecutionRun(
               modelId,
               modelSelectionSource: roleSelection?.modelId ? roleSelection.modelSelectionSource : 'inherited',
               ...(modelSelection ? { modelSelection } : {}),
+              ...(teamCredentialModel ? { teamCredentialModel } : {}),
               ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
               ...(args.params.secretReferenceOverlay
                 ? { secretReferenceOverlay: args.params.secretReferenceOverlay }
@@ -1142,6 +1145,8 @@ async function startAdmittedExecutionRun(
             commitModelId,
             ...(chatModelSelection ? { chatModelSelection } : {}),
             ...(commitModelSelection ? { commitModelSelection } : {}),
+            ...(chatTeamCredentialModel ? { chatTeamCredentialModel } : {}),
+            ...(commitTeamCredentialModel ? { commitTeamCredentialModel } : {}),
             ...(voiceCommit?.connectedServices !== undefined ? { commitConnectedServices: voiceCommit.connectedServices } : {}),
             commitIsolation,
             permissionIntent,

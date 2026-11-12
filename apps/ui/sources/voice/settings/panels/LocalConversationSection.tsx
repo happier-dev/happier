@@ -41,6 +41,8 @@ import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voicePro
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
+import { resolveNewSessionModelCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
@@ -59,6 +61,8 @@ import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKey
 import { resolveVoiceAgentCatalogSelectionV1, voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { VoiceGlobalConnectedServicesBindingField } from '@/voice/settings/panels/realtime/VoiceGlobalConnectedServicesBindingField';
+import { VoiceAgentModelPicker } from '@/voice/settings/panels/VoiceAgentModelPicker';
+import { isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -231,6 +235,8 @@ export function LocalConversationSection(props: {
   const selectedAgentIdForDropdown = selectedAgentEntry
     ? voiceAgentCatalogSelectionValueV1(selectedAgentEntry)
     : String(cfg.agent.agentId ?? '').trim() || null;
+  const modelAgentTargetKey = selectedAgentTarget?.ok
+    ? selectedAgentTarget.targetKey ?? selectedAgentEntry?.backendTargetKey ?? null : null;
   const connectedServiceIds = React.useMemo(() => resolveProjectedConnectedAccountServiceKeys(
     selectedAgentEntry?.connectedAccounts ?? [],
   ), [selectedAgentEntry]);
@@ -273,6 +279,13 @@ export function LocalConversationSection(props: {
     theme.colors.text.secondary,
   ]);
 
+  const agentRuntimeSettings = useAgentUiSettings({ agentIds: selectedAgentIdForModelOptions ? [selectedAgentIdForModelOptions] : [],
+    machineId: preflightMachineId, accountScope: voiceSettingsScope, domain: 'runtime' });
+  const modelProbeContext = selectedAgentTarget?.ok ? resolveNewSessionModelCapabilityProbeContext({
+    backendTarget: selectedAgentTarget.backendTarget, runtimeCarrierAgentId: selectedAgentIdForModelOptions,
+    machineId: preflightMachineId, accountScope: voiceSettingsScope, settings: agentRuntimeSettings,
+    connectedServices: cfg.agent.connectedServices?.v === 2 ? cfg.agent.connectedServices : null,
+  }) : null;
   const preflightModels = useNewSessionPreflightModelsState({
     // This settings page has no admitted Session target. The session source is
     // resolved by the canonical Session reader at start, never by a default Agent.
@@ -282,6 +295,12 @@ export function LocalConversationSection(props: {
     runtimeCarrierAgentId: selectedAgentIdForModelOptions,
     selectedMachineId: preflightMachineId,
     capabilityServerId,
+    backendTargetKey: modelAgentTargetKey ?? undefined,
+    probeContext: modelProbeContext,
+    selectedTeamCredentialModel: cfg.agent.chatModelSource === 'custom' && isTeamCredentialProviderModelPickerValue(cfg.agent.chatModelSelection)
+      ? cfg.agent.chatModelSelection : null,
+    providerConnectionId: cfg.agent.chatModelSource === 'custom' && cfg.agent.chatModelSelection
+      && !isTeamCredentialProviderModelPickerValue(cfg.agent.chatModelSelection) ? cfg.agent.chatModelSelection.providerConnectionId : null,
     enabled: Boolean(preflightMachineId && selectedAgentIdForModelOptions),
   });
 
@@ -315,7 +334,7 @@ export function LocalConversationSection(props: {
   const followsAgentModel = cfg.agent.chatModelSource === 'session';
   // A chosen model is named by its catalog title, even before the agent's model list has loaded.
   const chatModelId = String(cfg.agent.chatModelId ?? '').trim();
-  const chatModelLabel = modelIdMenuItems.find((it) => it.id === chatModelId)?.title
+  const chatModelLabel = cfg.agent.chatModelSelection ? cfg.agent.chatModelSelection.modelId : modelIdMenuItems.find((it) => it.id === chatModelId)?.title
     ?? resolveSessionModelLabel(String(cfg.agent.agentId ?? '').trim(), null, chatModelId)
     ?? chatModelId;
   const selectedAgentMark = selectedAgentEntry ? (
@@ -571,6 +590,9 @@ export function LocalConversationSection(props: {
             agentId={selectedAgentEntry?.identity ?? cfg.agent.agentId}
             serviceIds={connectedServiceIds}
             bindingVersion={2}
+            connectedAccounts={selectedAgentEntry?.connectedAccounts}
+            teamCatalogInput={modelAgentTargetKey ? { serverId: capabilityServerId || null, machineId: preflightMachineId,
+              agentTargetKey: modelAgentTargetKey } : undefined}
             title={t(AGENT_SELECTION_SETTINGS.connectedServices.titleKey)}
             subtitle={t('settingsVoice.pages.conversations.agentAccountDescription')}
             value={cfg.agent.connectedServices}
@@ -605,6 +627,29 @@ export function LocalConversationSection(props: {
           <>
           <DropdownMenu
             testID="settings.voice.local.chatModel"
+            renderContent={modelAgentTargetKey ? () => <VoiceAgentModelPicker
+              machineId={preflightMachineId} serverId={capabilityServerId || null}
+              picker={{ agentTargetKey: modelAgentTargetKey, nativeModels: preflightModels.modelOptions,
+                connectedServices: modelProbeContext?.capabilityParams?.connectedServices,
+                selected: followsAgentModel || isTeamCredentialProviderModelPickerValue(cfg.agent.chatModelSelection) ? null
+                  : cfg.agent.chatModelSelection ?? (chatModelId && chatModelId !== 'default' ? { agentTargetKey: modelAgentTargetKey, providerConnectionId: null, modelId: chatModelId } : null),
+                selectedTeamCredentialModel: !followsAgentModel && isTeamCredentialProviderModelPickerValue(cfg.agent.chatModelSelection) ? cfg.agent.chatModelSelection : null,
+                allowAutomatic: true, canEnterCustomNativeValue: true,
+                headerAccessory: <Item title={sameAsAgentModelLabel}
+                  subtitle={t('settingsVoice.local.conversation.chatModelSource.sessionSubtitle')}
+                  selected={followsAgentModel} onPress={() => { setAgent({ chatModelSource: 'session' }); setOpenMenu(null); }} />,
+                probe: preflightModels.probe,
+                onRequestClose: () => setOpenMenu(null),
+                onSelect: selection => {
+                  setAgent({ chatModelSource: 'custom', chatModelId: selection?.modelId ?? 'default', chatModelSelection: selection, providerChat: null });
+                  setOpenMenu(null);
+                },
+              }}
+              onSelectTeamCredentialModel={selection => {
+                setAgent({ chatModelSource: 'custom', chatModelId: selection.modelId, chatModelSelection: selection, providerChat: null });
+                setOpenMenu(null);
+              }}
+            /> : undefined}
             open={openMenu === 'mediatorChatModelId'}
             onOpenChange={(next) => setOpenMenu(next ? 'mediatorChatModelId' : null)}
             variant="selectable"
@@ -645,7 +690,7 @@ export function LocalConversationSection(props: {
 
               const next = String(id ?? '').trim();
               if (!next) return;
-              setAgent({ chatModelSource: 'custom', chatModelId: next });
+              setAgent({ chatModelSource: 'custom', chatModelId: next, chatModelSelection: null, providerChat: null });
               setOpenMenu(null);
             }}
           />
@@ -660,7 +705,7 @@ export function LocalConversationSection(props: {
               onCommit={(draft) => {
                 setCustomEntry(null);
                 if (!draft) return String(cfg.agent.chatModelId ?? '');
-                setAgent({ chatModelSource: 'custom', chatModelId: draft });
+                setAgent({ chatModelSource: 'custom', chatModelId: draft, chatModelSelection: null, providerChat: null });
               }}
             />
           ) : null}
@@ -810,6 +855,25 @@ export function LocalConversationSection(props: {
             <>
             <DropdownMenu
               open={openMenu === 'mediatorCommitModelId'}
+              renderContent={modelAgentTargetKey ? () => <VoiceAgentModelPicker
+                machineId={preflightMachineId} serverId={capabilityServerId || null}
+                picker={{ agentTargetKey: modelAgentTargetKey, nativeModels: preflightModels.modelOptions,
+                  connectedServices: modelProbeContext?.capabilityParams?.connectedServices,
+                  selected: isTeamCredentialProviderModelPickerValue(cfg.agent.commitModelSelection) ? null
+                    : cfg.agent.commitModelSelection ?? (cfg.agent.commitModelId && cfg.agent.commitModelId !== 'default' ? { agentTargetKey: modelAgentTargetKey, providerConnectionId: null, modelId: cfg.agent.commitModelId } : null),
+                  selectedTeamCredentialModel: isTeamCredentialProviderModelPickerValue(cfg.agent.commitModelSelection) ? cfg.agent.commitModelSelection : null,
+                  allowAutomatic: true, canEnterCustomNativeValue: true, probe: preflightModels.probe,
+                  onRequestClose: () => setOpenMenu(null),
+                  onSelect: selection => {
+                    setAgent({ commitModelId: selection?.modelId ?? 'default', commitModelSelection: selection, providerChat: null });
+                    setOpenMenu(null);
+                  },
+                }}
+                onSelectTeamCredentialModel={selection => {
+                  setAgent({ commitModelId: selection.modelId, commitModelSelection: selection, providerChat: null });
+                  setOpenMenu(null);
+                }}
+              /> : undefined}
               onOpenChange={(next) => setOpenMenu(next ? 'mediatorCommitModelId' : null)}
               variant="selectable"
               search={true}
@@ -827,7 +891,7 @@ export function LocalConversationSection(props: {
                     ?? t('settingsVoice.local.conversation.commitModelId.subtitle')
                   ),
                   detailFormatter: () => (
-                    modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.title
+                    cfg.agent.commitModelSelection?.modelId ?? modelIdMenuItems.find((it) => it.id === String(cfg.agent.commitModelId ?? '').trim())?.title
                     ?? String(cfg.agent.commitModelId)
                   ),
                 }}
@@ -846,7 +910,7 @@ export function LocalConversationSection(props: {
 
                 const next = String(id ?? '').trim();
                 if (!next) return;
-                setAgent({ commitModelId: next });
+                setAgent({ commitModelId: next, commitModelSelection: null, providerChat: null });
                 setOpenMenu(null);
               }}
             />
@@ -861,7 +925,7 @@ export function LocalConversationSection(props: {
                 onCommit={(draft) => {
                   setCustomEntry(null);
                   if (!draft) return String(cfg.agent.commitModelId ?? '');
-                  setAgent({ commitModelId: draft });
+                  setAgent({ commitModelId: draft, commitModelSelection: null, providerChat: null });
                 }}
               />
             ) : null}

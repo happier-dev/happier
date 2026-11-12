@@ -93,14 +93,6 @@ describe('createVoiceMachineError', () => {
             phase: 'preflight', presentation: 'error', recoverable: false,
         });
     });
-    it('requires a Voice model change when the Session uses unsupported Team credentials', () => {
-        expect(classifyVoiceMachineError(Object.assign(new Error('Voice does not support Team credential models.'), {
-            code: 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED',
-        }))).toMatchObject({ kind: 'provider_setup_required', phase: 'preflight',
-            recoveryAction: 'open_settings', presentation: 'error', recoverable: false });
-        expect(resolveVoiceMachineErrorKind('VOICE_AGENT_TEAM_MODEL_UNSUPPORTED', 'provider_error'))
-            .toBe('provider_setup_required');
-    });
     it('mints complete structured policy for a preflight microphone denial', () => {
         expect(createVoiceMachineError({ kind: 'mic_permission_denied', reason: 'denied' })).toEqual({
             kind: 'mic_permission_denied',

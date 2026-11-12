@@ -25,7 +25,7 @@ import {
   HappierReplayRecentMessagesCountSchema,
   HappierReplayWireMaxSeedCharsSchema,
 } from '../../sessions/replaySeedBudget.js';
-import { LlmTaskRunnerConfigV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
+import { LlmTaskRunnerChoiceV1Schema } from '../../llm/tasks/llmTaskRunnerConfigV1.js';
 import {
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
@@ -287,7 +287,7 @@ export const ExecutionRunReplaySeedRequestSchema = lazyZodSchema(() => z.discrim
     strategy: zMini.optional(HappierReplayStrategySchema),
     recentMessagesCount: zMini.optional(HappierReplayRecentMessagesCountSchema),
     maxSeedChars: zMini.optional(HappierReplayWireMaxSeedCharsSchema),
-    summaryRunner: zMini.optional(LlmTaskRunnerConfigV1Schema),
+    summaryRunner: zMini.optional(LlmTaskRunnerChoiceV1Schema),
   }),
 ]));
 export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySeedRequestSchema>;
@@ -299,6 +299,7 @@ export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySee
  */
 export const ExecutionRunVoiceAgentIntentInputV1Schema = lazyZodSchema(() => z.strictObject({
   commitModelSelection: zMini.optional(ProviderBoundModelRefSchema),
+  commitTeamCredentialModel: zMini.optional(TeamCredentialProviderModelSelectionV1Schema),
   voicePolicy: z.optional(z.strictObject({
     assistantLanguage: z.nullable(z.string().check(z.trim(), z.minLength(1))),
     welcome: z.strictObject({
@@ -579,18 +580,11 @@ export function refineExecutionRunStartRequest(
       });
     }
   }
-  if (value.intent === 'voice_agent' && value.teamCredentialModel) {
-    ctx.addIssue({
-      code: "custom",
-      message: 'voice_agent does not use the Agent execution-run Provider launch path',
-      path: ['teamCredentialModel'],
-    });
-  }
   if (
     value.intent === 'voice_agent'
-    && value.modelSelection
+    && (value.modelSelection || value.teamCredentialModel)
     && value.chatModelId !== undefined
-    && value.modelSelection.modelId !== value.chatModelId
+    && (value.modelSelection ?? value.teamCredentialModel)?.modelId !== value.chatModelId
   ) {
     ctx.addIssue({
       code: "custom",
@@ -606,25 +600,31 @@ export function refineExecutionRunStartRequest(
         message: 'Invalid voice_agent intentInput',
         path: ['intentInput'],
       });
-    } else if (parsedInput.data.commitModelSelection) {
+    } else {
+      const commitSelection = parsedInput.data.commitModelSelection ?? parsedInput.data.commitTeamCredentialModel;
+      const commitSelectionKey = parsedInput.data.commitTeamCredentialModel ? 'commitTeamCredentialModel' : 'commitModelSelection';
+      if (parsedInput.data.commitModelSelection && parsedInput.data.commitTeamCredentialModel) {
+        ctx.addIssue({ code: 'custom', message: 'Select exactly one commit Provider model source',
+          path: ['intentInput', 'commitTeamCredentialModel'] });
+      }
       if (
-        parsedInput.data.commitModelSelection.agentTargetKey
+        commitSelection && commitSelection.agentTargetKey
           !== buildBackendTargetKeyV2(value.backendTarget)
       ) {
         ctx.addIssue({
           code: "custom",
           message: 'Voice commit model selection must target the execution-run backend',
-          path: ['intentInput', 'commitModelSelection', 'agentTargetKey'],
+          path: ['intentInput', commitSelectionKey, 'agentTargetKey'],
         });
       }
       if (
-        value.commitModelId === undefined
-        || parsedInput.data.commitModelSelection.modelId !== value.commitModelId
+        commitSelection && (value.commitModelId === undefined
+        || commitSelection.modelId !== value.commitModelId)
       ) {
         ctx.addIssue({
           code: "custom",
           message: 'Voice commit model selection modelId must match commitModelId',
-          path: ['intentInput', 'commitModelSelection', 'modelId'],
+          path: ['intentInput', commitSelectionKey, 'modelId'],
         });
       }
     }

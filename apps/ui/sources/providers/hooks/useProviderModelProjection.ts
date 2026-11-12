@@ -3,7 +3,6 @@ import * as React from 'react';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
@@ -125,7 +124,7 @@ export function useProviderModelProjection(input: Readonly<{
             : { scopeKey, accountLifetime, error: null, loading: true });
         const publish = beginProviderModelProjectionRead(binding.scope, binding.credentialKey, scopeKey);
         try {
-            const response = await describeProviderModels({
+            const result = await describeProviderModels({
                 // Keep the refresh discriminator correlated with its required machine.
                 ...(forceRefresh && input.machineId
                     ? { machineId: input.machineId, forceRefresh: true as const }
@@ -140,12 +139,6 @@ export function useProviderModelProjection(input: Readonly<{
                 ...(input.teamCredentialResources ? { teamCredentialResources: [...input.teamCredentialResources] } : {}),
             }, { signal: controller.signal });
             if (requestGeneration !== generation.current || !requestStillCurrent()) return null;
-            const result = response.status === 'success' && input.teamCredentialResources !== undefined
-                && response.teamCredentialResources === undefined
-                ? { status: 'error' as const, error: createProviderErrorV1('provider_rpc_response_invalid', {
-                    ...(input.machineId ? { machineId: input.machineId } : {}),
-                }) }
-                : response;
             if (result.status === 'success') {
                 publish(result);
                 setState({

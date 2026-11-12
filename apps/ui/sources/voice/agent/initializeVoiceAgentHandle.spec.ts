@@ -406,7 +406,7 @@ describe('initializeVoiceAgentHandle', () => {
         expect(admittedStart().chatModelId).toBeUndefined();
     });
 
-    it.each(['current', 'missing', 'stale', 'cancelled', 'team', 'team_stale'])('starts on a hidden carrier with the bound root Agent, model and Launch Profile only when applied model is known (%s)', async applied => {
+    it.each(['current', 'missing', 'stale', 'cancelled', 'team', 'team_stale', 'custom_team'])('starts on a hidden carrier with the bound root Agent, model and Launch Profile only when applied model is known (%s)', async applied => {
         const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
         const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
         const carrierId = 'hidden-selection-carrier';
@@ -459,6 +459,12 @@ describe('initializeVoiceAgentHandle', () => {
                 ...localSettings, agent: {
                     ...localSettings.agent,
                     agentSource: 'session', chatModelSource: 'session', commitModelSource: 'session',
+                    ...(applied === 'custom_team' ? { chatModelSource: 'custom', commitModelSource: 'chat',
+                        chatModelId: 'claude-haiku-4-5', chatModelSelection: {
+                            kind: 'team_credential_provider_model', resourceId: 'team-resource', teamId: 'team-1',
+                            expectedResourceRevision: 0, deliveryMode: 'brokered',
+                            agentTargetKey: buildAgentUniverseBackendTargetKey('claude'), modelId: 'claude-haiku-4-5',
+                        } } : {}),
                 },
             } } },
         }) } });
@@ -485,15 +491,23 @@ describe('initializeVoiceAgentHandle', () => {
                 expect(start).not.toHaveBeenCalled();
                 return;
             }
-            if (applied !== 'current') {
-                await expect(initializing).rejects.toMatchObject({ code: applied === 'team'
-                    ? 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED' : 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
+            if (applied !== 'current' && applied !== 'team' && applied !== 'custom_team') {
+                await expect(initializing).rejects.toMatchObject({ code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
                 expect(start).not.toHaveBeenCalled();
                 return;
             }
             const handle = await initializing;
             expect(handle.rpcSessionId).toBe(carrierId);
             expect(handle.agentBackendId).toBe('claude');
+            if (applied === 'team' || applied === 'custom_team') {
+                const team = { kind: 'team_credential_provider_model', resourceId: 'team-resource', teamId: 'team-1',
+                    expectedResourceRevision: 0, deliveryMode: 'brokered',
+                    agentTargetKey: buildAgentUniverseBackendTargetKey('claude'), modelId: 'claude-haiku-4-5' };
+                expect(admittedStart().teamCredentialModel).toEqual(team);
+                expect(admittedStart().modelSelection).toBeUndefined();
+                expect(ExecutionRunVoiceAgentIntentInputV1Schema.parse(admittedStart().intentInput).commitTeamCredentialModel).toEqual(team);
+                return;
+            }
             expect(admittedStart()).toMatchObject({ launchProfileId: 'root-launch-profile',
                 modelSelection: { agentTargetKey: buildAgentUniverseBackendTargetKey('claude'),
                     providerConnectionId: null, modelId: 'claude-haiku-4-5' },

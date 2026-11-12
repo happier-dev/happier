@@ -20,6 +20,7 @@ import type {
   BackendTargetRefV2,
 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { PermissionIntent } from '@happier-dev/agents';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type VoiceAgentAgentSource = 'session' | 'agent';
@@ -56,6 +57,8 @@ export type VoiceAgentStartParams = Readonly<{
   commitModelId?: string;
   chatModelSelection?: ProviderBoundModelRef;
   commitModelSelection?: ProviderBoundModelRef;
+  chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
+  commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   /** Session-sourced Voice starts follow the bound target Agent's applied auth selection. */
   connectedServices?: ConnectedServiceBindingsV2;

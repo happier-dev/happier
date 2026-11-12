@@ -3,6 +3,7 @@ import type {
   AcpConfigOptionOverridesV1,
   BackendTargetRefV1,
   ProviderBoundModelRef,
+  TeamCredentialProviderModelSelectionV1,
   VoiceAgentOutputEventV1,
   VoiceAgentOutputTurnV1,
   VoiceAssistantAction,
@@ -29,6 +30,8 @@ export type VoiceAgentStartParams = Readonly<{
   commitModelId: string;
   chatModelSelection?: ProviderBoundModelRef;
   commitModelSelection?: ProviderBoundModelRef;
+  chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
+  commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   commitIsolation?: boolean;
   permissionIntent: PermissionIntent;
@@ -114,6 +117,7 @@ export type BackendFactory = (opts: {
   /** Host-private role of this native model request, including chat replacement. */
   modelRole?: 'chat' | 'commit';
   modelSelection?: ProviderBoundModelRef;
+  teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   permissionIntent: PermissionIntent;
   start?: Readonly<{ intent: 'voice_agent' }>;
@@ -183,6 +187,8 @@ export type VoiceAgentInstance = {
   commitModelId: string;
   chatModelSelection?: ProviderBoundModelRef;
   commitModelSelection?: ProviderBoundModelRef;
+  chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
+  commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   initialContext: string;
   voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];

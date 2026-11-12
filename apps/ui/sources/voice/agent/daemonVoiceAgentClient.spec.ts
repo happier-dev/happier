@@ -77,6 +77,22 @@ async function settleWithin<T>(
 }
 
 describe('DaemonVoiceAgentClient', () => {
+  it('starts Voice with the exact brokered Team model for chat and commit', async () => {
+    const team = { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'muse-resource',
+      expectedResourceRevision: 7, deliveryMode: 'brokered',
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-fast' } as const;
+    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_team_voice', created: true });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+      sessionId: 's1', agentId: 'codex', chatModelId: team.modelId, commitModelId: team.modelId,
+      chatTeamCredentialModel: team, commitTeamCredentialModel: team,
+      permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
+    })).resolves.toEqual({ voiceAgentId: 'run_team_voice' });
+    const request = ExecutionRunEnsureOrStartRequestSchema.parse(daemonRpc.mock.calls[0]?.[0].payload).start;
+    expect(request.teamCredentialModel).toEqual(team);
+    expect(request.modelSelection).toBeUndefined();
+    expect(request.intentInput).toMatchObject({ commitTeamCredentialModel: team });
+  });
   it('retains the connected account diagnostic at the Voice RPC boundary', async () => {
     const uxDiagnostic = { code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
       source: 'spawn_resume', serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', retryable: false,

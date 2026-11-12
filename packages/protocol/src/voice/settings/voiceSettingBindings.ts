@@ -249,9 +249,15 @@ function updateVoiceLocalConversationSetting(
     const parsed = parseScalar(schemaAtPath(VoiceLocalConversationSchema, segments), value);
     const { direct, editable } = localPreferenceOwner(voice, path);
     if (!editable || !parsed.success) return null;
-    return direct
-        ? writeLocalDirectVoiceSettings(voice, replacePath(readLocalDirectVoiceSettings(voice), segments, parsed.value) as VoiceLocalDirectSettings)
-        : writeLocalConversationVoiceSettings(voice, replacePath(readLocalConversationVoiceSettings(voice), segments, parsed.value) as VoiceLocalConversationSettings);
+    if (direct) return writeLocalDirectVoiceSettings(voice,
+        replacePath(readLocalDirectVoiceSettings(voice), segments, parsed.value) as VoiceLocalDirectSettings);
+    const next = replacePath(readLocalConversationVoiceSettings(voice), segments, parsed.value) as VoiceLocalConversationSettings;
+    if (path === 'agent.chatModelId' || path === 'agent.commitModelId') {
+        const roleSelection = path === 'agent.chatModelId' ? 'chatModelSelection' : 'commitModelSelection';
+        return writeLocalConversationVoiceSettings(voice, { ...next,
+            agent: { ...next.agent, [roleSelection]: null, providerChat: null } });
+    }
+    return writeLocalConversationVoiceSettings(voice, next);
 }
 
 function voiceLocalConversationBinding(path: LocalConversationPreferencePath): VoiceSettingBindingV1<T> {

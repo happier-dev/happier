@@ -1,4 +1,6 @@
 import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { loadHomeTeamCredentialModelCatalog } from '@/hooks/teams/homeTeamCredentialModelCatalog';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { listExecutableAgentUniverseIds } from '@/agents/catalog/agentUniverse';
 import { AgentsBackendsListOutputSchema, type AgentsBackendsListOutput } from '@happier-dev/protocol/actions/agentBackendInventory';
@@ -163,6 +165,7 @@ type VoiceToolModelListResult = Readonly<{
     description?: string;
     providerConnectionId?: string | null;
     providerName?: string;
+    teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
   }>>;
   supportsFreeform: boolean;
   source: 'preflight' | 'static' | 'unavailable';
@@ -178,48 +181,56 @@ async function projectVoiceToolProviderModels(params: Readonly<{
   limit: number | null;
 }>): Promise<VoiceToolModelListResult> {
   const providersEnabled = await isVoiceProvidersFeatureEnabledForSpawn({ serverId: params.serverId });
-  if (!providersEnabled) {
-    return params.base;
-  }
-
   if (!params.serverId) {
+    if (!providersEnabled) return params.base;
     throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
   }
   const context = await captureLazyActionAccountContext(params.serverId);
   try {
     const scope = { serverId: context.serverId, accountId: context.accountId };
     context.assertCurrent();
+    const declarations = await loadDaemonMergedProjectionInputs({ machineId: params.machineId, serverId: params.serverId,
+      accountLifetime: context.accountLifetime, sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
+    context.assertCurrent();
+    const declarationContext = providerDeclarationContext(params.machineId, declarations?.pluginProjectionV2);
+    const teamCatalog = await loadHomeTeamCredentialModelCatalog({ scope, agentTargetKey: params.agentTargetKey,
+      machineId: params.machineId, declarationContext, assertCurrent: context.assertCurrent });
+    if (!providersEnabled && teamCatalog.resources.length === 0) return params.base;
     const projection = await describeProviderModels({
       machineId: params.machineId,
       serverId: params.serverId,
       agentTargetKey: params.agentTargetKey,
       mode: 'picker',
+      ...(teamCatalog.resources.length > 0 ? { teamCredentialResources: [...teamCatalog.resources] } : {}),
     });
     context.assertCurrent();
-    const declarations = await loadDaemonMergedProjectionInputs({ machineId: params.machineId, serverId: params.serverId,
-      accountLifetime: context.accountLifetime, sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
-    context.assertCurrent();
-    await refreshProviderCatalog(scope);
-    context.assertCurrent();
-    const catalog = getProviderCatalogSnapshot(scope);
-    if (catalog?.status !== 'ready' || catalog.stale || !catalog.data) {
-      throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
+    let hiddenNativeModelKeys: ReadonlySet<string> = new Set();
+    if (providersEnabled) {
+      await refreshProviderCatalog(scope);
+      context.assertCurrent();
+      const catalog = getProviderCatalogSnapshot(scope);
+      if (catalog?.status !== 'ready' || catalog.stale || !catalog.data) {
+        throw Object.assign(new Error('provider_catalog_unavailable'), { code: 'provider_catalog_unavailable' });
+      }
+      hiddenNativeModelKeys = hiddenModelVisibilityKeys(composeProviderSettingsV1(catalog.data, {}), { providersFeatureEnabled: true });
     }
-    const settings = composeProviderSettingsV1(catalog.data, {});
     if (projection.status !== 'success') {
       throw Object.assign(new Error('provider_projection_unavailable'), { code: 'provider_projection_unavailable' });
     }
     const sections = buildSessionModelPickerSections({
       agentTargetKey: params.agentTargetKey,
-      declarationContext: providerDeclarationContext(params.machineId, declarations?.pluginProjectionV2),
+      declarationContext,
       nativeModels: params.base.items.map((item) => ({
         value: item.modelId,
         label: item.label,
         ...(item.description ? { description: item.description } : {}),
       })),
-      providerGroups: projection.groups,
+      providerGroups: providersEnabled ? projection.groups : [],
+      teamCredentialResources: projection.teamCredentialResources,
+      teamCredentialResourceStatusByKey: teamCatalog.resourceStatusByKey,
+      teamNameById: teamCatalog.teamNameById,
       providerProjectionAuthoritative: true,
-      hiddenNativeModelKeys: hiddenModelVisibilityKeys(settings, { providersFeatureEnabled: true }),
+      hiddenNativeModelKeys,
       canConfirmExperimental: false,
     });
     const connectionNameBySectionId = new Map(
@@ -239,14 +250,15 @@ async function projectVoiceToolProviderModels(params: Readonly<{
         label: option.label,
         ...(option.description ? { description: option.description } : {}),
         providerConnectionId,
+        ...(ref && 'kind' in ref && ref.kind === 'team_credential_provider_model' ? { teamCredentialModel: ref } : {}),
         ...(providerConnectionId
           ? { providerName: connectionNameBySectionId.get(section.id) ?? '' }
           : {}),
       }];
     }));
     const limitedItems = params.limit ? items.slice(0, params.limit) : items;
-    const hasProviderModels = items.some((item) => item.providerConnectionId !== null);
-    const supportsProviderFreeform = projection.groups.some((group) => (
+    const hasProviderModels = items.some((item) => item.providerConnectionId !== null || item.teamCredentialModel !== undefined);
+    const supportsProviderFreeform = providersEnabled && projection.groups.some((group) => (
       group.authorization.authorized
       && providerCatalogPermitsUnlistedModelIdV1({
         manualModelPolicy: group.manualModelPolicy,

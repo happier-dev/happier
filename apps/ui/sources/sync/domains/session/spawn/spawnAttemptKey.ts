@@ -50,6 +50,7 @@ export function createSpawnAttemptKeyForSessionSpawnNewInput(
         ),
         agentTarget: parsed.agentTarget,
         modelSelection: parsed.modelSelection ?? null,
+        ...(parsed.teamCredentialBindings?.length ? { teamCredentialBindings: parsed.teamCredentialBindings } : {}),
         profileId: parsed.profileId ?? null,
         permissionMode: parsed.permissionMode ?? null,
         agentModeId: parsed.agentModeId ?? null,

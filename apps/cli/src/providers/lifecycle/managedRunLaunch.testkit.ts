@@ -144,6 +144,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     const emit = event => { const value = { ...event, sequence: ++sequence, sessionId: request.sessionId, emittedAtMs: Date.now() };
       for (const listener of listeners) listener(value); };
     return {
+      functionToolsDelivered: Boolean(request.functionTools),
       async send(input, options) {
         const turnId = input.delivery.turnId;
         emit({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });

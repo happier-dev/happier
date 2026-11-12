@@ -10,6 +10,30 @@ const registry = { get: (id: string) => id === neural.providerId ? neural : null
 const june = 'sherpa-onnx-streaming-zipformer-en-2023-06-26';
 const parakeet = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
 
+describe('Voice scalar model preference writes', () => {
+  it('clears only the deliberately replaced exact role selection and retains unrelated preferences', () => {
+    const { voiceLocalConversationBinding } = createVoiceSettingBindingsV1({ owner, registry, unavailableValue: null });
+    const selected = { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 1,
+      deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'shared' } as const;
+    const voice = owner.voiceSettingsParse({ providers: { local_conversation: { schemaVersion: 1, config: { agent: {
+      chatModelSelection: selected, commitModelSelection: selected,
+      providerChat: { status: 'configured', chat: { agentTargetKey: selected.agentTargetKey, providerConnectionId: null, modelId: 'old' },
+        commit: { agentTargetKey: selected.agentTargetKey, providerConnectionId: null, modelId: 'old' } },
+    } } } } });
+    const unchanged = voiceLocalConversationBinding('agent.idleTtlSeconds').mutate({ voice }, 30)!;
+    expect(owner.readLocalConversationVoiceSettings(unchanged.voice).agent.chatModelSelection).toEqual(selected);
+    expect(owner.readLocalConversationVoiceSettings(unchanged.voice).agent.providerChat?.status).toBe('configured');
+    for (const role of ['chat', 'commit'] as const) {
+      const changed = voiceLocalConversationBinding(`agent.${role}ModelId`).mutate({ voice }, 'new-model')!;
+      const agent = owner.readLocalConversationVoiceSettings(changed.voice).agent;
+      expect(agent[`${role}ModelSelection`]).toBeNull();
+      expect(agent[role === 'chat' ? 'commitModelSelection' : 'chatModelSelection']).toEqual(selected);
+      expect(agent.providerChat).toBeNull();
+      expect(agent[`${role}ModelId`]).toBe('new-model');
+    }
+  });
+});
+
 describe('Dictation neural model selection (owner decision 2026-11-09)', () => {
   it.each(['daemon', 'device'] as const)('uses the host execution policy through the %s settings Action', execution => {
     const { voiceSettingBinding } = createVoiceSettingBindingsV1({ owner, registry, unavailableValue: null,

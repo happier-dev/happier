@@ -40,7 +40,11 @@ import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot'
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { readReusableDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { loadDaemonMergedProjectionInputs, readReusableDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { loadHomeTeamCredentialModelCatalog } from '@/hooks/teams/homeTeamCredentialModelCatalog';
+import { describeProviderModels } from '@/providers/actions/client';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import { resolveVoiceConnectedAccountTargetEligibility } from '@/voice/credentials/sourceEligibility';
@@ -256,8 +260,37 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const agentLifetime = captureActiveServerAccountScopeLifetime();
     const observedAgents = machine.machineId && agentLifetime && areAccountSettingsScopesEqual(scope, agentLifetime.scope)
         ? readMachineAgentsForScope(agentLifetime, machine.machineId) : EMPTY_MACHINE_AGENTS;
+    const selectedModel = voice.providerId === 'local_conversation' && localConfig.conversationMode === 'agent'
+        && localConfig.agent.chatModelSource === 'custom' ? localConfig.agent.chatModelSelection : null;
+    let modelRoute: Parameters<typeof projectVoiceSelectedAgentReadiness>[2]['modelRoute'];
+    if (selectedModel && ('kind' in selectedModel || selectedModel.providerConnectionId) && selectedAgent && machine.machineId && agentLifetime
+        && areAccountSettingsScopesEqual(scope, agentLifetime.scope) && input.isCurrent()) {
+        const agentTargetKey = buildBackendTargetKeyV2(selectedAgent);
+        const declarations = await loadDaemonMergedProjectionInputs({ machineId: machine.machineId, serverId,
+            accountLifetime: agentLifetime, sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
+        const declarationContext = providerDeclarationContext(machine.machineId, declarations?.pluginProjectionV2);
+        const teamCatalog = 'kind' in selectedModel ? await loadHomeTeamCredentialModelCatalog({
+            scope: agentLifetime.scope, agentTargetKey, machineId: machine.machineId, declarationContext, signal: context.signal,
+            assertCurrent: () => {
+                if (!input.isCurrent() || !agentLifetime.isCurrent()) {
+                    throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+                }
+            },
+        }) : null;
+        const personalProvidersEnabled = resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'providers', settings,
+            snapshot: featureSnapshot ?? { status: 'loading' }, scope: { scopeKind: 'spawn', serverId } })?.state === 'enabled';
+        const modelProjection = teamCatalog || personalProvidersEnabled ? await describeProviderModels({ machineId: machine.machineId, serverId, agentTargetKey,
+            mode: 'picker',
+            ...('providerConnectionId' in selectedModel ? { currentSelection: selectedModel } : {}),
+            ...(teamCatalog ? { teamCredentialResources: [...teamCatalog.resources] } : {}),
+        }) : null;
+        modelRoute = { selection: selectedModel, agentTargetKey, declarationContext,
+            providerSources: personalProvidersEnabled && modelProjection?.status === 'success' ? modelProjection.groups : [],
+            teamCredentialResources: modelProjection?.status === 'success' ? modelProjection.teamCredentialResources : [],
+            teamCredentialResourceStatusByKey: teamCatalog?.resourceStatusByKey };
+    }
     const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-        { serverId, machineId: machine.machineId });
+        { serverId, machineId: machine.machineId, modelRoute });
     const localFacts = projectLocalConversationReadinessFacts({ registry, voice, voiceSettingsV1: settings.voiceSettingsV1,
         secrets: settings.secrets, connectedPurposes, platform, localInput: localAvailability,
         local: resolveVoiceProviderAvailability({ happierVoiceSupported: hostedEnabled, platformOs: platform, local: localAvailability }).local,

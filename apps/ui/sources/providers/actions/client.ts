@@ -123,7 +123,12 @@ export const describeProviderModels = async (input: ProviderActionInput<'provide
     const { serverId, ...request } = input;
     const id = input.forceRefresh ? 'providers.models.refresh' : 'providers.models.projection';
     const result = await invoke(id, request, outputs[id], { serverId }, approval);
-    if (result.status === 'success' && 'connectionId' in result) throw createProviderErrorV1('provider_rpc_response_invalid');
+    if (result.status === 'success') {
+        if ('connectionId' in result) throw createProviderErrorV1('provider_rpc_response_invalid');
+        if ('teamCredentialResources' in input && input.teamCredentialResources !== undefined && result.teamCredentialResources === undefined) {
+            throw createProviderErrorV1('provider_rpc_response_invalid', { ...(input.machineId ? { machineId: input.machineId } : {}) });
+        }
+    }
     return result;
 };
 export const refreshProviderConnectionModels = async (input: Readonly<{ machineId: string; connectionId: string; serverId: string | null }>, approval?: ProviderActionApprovalOptions) => {

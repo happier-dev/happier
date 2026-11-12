@@ -644,26 +644,37 @@ describe('startExecutionRun', () => {
     }
   });
 
-  it('refuses unsupported inherited Team Voice custody before publishing a Run', async () => {
+  it.each(['brokered', 'direct'] as const)('starts admitted Team Voice roles through the runtime factory (%s)', async deliveryMode => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const createRuntime = () => createProvisioningRuntime();
+    const createRuntime = vi.fn((_options: Parameters<Parameters<typeof startExecutionRun>[0]['createRuntime']>[0]) => createProvisioningRuntime());
     const voiceAgentManager = new VoiceAgentManager({ createRuntime });
+    const teamCredentialModel = { kind: 'team_credential_provider_model' as const, resourceId: 'resource', teamId: 'team',
+      expectedResourceRevision: 2, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', deliveryMode };
     try {
-      await expect(startExecutionRun({
+      const started = await startExecutionRun({
         params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
+          ...(deliveryMode === 'direct' ? { teamCredentialModel, chatModelId: teamCredentialModel.modelId,
+            commitModelId: teamCredentialModel.modelId, intentInput: { commitTeamCredentialModel: teamCredentialModel } } : {}),
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', commitIsolation: true },
         childSelectionContext: { lifecycle: 'attached', readAppliedParentSelection: () => ({
           status: 'applied', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, modelId: 'team-model', connectedServices: null,
-          teamCredentialModel: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team',
-            expectedResourceRevision: 2, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', deliveryMode: 'brokered' },
+          teamCredentialModel,
         }) },
         parentProvider: 'codex', sendAcp: async () => {}, streamedTranscriptSession: null, createRuntime,
         getNowMs: () => 1, budgetRegistry: null, runs, controllers, enqueueMarkerWrite: async () => {},
         writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
         send: async () => ({ ok: true }), voiceAgentManager,
-      })).rejects.toMatchObject({ code: 'execution_run_child_choice_required' });
-      expect(runs.size).toBe(0);
+      });
+      await voiceAgentManager.commit({ voiceAgentId: started.runId });
+      expect(runs.get(started.runId)?.voiceAgentConfig).toMatchObject({
+        chatTeamCredentialModel: { resourceId: 'resource', modelId: 'team-model', deliveryMode },
+        commitTeamCredentialModel: { resourceId: 'resource', modelId: 'team-model', deliveryMode },
+      });
+      expect(createRuntime).toHaveBeenCalledTimes(2);
+      for (const [options] of createRuntime.mock.calls) expect(options).toMatchObject({
+        teamCredentialModel: { resourceId: 'resource', modelId: 'team-model', deliveryMode },
+      });
     } finally { await voiceAgentManager.dispose(); }
   });
   it('admits an attached child from applied parent route and retains it independently of later parent changes', async () => {

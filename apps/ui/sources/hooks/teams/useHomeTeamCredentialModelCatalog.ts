@@ -8,7 +8,7 @@ import { observeTeamCredentialResourceCatalog, refreshTeamCredentialResourceCata
 import { getTeamCredentialResourceCatalogSnapshot, getTeamCredentialResourceCatalogsSelectionKey, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, resolveAccountAgentTeamCredentialDemand } from '@/providers/catalog/accountProviderDeclarations';
-import { mergeTeamCredentialCatalogResourcesV1 } from '@happier-dev/protocol/teams';
+import { projectHomeCatalogSnapshots } from './homeTeamCredentialModelCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -120,11 +120,9 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
                 reload: reloadHomeCatalog,
             };
         }
-        const pages: (readonly TeamCredentialResourceCatalogEntryV1[])[] = [];
-        const connectedServiceKeys = demand?.connectedServiceKeys ?? null;
+        const pages: ReturnType<typeof getTeamCredentialResourceCatalogSnapshot>[] = [];
         const teamNameById: Record<string, string> = {};
         const homeNameByTeamId: Record<string, string> = {};
-        const resourceStatusByKey = new Map<string, TeamCredentialResourceStatus>();
         let current = directory.kind !== 'loading' && !directory.partial
             && (!demand || demand.requirements !== null);
         if (directory.kind === 'loading' && !condition) condition = { reason: 'loading', retryable: false };
@@ -132,34 +130,13 @@ export function useHomeTeamCredentialModelCatalog(input: Readonly<{
             teamNameById[row.address.teamId] = row.team.name;
             homeNameByTeamId[row.address.teamId] = row.homeName;
             const snapshot = getTeamCredentialResourceCatalogSnapshot(scope, row.address, application, executionMachineId);
-            const selectable = snapshot?.selectionCurrent === true;
-            const status: TeamCredentialResourceStatus = snapshot?.error
-                ? snapshot.error.kind === 'unreachable'
-                    ? { kind: 'homeUnreachable' }
-                    : { kind: 'failed', code: snapshot.error.code ?? snapshot.error.kind, reason: snapshot.error.kind }
-                : unavailable?.reason === 'offline'
-                    ? { kind: 'homeUnreachable' }
-                    : selectable ? { kind: 'current' } : { kind: 'pending' };
-            if (snapshot?.status !== 'ready' || snapshot.stale) {
-                current = false;
-            }
             if (snapshot?.error && (!condition || condition.reason === 'loading')) condition = teamsUnavailableReason(snapshot.error);
             else if (snapshot?.status !== 'ready' && !condition) condition = { reason: 'loading', retryable: false };
-            pages.push(snapshot?.data ?? []);
-            for (const resource of snapshot?.data ?? []) {
-                const key = `${resource.teamId}:${resource.id}`;
-                const previousStatus = resourceStatusByKey.get(key);
-                if (!previousStatus || previousStatus.kind === 'current' || status.kind === 'failed' || status.kind === 'homeUnreachable') {
-                    resourceStatusByKey.set(key, status);
-                }
-            }
+            pages.push(snapshot);
         }
-        // Gathering, the connected-service filter and model alternatives come from the protocol owner.
-        const resourcesByKey = mergeTeamCredentialCatalogResourcesV1(pages, connectedServiceKeys, {
-            requireProviderModels: Boolean(demand && demand.applications.length > 0),
-        });
-        for (const key of [...resourceStatusByKey.keys()]) if (!resourcesByKey.has(key)) resourceStatusByKey.delete(key);
-        const resources = [...resourcesByKey.values()];
+        const projected = projectHomeCatalogSnapshots(pages, demand, unavailable?.reason === 'offline');
+        current = current && projected.current;
+        const { resources, resourceStatusByKey } = projected;
         return Object.freeze({
             resources: resources.length > 0 ? Object.freeze(resources) : EMPTY_RESOURCES,
             teamNameById: Object.freeze(teamNameById),

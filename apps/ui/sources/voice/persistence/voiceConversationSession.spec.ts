@@ -46,6 +46,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionRunnerRuntimeStatusFixture } from '@/dev/testkit/fixtures/sessionRunnerRuntimeFixtures';
 import { createSessionProviderBindingFingerprintV1, SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
@@ -908,6 +909,48 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     } } : agent.connectedServices ?? { v: 2, bindingsByServiceId: {} };
     expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({ connectedServices: expected }));
     expect(purposeCatalogReads).toBe(selection === 'default' ? 1 : 0);
+  });
+
+  it.each(['brokered', 'vendor-native'] as const)('carries the configured exact Team model into a fresh Home carrier (%s)', async deliveryMode => {
+    const selection = TeamCredentialProviderModelSelectionV1Schema.parse({
+      kind: 'team_credential_provider_model', teamId: 'team-custom', resourceId: 'resource-custom',
+      expectedResourceRevision: 9, deliveryMode, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'custom-model',
+      ...(deliveryMode === 'vendor-native' ? { nativeDelivery: {
+        managedId: 'managed-custom', controllerInstallationId: 'controller-custom', guestInstallationId: 'guest-custom',
+        bindingKey: 'binding-custom', placeholderRef: 'placeholder-custom', sourceRevision: 'source-custom',
+        providerTicket: 't'.repeat(43),
+      } } : {}),
+    });
+    Object.assign(state.settings.voice.providers.local_conversation.config.agent, {
+      agentSource: 'agent', agentId: 'codex', chatModelSource: 'custom', chatModelId: selection.modelId,
+      chatModelSelection: selection,
+    });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, teamId: selection.teamId,
+        resourceId: selection.resourceId, expectedResourceRevision: selection.expectedResourceRevision,
+        deliveryMode, providerModelSelection: { agentTargetKey: selection.agentTargetKey, modelId: selection.modelId },
+        ...(selection.nativeDelivery ? { nativeDelivery: selection.nativeDelivery } : {}),
+      }],
+    }));
+    expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toBeUndefined();
+  });
+
+  it('carries the configured exact Team model only while its custom source is selected', async () => {
+    Object.assign(state.settings.voice.providers.local_conversation.config.agent, {
+      agentSource: 'agent', agentId: 'codex', chatModelSource: 'session', chatModelId: 'retained-custom-model',
+      chatModelSelection: TeamCredentialProviderModelSelectionV1Schema.parse({
+        kind: 'team_credential_provider_model', teamId: 'team-custom', resourceId: 'resource-custom',
+        expectedResourceRevision: 9, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex',
+        modelId: 'retained-custom-model',
+      }),
+    });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    const input = spawnRequests.mock.calls.at(-1)?.[0];
+    expect(input.teamCredentialBindings).toBeUndefined();
+    expect(input.modelSelection).toBeUndefined();
   });
 
   it('R41 gives changed fixed-Agent authentication distinct carriers while keeping unchanged retries stable', async () => {
@@ -2506,9 +2549,20 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
     sessionDetailResponse.mockClear();
   });
 
-  it.each(['native', 'provider', 'team'])('inherits the coding root Agent, model and connected account instead of Account defaults (%s)', async source => {
+  // Voice Team models are owner-approved; preserve their exact source through ordinary Session admission.
+  it.each(['native', 'provider', 'team', 'team-native'])('inherits the coding root Agent, model and connected account instead of Account defaults (%s)', async source => {
     state.settings.voice.providers.local_conversation.config.agent.chatModelSource = 'session';
     const providerConnectionId = source === 'provider' ? 'pc_root_gateway' : null;
+    const teamCredentialModel = source.startsWith('team') ? TeamCredentialProviderModelSelectionV1Schema.parse({
+      kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'team-resource',
+      expectedResourceRevision: 7, deliveryMode: source === 'team-native' ? 'vendor-native' : 'brokered',
+      agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'claude-haiku-4-5',
+      ...(source === 'team-native' ? { nativeDelivery: {
+        managedId: 'managed-1', controllerInstallationId: 'controller-1', guestInstallationId: 'guest-1',
+        bindingKey: 'binding-1', placeholderRef: 'placeholder-1', sourceRevision: 'source-revision-1',
+        providerTicket: 't'.repeat(43),
+      } } : {}),
+    }) : null;
     const connectedServices = { v: 2, bindingsByServiceId: {
       'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'profile', profileId: 'claude-root-account' },
     } };
@@ -2519,14 +2573,10 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
         selection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'last-accepted-model' } },
       sessionModelsV1: { v: 1, agentId: 'claude', updatedAt: 30, currentModelId: 'claude-haiku-4-5',
         availableModels: [{ id: 'claude-haiku-4-5', name: 'Haiku' }],
-        activeSelectionV1: { v: source === 'team' ? 2 : 1, source: 'runtime_apply',
+        activeSelectionV1: { v: teamCredentialModel ? 2 : 1, source: 'runtime_apply',
           selection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId, modelId: 'claude-haiku-4-5' },
           runner: { pid: 123, processStartTimeMs: 1000 },
-          ...(source === 'team' ? { teamCredentialModel: {
-            kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'team-resource',
-            expectedResourceRevision: 0, deliveryMode: 'brokered',
-            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'claude-haiku-4-5',
-          } } : {}),
+          ...(teamCredentialModel ? { teamCredentialModel } : {}),
         },
       },
     } };
@@ -2562,22 +2612,22 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       };
     }
     const { ensureVoiceConversationSessionForSessionRoot } = await loadConversationSession();
-    if (source === 'team') {
-      await expect(ensureVoiceConversationSessionForSessionRoot({
-        sessionRootAddress: { serverId: homeId, sessionId: 'root-session' },
-      })).rejects.toMatchObject({ code: 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED' });
-      expect(spawnRequests).not.toHaveBeenCalled();
-      return;
-    }
     await expect(ensureVoiceConversationSessionForSessionRoot({
       sessionRootAddress: { serverId: homeId, sessionId: 'root-session' },
     })).resolves.toBe('voice-root-session');
     expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      modelSelection: expect.objectContaining({ ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
-        modelId: 'claude-haiku-4-5', providerConnectionId } }),
+      ...(teamCredentialModel ? { teamCredentialBindings: [{
+        v: 1, slot: { kind: 'provider_model' }, teamId: 'team-1', resourceId: 'team-resource',
+        expectedResourceRevision: 7, deliveryMode: teamCredentialModel.deliveryMode,
+        ...(teamCredentialModel.nativeDelivery ? { nativeDelivery: teamCredentialModel.nativeDelivery } : {}),
+        providerModelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'claude-haiku-4-5' },
+      }] } : { modelSelection: expect.objectContaining({ ref: {
+        agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'claude-haiku-4-5', providerConnectionId,
+      } }) }),
       connectedServices,
     }));
+    if (teamCredentialModel) expect(spawnRequests.mock.calls.at(-1)?.[0].modelSelection).toBeUndefined();
   });
 
   it('uses the Home default Agent when a Home carrier has persisted Session-source settings', async () => {

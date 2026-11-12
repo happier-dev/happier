@@ -8,6 +8,12 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import {
+    readProjectedAgentDeclarationV1,
+    readProjectedProviderDeclarationsV1,
+    resolveAgentTeamCredentialDemandV1,
+    type AgentTeamCredentialDemandV1,
+} from '@happier-dev/protocol/teams';
 import { getBundledAgentDeclaration } from '@/agents/registry/registryCore';
 import {
     BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS,
@@ -34,8 +40,7 @@ export function providerDeclarationContext(machineId: string | null | undefined,
 export function readAccountProviderDeclarations(context: ProviderDeclarationContext): readonly AccountProviderDeclarationV1[] {
     const projection = context.projection;
     if (!projection) return context.kind === 'account' ? bundledProviderDeclarations : [];
-    const projected = Object.values(projection.familiesById.providers?.entriesById ?? {}).flatMap(entry =>
-        entry.definition && entry.provenance ? [{ contributionKey: entry.id, definition: entry.definition, provenance: entry.provenance }] : []);
+    const projected = readProjectedProviderDeclarationsV1(projection);
     if (context.kind === 'machine') return projected;
     // Account facts remain available without an execution Machine. An admitted
     // projection supplements dynamic Providers and supplies its current definitions.
@@ -110,26 +115,20 @@ type ExactAccountAgentDeclaration =
 function readExactAccountAgentDeclaration(agentTargetKey: string, context: ProviderDeclarationContext): ExactAccountAgentDeclaration | null {
     const projection = context.projection;
     if (context.kind === 'machine' && !projection) return null;
+    if (projection) {
+        const declaration = readProjectedAgentDeclarationV1(projection, agentTargetKey);
+        return declaration ? { kind: 'projected', declaration } : null;
+    }
     let target: ReturnType<typeof parseBackendTargetKeyV2>;
     try { target = parseBackendTargetKeyV2(agentTargetKey); } catch { return null; }
     if (target.kind === 'agent') {
         if (target.definitionId !== undefined) return null;
-        if (projection) {
-            const declaration = Object.values(projection.agentsById).find(declaration =>
-                declaration.identity?.pluginId === target.identity.pluginId
-                && declaration.identity.localId === target.identity.localId);
-            return declaration ? { kind: 'projected', declaration } : null;
-        }
         const declaration = Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find(declaration =>
             declaration.identity.pluginId === target.identity.pluginId
             && declaration.identity.localId === target.identity.localId);
         return declaration ? { kind: 'bundled', declaration } : null;
     }
     if (target.configuredBackendId !== undefined || target.sourceKind === 'configured') return null;
-    if (projection) {
-        const declaration = projection.agentsById[target.backendId];
-        return declaration ? { kind: 'projected', declaration } : null;
-    }
     const declaration = getBundledAgentDeclaration(target.backendId);
     return declaration ? { kind: 'bundled', declaration } : null;
 }
@@ -138,7 +137,7 @@ export function readAccountAgentProviderRequirements(agentTargetKey: string, con
     return readExactAccountAgentDeclaration(agentTargetKey, context)?.declaration.providerRequirements ?? null;
 }
 
-function readAccountAgentQualifiedConnectedAccounts(agentTargetKey: string, context: ProviderDeclarationContext) {
+export function readAccountAgentQualifiedConnectedAccounts(agentTargetKey: string, context: ProviderDeclarationContext) {
     const resolved = readExactAccountAgentDeclaration(agentTargetKey, context);
     if (!resolved) return null;
     return resolved.kind === 'bundled'
@@ -159,6 +158,14 @@ export function readAccountAgentManagedConnectedServices(agentTargetKey: string,
         if (binding?.source === 'connected') bindingsByServiceId[serviceKey] = binding;
     }
     return Object.keys(bindingsByServiceId).length ? { v: 2, bindingsByServiceId } : null;
+}
+
+/** Which Team credential applications and services an Agent can use here, through the protocol owner. */
+export function resolveAccountAgentTeamCredentialDemand(agentTargetKey: string, context: ProviderDeclarationContext): AgentTeamCredentialDemandV1 {
+    return resolveAgentTeamCredentialDemandV1({ agentTargetKey,
+        requirements: readAccountAgentProviderRequirements(agentTargetKey, context),
+        connectedAccounts: readAccountAgentQualifiedConnectedAccounts(agentTargetKey, context),
+        providers: readAccountProviderDeclarations(context) });
 }
 
 /** Null retains diagnosis when the exact Agent's connected-account declaration is unresolved. */

@@ -46,12 +46,19 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
+import { TeamCredentialResourceCatalogEntryV1Schema, type TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { teamSummaryFixture } from '@/dev/testkit';
+import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 const providerTransport = createProviderSettingsHarness();
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let rowDefinitions: readonly unknown[];
+let teamResources: readonly TeamCredentialResourceCatalogEntryV1[] = [];
+const teamCatalogReads: string[] = [];
 async function publishMachineCensus() {
   if (!account) throw new Error('Expected a restored test Account');
   await fetchAndApplyMachines({ credentials: account.credentials, expectedAccountMode: 'plain', encryption: null,
@@ -259,6 +266,8 @@ beforeEach(async () => {
   account = undefined;
   routeParams.value = {};
   rowDefinitions = [];
+  teamResources = [];
+  teamCatalogReads.length = 0;
   providerTransport.reset();
   useVoiceTargetStore.setState({ autoTargetMachineByScope: {} });
   clearDaemonMergedProjectionCacheForTests();
@@ -287,10 +296,20 @@ beforeEach(async () => {
       if (path === '/v1/features' || path === '/v1/features/authenticated') {
         const features = buildServerFeaturesResponse({ voiceEnabled: true });
         features.features.providers.enabled = true;
+        tryWriteServerEnabledBitInPlace(features, 'teams', true);
+        tryWriteServerEnabledBitInPlace(features, 'teams.credentialResources', true);
         return Response.json(features);
       }
       if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+      if (path === '/v1/teams/list') {
+        teamCatalogReads.push(path);
+        return Response.json({ items: teamResources.length ? [teamSummaryFixture({ id: 'voice-team' })] : [], nextCursor: null });
+      }
+      if (path === '/v1/teams/credential-resources/entitled/list' || path === '/v1/teams/credential-resources/entitled/discover') {
+        teamCatalogReads.push(path);
+        return Response.json({ resources: teamResources, nextCursor: null, ...(path.endsWith('/discover') ? { failures: [] } : {}) });
+      }
       if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {
         experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true },
       } } });
@@ -350,6 +369,98 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it('uses the shared Session model picker and keeps an exact Provider choice when its model id matches a native model', async () => {
+    serveBundledCodexAgent();
+    const LocalConversationSection = await loadLocalConversationSection();
+    const { SessionModelPicker } = await import('@/components/sessions/modelPicker/SessionModelPicker');
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'codex', chatModelSource: 'custom', chatModelId: 'm1',
+    } });
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    await openDropdown(screen, t('settingsVoice.local.mediatorChatModelSource'));
+    const picker = screen.tree.findByType(SessionModelPicker);
+    const exact = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'm1' };
+    await act(async () => picker.props.onSelect(exact));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent).toMatchObject({
+      chatModelSource: 'custom', chatModelId: 'm1', chatModelSelection: exact,
+    });
+    await screen.update(<LocalConversationSection voice={setVoice.mock.lastCall![0]} setVoice={setVoice} />);
+    await openDropdown(screen, t('settingsVoice.local.mediatorChatModelSource'));
+    const automaticPicker = screen.tree.findByType(SessionModelPicker);
+    expect(automaticPicker.props.allowAutomatic).toBe(true);
+    await act(async () => automaticPicker.props.onSelect(null));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent).toMatchObject({
+      chatModelSource: 'custom', chatModelId: 'default', chatModelSelection: null,
+    });
+  });
+  it('offers the same brokered Team model and account as Home and preserves the Team tuple for chat and commit', async () => {
+    const targetKey = 'agent:happier.agent.codex/codex';
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const serviceId = 'happier.agent.codex/openai-codex';
+    const definition = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.managedRuntime)!.definition;
+    const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 7,
+      agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, title: 'Codex',
+        providerRequirements: readAccountAgentProviderRequirements(targetKey, { kind: 'account' }),
+        connectedAccounts: [{ purpose: 'primary', service }],
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      } }, familiesById: { providers: { family: 'providers', entriesById: {
+        'happier.provider.cliproxyapi/cliproxyapi': { id: 'happier.provider.cliproxyapi/cliproxyapi', pluginId: 'happier.provider.cliproxyapi',
+          provenance: 'external', sourceKind: 'path', definition },
+      } } } });
+    registryDescribe.mockResolvedValue({ supported: true, projection });
+    const selection = { kind: 'team_credential_provider_model', teamId: 'voice-team', resourceId: 'voice-shared',
+      expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: targetKey, modelId: 'm1' } as const;
+    teamResources = [TeamCredentialResourceCatalogEntryV1Schema.parse({ id: selection.resourceId, teamId: selection.teamId,
+      displayName: 'Team Muse', resourceRevision: 4, readiness: { kind: 'available' }, recoveryAction: null,
+      mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+      sourcePresentation: { kind: 'connected_service', service },
+      connectedServiceSelections: [{ source: 'team_resource', resourceId: selection.resourceId, deliveryMode: 'brokered' }],
+      providerModels: [{ selection, descriptor: { id: 'm1', name: 'Shared Muse model' }, sourceRevision: 'source-4', availability: 'available',
+        application: { agentTargetKey: targetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+          endpointTemplateId: 'responses', protocol: 'openai-responses' } }],
+    })];
+    providerTransport.setResponse(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+      createProviderModelProjectionFixture({ agentTargetKey: targetKey, groups: [], teamCredentialResources: teamResources }));
+    const { SessionModelPicker } = await import('@/components/sessions/modelPicker/SessionModelPicker');
+    const { buildSessionModelPickerSections } = await import('@/components/sessions/modelPicker/buildSessionModelPickerSections');
+    const { NewSessionConnectedServicesSelectionContent } = await import('@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent');
+    const { ModalProvider } = await import('@/modal/ModalProvider');
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'codex', agentTargetKey: targetKey,
+      agentIdentity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      chatModelSource: 'custom', chatModelId: 'm1', commitModelSource: 'custom', commitModelId: 'm1',
+    } });
+    const screen = await renderSettingsView(<InjectedAuthProvider credentials={account!.credentials}>
+      <ModalProvider><LocalConversationSection voice={voice} setVoice={setVoice} /></ModalProvider>
+    </InjectedAuthProvider>);
+    expect(teamCatalogReads).toHaveLength(0);
+    await openDropdown(screen, t('settingsVoice.local.mediatorChatModelSource'));
+    await waitForTestEvent(screen.subscribe, () => screen.tree.findByType(SessionModelPicker).props,
+      props => props.teamCredentialResources.some((resource: TeamCredentialResourceCatalogEntryV1) => resource.providerModels.length > 0)
+        && props.teamCredentialResourceStatusByKey.get('voice-team:voice-shared')?.kind === 'current');
+    const picker = screen.tree.findByType(SessionModelPicker);
+    const options = buildSessionModelPickerSections({ ...picker.props, hiddenNativeModelKeys: new Set<string>() }).flatMap(section => section.options);
+    expect(options.some(option => !option.disabled && option.value?.modelId === 'm1'
+      && 'kind' in option.value && option.value.kind === 'team_credential_provider_model')).toBe(true);
+    await act(async () => picker.props.onSelectTeamCredentialModel(selection));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent.chatModelSelection).toEqual(selection);
+    openAdvancedAgent(screen);
+    await openDropdown(screen, t('settingsVoice.local.conversation.commitModelId.title'));
+    await waitForTestEvent(screen.subscribe, () => screen.tree.findByType(SessionModelPicker).props.teamCredentialResourceStatusByKey.get('voice-team:voice-shared')?.kind,
+      kind => kind === 'current');
+    await act(async () => screen.tree.findByType(SessionModelPicker).props.onSelectTeamCredentialModel(selection));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent.commitModelSelection).toEqual(selection);
+    await act(async () => screen.findByTestId('voice-realtime-connected-services-codex').props.onPress());
+    await waitForTestEvent(screen.subscribe, () => screen.tree.findByType(NewSessionConnectedServicesSelectionContent).props.teamCredentialResourceStatusByKey.get('voice-team:voice-shared')?.kind,
+      kind => kind === 'current');
+    const accounts = screen.tree.findByType(NewSessionConnectedServicesSelectionContent);
+    await act(async () => accounts.props.setBindingForService(serviceId, teamResources[0]!.connectedServiceSelections[0]));
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent.connectedServices?.bindingsByServiceId[serviceId])
+      .toEqual(teamResources[0]!.connectedServiceSelections[0]);
+  });
   it.each([undefined, 'read-only'] as const)('renders the Voice permission default without replacing a saved choice (%s)', async (permissionIntent) => {
     const LocalConversationSection = await loadLocalConversationSection();
     const voice = settingsParse({ voiceSettingsV1: {

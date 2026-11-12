@@ -1,4 +1,8 @@
 import { useObservedMachineAgents } from '@/agents/machineAgents/useMachineAgents';
+import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
+import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { useLastUsedBackendSelectionForScope } from '@/sync/domains/state/newSessionTargetUiState';
 import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
@@ -433,8 +437,26 @@ export function useVoiceConversationsReadinessModel(props: {
       acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
       daemonMergedProjectionInputs: agentProjection.inputs,
     }).agentTarget;
+  const selectedAgentModel = localAdapterSettings.adapterId === 'local_conversation'
+    && localAdapterSettings.config.conversationMode === 'agent' && localAdapterSettings.config.agent.chatModelSource === 'custom'
+    ? localAdapterSettings.config.agent.chatModelSelection : null;
+  const selectedAgentTeamCatalog = useHomeTeamCredentialModelCatalog({ serverId: settingsScope?.serverId,
+    machineId: props.executionMachineId, agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
+    enabled: selectedAgentModel !== null && 'kind' in selectedAgentModel && selectedAgentModel.kind === 'team_credential_provider_model' });
+  const selectedProviderModel = selectedAgentModel && 'providerConnectionId' in selectedAgentModel ? selectedAgentModel : null;
+  const personalProvidersEnabled = useFeatureEnabled('providers', { scopeKind: 'spawn', serverId: settingsScope?.serverId });
+  const selectedAgentProviderProjection = useProviderModelProjection({ serverId: settingsScope?.serverId ?? null,
+    machineId: props.executionMachineId ?? null, agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
+    enabled: personalProvidersEnabled && Boolean(selectedProviderModel?.providerConnectionId), currentSelection: selectedProviderModel ?? undefined });
   const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-    { serverId: settingsScope?.serverId, machineId: props.executionMachineId });
+    { serverId: settingsScope?.serverId, machineId: props.executionMachineId,
+      ...(selectedAgentModel ? { modelRoute: { selection: selectedAgentModel,
+        agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
+        declarationContext: providerDeclarationContext(props.executionMachineId, agentProjection.inputs?.pluginProjectionV2),
+        providerSources: personalProvidersEnabled ? selectedAgentProviderProjection.data?.groups : [],
+        teamCredentialResources: selectedAgentTeamCatalog.resources,
+        teamCredentialResourceStatusByKey: selectedAgentTeamCatalog.resourceStatusByKey,
+      } } : {}) });
   const selectedSpeechProviderIds = [
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,

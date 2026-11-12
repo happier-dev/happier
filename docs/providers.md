@@ -1085,15 +1085,17 @@ guess. This is development source, with composed live validation still pending.
 
 Detached and scheduled runs keep their own explicit choices or Account defaults.
 Resuming a run keeps its retained selection even after the parent or defaults
-change; fork keeps its separate explicit inheritance path. Voice's Session model
-choices are omitted until this admission, while configured chat and commit
-choices remain explicit. A Voice carrier that follows the Session model reads the
-same active-route disposition; a Team-backed Session is refused before any
-carrier effect with `VOICE_AGENT_TEAM_MODEL_UNSUPPORTED`, a Voice setup error,
-because the `voice_agent` start contract rejects `teamCredentialModel` and the
-Voice manager's chat/commit inputs carry only Account Provider or native refs.
-Host child admission also rejects inherited Team routes for either Voice role;
-recognizing a Team model does not authorize substituting its native tuple.
+change; fork keeps its separate explicit inheritance path. In 0.3 development,
+Voice uses the Home Team credential model catalog and shared Session picker
+sections and account rows for its selected Agent and Machine. Its existing Agent
+settings retain exact chat and commit selections, including the Team resource,
+revision and delivery mode. A Voice carrier following a Session reads the same
+active-route disposition and preserves the Team binding intent. Voice chat and
+commit runtimes consume the existing Team Provider launch admission and binding
+opener, including isolated commits and retained-run recovery. Team credentials
+therefore retain the Provider owner's brokered or direct delivery contract.
+Automatic child inheritance retains its existing refusal of direct Team custody;
+the caller must make an explicit supported credential choice.
 Agent-native child definitions retain their Agent's own model rules.
 
 In 0.3 development, a Voice Start refusal retains the typed Provider error through
@@ -2165,6 +2167,17 @@ The source Account keeps credential custody. A Team resource stores a typed refe
 current source plus audience and use policy; it does not copy a Provider definition or create a
 second credential store.
 
+Finite declared Actions in unreleased 0.3 use Home's Team operation admission
+owner for the selected delivery mode. For brokered V3 Actions, Home signs the
+requester, declared purpose, source and input digest and records one admission
+in the existing RepeatKey store until the signed grant expires. The first
+custodian carrier request atomically consumes that mark; another carrier using
+the same grant receives `operation_not_current`. This consumption does not
+recheck Team membership: an admitted Action may finish after withdrawal, while
+a fresh open must pass current entitlement. Brokered custody stays on the
+custodian Machine. Loaded provisioning and SCM journeys remain separately
+validated development behavior, not a released support claim.
+
 The recipient catalog includes the source owner’s public display label for recovery
 instructions. It does not include their Account id, source binding, grants or broker
 placement. The same canonical Account label projection supplies administration lists
@@ -2345,14 +2358,22 @@ native import and manual key credentials in the existing qualified account
 lifecycle. Device sign-in mints once at connection. Each native Session requests
 one nonblocking subscription-usage refresh on its existing MSP host only when
 its launch has no Meta API key; native Muse may mint a key for that refresh.
-Status and standalone quota reads acquire nothing. Selected native launches
+Status acquires nothing. When the existing quota owner asks for stale usage
+while someone is viewing, or a person requests Refresh, native quota uses a short
+OAuth-only host with the same credential materializer and an isolated home.
+Measured Muse 1.4.15 cost is about 2.3–2.8 seconds and one fresh key mint, plus
+local native initialization files; the host and temporary home are disposed.
+Selected native launches
 retain the private OAuth credential file and deliver `META_API_KEY` when that
 Account has a key, replacing any conflicting inherited key. Catalog listing and
 Sessions consume this same launch declaration, preserving native contributor
-model IDs. Muse's key lane cannot refresh subscription usage (-32081); it skips
-that request and missing usage shows Unavailable. OAuth-only launches retain
-refresh. Native refresh failures retain their typed cause and safe retry/mint
-classification without an automatic retry. Other model-source consumers retain
+model IDs. Muse's key lane cannot refresh subscription usage (-32081), so
+Sessions skip that request. Account allowance comes through the OAuth-only quota
+host even when Sessions use a key. OAuth-only Sessions retain their refresh.
+Native -32080 supplies retryAfterMs to the existing quota next-allowed boundary;
+-32081/-32082 retain typed unavailable causes. Missing usage shows Unavailable.
+Native refresh failures retain their safe retry/mint classification without an
+automatic retry, additional timer, cache or store. Other model-source consumers retain
 their declared environment/header outputs.
 The existing native-home owner prepares the private XDG overlay and removes it
 through local account cleanup. Initial normalized mint usage is transient until

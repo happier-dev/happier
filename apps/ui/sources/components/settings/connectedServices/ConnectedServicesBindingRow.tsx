@@ -64,6 +64,8 @@ export type ConnectedServicesBindingRowProps = Readonly<{
   disabled?: boolean;
   /** Runs as the card opens; returning false keeps it closed. */
   onBeforeOpen?: () => boolean;
+  /** Inventory owners mount their live detail subscriptions inside the open card. */
+  renderSelectionContent?: (props: SelectionContentProps) => React.ReactNode;
 }>;
 
 export function resolveConnectedServicesBindingWarningLabel(
@@ -178,6 +180,7 @@ export function ConnectedServicesBindingRow(
         allowDefaultProfileFallback: props.allowDefaultProfileFallback,
         resolveOptionAvailability,
         onOpenSettings: props.onOpenSettings,
+        renderSelectionContent: props.renderSelectionContent,
       },
       chrome: {
         kind: 'card',
@@ -214,6 +217,7 @@ type ConnectedServicesBindingPickerModalContentProps = Readonly<{
     Record<string, ConnectedServicesServiceBinding | undefined>
   >;
   setBindingForService: ConnectedServicesBindingRowProps['setBindingForService'];
+  renderSelectionContent?: ConnectedServicesBindingRowProps['renderSelectionContent'];
 }> &
   Omit<
     SelectionContentProps,
@@ -228,6 +232,7 @@ function ConnectedServicesBindingPickerModalContent(
     onOpenSettings,
     initialBindingsByServiceId,
     setBindingForService,
+    renderSelectionContent,
     ...contentProps
   } = props;
   // The card shows each pick at once; the caller persists it. Persisting is an effect, so the next
@@ -254,15 +259,16 @@ function ConnectedServicesBindingPickerModalContent(
     [onClose, onOpenSettings],
   );
 
-  return (
-    <NewSessionConnectedServicesSelectionContent
-      {...contentProps}
-      bindingsByServiceId={bindingsByServiceId}
-      setBindingForService={handleSetBinding}
-      onOpenSettings={handleOpenSettings}
-      requestClose={onClose}
-      maxHeight={SELECTION_LIST_MODAL_MAX_HEIGHT}
-      heightBehavior={resolveSelectionListModalHeightBehavior()}
-    />
+  const selectionProps: SelectionContentProps = {
+      ...contentProps,
+      bindingsByServiceId,
+      setBindingForService: handleSetBinding,
+      onOpenSettings: handleOpenSettings,
+      requestClose: onClose,
+      maxHeight: SELECTION_LIST_MODAL_MAX_HEIGHT,
+      heightBehavior: resolveSelectionListModalHeightBehavior(),
+  };
+  return renderSelectionContent ? renderSelectionContent(selectionProps) : (
+    <NewSessionConnectedServicesSelectionContent {...selectionProps} />
   );
 }

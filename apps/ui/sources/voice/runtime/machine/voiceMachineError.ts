@@ -78,7 +78,6 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
         || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
         || reason === 'execution_run_protocol_unsupported'
         || reason === 'codex_tool_restriction_unsupported_model'
-        || reason === 'VOICE_AGENT_TEAM_MODEL_UNSUPPORTED'
         || reason === 'VOICE_AGENT_SELECTION_UNAVAILABLE'
         || reason === 'voice_agent_selection_unavailable') return 'provider_setup_required';
     if (readVoiceProviderCredentialRemediationCode({ code: reason })) return 'provider_auth_invalid';

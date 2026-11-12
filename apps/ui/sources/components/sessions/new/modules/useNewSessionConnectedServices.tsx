@@ -64,9 +64,8 @@ import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@
 import { projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { SessionInstrumentStripLineAction } from '@/components/sessions/agentInput/instrumentStrip';
-import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
-import { providerDeclarationContext, readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
-import { resourceHasAvailableTeamCredentialProviderModel } from '@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness';
+import { resolveSelectedProviderRoute } from '@/providers/session/resolveSelectedProviderRoute';
+import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 
 export type NewSessionConnectedServicesResult = Readonly<{
@@ -185,36 +184,17 @@ export function useNewSessionConnectedServices(params: Readonly<{
   const selectedProviderSource = React.useMemo(() => selectedProviderConnectionId
     ? params.providerSources?.find(source => source.connectionId === selectedProviderConnectionId) ?? null : null,
   [params.providerSources, selectedProviderConnectionId]);
-  const selectedProviderRoute = React.useMemo(() => {
-    const selection = params.modelSelection;
-    if (selection && 'source' in selection && selection.source === 'team_resource') {
-      // Selection is committed only after worker compatibility/confirmation. Recheck
-      // the current entitled tuple; a Team model replaces the same native services
-      // as any other Provider binding through this Agent's admitted requirements.
-      const requirements = readAccountAgentProviderRequirements(selection.agentTargetKey,
-        providerDeclarationContext(params.sourceMachineId, params.providerProjection));
-      return {
-        ready: Boolean(requirements && selection.agentTargetKey === params.nativeAgentTargetKey
-          && (params.teamCredentialResourceStatusByKey?.get(`${selection.teamId}:${selection.resourceId}`)?.kind === 'current')
-          && params.teamCredentialResources?.some(resource => resourceHasAvailableTeamCredentialProviderModel(resource,
-            { ...selection, kind: 'team_credential_provider_model' }))),
-        suppressedConnectedServiceIds: requirements?.authIsolation.suppressConnectedServiceIds ?? [],
-        acceptedConnectedServiceIds: supportedConnectedServiceIds,
-      };
-    }
-    if (!selectedProviderConnectionId) return null;
-    const row = selectedProviderSource?.rows?.find(row => row.ref.modelId === selection?.modelId);
-    return {
-      ready: selectedProviderSource?.authorization?.authorized === true && Boolean(row && !presentProviderModelRow({
-        modelId: row.ref.modelId, authorization: selectedProviderSource.authorization, compatibility: row.compatibility,
-        visibility: row.visibility,
-      }).selectionDisabled),
-      suppressedConnectedServiceIds: selectedProviderSource?.suppressedConnectedServiceIds ?? [],
-      acceptedConnectedServiceIds: supportedConnectedServiceIds,
-    };
-  }, [selectedProviderConnectionId, selectedProviderSource, params.modelSelection, params.nativeAgentTargetKey,
-    params.teamCredentialResources, params.teamCredentialResourceStatusByKey, params.providerProjection, params.sourceMachineId,
-    supportedConnectedServiceIds]);
+  const selectedProviderRoute = React.useMemo(() => resolveSelectedProviderRoute({
+    selection: params.modelSelection ?? null,
+    agentTargetKey: params.nativeAgentTargetKey,
+    declarationContext: providerDeclarationContext(params.sourceMachineId, params.providerProjection),
+    providerSources: params.providerSources,
+    teamCredentialResources: params.teamCredentialResources,
+    teamCredentialResourceStatusByKey: params.teamCredentialResourceStatusByKey,
+    acceptedConnectedServiceIds: supportedConnectedServiceIds,
+  }), [params.modelSelection, params.nativeAgentTargetKey, params.teamCredentialResources,
+    params.teamCredentialResourceStatusByKey, params.providerProjection, params.sourceMachineId,
+    params.providerSources, supportedConnectedServiceIds]);
   const inheritsPurposeDefaults = React.useMemo(() => {
     if (hasExplicitBindings) return false;
     const suppressed = new Set((selectedProviderRoute?.ready ? selectedProviderRoute.suppressedConnectedServiceIds : [])
@@ -508,6 +488,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
     resolveServiceTitle,
     nativeLabel: t('connectedServices.authChip.nativeLabel'),
     formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
+    teamCredentialResources: params.teamCredentialResources,
+    teamNameById: params.teamNameById,
   }), [
     accountGroupsFeatureEnabled,
     connectedServiceAccountGroupOptionsByServiceId,
@@ -516,6 +498,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
     resolveServiceTitle,
     settings.connectedServicesDefaultProfileByServiceId,
     supportedConnectedServiceIds,
+    params.teamCredentialResources,
+    params.teamNameById,
   ]);
 
   // Hoisted out of the render callback below: the selection content INVOKES this

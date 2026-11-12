@@ -7,6 +7,7 @@ import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversat
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { projectSessionModelSelectionV2ToV1, SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
@@ -499,7 +500,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
     conversationSelection?: VoiceConversationSelection;
     onConversationSelection?: (selection: VoiceConversationSelection) => void;
     connectedServices?: ConnectedServiceBindingsV2;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelectionV1 | SessionModelSelectionV2;
     startupInstructions?: AgentSessionStartupInstructionsV1;
     accountLifetime?: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
@@ -515,14 +516,25 @@ async function spawnVoiceConversationSession(params: Readonly<{
     // Explicit Session inheritance wins; otherwise Home and Session carriers
     // consume the same configured Voice choice as ordinary Voice Agent turns.
     const configuredAgent = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent;
-    const configuredModelId = normalizeNonEmptyString(configuredAgent.chatModelId);
-    const configuredModelRef = configuredAgent.providerChat?.status === 'configured'
+    const configuredModelId = configuredAgent.chatModelSource === 'custom' ? normalizeNonEmptyString(configuredAgent.chatModelId) : null;
+    const configuredSelection = configuredAgent.chatModelSource === 'custom' ? configuredAgent.chatModelSelection : null;
+    const configuredTeamModel = configuredSelection && 'kind' in configuredSelection ? configuredSelection : null;
+    const configuredModelRef = configuredSelection && !('kind' in configuredSelection)
+        ? configuredSelection : configuredAgent.providerChat?.status === 'configured'
         ? configuredAgent.providerChat.chat
         : configuredModelId && configuredModelId !== 'default'
             ? { agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: configuredModelId }
             : null;
-    const modelSelection = params.modelSelection ?? (configuredModelRef
-        ? SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() }) : undefined);
+    let modelSelection = params.modelSelection;
+    if (!modelSelection && configuredTeamModel) {
+        const { kind: _kind, ...ref } = configuredTeamModel;
+        modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, ref: { source: 'team_resource', ...ref }, updatedAt: Date.now() });
+    } else if (!modelSelection && configuredModelRef) {
+        modelSelection = SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() });
+    }
+    const spawnModelSelection = modelSelection?.v === 2 ? projectSessionModelSelectionV2ToV1(modelSelection) : modelSelection;
+    const teamBinding = modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource'
+        ? sessionModelSelectionV2TeamBindingIntent(modelSelection) : null;
     let input: StrictSessionSpawnNewInput = {
         creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
         executionTarget: {
@@ -533,7 +545,8 @@ async function spawnVoiceConversationSession(params: Readonly<{
         agentTarget,
         permissionMode: params.permissionMode,
         transcriptStorage: 'persisted',
-        ...(modelSelection !== undefined ? { modelSelection } : {}),
+        ...(spawnModelSelection ? { modelSelection: spawnModelSelection } : {}),
+        ...(teamBinding ? { teamCredentialBindings: [teamBinding] } : {}),
         ...(params.connectedServices
             ? { connectedServices: params.connectedServices }
             : {}),

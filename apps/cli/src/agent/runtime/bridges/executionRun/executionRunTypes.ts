@@ -275,6 +275,8 @@ export type ExecutionRunState = Readonly<{
     commitModelId: string;
     chatModelSelection?: ProviderBoundModelRef;
     commitModelSelection?: ProviderBoundModelRef;
+    chatTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
+    commitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     commitConnectedServices?: ConnectedServiceBindingsV2 | null;
     commitIsolation: boolean;
     permissionIntent: PermissionIntent;

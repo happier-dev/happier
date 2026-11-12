@@ -34,14 +34,18 @@ export function applyVoiceAgentSelectionV1(voice: VoiceSettings, choice: VoiceAg
     const config = owner.readLocalConversationVoiceSettings(voice);
     if (choice.kind === 'catalog') {
         const { entry } = choice;
+        const changed = readBackendTargetKeyV2(config.agent.agentTargetKey ?? { kind: 'backend', backendId: config.agent.agentId })
+            !== readBackendTargetKeyV2(entry.backendTargetKey ?? { kind: 'backend', backendId: entry.agentId });
         return owner.writeLocalConversationVoiceSettings(voice, { ...config, agent: { ...config.agent,
             agentId: entry.agentId, agentTargetKey: entry.backendTargetKey,
             agentIdentity: entry.isBuiltIn ? null : entry.identity,
+            ...(changed ? { chatModelSelection: null, commitModelSelection: null, providerChat: null } : {}),
         } });
     }
     const agentId = choice.agentId.trim();
     if (!agentId || agentId === config.agent.agentId.trim()) return voice;
     return owner.writeLocalConversationVoiceSettings(voice, { ...config, agent: { ...config.agent,
         agentId, agentTargetKey: null, agentIdentity: null,
+        chatModelSelection: null, commitModelSelection: null, providerChat: null,
     } });
 }

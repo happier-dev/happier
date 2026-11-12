@@ -4,6 +4,7 @@ import { AGENT_PERMISSION_INTENTS_V1 as PERMISSION_INTENTS, parseAgentPermission
 import { BackendTargetKeyV2Schema } from '../../backends/targets/backendTargetRefV2.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
+import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { ProviderConnectionIdSchema } from '../../providers/ids.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -114,8 +115,10 @@ export const VoiceLocalConversationSchema = z.object({
         }), {}),
       chatModelSource: z._default(z.enum(['session', 'custom']), 'custom'),
       chatModelId: z._default(z.string(), 'default'),
+      chatModelSelection: z._default(z.nullable(z.union([ProviderBoundModelRefSchema, TeamCredentialProviderModelSelectionV1Schema])), null),
       commitModelSource: z._default(z.enum(['chat', 'session', 'custom']), 'chat'),
       commitModelId: z._default(z.string(), 'default'),
+      commitModelSelection: z._default(z.nullable(z.union([ProviderBoundModelRefSchema, TeamCredentialProviderModelSelectionV1Schema])), null),
       providerChat: z._default(z.nullable(VoiceLocalConversationProviderChatSchema), null),
       verbosity: z._default(z.enum(['short', 'balanced']), 'short'),
     }), {}),

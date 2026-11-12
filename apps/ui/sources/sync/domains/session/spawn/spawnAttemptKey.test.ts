@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 
 import {
     createSpawnAttemptKeyForSessionSpawnNewInput,
@@ -8,6 +9,50 @@ import {
 } from './spawnAttemptKey';
 
 describe('Session creation custody identity', () => {
+    it.each([
+        { teamId: 'team-b' },
+        { resourceId: 'resource-b' },
+        { expectedResourceRevision: 8 },
+        { agentTargetKey: 'agent:happier.agent.claude/claude' },
+        { modelId: 'model-b' },
+        { deliveryMode: 'vendor-native' },
+    ])('distinguishes an exact Team model selection change %j', changed => {
+        const ref = { source: 'team_resource', teamId: 'team-a', resourceId: 'resource-a',
+            expectedResourceRevision: 7, agentTargetKey: 'agent:happier.agent.codex/codex',
+            modelId: 'model-a', deliveryMode: 'brokered' };
+        const input = {
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' },
+            directory: { kind: 'path', path: '/repo' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        } satisfies SessionSpawnNewInputV2;
+        const teamInput = (selectionRef: typeof ref) => ({ ...input, teamCredentialBindings: [
+            sessionModelSelectionV2TeamBindingIntent(SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 0, ref: selectionRef })),
+        ] });
+        const fingerprint = createSpawnAttemptKeyForSessionSpawnNewInput(teamInput(ref), '/home/alice');
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput(teamInput({ ...ref, ...changed }), '/home/alice')).not.toBe(fingerprint);
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput(input, '/home/alice')).not.toBe(fingerprint);
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput(teamInput(ref), '/home/alice')).toBe(fingerprint);
+    });
+
+    it('distinguishes vendor-native Team delivery references', () => {
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 0, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+            agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'model-a', deliveryMode: 'vendor-native',
+            nativeDelivery: { managedId: 'managed-a', controllerInstallationId: 'controller-a', guestInstallationId: 'guest-a',
+                bindingKey: 'binding-a', placeholderRef: 'placeholder-a', sourceRevision: 'source-a', providerTicket: 't'.repeat(43) },
+        } });
+        const binding = sessionModelSelectionV2TeamBindingIntent(selection);
+        const input = {
+            executionTarget: { serverId: 'server-a', machineId: 'machine-1' }, directory: { kind: 'path', path: '/repo' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            teamCredentialBindings: [binding],
+        } satisfies SessionSpawnNewInputV2;
+        if (!('nativeDelivery' in binding) || !binding.nativeDelivery) throw new Error('Missing native Team fixture');
+        expect(createSpawnAttemptKeyForSessionSpawnNewInput({ ...input, teamCredentialBindings: [
+            { ...binding, nativeDelivery: { ...binding.nativeDelivery, sourceRevision: 'source-b' } },
+        ] }, '/home/alice')).not.toBe(createSpawnAttemptKeyForSessionSpawnNewInput(input, '/home/alice'));
+    });
+
     it('distinguishes fresh spawns that differ only in skill session selection', () => {
         const base = {
             executionTarget: { serverId: 'server-a', machineId: 'machine-1' }, directory: { kind: 'path' as const, path: '/repo' },

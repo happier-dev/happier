@@ -561,6 +561,7 @@ export class VoiceAgentManager {
         modelId: voiceAgent.chatModelId,
         modelRole: 'chat',
         ...(voiceAgent.chatModelSelection ? { modelSelection: voiceAgent.chatModelSelection } : {}),
+        ...(voiceAgent.chatTeamCredentialModel ? { teamCredentialModel: voiceAgent.chatTeamCredentialModel } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
@@ -727,6 +728,7 @@ export class VoiceAgentManager {
         modelId: voiceAgent.commitModelId,
         modelRole: 'commit',
         ...(voiceAgent.commitModelSelection ? { modelSelection: voiceAgent.commitModelSelection } : {}),
+        ...(voiceAgent.commitTeamCredentialModel ? { teamCredentialModel: voiceAgent.commitTeamCredentialModel } : {}),
         ...(voiceAgent.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: voiceAgent.sessionConfigOptionOverrides }
           : {}),
@@ -876,6 +878,7 @@ export class VoiceAgentManager {
         modelId: params.chatModelId,
         modelRole: 'chat',
         ...(params.chatModelSelection ? { modelSelection: params.chatModelSelection } : {}),
+        ...(params.chatTeamCredentialModel ? { teamCredentialModel: params.chatTeamCredentialModel } : {}),
         ...(params.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
           : {}),
@@ -929,6 +932,8 @@ export class VoiceAgentManager {
         commitModelId: params.commitModelId,
         ...(params.chatModelSelection ? { chatModelSelection: params.chatModelSelection } : {}),
         ...(params.commitModelSelection ? { commitModelSelection: params.commitModelSelection } : {}),
+        ...(params.chatTeamCredentialModel ? { chatTeamCredentialModel: params.chatTeamCredentialModel } : {}),
+        ...(params.commitTeamCredentialModel ? { commitTeamCredentialModel: params.commitTeamCredentialModel } : {}),
         ...(params.sessionConfigOptionOverrides
           ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides }
           : {}),
@@ -1465,6 +1470,7 @@ export class VoiceAgentManager {
 		    const run = (async () => {
           const canReuseChatBackend = voiceAgent.commitIsolation !== true
             && voiceAgent.commitModelId === voiceAgent.chatModelId
+            && isDeepStrictEqual(voiceAgent.chatTeamCredentialModel, voiceAgent.commitTeamCredentialModel)
             && isDeepStrictEqual(voiceAgent.connectedServices, readVoiceCommitConnectedServices(voiceAgent))
             && areVoiceModelSelectionsEqual(
               voiceAgent.chatModelSelection,

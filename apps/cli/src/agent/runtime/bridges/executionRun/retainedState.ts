@@ -55,6 +55,8 @@ const RetainedRunStateSchema = z.strictObject({
   voiceAgentConfig: z.optional(z.strictObject({
     profileId: z.optional(z.nullable(z.string())), chatModelId: z.string(), commitModelId: z.string(),
     chatModelSelection: z.optional(ProviderBoundModelRefSchema), commitModelSelection: z.optional(ProviderBoundModelRefSchema),
+    chatTeamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
+    commitTeamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
     commitConnectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
     commitIsolation: z.boolean(), permissionIntent: z.enum(PERMISSION_INTENTS), idleTtlSeconds: z.number(),
     initialContext: z.string(), initialContextMode: z.enum(['bootstrap', 'first_turn']), verbosity: z.enum(['short', 'balanced']),

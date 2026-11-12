@@ -72,12 +72,22 @@ describe('ExecutionRunHostBridge ensure-or-start response', () => {
 });
 
 describe('Voice execution-run resume launch custody', () => {
-    it.each([null, {
-        v: 2, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'original-account' } },
-    }] satisfies (ConnectedServiceBindingsV2 | null)[])('rehydrates the original credential selection %j and distinct role models', async (connectedServices) => {
+    it.each([
+        { connectedServices: null, teamChat: false, teamCommit: false },
+        { connectedServices: { v: 2, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'original-account' } } }, teamChat: false, teamCommit: false },
+        { connectedServices: null, teamChat: true, teamCommit: false },
+        { connectedServices: null, teamChat: false, teamCommit: true },
+        { connectedServices: null, teamChat: true, teamCommit: true },
+    ] satisfies { connectedServices: ConnectedServiceBindingsV2 | null; teamChat: boolean; teamCommit: boolean }[])('rehydrates the original credential selection %j and distinct role models', async ({ connectedServices, teamChat, teamCommit }) => {
         const backendTarget = { kind: 'builtInAgent' as const, agentId: 'codex' };
         const chatModelSelection = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'original-chat-provider', modelId: 'chat-model' });
         const commitModelSelection = ProviderBoundModelRefSchema.parse({ ...chatModelSelection, providerConnectionId: 'original-commit-provider', modelId: 'commit-model' });
+        const chatTeamCredentialModel = teamChat ? { kind: 'team_credential_provider_model' as const,
+            resourceId: 'chat-resource', teamId: 'original-team', expectedResourceRevision: 8,
+            agentTargetKey: chatModelSelection.agentTargetKey, modelId: 'chat-model', deliveryMode: 'brokered' as const } : undefined;
+        const commitTeamCredentialModel = teamCommit ? { kind: 'team_credential_provider_model' as const,
+            resourceId: 'commit-resource', teamId: 'original-team', expectedResourceRevision: 9,
+            agentTargetKey: chatModelSelection.agentTargetKey, modelId: 'commit-model', deliveryMode: 'direct' as const } : undefined;
         const commitConnectedServices: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
             'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'original-commit-pool' },
         } };
@@ -86,18 +96,19 @@ describe('Voice execution-run resume launch custody', () => {
             intent: 'voice_agent', backendTarget, backendId: 'codex', instructions: '', permissionMode: 'read_only',
             retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'cancelled', startedAtMs: 1,
             launch: {
-                connectedServicesSelection: connectedServices, modelId: 'chat-model', modelSelection: chatModelSelection,
-                teamCredentialModel: {
-                    kind: 'team_credential_provider_model', resourceId: 'original-team-resource', teamId: 'original-team',
-                    expectedResourceRevision: 8, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'chat-model', deliveryMode: 'brokered',
-                },
+                connectedServicesSelection: connectedServices, modelId: 'chat-model',
+                modelSelection: teamChat ? undefined : chatModelSelection,
+                teamCredentialModel: chatTeamCredentialModel,
                 sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } } },
                 cwd: '/original-workspace', acpSessionModeId: 'plan',
                 secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: 'happier:shared-secret:v1:original', revision: 7 } } },
             },
             resumeHandle: { kind: 'voice_agent_sessions.v1', backendTarget: readBackendTargetRefV2(backendTarget), chatProviderSessionId: 'vendor-chat', commitProviderSessionId: 'vendor-commit' },
             voiceAgentConfig: {
-                chatModelId: 'chat-model', commitModelId: 'commit-model', chatModelSelection, commitModelSelection,
+                chatModelId: 'chat-model', commitModelId: 'commit-model',
+                chatModelSelection: teamChat ? undefined : chatModelSelection,
+                commitModelSelection: teamCommit ? undefined : commitModelSelection,
+                chatTeamCredentialModel, commitTeamCredentialModel,
                 commitConnectedServices,
                 commitIsolation: true, permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '',
                 initialContextMode: 'bootstrap', verbosity: 'short', disabledActionIds: [], transcript: { persistenceMode: 'ephemeral', epoch: 1 },
@@ -130,7 +141,7 @@ describe('Voice execution-run resume launch custody', () => {
                             kind: 'provider-session-id', providerSessionId: options.modelId === 'chat-model' ? 'vendor-chat' : 'vendor-commit',
                             sequence: 1, sessionId: 'session-parent', emittedAtMs: 1,
                         }));
-                        return { watch(next) { listener = next; return { dispose() { listener = null; } }; }, async send() { return { status: 'admitted' as const }; }, async dispose() {} };
+                        return { functionToolsDelivered: Boolean(request.functionTools), watch(next) { listener = next; return { dispose() { listener = null; } }; }, async send() { return { status: 'admitted' as const }; }, async dispose() {} };
                     } } };
                     return createNativeAgentSessionInteractionHostRuntime({
                         runtime,
@@ -154,11 +165,11 @@ describe('Voice execution-run resume launch custody', () => {
             });
             expect(result).toEqual({ ok: true });
             expect(runs.get(run.runId)).toMatchObject({ status: 'running', resumeHandle: run.resumeHandle });
-            expect(seen.map((options) => options.modelSelection)).toEqual([chatModelSelection, commitModelSelection]);
+            expect(seen.map((options) => options.modelSelection)).toEqual([teamChat ? undefined : chatModelSelection, teamCommit ? undefined : commitModelSelection]);
+            expect(seen.map((options) => options.teamCredentialModel)).toEqual([chatTeamCredentialModel, commitTeamCredentialModel]);
             expect(seen.map((options) => options.modelId)).toEqual(['chat-model', 'commit-model']);
             for (const options of seen) {
                 expect(options.sessionConfigOptionOverrides).toEqual(run.launch?.sessionConfigOptionOverrides);
-                expect(options.teamCredentialModel).toEqual(run.launch?.teamCredentialModel);
                 expect(options).toMatchObject({ secretReferenceOverlay: run.launch?.secretReferenceOverlay, start: { cwd: '/original-workspace', acpSessionModeId: 'plan', intent: 'voice_agent' } });
             }
         } finally { await voiceAgentManager.dispose(); }

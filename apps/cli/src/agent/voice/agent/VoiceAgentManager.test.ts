@@ -613,12 +613,15 @@ describe('VoiceAgentManager', () => {
     });
     const replacement = createPromptCaptureBackend([{ responseText: 'The current answer.' }]);
     let created = false;
-    const createRuntime = () => { if (created) return replacement; created = true; return first; };
+    const selections: Parameters<BackendFactory>[0]['teamCredentialModel'][] = [];
+    const chatTeamCredentialModel = { kind: 'team_credential_provider_model' as const, resourceId: 'chat-team', teamId: 'team',
+      expectedResourceRevision: 3, agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'catalog-model', deliveryMode: 'brokered' as const };
+    const createRuntime: BackendFactory = options => { selections.push(options.teamCredentialModel); if (created) return replacement; created = true; return first; };
     const manager = new VoiceAgentManager({ createRuntime });
     try {
       const { voiceAgentId } = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         chatModelId: 'catalog-model', commitModelId: 'catalog-model', permissionIntent: 'read-only',
-        idleTtlSeconds: 3600, initialContext: 'INITIAL_CONTEXT' }, {
+        idleTtlSeconds: 3600, initialContext: 'INITIAL_CONTEXT', chatTeamCredentialModel }, {
         createRuntime, readHistoryContextWindowTokens: async () => 32_768,
       });
       await manager.sendTurn({ voiceAgentId, userText: `EARLIER_WHOLE_TURN ${'useful '.repeat(30_000)}` });
@@ -640,6 +643,7 @@ describe('VoiceAgentManager', () => {
       } });
       expect(replacement.prompts[0]).not.toContain('EARLIER_WHOLE_TURN');
       expect(replacement.prompts[0]).toContain('RECENT_WHOLE_TURN');
+      expect(selections).toEqual([chatTeamCredentialModel, chatTeamCredentialModel]);
       expect(events.at(-1)).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final', text: 'The current answer.' } });
     } finally { await manager.dispose(); }
   });
@@ -1870,6 +1874,26 @@ describe('VoiceAgentManager', () => {
         sourceKind: 'configured',
       },
     });
+  });
+
+  it('keeps distinct Team resources isolated when chat and commit use the same model', async () => {
+    const chat = createDeterministicBackend('team-chat');
+    const commit = createDeterministicBackend('team-commit');
+    const selections: Parameters<BackendFactory>[0]['teamCredentialModel'][] = [];
+    const manager = new VoiceAgentManager({ createRuntime: options => {
+      selections.push(options.teamCredentialModel);
+      return selections.length === 1 ? chat : commit;
+    } });
+    const chatTeamCredentialModel = { kind: 'team_credential_provider_model' as const, resourceId: 'chat-resource', teamId: 'team',
+      expectedResourceRevision: 3, agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'same-model', deliveryMode: 'brokered' as const };
+    const commitTeamCredentialModel = { ...chatTeamCredentialModel, resourceId: 'commit-resource' };
+    try {
+      const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        chatModelId: 'same-model', commitModelId: 'same-model', chatTeamCredentialModel, commitTeamCredentialModel,
+        commitIsolation: false, permissionIntent: 'read-only', idleTtlSeconds: 60, initialContext: '' });
+      expect(await manager.commit({ voiceAgentId: started.voiceAgentId })).toEqual({ commitText: 'team-commit:response' });
+      expect(selections).toEqual([chatTeamCredentialModel, commitTeamCredentialModel]);
+    } finally { await manager.dispose(); }
   });
 
   it('routes independent Provider selections and the same non-default temperature to chat and commit', async () => {

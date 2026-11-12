@@ -103,10 +103,10 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const chatModelId = normalizeVoiceAgentModelId(params.chatModelId);
     const commitModelId = normalizeVoiceAgentModelId(params.commitModelId, true);
     const launchProfileId = normalizeVoiceAgentLaunchProfileId(params.launchProfileId);
-    const chatModelSelection = params.chatModelSelection ?? (chatModelId
+    const chatModelSelection = params.chatTeamCredentialModel ? undefined : params.chatModelSelection ?? (chatModelId
       ? { agentTargetKey, providerConnectionId: null, modelId: chatModelId }
       : params.chatModelId?.trim() === 'default' ? null : undefined);
-    const commitModelSelection = params.commitModelSelection ?? (commitModelId && commitModelId !== 'default'
+    const commitModelSelection = params.commitTeamCredentialModel ? undefined : params.commitModelSelection ?? (commitModelId && commitModelId !== 'default'
       ? { agentTargetKey, providerConnectionId: null, modelId: commitModelId }
       : undefined);
     const ensureOrStartMethod = requiresProviderSafeExecutionRunStartRpc({ modelSelection: chatModelSelection }, true)
@@ -123,15 +123,18 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
       ...(params.resumeHandle ? { resumeHandle: params.resumeHandle } : {}),
       ...(chatModelId ? { chatModelId } : {}),
       ...(commitModelId ? { commitModelId } : {}),
+      ...(params.chatTeamCredentialModel ? { teamCredentialModel: params.chatTeamCredentialModel,
+        modelId: params.chatTeamCredentialModel.modelId } : {}),
       ...(chatModelSelection !== undefined
         ? {
             ...(chatModelSelection ? { modelId: chatModelSelection.modelId } : {}),
             modelSelection: chatModelSelection,
           }
         : {}),
-      ...(commitModelSelection || params.voicePolicy
+      ...(commitModelSelection || params.commitTeamCredentialModel || params.voicePolicy
         ? { intentInput: {
             ...(commitModelSelection ? { commitModelSelection } : {}),
+            ...(params.commitTeamCredentialModel ? { commitTeamCredentialModel: params.commitTeamCredentialModel } : {}),
             ...(params.voicePolicy ? { voicePolicy: params.voicePolicy } : {}),
           } }
         : {}),

@@ -9,6 +9,8 @@ import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentI
 import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveVoiceAttemptRecoveryRuntimeTarget } from '@/voice/agent/voiceAgentRecoveryTarget';
+import { projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
+import { resolveSelectedProviderRoute } from '@/providers/session/resolveSelectedProviderRoute';
 
 /** Passive selection uses the same remembered/catalog facts that Start admits. */
 export function projectVoiceDefaultAgentSelection(
@@ -29,14 +31,17 @@ export function projectVoiceDefaultAgentSelection(
 export function projectVoiceSelectedAgentReadiness(
     target: AgentExecutionTargetV1 | null,
     inventory: MachineAgentsSnapshot,
-    context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined }>,
+    context: Readonly<{ serverId: string | null | undefined; machineId: string | null | undefined;
+        modelRoute?: Parameters<typeof resolveSelectedProviderRoute>[0] }>,
 ): Readonly<{ runtime: VoiceReadinessFact; selectedAgent?: VoiceRoleReadiness['selectedAgent'] }> {
     if (!target) return { runtime: 'unknown' };
     const bundledId = resolveBundledAgentIdFromContributionIdentity(target.identity);
     const agentId = bundledId ?? buildQualifiedPluginContributionKey(target.identity);
     const row = inventory.agents.find(agent => agent.agentId === agentId && agent.definitionId === target.definitionId);
-    const agent = inventory.status === 'idle' || inventory.status === 'offline' || inventory.status === 'error'
+    const observed = inventory.status === 'idle' || inventory.status === 'offline' || inventory.status === 'error'
         || row?.stale ? undefined : row;
+    const providerRoute = context.modelRoute ? resolveSelectedProviderRoute(context.modelRoute) : null;
+    const agent = providerRoute ? projectMachineAgentForCredential(observed, { credentialBindings: null, providerRoute }) : observed;
     const runtime: VoiceReadinessFact = agent?.state === 'ready' || agent?.state === 'updateAvailable' ? 'ready'
         : agent?.state === 'needsSignIn' || agent?.state === 'notInstalled' ? 'missing'
             : agent?.state === 'installing' ? 'installing' : agent?.state === 'unsupported' ? 'incompatible' : 'unknown';

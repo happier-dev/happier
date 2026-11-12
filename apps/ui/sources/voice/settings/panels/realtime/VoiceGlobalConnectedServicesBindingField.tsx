@@ -25,10 +25,53 @@ import { storage, useSetting } from '@/sync/domains/state/storage';
 import { useProfile } from '@/sync/store/hooks';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { t, tLoose } from '@/text';
-import { buildQualifiedConnectedAccountGroupOptionsByServiceId, buildQualifiedConnectedAccountProfileOptionsByServiceId } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
-import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { useNewSessionConnectedServiceOptions, type NewSessionConnectedServiceOptionsInput } from '@/components/sessions/new/modules/useNewSessionConnectedServiceOptions';
+import { NewSessionConnectedServicesSelectionContent, type NewSessionConnectedServicesSelectionContentProps } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
+import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
+import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
+import { useDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 
 const EMPTY_RECORD: Readonly<Record<string, never>> = Object.freeze({});
+const EMPTY_CONNECTED_ACCOUNTS: NewSessionConnectedServiceOptionsInput['connectedAccounts'] = Object.freeze([]);
+type TeamCatalogInput = Omit<Parameters<typeof useHomeTeamCredentialModelCatalog>[0], 'enabled'>;
+
+function VoiceConnectedServicesSelectionContent(props: Readonly<{
+  content: NewSessionConnectedServicesSelectionContentProps;
+  inventoryInput: NewSessionConnectedServiceOptionsInput;
+  teamCatalogInput?: TeamCatalogInput;
+}>) {
+  const router = useRouter();
+  const catalog = useHomeTeamCredentialModelCatalog({ ...props.teamCatalogInput,
+    serverId: props.teamCatalogInput?.serverId, enabled: props.teamCatalogInput !== undefined });
+  const coordinateSelection = useTeamCredentialSelectionCoordinator(props.teamCatalogInput?.serverId);
+  const directDelivery = useDirectDeliveryDisclosure(props.teamCatalogInput?.machineId ?? null, props.teamCatalogInput?.serverId ?? null);
+  const currentCatalog = React.useRef(catalog);
+  currentCatalog.current = catalog;
+  return <NewSessionConnectedServicesSelectionContent {...props.content} inventoryInput={props.inventoryInput}
+    teamCredentialResources={catalog.resources} teamCredentialResourceStatusByKey={catalog.resourceStatusByKey}
+    teamNameById={catalog.teamNameById} directDelivery={directDelivery}
+    onRecoverTeamCredentialResource={resource => {
+      if (props.teamCatalogInput?.serverId) router.push(teamCredentialDetailPath({ serverId: props.teamCatalogInput.serverId, teamId: resource.teamId }, resource.id));
+    }}
+    setBindingForService={(serviceId, binding) => {
+      if (binding.source !== 'team_resource') return props.content.setBindingForService(serviceId, binding);
+      const resource = catalog.resources.find(resource => resource.id === binding.resourceId);
+      if (!resource) return;
+      void coordinateSelection({ resource, deliveryMode: binding.deliveryMode, selection: binding,
+        isCurrent: () => currentCatalog.current.resourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current'
+          && currentCatalog.current.resources.some(current => current.teamId === resource.teamId && current.id === resource.id
+            && current.resourceRevision === resource.resourceRevision),
+      }).then(outcome => {
+        if (outcome.kind === 'continue') props.content.setBindingForService(serviceId, outcome.selection);
+      });
+    }}
+  />;
+}
 
 export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   agentId: unknown;
@@ -40,12 +83,15 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   value: unknown;
   /** Local Voice uses current Session bindings; native realtime envelopes retain V1. */
   bindingVersion?: 1 | 2;
+  connectedAccounts?: NewSessionConnectedServiceOptionsInput['connectedAccounts'];
+  teamCatalogInput?: TeamCatalogInput;
   onChange: (value: unknown, expectedSettingsVersion: number | null) => void;
 }>) {
-  const profile = useProfile();
-  const { present } = useConnectedAccountIdentityPrivacy();
+  const legacyAccounts = useProfile(profile => props.bindingVersion === 2 ? null : profile.connectedServicesV2, ['connectedServicesV2']);
+  const settingsScope = useAccountSettingsScope();
+  const registry = useProjectedConnectedServicesRegistry();
   const connectedServicesDefaultProfileByServiceId = useSetting('connectedServicesDefaultProfileByServiceId');
-  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
+  const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels, { enabled: props.bindingVersion !== 2 });
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const bundledAgentId = isBundledAgentId(props.agentId)
     ? props.agentId
@@ -71,43 +117,54 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
       }) : legacyServiceIds)],
     [props.serviceIds, props.bindingVersion, legacyServiceIds],
   );
-  const profileOptionsByServiceId = React.useMemo(
-    () => props.bindingVersion === 2 ? buildQualifiedConnectedAccountProfileOptionsByServiceId({
-      accounts: profile.connectedAccountsV4 ?? [], supportedServiceIds, labelsByKey, presentIdentity: present,
-    }) : buildConnectedServiceProfileOptionsByServiceId({
-      accountProfileConnectedServicesV2: profile.connectedServicesV2 ?? [],
+  const legacyProfileOptions = React.useMemo(
+    () => buildConnectedServiceProfileOptionsByServiceId({
+      accountProfileConnectedServicesV2: legacyAccounts ?? [],
       supportedConnectedServiceIds: legacyServiceIds,
       labelsByKey,
     }),
     [
-      profile.connectedServicesV2,
+      legacyAccounts,
       labelsByKey,
       supportedServiceIds,
       legacyServiceIds,
-      props.bindingVersion, profile.connectedAccountsV4, present,
     ],
   );
-  const groupOptionsByServiceId = React.useMemo(
-    () => props.bindingVersion === 2 ? buildQualifiedConnectedAccountGroupOptionsByServiceId({
-      groups: profile.connectedAccountGroupsV4 ?? [], supportedServiceIds, labelsByKey,
-    }) : buildConnectedServiceAccountGroupOptionsByServiceId({
+  const legacyGroupOptions = React.useMemo(
+    () => buildConnectedServiceAccountGroupOptionsByServiceId({
       accountGroupsFeatureEnabled: accountGroupsEnabled,
-      accountProfileConnectedServicesV2: profile.connectedServicesV2 ?? [],
+      accountProfileConnectedServicesV2: legacyAccounts ?? [],
       supportedConnectedServiceIds: legacyServiceIds,
     }),
-    [accountGroupsEnabled, profile.connectedServicesV2, supportedServiceIds, legacyServiceIds, props.bindingVersion, profile.connectedAccountGroupsV4, labelsByKey],
+    [accountGroupsEnabled, legacyAccounts, legacyServiceIds],
   );
   const parsedBinding = React.useMemo(() => {
     const parsed = (props.bindingVersion === 2 ? ConnectedServiceBindingsV2Schema : ConnectedServiceBindingsV1Schema).safeParse(props.value);
     return parsed.success ? parsed.data : null;
   }, [props.value, props.bindingVersion]);
   const bindingsByServiceId = parsedBinding?.bindingsByServiceId ?? EMPTY_RECORD;
+  const resolveServiceTitle = React.useCallback((serviceId: string) => {
+    const service = parseQualifiedPluginContributionKey(serviceId);
+    return service ? resolveQualifiedConnectedServiceRegistryDisplayName(registry, service, t) : serviceId;
+  }, [registry]);
+  const inventoryInput = React.useMemo<NewSessionConnectedServiceOptionsInput | null>(() => props.bindingVersion === 2 ? ({
+    connectedAccounts: props.connectedAccounts ?? EMPTY_CONNECTED_ACCOUNTS, supportedServiceIds, scope: settingsScope, resolveServiceTitle,
+  }) : null, [props.bindingVersion, props.connectedAccounts, supportedServiceIds, settingsScope, resolveServiceTitle]);
+  const selectedTargets = React.useMemo(() => [bindingsByServiceId], [bindingsByServiceId]);
+  const personalOptions = useNewSessionConnectedServiceOptions(inventoryInput, selectedTargets);
+  const profileOptionsByServiceId = inventoryInput ? personalOptions.profileOptionsByServiceId : legacyProfileOptions;
+  const groupOptionsByServiceId = inventoryInput ? personalOptions.groupOptionsByServiceId : legacyGroupOptions;
   const defaultProfileIdByServiceId = connectedServicesDefaultProfileByServiceId ?? EMPTY_RECORD;
   // The value the picks build on, and the version and Account scope the card opened under.
   const valueRef = React.useRef(bindingsByServiceId);
   valueRef.current = bindingsByServiceId;
   const openRef = React.useRef<{ expectedSettingsVersion: number | null; scope: AccountSettingsScope | null } | null>(null);
   const commit = React.useCallback((next: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>) => {
+    if (props.bindingVersion === 2) {
+      props.onChange(ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: next }),
+        openRef.current?.expectedSettingsVersion ?? null);
+      return;
+    }
     const sessionBindings = buildConnectedServicesBindingsPayload({
       supportedConnectedServiceIds: supportedServiceIds,
       connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
@@ -116,7 +173,7 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
       defaultProfileByServiceId: { ...defaultProfileIdByServiceId },
       accountGroupsFeatureEnabled: accountGroupsEnabled,
     });
-    props.onChange(props.bindingVersion === 2 ? sessionBindings : sessionBindings === null
+    props.onChange(sessionBindings === null
       ? null
       : ConnectedServiceBindingsV1Schema.parse({ v: 1, bindingsByServiceId: sessionBindings.bindingsByServiceId }),
     openRef.current?.expectedSettingsVersion ?? null);
@@ -189,5 +246,7 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     }}
     setBindingForService={(_serviceId, _binding, next) => commit(next)}
     onOpenSettings={openConnect}
+    renderSelectionContent={inventoryInput ? content => <VoiceConnectedServicesSelectionContent content={content}
+      inventoryInput={inventoryInput} teamCatalogInput={props.teamCatalogInput} /> : undefined}
   />;
 }

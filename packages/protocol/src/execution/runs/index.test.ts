@@ -589,8 +589,16 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunStartRequestSchema.safeParse({
       ...base,
       intent: 'voice_agent',
-      instructions: 'Voice uses its own chat and commit model binding contract.',
+      instructions: 'Voice uses the shared Team launch owner for both roles.',
+      chatModelId: teamCredentialModel.modelId,
+      commitModelId: teamCredentialModel.modelId,
       teamCredentialModel,
+      intentInput: { commitTeamCredentialModel: teamCredentialModel },
+    }).success).toBe(true);
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      ...base, intent: 'voice_agent', chatModelId: teamCredentialModel.modelId,
+      commitModelId: 'different-model', teamCredentialModel,
+      intentInput: { commitTeamCredentialModel: teamCredentialModel },
     }).success).toBe(false);
   });
 

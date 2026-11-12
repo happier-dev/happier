@@ -65,6 +65,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { resolveSelectedVoiceWelcomeText } from '@/voice/agent/voiceWelcomeText';
 import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { resolveVoiceSessionModelSelection } from '@/voice/agent/resolveVoiceSessionModelSelection';
+import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
@@ -457,6 +458,8 @@ export async function initializeVoiceAgentHandle({
     let commitModelId: string | undefined;
     let chatModelSelection: ProviderBoundModelRef | undefined;
     let commitModelSelection: ProviderBoundModelRef | undefined;
+    let chatTeamCredentialModel: VoiceAgentStartParams['chatTeamCredentialModel'];
+    let commitTeamCredentialModel: VoiceAgentStartParams['commitTeamCredentialModel'];
     let connectedServices: VoiceAgentStartParams['connectedServices'];
     let resolvedAgentId: string | null = null;
     let resolvedBackendTarget: BackendTargetRefV1 | null = null;
@@ -528,6 +531,10 @@ export async function initializeVoiceAgentHandle({
         ({ chatModelId, commitModelId } = resolveModelIds(nextBackend, nextRpcSessionId, targetAddress));
         chatModelSelection = undefined;
         commitModelSelection = undefined;
+        chatTeamCredentialModel = undefined;
+        commitTeamCredentialModel = undefined;
+        let chatChoice = agentCfg.chatModelSource === 'custom' ? agentCfg.chatModelSelection : null;
+        let commitChoice = agentCfg.commitModelSource === 'custom' ? agentCfg.commitModelSelection : null;
         if (nextBackend !== 'daemon') {
             resolvedAgentId = String(agentId ?? '').trim() || null;
             connectedServices = undefined;
@@ -558,23 +565,43 @@ export async function initializeVoiceAgentHandle({
         if (agentSource === 'session' && resolvedAgentId && targetAddress
             && targetAddress.sessionId !== nextRpcSessionId
             && (agentCfg.chatModelSource === 'session' || agentCfg.commitModelSource === 'session')) {
-            const selection = (await resolveVoiceSessionModelSelection({
+            const sessionSelection = await resolveVoiceSessionModelSelection({
                 sessionAddress: targetAddress,
                 signal,
                 agentId: resolvedAgentId,
                 agentTargetKey: buildAgentUniverseBackendTargetKey(resolvedAgentId),
-            }))?.ref;
+            });
+            let selection: NonNullable<typeof chatChoice> | undefined;
+            if (sessionSelection?.v === 2) {
+                if (sessionSelection.ref.source === 'team_resource') {
+                    const { source: _source, ...ref } = sessionSelection.ref;
+                    selection = { kind: 'team_credential_provider_model', ...ref };
+                } else {
+                    selection = projectSessionModelSelectionV2ToV1(sessionSelection)?.ref;
+                }
+            } else {
+                selection = sessionSelection?.ref;
+            }
             assertAccountCurrent();
             if (!selection) return throwVoiceAgentSelectionUnavailable();
             if (agentCfg.chatModelSource === 'session') {
-                chatModelSelection = selection;
-                chatModelId = selection.modelId;
+                chatChoice = selection;
             }
             if (agentCfg.commitModelSource === 'session'
-                || (agentCfg.commitModelSource === 'chat' && chatModelSelection)) {
-                commitModelSelection = selection;
-                commitModelId = selection.modelId;
+                || (agentCfg.commitModelSource === 'chat' && chatChoice)) {
+                commitChoice = selection;
             }
+        }
+        if (agentCfg.commitModelSource === 'chat') commitChoice = chatChoice;
+        if (chatChoice) {
+            chatModelId = chatChoice.modelId;
+            if ('kind' in chatChoice) chatTeamCredentialModel = chatChoice;
+            else chatModelSelection = chatChoice;
+        }
+        if (commitChoice) {
+            commitModelId = commitChoice.modelId;
+            if ('kind' in commitChoice) commitTeamCredentialModel = commitChoice;
+            else commitModelSelection = commitChoice;
         }
         runMetadataSessionId =
             resolveVoiceRunMetadataSessionId(sessionId, nextBackend, daemonConversationSessionId);
@@ -740,6 +767,8 @@ export async function initializeVoiceAgentHandle({
                 commitModelId,
                 ...(chatModelSelection ? { chatModelSelection } : {}),
                 ...(commitModelSelection ? { commitModelSelection } : {}),
+                ...(chatTeamCredentialModel ? { chatTeamCredentialModel } : {}),
+                ...(commitTeamCredentialModel ? { commitTeamCredentialModel } : {}),
                 ...(connectedServices ? { connectedServices } : {}),
                 ...(providerChat
                     ? {
