@@ -1,0 +1,412 @@
+{
+  "provenance": {
+    "observedAt": "2026-11-12T22:41:25.334Z",
+    "apiVersion": "1.0",
+    "apiDefinition": "https://api.elevenlabs.io/openapi.json",
+    "endpoint": "https://api.elevenlabs.io/v1/convai/tools",
+    "method": "POST",
+    "source": "Account C Settings Finish setup, Team-shared ElevenLabs key; normal provisioning owner",
+    "omitted": "Credential headers were never recorded. Response access_info, usage_stats and response_mocks omitted. Tool id and tool_config are unmodified.",
+    "result": "Accepted without production edits; historical R136 failure response unavailable."
+  },
+  "sourceTool": {
+    "name": "settings_set",
+    "description": "Discover settings, read or change their values, or request a settings operation through its owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "anchor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "value": {
+          "$ref": "#/$defs/__schema1"
+        },
+        "target": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "home"
+                },
+                "serverId": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "serverId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "project"
+                },
+                "serverId": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "projectKey": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "serverId",
+                "projectKey"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "public_profile_draft"
+                },
+                "serverId": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "serverId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "team"
+                },
+                "serverId": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "teamId": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "serverId",
+                "teamId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "team_identity_connection"
+                },
+                "serverId": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "teamId": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "connectionId": {
+                  "$ref": "#/$defs/__schema2"
+                }
+              },
+              "required": [
+                "kind",
+                "serverId",
+                "teamId",
+                "connectionId"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "expectedSettingsVersion": {
+          "$ref": "#/$defs/__schema3"
+        },
+        "reversal": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "capture"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "$ref": "#/$defs/__schema4"
+                },
+                "scope": {
+                  "$ref": "#/$defs/__schema5"
+                },
+                "beforeVersion": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "appliedVersion": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "before": {
+                  "$ref": "#/$defs/__schema6"
+                },
+                "applied": {
+                  "$ref": "#/$defs/__schema6"
+                }
+              },
+              "required": [
+                "kind",
+                "scope",
+                "beforeVersion",
+                "appliedVersion",
+                "before",
+                "applied"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "$ref": "#/$defs/__schema7"
+                },
+                "scope": {
+                  "$ref": "#/$defs/__schema5"
+                },
+                "beforeVersion": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "appliedVersion": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "changes": {
+                  "$ref": "#/$defs/__schema8"
+                }
+              },
+              "required": [
+                "kind",
+                "scope",
+                "beforeVersion",
+                "appliedVersion",
+                "changes"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "anchor",
+        "value"
+      ],
+      "additionalProperties": false,
+      "$defs": {
+        "__schema0": {
+          "type": "string",
+          "minLength": 1
+        },
+        "__schema1": {},
+        "__schema2": {
+          "type": "string",
+          "minLength": 1
+        },
+        "__schema3": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "__schema4": {
+          "type": "string",
+          "const": "restore"
+        },
+        "__schema5": {
+          "type": "object",
+          "properties": {
+            "serverId": {
+              "$ref": "#/$defs/__schema2"
+            },
+            "accountId": {
+              "$ref": "#/$defs/__schema2"
+            }
+          },
+          "required": [
+            "serverId",
+            "accountId"
+          ],
+          "additionalProperties": false
+        },
+        "__schema6": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "unset": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "unset"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "__schema7": {
+          "type": "string",
+          "const": "restore"
+        },
+        "__schema8": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema9"
+          }
+        },
+        "__schema9": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "before": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "applied": {
+              "$ref": "#/$defs/__schema6"
+            }
+          },
+          "required": [
+            "key",
+            "before",
+            "applied"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "request": {
+    "tool_config": {
+      "type": "client",
+      "name": "settings_set",
+      "description": "Discover settings, read or change their values, or request a settings operation through its owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.",
+      "parameters": {
+        "type": "object",
+        "description": "",
+        "dynamic_variable": "",
+        "is_omitted": false,
+        "required": [
+          "arguments_json"
+        ],
+        "properties": {
+          "arguments_json": {
+            "type": "string",
+            "enum": null,
+            "is_system_provided": false,
+            "dynamic_variable": "",
+            "allowed_values": null,
+            "allowed_values_dynamic_variable": "",
+            "constant_value": "",
+            "is_omitted": false,
+            "description": "A JSON-encoded argument object matching this JSON Schema: {\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"anchor\":{\"type\":\"string\",\"minLength\":1},\"key\":{\"$ref\":\"#/$defs/__schema0\"},\"value\":{\"$ref\":\"#/$defs/__schema1\"},\"target\":{\"oneOf\":[{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"home\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"project\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"projectKey\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"projectKey\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"public_profile_draft\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"team\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"teamId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"teamId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"team_identity_connection\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"teamId\":{\"$ref\":\"#/$defs/__schema2\"},\"connectionId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"teamId\",\"connectionId\"],\"additionalProperties\":false}]},\"expectedSettingsVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"reversal\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"capture\"}},\"required\":[\"kind\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"$ref\":\"#/$defs/__schema4\"},\"scope\":{\"$ref\":\"#/$defs/__schema5\"},\"beforeVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"appliedVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"before\":{\"$ref\":\"#/$defs/__schema6\"},\"applied\":{\"$ref\":\"#/$defs/__schema6\"}},\"required\":[\"kind\",\"scope\",\"beforeVersion\",\"appliedVersion\",\"before\",\"applied\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"$ref\":\"#/$defs/__schema7\"},\"scope\":{\"$ref\":\"#/$defs/__schema5\"},\"beforeVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"appliedVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"changes\":{\"$ref\":\"#/$defs/__schema8\"}},\"required\":[\"kind\",\"scope\",\"beforeVersion\",\"appliedVersion\",\"changes\"],\"additionalProperties\":false}]},\"clientId\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"anchor\",\"value\"],\"additionalProperties\":false,\"$defs\":{\"__schema0\":{\"type\":\"string\",\"minLength\":1},\"__schema1\":{},\"__schema2\":{\"type\":\"string\",\"minLength\":1},\"__schema3\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":9007199254740991},\"__schema4\":{\"type\":\"string\",\"const\":\"restore\"},\"__schema5\":{\"type\":\"object\",\"properties\":{\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"accountId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"serverId\",\"accountId\"],\"additionalProperties\":false},\"__schema6\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"unset\":{\"type\":\"boolean\",\"const\":true}},\"required\":[\"unset\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"value\":{\"$ref\":\"#/$defs/__schema1\"}},\"required\":[\"value\"],\"additionalProperties\":false}]},\"__schema7\":{\"type\":\"string\",\"const\":\"restore\"},\"__schema8\":{\"minItems\":1,\"type\":\"array\",\"items\":{\"$ref\":\"#/$defs/__schema9\"}},\"__schema9\":{\"type\":\"object\",\"properties\":{\"key\":{\"$ref\":\"#/$defs/__schema0\"},\"before\":{\"$ref\":\"#/$defs/__schema6\"},\"applied\":{\"$ref\":\"#/$defs/__schema6\"}},\"required\":[\"key\",\"before\",\"applied\"],\"additionalProperties\":false}}}"
+          }
+        }
+      },
+      "expects_response": true,
+      "execution_mode": "immediate",
+      "response_timeout_secs": 120,
+      "interruption_mode": "allow",
+      "disable_interruptions": false,
+      "pre_tool_speech": "auto",
+      "force_pre_tool_speech": false,
+      "assignments": [],
+      "tool_call_sound": null,
+      "tool_call_sound_behavior": "auto",
+      "tool_error_handling_mode": "passthrough",
+      "dynamic_variables": {
+        "dynamic_variable_placeholders": {}
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "tool_3201m78yrhx9f6g9wmwgnecwj1kt",
+      "tool_config": {
+        "type": "client",
+        "name": "settings_set",
+        "description": "Discover settings, read or change their values, or request a settings operation through its owner. Operations retain their human interaction and credential trust requirements. Local preferences belong to the answering client.",
+        "response_timeout_secs": 120,
+        "disable_interruptions": false,
+        "interruption_mode": "allow",
+        "force_pre_tool_speech": false,
+        "pre_tool_speech": "auto",
+        "assignments": [],
+        "tool_call_sound": null,
+        "tool_call_sound_behavior": "auto",
+        "tool_error_handling_mode": "passthrough",
+        "parameters": {
+          "description": "",
+          "dynamic_variable": "",
+          "is_omitted": false,
+          "type": "object",
+          "required": [
+            "arguments_json"
+          ],
+          "properties": {
+            "arguments_json": {
+              "type": "string",
+              "description": "A JSON-encoded argument object matching this JSON Schema: {\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"anchor\":{\"type\":\"string\",\"minLength\":1},\"key\":{\"$ref\":\"#/$defs/__schema0\"},\"value\":{\"$ref\":\"#/$defs/__schema1\"},\"target\":{\"oneOf\":[{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"home\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"project\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"projectKey\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"projectKey\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"public_profile_draft\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"team\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"teamId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"teamId\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"team_identity_connection\"},\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"teamId\":{\"$ref\":\"#/$defs/__schema2\"},\"connectionId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"kind\",\"serverId\",\"teamId\",\"connectionId\"],\"additionalProperties\":false}]},\"expectedSettingsVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"reversal\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"kind\":{\"type\":\"string\",\"const\":\"capture\"}},\"required\":[\"kind\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"$ref\":\"#/$defs/__schema4\"},\"scope\":{\"$ref\":\"#/$defs/__schema5\"},\"beforeVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"appliedVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"before\":{\"$ref\":\"#/$defs/__schema6\"},\"applied\":{\"$ref\":\"#/$defs/__schema6\"}},\"required\":[\"kind\",\"scope\",\"beforeVersion\",\"appliedVersion\",\"before\",\"applied\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"kind\":{\"$ref\":\"#/$defs/__schema7\"},\"scope\":{\"$ref\":\"#/$defs/__schema5\"},\"beforeVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"appliedVersion\":{\"$ref\":\"#/$defs/__schema3\"},\"changes\":{\"$ref\":\"#/$defs/__schema8\"}},\"required\":[\"kind\",\"scope\",\"beforeVersion\",\"appliedVersion\",\"changes\"],\"additionalProperties\":false}]},\"clientId\":{\"type\":\"string\",\"minLength\":1}},\"required\":[\"anchor\",\"value\"],\"additionalProperties\":false,\"$defs\":{\"__schema0\":{\"type\":\"string\",\"minLength\":1},\"__schema1\":{},\"__schema2\":{\"type\":\"string\",\"minLength\":1},\"__schema3\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":9007199254740991},\"__schema4\":{\"type\":\"string\",\"const\":\"restore\"},\"__schema5\":{\"type\":\"object\",\"properties\":{\"serverId\":{\"$ref\":\"#/$defs/__schema2\"},\"accountId\":{\"$ref\":\"#/$defs/__schema2\"}},\"required\":[\"serverId\",\"accountId\"],\"additionalProperties\":false},\"__schema6\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"unset\":{\"type\":\"boolean\",\"const\":true}},\"required\":[\"unset\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"value\":{\"$ref\":\"#/$defs/__schema1\"}},\"required\":[\"value\"],\"additionalProperties\":false}]},\"__schema7\":{\"type\":\"string\",\"const\":\"restore\"},\"__schema8\":{\"minItems\":1,\"type\":\"array\",\"items\":{\"$ref\":\"#/$defs/__schema9\"}},\"__schema9\":{\"type\":\"object\",\"properties\":{\"key\":{\"$ref\":\"#/$defs/__schema0\"},\"before\":{\"$ref\":\"#/$defs/__schema6\"},\"applied\":{\"$ref\":\"#/$defs/__schema6\"}},\"required\":[\"key\",\"before\",\"applied\"],\"additionalProperties\":false}}}",
+              "enum": null,
+              "is_system_provided": false,
+              "dynamic_variable": "",
+              "allowed_values": null,
+              "allowed_values_dynamic_variable": "",
+              "constant_value": "",
+              "is_omitted": false
+            }
+          }
+        },
+        "expects_response": true,
+        "dynamic_variables": {
+          "dynamic_variable_placeholders": {}
+        },
+        "execution_mode": "immediate"
+      }
+    }
+  }
+}

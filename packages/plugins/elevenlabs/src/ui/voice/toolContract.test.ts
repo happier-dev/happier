@@ -4,6 +4,7 @@ import { describePluginJsonSchemaValueIssues } from '@happier-dev/protocol/plugi
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import vendorSchema from './fixtures/tools.openapi.json';
+import recordedCreateTool from './fixtures/tools.create.live.json';
 import { provisionElevenLabsWithAccountOperations } from './operations.js';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../protocol/voice/index.js';
 import { VoiceActionExecuteInputSchema, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
@@ -19,6 +20,35 @@ const catalog = [
 ];
 
 describe('ElevenLabs tool contract', () => {
+  it('replays the real accepted settings tool request and attaches the returned tool to the created agent', async () => {
+    let agent: Record<string, unknown> = {};
+    // Only the vendor boundary is replaced. The create-tool exchange is recorded;
+    // the remaining vendor responses echo the actual provisioning request.
+    const result = await provisionElevenLabsWithAccountOperations({
+      accountOperations: { request: async ({ operationId, parameters }) => {
+        let response: unknown;
+        if (operationId === 'voices') response = { voices: [{ voice_id: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS.tts.voiceId }] };
+        else if (operationId === 'create-tool') {
+          expect(parameters.body).toEqual(recordedCreateTool.request);
+          response = recordedCreateTool.response.body;
+        } else if (operationId === 'create-agent') {
+          expect(parameters.body).toMatchObject({ conversation_config: {
+            agent: { prompt: { tool_ids: [recordedCreateTool.response.body.id] } },
+          } });
+          agent = { ...(parameters.body as Record<string, unknown>), agent_id: 'agent_recorded_contract' };
+          response = { agent_id: 'agent_recorded_contract' };
+        } else if (operationId === 'agent') response = agent;
+        else throw new Error(`Unexpected vendor operation: ${operationId}`);
+        return { status: recordedCreateTool.response.status, finalUrl: recordedCreateTool.provenance.endpoint,
+          headers: {}, body: new TextEncoder().encode(JSON.stringify(response)) };
+      } },
+      request: { kind: 'create', prompt: 'Happier Voice', tools: [recordedCreateTool.sourceTool],
+        tts: ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS.tts },
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ ok: true, agentId: 'agent_recorded_contract' });
+  });
+
   it.each(catalog)('provisions the real $id catalog schema accepted by the vendor', async (spec) => {
     let agent: Record<string, unknown> = {};
     let created = false;
