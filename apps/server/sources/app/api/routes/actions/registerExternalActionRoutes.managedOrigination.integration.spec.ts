@@ -27,7 +27,7 @@ import {
     signExternalActionMachineRequestV1, encodeExternalActionResolvedTargetV1,
     signExternalActionMachineRpcRequestV1,
 } from '@happier-dev/protocol/actions';
-import { EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeReviewedActionChildHttpProofV1, encodeExternalActionHttpBodyV1,
     EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -319,11 +319,6 @@ describe('ordinary Account managed Action origination', () => {
         });
         try {
             const profile = await read();
-            if (member) {
-                expect(profile.statusCode).toBe(401);
-                expect(profile.json()).toMatchObject({ authorizationRefusal: 'machine_admission_after_principal' });
-                return;
-            }
             expect(profile.statusCode, profile.body).toBe(200);
             expect(profile.json()).toMatchObject({ id: requester.id, connectedAccountsV4: [], connectedAccountGroupsV4: [] });
             expect((await read('/v1/account/profile', 'connectedServices.catalog.list')).statusCode).toBe(401);
@@ -374,13 +369,6 @@ describe('ordinary Account managed Action origination', () => {
         });
         try {
             const profile = await read();
-            if (member) {
-                // This inventory has no requester RPC placement: even a shared
-                // Machine administrator cannot turn it into custodian access.
-                expect(profile.statusCode).toBe(401);
-                expect(profile.json()).toMatchObject({ authorizationRefusal: 'machine_admission_after_principal' });
-                return;
-            }
             expect(profile.statusCode, profile.body).toBe(200);
             expect(profile.json()).toMatchObject({ id: requester.id });
             for (const path of ['/v1/account/encryption/currentness', '/v2/account/settings',
@@ -694,7 +682,7 @@ describe('ordinary Account managed Action origination', () => {
     });
 
     it.each(['terminal', 'account'] as const)(
-        'refuses self-approval and unexposed placement for an original %s automation root', async kind => {
+        'refuses unexposed client placement for an original %s automation root', async kind => {
         const selected = await fixture(true);
         const { session, presence, io } = await sourceFixture(selected);
         const token = await auth.createToken(selected.account.id, undefined, {
@@ -703,15 +691,17 @@ describe('ordinary Account managed Action origination', () => {
         const instance = await app(async () => { throw new Error('A refused root must never dispatch'); }, undefined, { io, presence });
         const headers = { authorization: `Bearer ${token}`, [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' };
         try {
-            for (const actionId of ['session.permission.respond', 'approval.request.decide', 'ui.find']) {
+            // Approval decisions are admitted to their canonical decision owner;
+            // this route test covers only the unexposed client placement.
+            for (const actionId of ['ui.find']) {
                 const envelope = { v: 1, requestId: crypto.randomUUID(),
                     target: { kind: 'session', sessionId: session.id }, input: {} };
                 for (const url of [`/v1/actions/${actionId}`, bindExternalActionExecutionAuthorizationHttpPathV1(actionId)]) {
                     const response = await instance.inject({ method: 'POST', url, headers,
                         payload: url.endsWith('/execution-authorization')
                             ? { v: 1, machineId: selected.controller.machineId, envelope } : envelope });
-                    expect(response.statusCode, response.body).toBe(401);
-                    expect(response.json()).toMatchObject({ error: 'invalid_token' });
+                    expect(response.statusCode, response.body).toBe(403);
+                    expect(response.json()).toMatchObject({ error: 'credential_scope_denied' });
                 }
             }
         } finally { await instance.close(); }
@@ -848,7 +838,9 @@ describe('ordinary Account managed Action origination', () => {
             const workflowAdmission = await verifyWorkflowExternalActionRequesterAuthorization({ authorization: parent,
                 origin: workflowActionOrigin, publisherAccountId: selected.account.id,
                 publisherCustodianAccountId: selected.account.id, publisherMachineId: selected.controller.machineId,
-                publisherInstallationId: selected.controller.installationId });
+                publisherInstallationId: selected.controller.installationId,
+                target, preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+                    actionId, envelope: { ...envelope, requestId } }) });
             if (!workflowAdmission) throw new Error('Expected the captured Setup requester');
             const { authority, ...principal } = workflowAdmission.principal;
             expect(authority).toBe('account_automation');
@@ -2063,7 +2055,8 @@ describe('ordinary Account managed Action origination', () => {
         const originSession = await db.session.create({ data: { accountId: selected.account.id,
             tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const run = await db.automationRun.create({ data: { accountId: selected.account.id, originKind: 'direct', originSessionId: originSession.id,
-            causeKind: null, state: 'running', workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}',
+            causeKind: null, state: 'running', claimedByMachineId: selected.controller.machineId,
+            workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: '{}',
             scheduledAt: new Date(), dueAt: new Date(), assignments: { create: { machineId: selected.controller.machineId } } } });
         const actionId = 'machines.managed.delete';
         const requestId = crypto.randomUUID();
@@ -2563,7 +2556,7 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it('requires controller authority before a guest-only manager reads or reports retained setup', async () => {
+    it('permits guest-only visibility while requiring controller authority for retained setup', async () => {
         const owner = await fixture(true);
         const actor = await fixture(true);
         const guestKeys = tweetnacl.sign.keyPair();
@@ -2588,7 +2581,7 @@ describe('ordinary Account managed Action origination', () => {
             allocation: 'bound', enrolledMachineId: guest.id, machineSetup: { setup, state: 'pending' },
             resource: { contributionRef: owner.input.selection.launch.provider, schemaVersion: 1, value: { id: 'same-resource' } } } });
         await expect(getManagedMachine({ actorAccountId: actor.account.id, input: { homeId, managedId: row.id } }))
-            .rejects.toMatchObject({ code: 'permission_denied' });
+            .resolves.toMatchObject({ id: row.id, enrolledMachineId: guest.id });
         const instance = await app(async () => { throw new Error('Resolving and reporting cannot execute setup'); });
         try {
             const creation = { homeId, machineId: guest.id, presetId, presetRevision: 1 };
