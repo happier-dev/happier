@@ -54,8 +54,6 @@ type Fixture = Readonly<{
   identity: ManagedMachineEnrollmentIdentityV1;
   carrier: 'ssh' | 'native';
   guestHome?: true;
-  /** Observed selected-role override from Crabbox's local-container option. */
-  selectedRole?: 'sandbox';
   platform?: 'Darwin';
   expectedGap?: 'dedicated_identity_unsupported';
 }>;
@@ -63,9 +61,11 @@ type Fixture = Readonly<{
 // These are plan oracles for admitted roles and the real carrier shapes censused
 // from the provider producers. They do not reproduce production default selection.
 const fixtures: readonly Fixture[] = [
+  { key: 'happier.machine.agent37/agent37', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.boat/boat', declaredRole: 'server', identity: dedicated, carrier: 'ssh' },
-  { key: 'happier.machine.crabbox/crabbox', declaredRole: 'server', identity: dedicated, carrier: 'ssh' },
-  { key: 'happier.machine.crabbox/crabbox', declaredRole: 'server', selectedRole: 'sandbox', identity: sandbox, carrier: 'ssh' },
+  { key: 'happier.machine.coder/coder', declaredRole: 'server', identity: dedicated, carrier: 'native' },
+  { key: 'happier.machine.crabbox/crabbox-coordinator', declaredRole: 'server', identity: dedicated, carrier: 'ssh' },
+  { key: 'happier.machine.crabbox/crabbox', declaredRole: 'sandbox', identity: sandbox, carrier: 'ssh' },
   { key: 'happier.machine.digitalocean/digitalocean', declaredRole: 'server', identity: dedicated, carrier: 'ssh' },
   { key: 'happier.machine.hetzner/hetzner', declaredRole: 'server', identity: dedicated, carrier: 'ssh' },
   { key: 'happier.machine.lume/lume', declaredRole: 'personal', identity: personal, carrier: 'ssh', platform: 'Darwin' },
@@ -75,9 +75,16 @@ const fixtures: readonly Fixture[] = [
   { key: 'happier.machine.cua/local-sandbox', declaredRole: 'sandbox', identity: sandbox, carrier: 'native', guestHome: true },
   { key: 'happier.machine.cua/local-space', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.cua/byoc', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.daytona/daytona', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.docker-sandboxes/docker-sandboxes', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.e2b/e2b', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.fly/fly', declaredRole: 'sandbox', identity: sandbox, carrier: 'native', guestHome: true },
+  { key: 'happier.machine.freestyle/freestyle', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.maritime/maritime', declaredRole: 'server', identity: dedicated, carrier: 'native' },
   { key: 'happier.machine.modal/modal', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.railway/railway', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.superserve/superserve', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.upstash-box/upstash-box', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.vercel/vercel', declaredRole: 'sandbox', identity: sandbox, carrier: 'native', guestHome: true },
   { key: 'happier.devcontainer/devcontainer', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
 ];
@@ -100,13 +107,13 @@ describe('normalized Machine catalog at the shared enrollment boundary', () => {
     expect(covered).toEqual(declared);
   });
 
-  it.each(fixtures)('$key honors $identity.kind through $carrier (persistent home: $guestHome, selected role: $selectedRole, platform: $platform)', async fixture => {
+  it.each(fixtures)('$key honors $identity.kind through $carrier (persistent home: $guestHome, platform: $platform)', async fixture => {
     const definition = provisioners().get(fixture.key);
     expect(definition, `Missing normalized provisioner ${fixture.key}`).toBeDefined();
     if (!definition) throw new Error(`Missing normalized provisioner ${fixture.key}`);
     expect(definition.enrollmentRole).toBe(fixture.declaredRole);
     expect(definition.bootstrapTransport?.kind ?? 'ssh').toBe(fixture.carrier);
-    expect(fixture.selectedRole ?? definition.enrollmentRole).toBe(fixture.identity.role);
+    expect(definition.enrollmentRole).toBe(fixture.identity.role);
     const split = fixture.key.lastIndexOf('/');
     const contributionRef = { pluginId: fixture.key.slice(0, split), localId: fixture.key.slice(split + 1) };
     const root = await mkdtemp(join(tmpdir(), 'happier-catalog-enrollment-'));
