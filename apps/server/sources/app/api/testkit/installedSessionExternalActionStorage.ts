@@ -138,7 +138,7 @@ export function createInstalledSessionExternalActionStorage() {
             findUnique: async ({ where }: { where: unknown }) => sourceRows().find(row => matchesDbMockWhere(row, where)) ?? null,
             findMany: async ({ where }: { where: unknown }) => sourceRows().filter(row => matchesDbMockWhere(row, where)),
         },
-        projectDeploymentDefaults: { findUnique: async () => null },
+        projectDeploymentDefaults: { findUnique: async () => null, findFirst: async () => null },
         artifact: {
             findUnique: async ({ where }: { where: { id: string } }) => where.id === state.creation.artifact.id
                 ? state.creation.artifact : state.deploymentRead.enabled && where.id === state.deploymentRead.candidate.id
@@ -157,7 +157,7 @@ export function createInstalledSessionExternalActionStorage() {
             findMany: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
                 && matchesDbMockWhere(environmentRow(), where) ? [environmentRow()] : [],
         },
-        deploymentDomain: { count: async () => 0 },
+        deploymentDomain: { count: async () => 0, findFirst: async () => null },
         deploymentTargetLink: {
             count: async ({ where }: { where: unknown }) => Number(state.deploymentRead.enabled
                 && matchesDbMockWhere(state.deploymentRead.link, where)),

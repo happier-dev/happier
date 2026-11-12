@@ -154,9 +154,10 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 headers: { authorization: `Bearer ${token}` },
                 payload: { v: 2, requestId: 'protected-refused', target: { kind: 'machine', machineId: 'machine' },
                     payload: { t: 'encrypted', c: 'opaque' } } });
-            expect(response.statusCode, response.body).toBe(502);
-            expect(response.json()).toEqual({ error: 'invalid_request', code: 'action_outcome_unknown',
-                requestId: 'protected-refused', diagnostic: { reason: 'daemon_rpc_refused', errorCode: 'RPC_FORBIDDEN' } });
+            expect(response.statusCode, response.body).toBe(403);
+            expect(response.json()).toEqual({ error: 'credential_scope_denied',
+                diagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN' } });
+            expect(response.body).not.toContain('private-error-marker');
             expect(response.headers['cache-control']).toBe('no-store');
         } finally {
             storage.account.encryptionMode = previousMode;
@@ -203,7 +204,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         } finally { await app.close(); }
     });
 
-    it.each([RPC_METHODS.BASH, 'ripgrep', RPC_METHODS.SESSION_LOG_TAIL])('admits only the bound physical Machine custodian to protected Session receivers with a current receipt (%s)', async rpcMethod => {
+    it.each([RPC_METHODS.BASH, 'ripgrep', RPC_METHODS.SESSION_LOG_TAIL])('admits the physical Machine custodian and refuses Use-only protected Session receivers (%s)', async rpcMethod => {
         storage.state.metadata = shareableMachineMetadata;
         const compatibility = evaluateAccountStoredContentCompatibility({ status: 'missing' });
         const emitWithAck = vi.fn(async (_event: string, request: Readonly<{ machineAdmission?: unknown; callerAuthority?: string }>) => ({
@@ -235,7 +236,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
         }));
         expect(emitWithAck).toHaveBeenCalledTimes(2);
-        storage.state.accountGrants.push({ accountId: 'other-account', accessLevel: 'admin', account: {
+        storage.state.accountGrants.push({ accountId: 'other-account', accessLevel: 'view', account: {
             id: 'other-account', status: 'active', name: null, firstName: null, lastName: null, username: null, avatar: null,
         } });
         storage.state.sessionIds.add('member-session');
@@ -247,7 +248,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         target.data.sessionId = 'member-session';
         target.data.sessionScopedBinding.sessionId = 'member-session';
         expect(await call('present_user', false, 'other-account')).toHaveBeenCalledWith(expect.objectContaining({
-            ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            ok: false, errorCode: rpcMethod === RPC_METHODS.SESSION_LOG_TAIL ? 'agent_isolation_unavailable' : RPC_ERROR_CODES.FORBIDDEN,
         }));
         expect(emitWithAck).toHaveBeenCalledTimes(2);
         target.data.userId = 'account';
@@ -328,10 +329,15 @@ describe('installed Session proposal admission at the Home mint route', () => {
             expect(emitWithAck).toHaveBeenCalledTimes(1);
             emitWithAck.mockClear();
             withdrawBeforeDispatch = true;
+            // This dispatch was already admitted; withdrawal governs the next request.
+            expect(await call('other-account', 'present_user')).toHaveBeenCalledWith({ ok: true,
+                result: { admissionAuthority: 'present_user' } });
+            expect(withdrawBeforeDispatch).toBe(false);
+            expect(emitWithAck).toHaveBeenCalledTimes(1);
+            emitWithAck.mockClear();
             expect(await call('other-account', 'present_user')).toHaveBeenCalledWith(expect.objectContaining({
                 ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
             }));
-            expect(withdrawBeforeDispatch).toBe(false);
             expect(emitWithAck).not.toHaveBeenCalled();
         }
         expect(await call('account', 'account_automation')).toHaveBeenCalledWith({ ok: true,
@@ -1074,7 +1080,9 @@ describe('installed Session proposal admission at the Home mint route', () => {
         const { app, mint } = createApp('account');
         const serverId = storage.state.homeId;
         const actionId = 'deployments.environments.create';
-        const input = { mode, serverId, projectSourceId: 'source', requestKey: 'authored-create',
+        const preview = purpose === 'preview' ? { templateEnvironmentId: 'staging', expectedTemplateRevision: 1,
+            pullRequestId: '42', runtimeTargetLinkId: 'runtime' } : undefined;
+        const input = { mode, serverId, projectSourceId: 'source', requestKey: 'authored-create', ...(preview ? { preview } : {}),
             name: 'Reviewed app', protection: 'nonProduction', purpose, deployerMode: 'chosen',
             deployerPrincipals: DeploymentEnvironmentDeployerPrincipalsV1Schema.parse([{ principalKind: 'account', principalId: 'account' }]),
             definition: { from: 'image', image: 'nginx:1', port: 80 },
@@ -1085,10 +1093,10 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
             expect(authorization.binding.deploymentPreparationAdmission).toEqual({ operation: 'create', mode, source: { id: 'source' },
                 requestKey: input.requestKey, protection: input.protection, purpose: input.purpose, deployerMode: input.deployerMode,
-                deployerPrincipals: input.deployerPrincipals });
+                deployerPrincipals: input.deployerPrincipals, ...(preview ? { preview } : {}) });
             const verify = (path: string, body: unknown, method = 'GET', routeInput?: unknown, effect = actionId) =>
                 verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization, path, body, effect, method, routeInput));
-            const prepared = { serverId, projectSourceId: input.projectSourceId, requestKey: input.requestKey,
+            const prepared = { serverId, projectSourceId: input.projectSourceId, requestKey: input.requestKey, ...(preview ? { preview } : {}),
                 protection: input.protection, purpose: input.purpose, deployerMode: input.deployerMode, deployerPrincipals: input.deployerPrincipals,
                 controllerMachineId: 'machine', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
             expect(Boolean(await verify('/v1/deployments/environments', prepared, 'POST', prepared))).toBe(mode === 'apply');
@@ -1124,7 +1132,12 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 artifactId: 'another', principal: { kind: 'team', teamId: 'unrelated' }, accessLevel: 'admin',
             }, 'PUT')).toBeNull();
             storage.state.deploymentRead.sourceReadable = false;
-            for (const [path, routeInput] of reads) expect.soft(await verify(path, undefined, 'GET', routeInput), path).toBeNull();
+            for (const [path, routeInput] of reads) expect.soft(await verify(path, undefined, 'GET', routeInput), path).not.toBeNull();
+            const refused = await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport({
+                ...input, requestKey: randomUUID(),
+            })));
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
         } finally {
             storage.state.deploymentRead.enabled = false;
             storage.state.deploymentRead.sourceReadable = true;
@@ -1193,9 +1206,14 @@ describe('installed Session proposal admission at the Home mint route', () => {
             expect(await verify('/access/key-envelopes', commit, 'POST')).toBeNull();
             creation.artifact.accountId = 'account'; creation.artifact.accountGrants = [];
             creation.membershipActive = false;
-            expect(await verify('/access/grants', grant, 'PUT'), 'retired Source management withdraws preparation').toBeNull();
-            expect(await verify('/access/recipients')).toBeNull();
-            expect(await verify('/access/key-envelopes', commit, 'POST')).toBeNull();
+            expect(await verify('/access/grants', grant, 'PUT')).not.toBeNull();
+            expect(await verify('/access/recipients')).not.toBeNull();
+            expect(await verify('/access/key-envelopes', commit, 'POST')).not.toBeNull();
+            const refused = await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport({
+                ...input, requestKey: randomUUID(),
+            })));
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
         } finally {
             rows.enabled = false; rows.sourceReadable = true; rows.source.owner = originalOwner;
             creation.team = null; creation.membershipActive = true; creation.artifact.accountId = 'account';
@@ -1206,6 +1224,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
 
     it.each(['deployments.environments.create', 'deployments.environments.update'] as const)(
         'admits private definition preparation under %s without granting another mutation', async actionId => {
+            storage.state.deploymentRead.enabled = true;
+            storage.state.deploymentRead.sourceReadable = true;
             const { app, mint } = createApp('account');
             const serverId = 'srv_proposal_admission';
             const content = { serverId, contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -1241,6 +1261,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
         ['deployments.environments.update', false, 'e2ee', 1], ['deployments.environments.update', false, 'e2ee', 2],
     ] as const)(
         'admits binding preparation reads under %s with builder change %s in %s v%s without other writes', async (actionId, buildChanged, mode, version) => {
+            storage.state.deploymentRead.enabled = true;
+            storage.state.deploymentRead.sourceReadable = true;
         const { app, mint } = createApp('account');
         const previousMode = storage.account.encryptionMode;
         storage.account.encryptionMode = mode;
@@ -1325,6 +1347,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
     });
     it.each(['deployments.deploy', 'deployments.rollback', 'deployments.promote', 'deployments.teardown', 'machines.services.logs.read'] as const)(
         'admits only current Environment reads prepared by the installed %s owner', async actionId => {
+            storage.state.deploymentRead.enabled = true;
+            storage.state.deploymentRead.sourceReadable = true;
             const { app, mint } = createApp('account');
             const serverId = 'srv_proposal_admission';
             const deploymentInput = {
@@ -1359,7 +1383,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         readPath, payload, effect, method, routeInput)), readPath).toBeNull();
                 }
                 expect(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
-                    path, undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' })))).toBe(true);
+                    path, undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' })))).toBe(actionId !== 'machines.services.logs.read');
                 if (actionId !== 'machines.services.logs.read') {
                     const rows = { kinds: ['workspace-ref'], serverId };
                     const candidateCreate = { id: crypto.randomUUID(), kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
@@ -1374,8 +1398,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
                                 actionOperationId: 'deployment-operation', expectedRevision: 1,
                                 requestBodyDigest: computeDeploymentTransitionRequestDigestV1(transitionBody) } } }) };
                     for (const [readPath, body, effect, method, routeInput] of [
-                        [`/v1/deployments/receipts/receipt?serverId=${serverId}`, undefined, 'deployments.receipts.get', 'GET',
-                            { serverId, deploymentId: 'receipt' }],
+                        [`/v1/deployments/receipts/active-receipt?serverId=${serverId}`, undefined, 'deployments.receipts.get', 'GET',
+                            { serverId, deploymentId: 'active-receipt' }],
                         ['/v1/artifacts/candidate', undefined, actionId, 'GET', { id: 'candidate' }],
                         ['/v1/account/encryption/currentness', undefined, actionId, 'GET', {}],
                         [`/v1/deployments/environments/staging/${actionId.slice('deployments.'.length)}`, admission, actionId, 'POST', admission],
@@ -1840,6 +1864,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
         storage.state.creation.artifact.accountId = 'account';
         storage.state.creation.artifact.kind = null;
         storage.state.creation.artifact.accountGrants = [];
+        storage.state.deploymentRead.enabled = false;
+        storage.state.deploymentRead.sourceReadable = true;
         storage.state.deploymentRead.source.owner = { kind: 'account', accountId: 'account' };
     });
 
@@ -1950,7 +1976,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         }
     });
 
-    it.each(['account', 'terminal'] as const)('admits invitation proposals with %s credentials without execution authority', async kind => {
+    it.each(['account', 'terminal'] as const)('admits invitation proposals with %s credentials as ordinary host automation', async kind => {
         const { app, mint, dispatch } = createApp(kind);
         try {
             for (const actionId of ['teams.invitations.create', 'teams.invitations.reissue']) {
@@ -1968,7 +1994,9 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 const path = actionId === 'teams.invitations.create'
                     ? '/v1/teams/invitations/create' : '/v1/teams/invitations/reissue';
                 expect(await verifyExternalActionDomainExecutionRequest(
-                    signedRequestProof(authorization, path, body.envelope.input))).toBeNull();
+                    signedRequestProof(authorization, path, body.envelope.input))).toMatchObject({
+                    effectiveAuthority: 'account_automation', principal: { authority: 'account_automation' },
+                });
                 storage.state.bound = false;
                 expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
                 expect(await verifyProposalCurrentness(authorization)).toBeNull();
@@ -2234,9 +2262,12 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 const humanCredential = await auth.createToken('account', undefined, {
                     kind: 'account', authority: 'present_user',
                 });
-                // The proposal carrier remains automation authority and cannot perform the effect.
+                // Signed native host automation reaches the ordinary approval policy;
+                // verification never upgrades it to present-user authority.
                 expect(await verifyExternalActionDomainExecutionRequest(
-                    signedRequestProof(authorization, path, body.envelope.input))).toBeNull();
+                    signedRequestProof(authorization, path, body.envelope.input))).toMatchObject({
+                    effectiveAuthority: 'account_automation', principal: { authority: 'account_automation' },
+                });
                 // Artifact persistence and the Home domain HTTP effect are
                 // boundaries; the approval, signature and egress owners are real.
                 const deps = {
@@ -2268,7 +2299,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         && verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
                             actionId: request.actionId, input: request.actionArgs, target: authorization.binding.target,
                             signature: request.executionOriginV1.externalActionInputSignature!, publicKey: installation.publicKey }),
-                    isActionApprovalRequired: () => false,
+                    isActionApprovalRequired: () => true,
                 };
                 // Unused transport arms are absent from this boundary fixture.
                 const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
@@ -2291,11 +2322,13 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 expect(verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
                     actionId, target: body.envelope.target, input: request.actionArgs,
                     signature: request.executionOriginV1.externalActionInputSignature!, publicKey: installation.publicKey })).toBe(true);
-                const decide = (authority: 'account_automation' | 'present_user') => executor.execute(
+                const decide = (authority: 'account_automation' | 'present_user', surface: 'ui' | 'api' = 'ui') => executor.execute(
                     'approval.request.decide', { artifactId: 'proposal-approval', decision: 'approve' },
-                    { surface: 'ui', authority, serverId: 'profile', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+                    { surface, authority, serverId: 'profile', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
                         actionRequestId: `human-${actionId}` });
-                expect(await decide('account_automation')).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+                // API automation retains the credential decision floor. Native host automation
+                // follows the ordinary approval preference rather than a blanket human floor.
+                expect(await decide('account_automation', 'api')).toMatchObject({ ok: false, errorCode: 'present_user_required' });
                 expect(effects).toBe(0);
                 const human = await decide('present_user');
                 expect(human.ok).toBe(true);
