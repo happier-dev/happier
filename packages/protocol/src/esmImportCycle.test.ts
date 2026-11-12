@@ -26,6 +26,24 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 }
 
 describe('protocol ESM import safety', () => {
+  it.each([
+    'sessions/pending/pendingRequestedActionV1.ts',
+    'sessions/messages/sessionPendingMachineAdmissionV1.ts',
+    'account/publicProfilePublication.ts',
+    'account/publicProfileIntents.ts',
+    'actions/projectActionFamily.ts',
+  ])('consumes the Action catalog with %s first under the native source runtime', async (entryPath) => {
+    const catalog = pathToFileURL(path.join(__dirname, 'actions/actionSpecs.ts')).href;
+    const projects = pathToFileURL(path.join(__dirname, 'actions/projectActionFamily.ts')).href;
+    await importInFreshProcess(entryPath, `
+      const { strict: assert } = await import('node:assert');
+      const { ACTION_SPECS, getActionSpec } = await import(${JSON.stringify(catalog)});
+      const { PROJECT_ACTION_SPECS_V1 } = await import(${JSON.stringify(projects)});
+      for (const spec of PROJECT_ACTION_SPECS_V1) assert.equal(getActionSpec(spec.id).id, spec.id);
+      assert.equal(new Set(ACTION_SPECS.map(spec => spec.id)).size, ACTION_SPECS.length);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
   it.each(['actions/operations/v1.ts', 'actions/specs/actionOperations.ts', 'plugins/contributions/v2.ts', 'plugins/contributions/machineProvisioners.ts'])(
     'projects Action operations with %s first under the fresh public CLI source runtime', async (entryPath) => {
       const specs = pathToFileURL(path.join(__dirname, 'actions/specs/actionOperations.ts')).href;
