@@ -27,7 +27,8 @@ import {
   type HappierPublicProfileLabels,
   type HappierPublicProfileOwner,
 } from '../../components/PublicProfile.js';
-import type { PublicUsageOriginalLabels } from './PublicProfileUsage.js';
+import { PublicProfileUsageBody, type PublicUsageOriginalLabels } from './PublicProfileUsage.js';
+import { projectPublicUsageChartModels } from '../../data/publicUsageChartModels.js';
 
 const coverage = { status: 'partial', method: 'mixed' } as const;
 const snapshot = PublicProfileSnapshotV1Schema.parse({
@@ -182,6 +183,39 @@ function render(
 }
 
 describe('HappierPublicProfile', () => {
+  it('renders a public usage_flow river with an unknown week without inventing an Agent', () => {
+    const models = { ...projectPublicUsageChartModels(snapshot, {}), river: {
+      width: 'share' as const,
+      weeks: [{ start: '2026-10-26', end: '2026-11-01', partial: false, total: null, shares: null }],
+    } };
+    const mounted = mountThroughReactNativeWeb(createElement(HappierUiEnvironmentProvider, {
+      environment: projectHappierUiEnvironment(createSurfaceContext()),
+      children: createElement(PublicProfileUsageBody, {
+        presentation: { kind: 'usage', widgetId: 'usage_flow', inputs: { style: 'river' } },
+        models, records: null, width: 720, testID: 'unknown-river', host: {
+          paint: { accent: '#007aff', paper: '#fff', dark: false },
+          agent: id => ({ id, name: 'Invented Agent', color: '#007aff' }),
+          labels: { chartLabel: () => 'Public flow', unavailable: 'Unavailable', river: {
+            week: String, partialWeek: String, inline: String, caption: '', unknownAgent: 'Unattributed Agent',
+            values: { show: 'Show values', hide: 'Hide values', unknownLabel: 'Unreported',
+              weekColumn: 'Week', totalColumn: 'Total', formatTotal: String, percent: String },
+          } },
+        },
+      }),
+    }));
+    try {
+      const toggle = mounted.container.querySelector<HTMLElement>('[data-testid="unknown-river-values-toggle"]');
+      expect(toggle).not.toBeNull();
+      act(() => toggle!.click());
+      const table = mounted.container.querySelector('[data-testid="unknown-river-values"]');
+      expect(table).not.toBeNull();
+      expect(table!.textContent).toContain('2026-10-26');
+      expect(table!.textContent).toContain('Unreported');
+      expect(table!.textContent).not.toContain('Agent');
+      expect(mounted.container.textContent).not.toContain('Invented Agent');
+    } finally { mounted.unmount(); }
+  });
+
   it('shares one model projection across twenty child widgets instead of revisiting 1000 facts per widget', async () => {
     const view = projectPublicProfile({ context, snapshot: { ...snapshot, facts: { ...snapshot.facts,
       sessionDurations: Array.from({ length: 1000 }, () => ({ agentId: 'codex', durationMs: 100 })) } }, metadata: {},
