@@ -179,3 +179,37 @@ it('isolates a retained dependent without altering the serving incumbent when pr
     }
     expect(borrowedDisposals).toBe(1);
 });
+
+it('keeps healthy prepared activation custody available after a peer fails readiness', async () => {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+        plugins: ['acme.rejected', 'acme.healthy'].map(id => ({
+            manifest: createPluginManifestV2Fixture({ id, contributes: {
+                actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['cli'],
+                    execution: { target: 'daemon' }, placementBindings: ['commandPalette'], dangerLevel: 'safe' }],
+            } }),
+            files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("read", async () => ({ healthy: true })); }' },
+        })),
+        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
+            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+            referenceGraph: { loadedPlugins: [], diagnosticsByPluginId: {} },
+        })),
+    });
+    try {
+        // Readiness releases the rejected component before adoption captures
+        // prepared custody. The healthy peer must remain adoptable.
+        await fixture.registry.recordPluginActivationFailure('acme.rejected', 'Host readiness rejected the candidate');
+        const prepared = fixture.registry.retainPreparedActivationRegistryComponents?.() ?? [];
+        try {
+            expect(prepared.flatMap(lease => [...lease.pluginIds])).toEqual(['acme.healthy']);
+            const executor = createActionExecutor({
+                ...createUnavailableActionTransportDeps(),
+                invokeContributedAction: createCommittedContributedActionInvoker({
+                    acquireRuntimeRegistryLease: async () => ({ registry: fixture.registry, source: 'ephemeral', durableRevision: -1, release: async () => {} }),
+                }),
+            });
+            expect(await executor.execute('action.invoke', {
+                action: { pluginId: 'acme.healthy', localId: 'read' }, input: {},
+            }, { surface: 'cli' })).toMatchObject({ ok: true, result: { healthy: true } });
+        } finally { await Promise.all(prepared.map(lease => lease.release())); }
+    } finally { await fixture.dispose(); }
+});
