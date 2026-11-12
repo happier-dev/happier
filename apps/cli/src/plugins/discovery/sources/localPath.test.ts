@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -52,6 +52,18 @@ async function writeStandaloneManifest(manifestPath: string, manifestOverrides?:
 }
 
 describe('resolveLocalPathPluginSource', () => {
+  it('loads an npm first-party materialization while retaining archive namespace refusal', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-first-party-npm-'));
+    try {
+      await writePluginManifest(pluginRoot, { id: 'happier.asciinema' });
+      expect(await resolveLocalPathPluginSource({ locator: pluginRoot, installedSourceKind: 'package',
+        registryPackageName: '@happier-dev/plugins-asciinema', purpose: 'installedRead' }))
+        .toMatchObject({ ok: true, manifest: { id: 'happier.asciinema' } });
+      expect(await resolveLocalPathPluginSource({ locator: pluginRoot, installedSourceKind: 'archive',
+        purpose: 'installedRead' })).toMatchObject({ ok: false });
+    } finally { await rm(pluginRoot, { recursive: true, force: true }); }
+  });
+
   it('resolves a plugin root directory into a parsed local-path plugin source', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-'));
     const manifestPath = await writePluginManifest(pluginRoot);

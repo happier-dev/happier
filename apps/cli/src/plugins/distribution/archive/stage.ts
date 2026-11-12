@@ -601,6 +601,7 @@ export async function stageNpmCompatiblePluginArchive(
       // Staging only ever expands a published package or archive, which is
       // exactly what the registry-lifecycle rules describe.
       sourceProvenance: 'registryCustodied',
+      registryPackageName: params.expectedPackage?.name,
     });
     assertStagingNotAborted(params.signal);
     if (!manifestResult.ok) {

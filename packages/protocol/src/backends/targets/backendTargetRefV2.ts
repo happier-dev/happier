@@ -37,7 +37,7 @@ function resolveBundledAgentIdentityV1(backendId: string): PluginContributionIde
 }
 
 /** The bundled routing id a canonical Agent key names, for callers that route by it. */
-function resolveBundledAgentRoutingIdV1(identity: PluginContributionIdentityV1): string | null {
+export function resolveBundledAgentRoutingIdV1(identity: PluginContributionIdentityV1): string | null {
   const persistedAgentId = resolveAgentIdFromPersistedContributionIdentityV1(identity);
   if (persistedAgentId) return persistedAgentId;
   for (const [agentId, candidate] of Object.entries(BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1)) {

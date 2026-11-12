@@ -17,7 +17,7 @@ import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPat
 import { resolveAuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { resolvePublishedPinnedRunnerSnapshotById } from '@happier-dev/cli-common/pinnedRunnerSnapshot';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../projection/registry/sources/generatedBundledPluginManifests';
-import { readPluginManifest } from '../manifest/read';
+import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '../manifest/read';
 import { ingestCanonicalPluginManifest } from '../manifest/ingest';
 import { readBundledPluginManifestInput } from '../projection/registry/builtIn/manifestFile';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
@@ -394,6 +394,7 @@ export async function attestRetainedPluginSource(params: Readonly<{
             : join(rootPath, '.happier-plugin', 'plugin.json'),
         manifestAuthority,
         sourceProvenance: generation?.record.sourceProvenance ?? 'localSource',
+        registryPackageName: generation ? await readAdmittedGenerationNpmPackageName(generation) : undefined,
     });
     if (!manifest.ok || manifest.manifest.id !== params.pluginId) {
         throw new Error('Retained plugin immutable declaration source mismatch');

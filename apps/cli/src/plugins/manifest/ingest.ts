@@ -28,7 +28,7 @@ export type CanonicalPluginManifestIngestionResult =
 export type PluginManifestReadPurpose = 'admission' | 'installedRead' | 'authoring';
 
 type CanonicalPluginManifestIngestionOptions =
-  Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'sourceProvenance' | 'enforceEngineCompatibility'>
+  Pick<PluginManifestValidationOptions, 'manifestAuthority' | 'sourceProvenance' | 'registryPackageName' | 'enforceEngineCompatibility'>
   & Readonly<{ purpose?: PluginManifestReadPurpose }>;
 
 export function ingestCanonicalPluginManifest(

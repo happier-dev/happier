@@ -37,6 +37,7 @@ export type PluginCompatibilityProjectionEvaluation =
  */
 export function evaluatePluginCompatibilityProjection(
   input: unknown,
+  registryPackageName?: string,
 ): PluginCompatibilityProjectionEvaluation {
   const parsed = CompatibilityProjectionEnvelopeSchema.safeParse(input);
   if (!parsed.success) {
@@ -53,6 +54,7 @@ export function evaluatePluginCompatibilityProjection(
   // artifact; nothing local reaches this evaluation.
   const manifestValidation = ingestCanonicalPluginManifest(parsed.data.manifest, {
     sourceProvenance: 'registryCustodied',
+    registryPackageName,
     purpose: 'admission',
   });
   if (!manifestValidation.ok) {

@@ -1,3 +1,4 @@
+import { createImmutablePluginGenerationRecordFromSource } from '../store/registry/generationStore';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readPluginManifest } from './read';
+import { readPluginManifest, readAdmittedGenerationNpmPackageName } from './read';
 import { ingestCanonicalPluginManifest } from './ingest';
 import { serializeCanonicalPluginManifest } from './serialize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -17,6 +18,21 @@ const requireFromCli = createRequire(import.meta.url);
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 describe('readPluginManifest target route', () => {
+  it('reloads a retained first-party npm generation using its acquired package identity', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-retained-npm-'));
+    roots.push(rootPath);
+    await writeFile(join(rootPath, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-asciinema' }));
+    const manifestPath = join(rootPath, 'plugin.json');
+    await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ id: 'happier.asciinema' })));
+    const record = await createImmutablePluginGenerationRecordFromSource({ pluginId: 'happier.asciinema',
+      sourceRootPath: rootPath, manifestRelativePath: 'plugin.json',
+      distribution: { kind: 'npm', registryOrigin: 'https://registry.npmjs.org', packageName: '@happier-dev/plugins-asciinema' },
+      updatePolicy: 'allowed', createdAtMs: 1 });
+    expect(await readPluginManifest({ manifestPath, sourceProvenance: record.sourceProvenance, purpose: 'installedRead',
+      registryPackageName: await readAdmittedGenerationNpmPackageName({ rootPath, record }) }))
+      .toMatchObject({ ok: true, manifest: { id: 'happier.asciinema' } });
+  });
+
   it('loads stored retired families at installed-file ingress while keeping authoring strict', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-manifest-retired-'));
     roots.push(root);

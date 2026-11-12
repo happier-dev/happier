@@ -1,8 +1,17 @@
+import { buildBackendTargetKeyV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { describe, expect, it } from 'vitest';
-import { ExecutionRunStartCliInputSchema, bindExecutionRunStartCliInput } from './executionRunCli.js';
+import { ExecutionRunStartCliInputSchema, bindExecutionRunStartCliInput, readExecutionRunCliBackendTarget } from './executionRunCli.js';
 import { readActionCliDerivedDefault } from '../actionCliProjection.js';
 
 describe('friendly execution Run target', () => {
+  it('keeps npm first-party Agents qualified instead of inferring bundled routing from their namespace', () => {
+    const key = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.asciinema', localId: 'assistant' } });
+    expect(readExecutionRunCliBackendTarget(key)).toMatchObject({ backendId: 'happier.asciinema/assistant' });
+    expect(readExecutionRunCliBackendTarget(buildBackendTargetKeyV2({ kind: 'agent',
+      identity: { pluginId: 'happier.agent.claude', localId: 'claude' } })))
+      .toMatchObject({ backendId: 'claude' });
+  });
+
   it('binds an authored cwd without a Session as explicitly detached and preserves Session selection', () => {
     const detached = ExecutionRunStartCliInputSchema.parse({ cwd: '/repo', intent: 'scm_commit_message', agent: 'codex' });
     const detachedInput = bindExecutionRunStartCliInput(detached);

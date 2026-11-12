@@ -86,6 +86,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
    * which is a working tree on this machine by construction.
    */
   installedSourceKind?: PluginSourceKindV1;
+  registryPackageName?: string;
   purpose?: PluginManifestReadPurpose;
 }>): Promise<ResolvedLocalPathPluginSource> {
   const rawLocator = String(params.locator ?? '').trim();
@@ -126,7 +127,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{
   const { pluginRootPath, manifestPath } = resolveManifestLocation(canonicalPath, pathStat.isFile());
   const manifestAuthority = 'external' as const;
   const sourceProvenance = pluginSourceProvenanceForKind(params.installedSourceKind);
-  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance, purpose: params.purpose });
+  const manifestRead = await readPluginManifest({ manifestPath, manifestAuthority, sourceProvenance, registryPackageName: params.registryPackageName, purpose: params.purpose });
   if (!manifestRead.ok) {
     return manifestRead;
   }

@@ -68,8 +68,9 @@ respectively, under the public SDK approval policy. There is no post-publish
 live smoke in this pipeline.
 
 Publication prerequisites remain real: a plugin requiring `>=0.3.0-0` cannot be
-admitted by the current `0.2.10` source host, and a `happier.*` id fails public
-npm registry namespace admission. Local archive installation is not proof of
+admitted by the current `0.2.10` source host, and a `happier.*` id is admitted from npm only when the resolved package
+name is in the `@happier-dev/` scope. Other npm packages remain rejected, and
+registry packages cannot replace a bundled plugin id. Local archive installation is not proof of
 registry namespace eligibility. Asciinema's package is currently an uncommitted
 consumer, not evidence of an npm release.
 

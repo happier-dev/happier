@@ -67,5 +67,8 @@ export async function resolveInstalledPluginSource(params: Readonly<{
       }],
     };
   }
-  return await resolveLocalPathPluginSource({ locator, installedSourceKind: record.source.kind, purpose: 'installedRead' });
+  const distribution = record.install.trust?.distribution;
+  return await resolveLocalPathPluginSource({ locator, installedSourceKind: record.source.kind,
+    registryPackageName: distribution?.kind === 'npm' ? distribution.packageName : undefined,
+    purpose: 'installedRead' });
 }

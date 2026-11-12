@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { readPluginManifest } from '@/plugins/manifest/read';
+import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '@/plugins/manifest/read';
 import type { PluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import type { PluginStorePaths } from '../paths';
 import {
@@ -109,6 +109,7 @@ async function inspectManifestLoadability(
       ),
       manifestAuthority: 'external',
       sourceProvenance: generation.record.sourceProvenance,
+      registryPackageName: await readAdmittedGenerationNpmPackageName(generation),
     });
   } catch (error) {
     return Object.freeze([Object.freeze({

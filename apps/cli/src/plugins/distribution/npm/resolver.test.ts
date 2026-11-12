@@ -46,6 +46,20 @@ describe('resolveNpmArtifactMetadata', () => {
     },
   };
 
+  it('selects first-party registry compatibility using the requested npm identity', async () => {
+    const projection = compatibilityProjection('1.0.0');
+    projection.manifest.id = 'happier.asciinema';
+    const packageName = '@happier-dev/plugins-asciinema';
+    const result = await resolveNpmArtifactMetadata({
+      request: { ...base, packageName, selection: { ...base.selection, packageName }, selector: { kind: 'tag', value: 'latest' } },
+      client: jsonClient({ name: packageName, 'dist-tags': { latest: '1.0.0' }, versions: {
+        '1.0.0': { name: packageName, version: '1.0.0', happier: { compatibilityProjection: projection },
+          dist: { integrity, tarball: 'https://registry.example.test/plugin.tgz' } },
+      } }),
+    });
+    expect(result.compatibility.automaticEligible).toBe(true);
+  });
+
   it('resolves a range to one highest immutable exact version', async () => {
     await expect(resolveNpmArtifactMetadata({
       request: { ...base, selector: { kind: 'range', value: '^1.2.0' } },

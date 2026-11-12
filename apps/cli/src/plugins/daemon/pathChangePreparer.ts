@@ -30,7 +30,7 @@ import {
 import { join, relative } from 'node:path';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
-import { readPluginManifest } from '@/plugins/manifest/read';
+import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '@/plugins/manifest/read';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { projectPluginAttributedCompatibilityFailure, projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
@@ -329,6 +329,7 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
                 ...incumbentGeneration.record.manifestRelativePath.split('/'),
               ),
               sourceProvenance: incumbentGeneration.record.sourceProvenance,
+              registryPackageName: await readAdmittedGenerationNpmPackageName(incumbentGeneration),
             });
             if (incumbent.ok && incumbent.manifest.id === projected.manifest.id) {
               incumbentAuthorityManifest = incumbent.manifest;

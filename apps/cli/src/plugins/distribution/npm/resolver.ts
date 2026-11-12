@@ -87,6 +87,7 @@ function compatibilityDiagnostic(
 function evaluateCandidateCompatibility(
   metadata: unknown,
   candidateVersion: string,
+  packageName: string,
 ): CandidateCompatibility {
   if (!isRecord(metadata)) {
     return Object.freeze({
@@ -112,7 +113,7 @@ function evaluateCandidateCompatibility(
       ]),
     });
   }
-  const evaluation = evaluatePluginCompatibilityProjection(projection);
+  const evaluation = evaluatePluginCompatibilityProjection(projection, packageName);
   if (
     evaluation.kind !== 'invalid'
     && evaluation.projection.manifest.version !== candidateVersion
@@ -156,7 +157,7 @@ function selectCompatibleVersion(params: Readonly<{
   const evaluate = (version: string): CandidateCompatibility => {
     const existing = evaluations.get(version);
     if (existing) return existing;
-    const next = evaluateCandidateCompatibility(params.versions[version], version);
+    const next = evaluateCandidateCompatibility(params.versions[version], version, params.request.packageName);
     evaluations.set(version, next);
     return next;
   };

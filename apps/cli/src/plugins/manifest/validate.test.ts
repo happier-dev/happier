@@ -421,6 +421,21 @@ describe('validatePluginManifest', () => {
     }
   });
 
+  it('admits Happier npm scope without allowing bundled identity replacement', () => {
+    const registry = { sourceProvenance: 'registryCustodied' as const };
+    expect(validatePluginManifest(createManifest('happier.asciinema'), {
+      ...registry, registryPackageName: '@happier-dev/plugins-asciinema',
+    })).toMatchObject({ ok: true });
+    for (const registryPackageName of ['acme-x', '@acme/x', '@happier-dev-other/x', undefined]) {
+      expect(validatePluginManifest(createManifest('happier.asciinema'), {
+        ...registry, registryPackageName,
+      })).toMatchObject({ ok: false });
+    }
+    expect(validatePluginManifest(createManifest(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS[0]!.pluginId), {
+      ...registry, registryPackageName: '@happier-dev/impostor',
+    })).toMatchObject({ ok: false });
+  });
+
   it('scopes the reserved happier namespace to registry-custodied artifacts', () => {
     // The rule stops a *published* artifact from impersonating a first-party
     // plugin. A working tree on this machine is the maintainer's own dev loop:

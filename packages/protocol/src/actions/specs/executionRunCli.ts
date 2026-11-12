@@ -9,13 +9,12 @@ import {
   BackendTargetKeyV2Schema,
   parseBackendTargetKeyV2,
   readBackendTargetRefV2,
+  resolveBundledAgentRoutingIdV1,
   type BackendTargetRefV2,
 } from '../../backends/targets/backendTargetRefV2.js';
 import {
   buildQualifiedPluginContributionKey,
-  resolveAgentIdFromPersistedContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
-import { isReservedHappierPluginId } from '../../plugins/pluginId.js';
 import {
   ExecutionRunClassSchema,
   ExecutionRunIntentSchema,
@@ -29,7 +28,7 @@ import { EXECUTION_RUN_INTENT_OPTIONS, EXECUTION_RUN_INTENT_POLICY_MATRIX } from
 import {
   EXECUTION_RUN_ACTION_PERMISSION_INPUTS,
   ExecutionRunActionPermissionModeSchema,
-  type ExecutionRunActionPermissionMode,
+  defaultExecutionRunPermissionMode,
 } from '../executionRunActionPermissionMode.js';
 import { actionCliDerivedDefault, type ActionCliProjection } from '../actionCliProjection.js';
 
@@ -37,11 +36,7 @@ const SessionSelectorSchema = lazyZodSchema(() => z.string().check(z.trim(), z.m
 const RunIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
 /** Existing friendly defaults, shared by the compiled command and workflow adapters. */
-export function defaultExecutionRunPermissionMode(
-  intent: ExecutionRunIntent,
-): ExecutionRunActionPermissionMode {
-  return intent === 'delegate' ? 'workspace_write' : 'read_only';
-}
+export { defaultExecutionRunPermissionMode };
 
 export function defaultExecutionRunClass(intent: ExecutionRunIntent): 'bounded' | 'long_lived' {
   return EXECUTION_RUN_INTENT_POLICY_MATRIX[intent].allowedRunClasses[0];
@@ -76,10 +71,8 @@ export function readExecutionRunCliBackendTarget(raw: string): BackendTargetRefV
     if (v2Key.success) {
       const target = parseBackendTargetKeyV2(v2Key.data);
       if (target.kind === 'backend') return readBackendTargetRefV2(target);
-      const backendId = resolveAgentIdFromPersistedContributionIdentityV1(target.identity)
-        ?? (isReservedHappierPluginId(target.identity.pluginId)
-          ? target.identity.localId
-          : buildQualifiedPluginContributionKey(target.identity));
+      const backendId = resolveBundledAgentRoutingIdV1(target.identity)
+        ?? buildQualifiedPluginContributionKey(target.identity);
       return { kind: 'backend', backendId, sourceKind: 'built_in' };
     }
 

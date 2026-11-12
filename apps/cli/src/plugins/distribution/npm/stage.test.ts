@@ -254,6 +254,16 @@ async function createCandidateFixture(overrides: FixtureOverrides = {}): Promise
 }
 
 describe('stageDownloadedNpmArtifactCandidate', () => {
+  it('admits an npm-scoped happier plugin through archive staging', async () => {
+    const fixture = await createCandidateFixture({ packageName: '@happier-dev/plugins-asciinema', manifestId: 'happier.asciinema' });
+    const result = await stageDownloadedNpmArtifactCandidate({
+      candidate: { ...fixture.candidate, source: { ...fixture.candidate.source, packageName: '@happier-dev/plugins-asciinema' } },
+      stagingParentPath: fixture.stagingParentPath,
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) await cleanupStagedNpmArtifactCandidate(result.candidate);
+  });
+
   it('retains typed Settings attribution from a real tarball without echoing the invalid default', async () => {
     const invalidDefault = 'private-settings-value';
     const fixture = await createCandidateFixture({ pluginManifestBody: JSON.stringify(createPluginManifestV2Fixture({

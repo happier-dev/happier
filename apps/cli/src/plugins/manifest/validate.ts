@@ -6,6 +6,8 @@ import { isReservedHappierPluginId } from '@happier-dev/protocol/plugins/plugin-
 import { ingestPluginManifestV2, validatePublicPluginManifestPolicy } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol';
 
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../projection/registry/sources/generatedBundledPluginManifests';
+
 import { configuration } from '../../configuration';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { normalizeParsedPluginManifestV2 } from './normalize';
@@ -39,6 +41,8 @@ export type PluginManifestValidationOptions = Readonly<{
    * record because of it.
    */
   sourceProvenance: PluginSourceProvenance;
+  /** Resolved npm identity from acquisition custody, never the plugin manifest. */
+  registryPackageName?: string;
   /** Author-time validation may opt out; host load ingestion always enforces it. */
   enforceEngineCompatibility?: boolean;
   parsedManifest?: ParsedPluginManifestV2;
@@ -74,7 +78,9 @@ export function validatePluginManifest(input: unknown, options: PluginManifestVa
   // declarations may use first-party ids but still must support this host.
   const enforcesRegistryNamespace = options.sourceProvenance === 'registryCustodied'
     && manifestAuthority !== 'bundled_first_party';
-  if (isReservedHappierPluginId(manifest.id) && enforcesRegistryNamespace) {
+  if (isReservedHappierPluginId(manifest.id) && enforcesRegistryNamespace
+    && (!/^@happier-dev\/[^/]+$/.test(options.registryPackageName ?? '')
+      || BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.some(locator => locator.pluginId === manifest.id))) {
     diagnostics.push({ code: 'plugin_manifest_semantic_invalid', message: `Plugin id '${manifest.id}' uses the reserved happier.* namespace` });
   }
   if (derivePluginDaemonContributionRegistrationRights(manifest.contributes as Readonly<Record<string, unknown>>).length > 0
