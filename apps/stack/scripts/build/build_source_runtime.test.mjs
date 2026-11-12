@@ -2312,6 +2312,59 @@ test('source preparation preserves a missing loader code across the real finite 
   await assert.rejects(access(fixture.path('candidate/source-bundle.json')), { code: 'ENOENT' });
 });
 
+for (const failures of [1, 2]) {
+test(`source reload retries adoption of the same capture after ${failures} readiness failures`, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-adopt-retry-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const native = await installSourceAdmissionFixture(fixture.root);
+  const witness = fixture.path('probe-attempts');
+  const fail = fixture.path('fail-probe');
+  const repoDir = await createReloadDaemonRepo(fixture, `
+    import { existsSync, appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+    if (existsSync(${JSON.stringify(fail)})) {
+      const remaining = Number(readFileSync(${JSON.stringify(fail)}, 'utf8'));
+      appendFileSync(${JSON.stringify(witness)}, import.meta.url + '\\n');
+      writeFileSync(${JSON.stringify(fail)}, String(remaining - 1));
+      if (remaining === 1 && ${failures} === 2) throw new TypeError('adopt-readiness-second-failure');
+      if (remaining > 0) throw new ReferenceError('adopt-readiness-unavailable');
+    }
+    export const ready = true;
+  `);
+  const stackBaseDir = fixture.path('stacks/qa');
+  const bundleRoot = fixture.path('stacks/source-bundles');
+  let captures;
+  const options = { stackName: 'qa', stackBaseDir, repoDir, onHost: true,
+    args: ['--no-server', '--no-ui'],
+    env: { ...process.env, ...native.env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://fixture.invalid' },
+    onPhase: phase => {
+      if (phase.phase !== 'checking') return;
+      captures = fs.readdirSync(bundleRoot).filter(name => name.startsWith('runtime-')).sort();
+      fs.writeFileSync(fail, String(failures));
+    } };
+  if (failures === 1) {
+    await native.prepareReload(options);
+    const selected = JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8'));
+    assert.ok(selected.entrypoint);
+  } else {
+    await assert.rejects(native.prepareReload(options), error => {
+      assert.equal(error.loadError?.name, 'TypeError');
+      assert.equal(error.entryGraph, 'daemon');
+      return true;
+    });
+    const refusal = JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+    assert.equal(refusal.status, 'failed');
+    assert.equal(refusal.entryGraph, 'daemon');
+    assert.ok(refusal.firstFailingModule);
+    await assert.rejects(access(join(stackBaseDir, 'source-runtime/selected-daemon.json')), { code: 'ENOENT' });
+  }
+  const attempts = (await readFile(witness, 'utf8')).trim().split('\n');
+  assert.equal(attempts.length, 2, 'one readiness failure permits exactly one adoption retry');
+  assert.equal(new Set(attempts).size, 1, 'both probes import the same finished capture');
+  assert.deepEqual((await readdir(bundleRoot)).filter(name => name.startsWith('runtime-')).sort(), captures,
+    'readiness failure must not allocate a fresh producer build');
+});
+}
+
 test('source reload refusal publishes the failing module and preserves incumbent selection', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
   graph.old.entrypoint = graph.daemon.entrypoint;

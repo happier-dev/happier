@@ -126,8 +126,18 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter }) : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
-      const admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
-        env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+      let admitted;
+      try {
+        admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
+          env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+      } catch (error) {
+        pending.signal.throwIfAborted();
+        // Readiness retries the finished capture, never producer preparation.
+        // The probes keep their existing budget and cancellation signal.
+        await log(`[reload] readiness failed; retrying adoption of the same producer capture:${formatSourceReloadRefusal(error, env)}`);
+        admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
+          env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+      }
       if (components.server) await preflightSourceRuntimeMigrations({ server: components.server,
         env: serverEnv, stackBaseDir, signal: pending.signal });
       const sourceCaptures = { ...remote?.sourceCaptures, ...Object.fromEntries(Object.entries(components)
