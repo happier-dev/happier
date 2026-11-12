@@ -45,6 +45,8 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createCliApprovalsArtifactStore } from './artifactStore';
 
 // Only the Account HTTP boundary is replaced; the real Artifact codec, header
@@ -144,6 +146,35 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+
+  it('replays a retained plugin install at its daemon without requiring a second admission', async () => {
+    const store = createStore();
+    const created = await store.approvalsCreate({ request: installRequest(), serverId: 'home-1' });
+    // The remote Machine RPC is the boundary; Artifact custody and the CLI
+    // approval executor retain their real parsing, decision and replay path.
+    const replay = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async params => {
+      expect(params.machineId).toBe('machine-1');
+      expect(params.method).toBe(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
+      expect(params.request).toEqual({ artifactId: created.artifactId });
+      return { ok: false, errorCode: 'plugin_change_expired', error: 'plugin_change_expired', effectAttempted: false };
+    });
+    try {
+      const executor = createCliActionExecutorFromCredentials({ credentials: { ...credentials(),
+        token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 1,
+          provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+        credentialProvenance: 'stored_session' }, serverId: 'home-1',
+        serverApiUrl: 'http://plugin-approval.invalid', serverIdentityId: 'home-identity' });
+      const result = await executor.execute('approval.request.decide', { artifactId: created.artifactId, decision: 'approve' },
+        { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: 'home-1', serverIdentityId: 'home-identity', runtimeAccountId: 'account-1', actionRequestId: 'decide-retained' });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'failed',
+        execution: { ok: false, errorCode: 'plugin_change_expired' } } });
+      expect(replay).toHaveBeenCalledTimes(1);
+      expect(await store.approvalsGet({ artifactId: created.artifactId, serverId: 'home-1' }))
+        .toMatchObject({ status: 'failed', execution: { errorCode: 'plugin_change_expired' } });
+    } finally { replay.mockRestore(); }
+  });
+
 
   it.each(['approve', 'changed-review'] as const)('rejoins an installed update review after native Install confirmation: %s', async outcome => {
     const root = await mkdtemp(join(tmpdir(), 'happier-installed-update-confirmation-'));
@@ -544,7 +575,8 @@ describe('plugin install approval Artifact rejoin', () => {
     });
 
   it.each([['rejected', 'plain'], ['canceled', 'plain'], ['withdrawn', 'plain'], ['expired_origin', 'plain'],
-    ['superseded_source', 'plain'], ['approved', 'plain'], ['successor', 'plain'], ['canceled', 'e2ee']] as const)(
+    ['superseded_source', 'plain'], ['expired_change', 'plain'], ['unknown_admission', 'plain'],
+    ['approved', 'plain'], ['successor', 'plain'], ['canceled', 'e2ee']] as const)(
     'settles the exact %s approval candidate in %s through the real daemon and approval lifecycle', async (outcome, mode) => {
     accountMode = mode;
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-approval-retirement-'));
@@ -584,9 +616,15 @@ describe('plugin install approval Artifact rejoin', () => {
         expect(await store.approvalsUpdate({ ...created, request: approved, serverId: 'home-1' })).toEqual({ ok: true });
         // Existing approval owners record withdrawal as approval_canceled and
         // unavailable origin/source authority as approval_stale, not new states.
-        terminal = ApprovalRequestV2Schema.parse({ ...approved, status: 'failed', updatedAtMs: 3,
-          execution: projectApprovalExecutionFailureV2({ request: approved, executedAtMs: 3, effectAttempted: false,
-            failure: outcome === 'withdrawn'
+        terminal = ApprovalRequestV2Schema.parse({ ...approved,
+          status: outcome === 'unknown_admission' ? 'outcome_unknown' : 'failed', updatedAtMs: 3,
+          execution: projectApprovalExecutionFailureV2({ request: approved, executedAtMs: 3, effectAttempted: outcome === 'unknown_admission',
+            failure: outcome === 'expired_change'
+              ? { ok: false, errorCode: 'plugin_change_expired', error: 'plugin_change_expired' }
+              : outcome === 'unknown_admission'
+              ? { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
+                  details: { reasonCode: 'admission_unavailable' } }
+              : outcome === 'withdrawn'
               ? { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' }
               : { ok: false, errorCode: 'approval_stale', error: 'approval_stale',
                   details: { reason: outcome === 'expired_origin' ? 'credential_expired' : 'plugin_source_changed' } } }),
@@ -606,6 +644,25 @@ describe('plugin install approval Artifact rejoin', () => {
       }
       // Another client's real Artifact lifecycle write bypasses cliActionDeps.
       expect(await createStore().approvalsUpdate({ ...created, request: terminal, serverId: 'home-1' })).toEqual({ ok: true });
+      if (outcome === 'expired_change' || outcome === 'unknown_admission') {
+        const next = await owner.changeService.requestPluginChange({ kind: 'installPath', locator: pluginRoot }, { retainReview: true });
+        expect(next).toMatchObject({ kind: 'reviewRequired' });
+        if (next.kind !== 'reviewRequired') throw new Error('Expected fresh installation candidate');
+        expect(next.pendingChangeId).not.toBe(candidate.pendingChangeId);
+        const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
+          executionOriginV1: { ...request.executionOriginV1, requestId: 'retry-terminal-install' },
+          preview: { pluginInstall: { pendingReview: next } } });
+        const retry = await store.approvalsCreate({ request: nextRequest, serverId: 'home-1' });
+        expect(await createStore().approvalsCreate({ request: nextRequest, serverId: 'home-1' })).toEqual(retry);
+        expect(retry.artifactId).not.toBe(created.artifactId);
+        const approvals = await Promise.all([...rows.keys()].map(artifactId => store.approvalsGet({ artifactId, serverId: 'home-1' })));
+        expect(approvals.filter(approval => approval?.status === 'open')).toHaveLength(1);
+        expect((await owner.changeService.listPendingPluginChanges()).changes).toMatchObject([{ pendingChangeId: next.pendingChangeId }]);
+        expect(await owner.changeService.decidePluginChange({ pendingChangeId: next.pendingChangeId, decision: 'installAndTrust' }))
+          .toMatchObject({ kind: 'committed', pluginId });
+        expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.1.0');
+        return;
+      }
       if (outcome === 'successor') {
         const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
           executionOriginV1: { ...request.executionOriginV1, requestId: 'fresh-owner-consent' } });
@@ -736,12 +793,12 @@ describe('plugin install approval Artifact rejoin', () => {
     expect(http.post).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['rejected', 'executed'] as const)(
+  it.each(['rejected', 'executed', 'failed', 'outcome_unknown'] as const)(
     'creates a fresh approval after the retained review Artifact is %s', async (status) => {
       const store = createStore();
       const request = installRequest();
       const first = await store.approvalsCreate({ request, serverId: 'home-1' });
-      if (status === 'executed') {
+      if (status !== 'rejected') {
         const approved = ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
           decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } });
         expect(await store.approvalsUpdate({ ...first, request: approved, serverId: 'home-1' })).toEqual({ ok: true });
@@ -753,7 +810,11 @@ describe('plugin install approval Artifact rejoin', () => {
             decision: { kind: 'reject', decidedAtMs: 2 } }
         : { ...request, status, updatedAtMs: 4,
             decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
-            execution: { executedAtMs: 4, ok: true, result: { kind: 'committed' } } });
+            execution: status === 'executed'
+              ? { executedAtMs: 4, ok: true, result: { kind: 'committed' } }
+              : { executedAtMs: 4, ok: false,
+                  errorCode: status === 'failed' ? 'plugin_change_expired' : 'approval_execution_outcome_unknown',
+                  error: status === 'failed' ? 'plugin_change_expired' : 'approval_execution_outcome_unknown' } });
       expect(await store.approvalsUpdate({ ...first, request: terminal, serverId: 'home-1' })).toEqual({ ok: true });
 
       const nextRequest = ApprovalRequestV2Schema.parse({

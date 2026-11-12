@@ -61,6 +61,7 @@ import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { replayLiveCliApprovalOrigin } from './approvals/replayLiveOrigin';
+import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { selectApprovalReplayCredentials } from './approvals/replayCredentials';
 import { createExecutionRunHostApprovalReplay } from './approvals/replayExecutionRunHost';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
@@ -1330,10 +1331,14 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (signal?.aborted) return actionFailure('cancelled');
         onReplayDispatched?.();
         const originalBinding = request.executionOriginV1.externalActionExecutionAuthorization?.binding;
-        if (!originalBinding || 'authentication' in originalBinding
+        // Like the UI replay adapter, deliver this already-reviewed candidate
+        // to its retaining daemon; a new decision admission cannot own it.
+        const retainedPluginInstall = request.actionId === 'plugins.install'
+          && readPluginInstallApprovalPendingReview(request.preview) !== null;
+        if (!retainedPluginInstall && (!originalBinding || 'authentication' in originalBinding
           && (originalBinding.accountId !== originalBinding.custodianAccountId
             || originalBinding.workflowActionOrigin && !originalBinding.workflowActionOrigin.sessionLeaf
-              && !originalBinding.workflowActionOrigin.sessionAuthority)) {
+              && !originalBinding.workflowActionOrigin.sessionAuthority))) {
           // The stored origin has no private credentials. Re-enter the existing
           // requester admission so the deciding requester supplies them. Workflow
           // roots need the same custody even on the requester's own controller.
