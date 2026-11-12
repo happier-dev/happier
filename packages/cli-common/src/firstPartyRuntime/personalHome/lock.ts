@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { probeProcessLiveness } from '../../process/processLiveness.js';
 import { randomUUID } from 'node:crypto';
 import { link, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { unlinkCreatedJsonOwnerFileLock } from '../../fs/jsonOwnerFileLock.js';
 
 export type PersonalHomeOperationKind = 'inspect' | 'backup' | 'verify_backup' | 'restore' | 'erase' | 'relocate' | 'uninstall' | 'upgrade' | 'lifecycle' | 'claim_owner';
 export type PersonalHomeOperationRole = 'source' | 'destination';
@@ -55,12 +57,8 @@ function parseLockRecord(value: string): LockRecord {
 
 async function ownerAlive(record: LockRecord): Promise<boolean | null> {
   if (record.host !== hostname()) return null;
-  try {
-    process.kill(record.pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ESRCH' ? false : null;
-  }
+  const liveness = probeProcessLiveness(record.pid);
+  return liveness === 'alive' ? true : liveness === 'absent' ? false : null;
 }
 
 async function publishExclusiveLockRecord(path: string, record: LockRecord): Promise<void> {
@@ -68,10 +66,13 @@ async function publishExclusiveLockRecord(path: string, record: LockRecord): Pro
   try {
     await handle.writeFile(`${JSON.stringify(record)}\n`);
   } catch (error) {
-    // Only our unpublished exclusive create is ours to retire. Close before unlinking
-    // for Windows, and preserve the publication error if cleanup also fails.
+    // Capture our exclusive create before closing for Windows; the shared owner
+    // preserves any successor. Cleanup must not replace the publication error.
+    const createdIdentity = await handle.stat().catch(() => null);
     await handle.close().catch(() => undefined);
-    await unlink(path).catch(() => undefined);
+    if (createdIdentity) {
+      await unlinkCreatedJsonOwnerFileLock(path, createdIdentity).catch(() => undefined);
+    }
     throw error;
   }
   await handle.close();
