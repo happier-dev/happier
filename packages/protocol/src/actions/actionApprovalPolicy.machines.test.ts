@@ -8,6 +8,8 @@ import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } fro
 const corridorActionIds = ACTION_IDS.filter(id => /^machines\.(managed\.|presets\.|pools\.|access\.|provisioners\.|replacement\.|add\.ssh\.|environment\.apply$)/.test(id)
   || id.startsWith('connectedServices.authentication.'));
 
+// Contract: docs/actions.md:1132-1143, 9124-9132; 02102e614e1 separates
+// own-UI native confirmation from approval Artifacts. Automation still asks.
 describe('Corridor C approval defaults', () => {
   it('retains a verified controller UI invocation default across its external transport', () => {
     const actionId = 'machines.managed.acquire';
@@ -26,7 +28,7 @@ describe('Corridor C approval defaults', () => {
     expect(resolveActionApprovalRouting(args).required).toBe(false);
     expect(resolveActionApprovalRouting({ ...args, context: { ...context, authority: 'account_automation' } }).required).toBe(true);
     expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
-      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) }).required).toBe(true);
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) })).toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 
   it('applies a host-proved sharing reduction directly only for a present UI user, preserving Ask and automation policy', () => {
@@ -36,7 +38,7 @@ describe('Corridor C approval defaults', () => {
     const settings = normalizeActionsSettingsV1({ v: 1 });
     expect(resolveActionApprovalRouting({ ...args, settings }).required).toBe(false);
     expect(resolveActionApprovalRouting(args).required).toBe(false);
-    expect(resolveActionApprovalRouting({ ...args, defaultUiConfirmation: undefined, settings }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ ...args, defaultUiConfirmation: undefined, settings })).toMatchObject({ required: false, uiConfirmationRequired: true });
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       const context = { surface, authority: 'account_automation' } as const;
       expect(resolveActionApprovalRouting({ ...args, settings, context }).required).toBe(true);
@@ -46,7 +48,7 @@ describe('Corridor C approval defaults', () => {
     expect(resolveActionApprovalRouting({ ...args, settings,
       context: { surface: 'ui', authority: 'account_automation' } }).required).toBe(true);
     expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
-      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) }).required).toBe(true);
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) })).toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 
   it.each([
@@ -69,7 +71,7 @@ describe('Corridor C approval defaults', () => {
     }
     expect(resolveActionApprovalRouting({ actionId, spec, context,
       settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
-    }).required).toBe(true);
+    })).toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 
   it('keeps present-user terminal input under admitted custody while automation and explicit Ask still require approval', () => {
@@ -84,7 +86,7 @@ describe('Corridor C approval defaults', () => {
     }
     expect(resolveActionApprovalRouting({ actionId, spec,
       settings: normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
-      context: { surface: 'ui', authority: 'present_user' } }).required).toBe(true);
+      context: { surface: 'ui', authority: 'present_user' } })).toMatchObject({ required: false, uiConfirmationRequired: true });
     expect(resolveActionApprovalRouting({ actionId: 'machines.terminal.open', spec: getActionSpec('machines.terminal.open'), settings,
       context: { surface: 'ui', authority: 'present_user' } }).required).toBe(false);
   });
@@ -115,7 +117,10 @@ describe('Corridor C approval defaults', () => {
         for (const surface of ['agent', 'mcp', 'ui', 'cli', 'voice', 'plugin', 'api'] as const) {
           const context = { surface, authority: 'account_automation' } as const;
           const args = { actionId, spec: getActionSpec(actionId), input: { anchor }, context };
-          expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1 }) }).required, `${anchor}:${surface}`).toBe(true);
+          // OWNER-RULINGS.md:22 (2026-10-29), 4bf1812ec05: non-consequential CLI settings are direct.
+          expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1 }) }).required, `${anchor}:${surface}`).toBe(surface !== 'cli');
+          expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
+            actions: { [actionId]: { approvalRequiredSurfaces: [surface] } } }) }).required).toBe(true);
           const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
           expect(resolveActionApprovalRouting({ ...args, settings: waived }).required, `${anchor}:${surface}`).toBe(false);
         }
@@ -124,7 +129,7 @@ describe('Corridor C approval defaults', () => {
         expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1 }) }).required,
           `${anchor}:present_user`).toBe(false);
         expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,
-          actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) }).required).toBe(true);
+          actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }) })).toMatchObject({ required: false, uiConfirmationRequired: true });
       }
     }
   });
@@ -134,11 +139,12 @@ describe('Corridor C approval defaults', () => {
     const context = { surface: 'ui', authority: 'present_user' } as const;
     const args = { actionId, spec: getActionSpec(actionId), context };
     expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1 }) }))
-      .toMatchObject({ required: true, flow: 'deferred' });
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
     const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
     expect(resolveActionApprovalRouting({ ...args, settings: waived }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, settings: waived }).uiConfirmationRequired ?? false).toBe(false);
     expect(resolveActionApprovalRouting({ ...args, settings: waived, context: { surface: 'agent' } }).required).toBe(true);
     const required = normalizeActionsSettingsV1({ ...waived, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
-    expect(resolveActionApprovalRouting({ ...args, settings: required }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ ...args, settings: required })).toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 });
