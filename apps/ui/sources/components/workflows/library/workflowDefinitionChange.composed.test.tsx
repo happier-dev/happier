@@ -2,11 +2,12 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import { CurrentCursorResponseSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createArtifactBodyUpdateFixture, createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -15,7 +16,7 @@ import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarne
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@/modal', async () =>
-    (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+    (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, renderCustomModals: true }).module);
 installDisconnectedServerSocketBoundary();
 // Load the real cold Sync graph during collection, outside the per-hook budget.
 await loadSyncSingletonForTests();
@@ -48,6 +49,9 @@ it('one committed definition save publishes one fact and reads only that Artifac
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
             if (path === '/v3/automations/query') return Response.json({ automations: [], nextCursor: null });
+            // The unrelated feed fact names a real Session; missing HTTP rows deliberately block its cursor.
+            if (path === '/v2/sessions/unrelated-session') return Response.json(createPlainSessionByIdResponseFixture(
+                createSessionFixture({ id: 'unrelated-session', encryptionMode: 'plain' })));
             if (unrelatedChange && path === '/v2/changes') {
                 const after = Number(url.searchParams.get('after') ?? 0);
                 return Response.json({ changes: after < unrelatedChange.cursor ? [unrelatedChange] : [],
@@ -80,10 +84,12 @@ it('one committed definition save publishes one fact and reads only that Artifac
     await waitForHomeGovernance(() => expect(secondReader.getCurrent().status).toBe('loaded'));
     const wakes: unknown[] = [];
     let unrelatedConsumed = 0;
+    // Count committed feed facts through the owner's feed-backed policy;
+    // early Artifact socket wakes deliberately remain available to receipt readers.
     const release = subscribeHomeAccountChange(event => {
         if (event.serverId === restored.serverId && event.workflowDefinitionsAffect) wakes.push(event);
         if (event.serverId === restored.serverId && event.feedPageConsumed && event.changeKinds?.includes('session')) unrelatedConsumed++;
-    });
+    }, { includeCatchUpPending: 'recovery' });
     const deliver = async (event: unknown) => {
         if (!socket || socket.listenersAny().length === 0) throw new Error('Home update ingress is not registered');
         await act(async () => { await Promise.all(socket!.listenersAny().map(listener => listener('update', event))); });
@@ -118,7 +124,14 @@ it('one committed definition save publishes one fact and reads only that Artifac
         expect(hook.getCurrent().definitions).toBe(rowsBefore);
         const deleteWakesBefore = wakes.length;
         const deleteInventoryBefore = requests.filter(r => r.path === '/v1/artifacts').length;
-        await act(async () => { await deleteWorkflowDefinition({ definitionId }); });
+        const { ModalProvider } = await import('@/modal');
+        const confirmation = await renderScreen(<ModalProvider />);
+        // Deletion carries a real review; answer its public decision instead of leaving the Action pending.
+        const deletion = deleteWorkflowDefinition({ definitionId });
+        await waitForHomeGovernance(() => expect(confirmation.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        await confirmation.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await act(async () => { await deletion; });
+        await confirmation.unmount();
         expect(hook.getCurrent().deletedDefinitionId).toBe(definitionId);
         await deliver({ id: 'deleted-definition-receipt', seq: 13, createdAt: stored.updatedAt,
             body: { t: 'delete-artifact', artifactId: definitionId } });
