@@ -12,6 +12,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { ConnectedServicePoolSelectionGetRequestV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { getPreferredLanguage, preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { ModalProvider } from '@/modal';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -41,7 +42,7 @@ import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachabil
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
 vi.mock('@/modal', async () =>
-  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, renderCustomModals: true }).module,
 );
 const selectionTransport = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -273,7 +274,7 @@ function bodyProps(
 
 const wrap = (node: React.ReactElement, credentials: React.ComponentProps<typeof InjectedAuthProvider>['credentials'] = null) => (
   <InjectedAuthProvider credentials={credentials}>
-    <OverlayPortalProvider>{node}<OverlayPortalHost /></OverlayPortalProvider>
+    <ModalProvider><OverlayPortalProvider>{node}<OverlayPortalHost /></OverlayPortalProvider></ModalProvider>
   </InjectedAuthProvider>
 );
 
@@ -1356,6 +1357,9 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
       picker.props.onSelect(picker.props.items[0].id);
       await Promise.resolve();
     });
+    await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy());
+    expect(requests()).toEqual([]);
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     await vi.waitFor(() => expect(requests()).toHaveLength(1));
     expect(requests()[0]).toEqual({
       path: '/v2/sessions/s1/pending/local-1/action', accountId: 'account-a', body: { requestedAction: { v: 1, kind: 'reset_start',
@@ -1419,6 +1423,9 @@ it('binds Account-wide queued identities once across accounts without reading pr
       available.props.onSelect(available.props.items[0].id);
       await Promise.resolve();
     });
+    await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy());
+    expect(requests()).toEqual([]);
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     await vi.waitFor(() => expect(requests()).toHaveLength(1));
     expect(requests()[0]).toEqual({
       path: '/v2/sessions/s1/pending/local-1/action', accountId: 'account-a', body: { requestedAction: { v: 1, kind: 'reset_start',

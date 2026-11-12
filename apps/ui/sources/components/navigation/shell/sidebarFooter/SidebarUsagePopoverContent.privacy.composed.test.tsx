@@ -12,7 +12,9 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-installConnectedServicesCommonModuleMocks();
+installConnectedServicesCommonModuleMocks({
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module,
+});
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 setRuntimeFetch(home.request);
@@ -24,7 +26,7 @@ const { renderUsageFrame } = await import('@/components/dev/connectedServices/us
 const { storage } = await import('@/sync/domains/state/storage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { Modal } = await import('@/modal');
+const { Modal, ModalProvider } = await import('@/modal');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
     await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -45,39 +47,36 @@ describe('Usage identity privacy through real Action wiring', () => {
             const connection = await restoreServerAccountForTest({ serverUrl: 'https://usage-privacy-admission.test',
                 accountId: 'privacy-owner', credentials, request: home.request });
             if (consent !== 'direct') await home.requireUiApproval(serverId, 'connectedServices.identityPrivacy.set');
-            let answer: ((confirmed: boolean) => void) | undefined;
-            const confirm = vi.mocked(Modal.confirm);
-            confirm.mockClear();
-            if (consent !== 'direct') confirm.mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve; }));
+            vi.mocked(Modal.show).mockClear();
             const previousRuntime = getAppliedActiveServerSnapshot();
             const previousAvailable = isAppliedActiveServerRuntimeAvailable();
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             const previousHidden = storage.getState().localSettings.hideConnectedAccountIdentities;
             storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: false }, { source: 'ui' });
-            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><ModalProvider>
                 {surface === 'rail' ? <SidebarUsagePopoverContent close={() => {}} maxHeight={520} /> : renderUsageFrame('U1')}
-            </InjectedAuthProvider>);
+            </ModalProvider></InjectedAuthProvider>);
             try {
                 await flushHookEffects();
                 // Deliberate Ask waits for the person's native confirmation, never
                 // a deferred request to approve their own press.
                 await act(async () => { screen.pressByTestId('usage-popover-privacy'); });
                 if (consent !== 'direct') {
-                    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+                    await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy());
                     expect(home.artifacts(serverId).list()).toHaveLength(0);
                     expect(storage.getState().localSettings.hideConnectedAccountIdentities).toBe(false);
                     expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(false);
-                    await act(async () => { answer?.(consent === 'confirm'); });
+                    await screen.pressByTestIdAsync(`actions.confirmation-review.decision-${consent === 'confirm' ? 'approve' : 'reject'}`);
                 }
                 await expect.poll(async () => {
                     await flushHookEffects();
                     return storage.getState().localSettings.hideConnectedAccountIdentities;
                 }).toBe(consent !== 'cancel');
                 expect(screen.findAllByType(SidebarUsagePopoverView)[0]?.props.privacy.hidden).toBe(consent !== 'cancel');
-                expect(confirm).toHaveBeenCalledTimes(consent === 'direct' ? 0 : 1);
+                expect(Modal.show).toHaveBeenCalledTimes(consent === 'direct' ? 0 : 1);
                 expect(home.artifacts(serverId).list()).toHaveLength(0);
             } finally {
-                answer?.(false);
+                Modal.hideAll();
                 await screen.unmount();
                 storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousHidden }, { source: 'ui' });
                 publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
