@@ -432,7 +432,7 @@ describe('MCP servers collection and tools', () => {
         }));
         await vi.waitFor(() => expect(screen.findByType(CapabilityBlockingBanner).props.status).toMatchObject({ kind: 'cantrun', detail: 'npx' }));
         await screen.pressByTestIdAsync('mcp.server.banner.action');
-        expect(routerPushSpy).toHaveBeenCalledWith(`/machines/${machine.id}/installables?serverId=${encodeURIComponent(scope.serverId)}`);
+        expect(routerPushSpy).toHaveBeenCalledWith(`/machines/${encodeURIComponent(machine.id)}?serverId=${encodeURIComponent(scope.serverId)}&tab=setup&page=tools`);
     });
 
     it('allows a tool directly and Undo restores acknowledged inheritance after the catalog refreshes', async () => {
@@ -544,6 +544,33 @@ describe('MCP servers collection and tools', () => {
         expect(catalogWrites).toHaveLength(1);
     });
 
+    it.each([false, true])('Store catalog Add opens the native saved-server continuation (OAuth=%s)', async oauth => {
+        registryOAuth = oauth;
+        const { StoreListingController } = await import('@/components/store/StoreListingController');
+        type Listing = import('@/components/store/StoreListingController').StoreListingState;
+        let state: Listing = { kind: 'unavailable' };
+        const itemId = oauth ? 'example.test/oauth-docs' : 'example.test/stdio-docs';
+        const onClose = vi.fn();
+        await renderSettingsView(<StoreListingController reference={{ type: 'registryItem', kind: 'mcpServer',
+            sourceId: 'builtin:mcp-registry', itemId }} onClose={onClose}>
+            {value => { state = value; return null; }}</StoreListingController>);
+        const config = () => {
+            if (state.kind !== 'mcpServer' || !state.config) throw new Error('Expected the MCP listing');
+            return state.config;
+        };
+        await vi.waitFor(() => expect(config().catalog.items.some(row => row.itemId === itemId)).toBe(true));
+        const row = config().catalog.items.find(row => row.itemId === itemId)!;
+        await renderSettingsView(<>{config().renderDetail(row, { pushed: false, added: false })}</>);
+        await vi.waitFor(() => expect(config().detailFooter(row).primary.disabledReason).toBeUndefined());
+        await act(async () => { await config().detailFooter(row).primary.onPress(); });
+        expect(catalogWrites).toHaveLength(1);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        await act(async () => { await config().detailFooter(row).afterAdd?.open?.onPress(); });
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/mcp/uuid?afterRegistryAdd=1');
+        expect(onClose).toHaveBeenCalledOnce();
+        expect(settingsState.value.servers.find(server => server.id === 'uuid')?.remote?.auth?.kind === 'oauth').toBe(oauth);
+    });
+
     it('keeps an open Store listing detail still when a fact it does not show arrives', async () => {
         const { StoreMcpListing } = await import('@/components/store/StoreMcpListing');
         const { CapabilityListingDetail } = await import('@/components/capabilities/add/CapabilityAddModal');
@@ -622,8 +649,12 @@ describe('MCP servers collection and tools', () => {
         await screen.pressByTestIdAsync('settings.mcpServers.addServer');
         expect(Modal.show).toHaveBeenCalledTimes(1);
         await vi.waitFor(() => expect(screen.findAllByTestId('mcp.add:collection:stage').length).toBeGreaterThan(0));
+        // Suggestions can populate the model before the registry read settles.
+        await vi.waitFor(() => {
+            const config = screen.findByType(CapabilityAddModalBody).props.config as CapabilityAddModalConfig<McpAddCatalogRow>;
+            expect(config.catalog.items.some(row => row.itemId === 'example.test/oauth-docs')).toBe(true);
+        });
         await measureMountedCollections(screen, { width: mode === 'split' ? 1080 : 390 });
-        await vi.waitFor(() => expect(screen.findAllByTestId('mcp.add:collection').some(node => node.props.model?.keys.length > 0)).toBe(true));
         if (mode === 'stacked') {
             expect(registryDetailReads).toBe(0);
         }
