@@ -1,5 +1,6 @@
 import axios from '@/api/client/credentialAxios';
-import { ManagedGetOutputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedErrorV1Schema, ManagedGetOutputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineControllerError } from './controllerErrors';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { StoredCredentials } from '@/persistence';
@@ -20,10 +21,16 @@ export async function readManagedMachine(input: Readonly<{
   const response = await axios.post<unknown>(
     `${input.serverHttpBaseUrl.replace(/\/+$/, '')}${path}`, body, {
       headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...(requesterHeaders ?? { Authorization: `Bearer ${input.credentials!.token}` }) },
+      validateStatus: () => true,
       ...(input.signal ? { signal: input.signal } : {}),
     },
   );
   if (http && !await http.isCurrent()) throw Object.assign(new Error('Managed Machine requester authority is unavailable'), { code: 'workspace_sync_child_unavailable' });
+  if (response.status < 200 || response.status >= 300) {
+    const refusal = ManagedErrorV1Schema.safeParse(response.data);
+    throw Object.assign(new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed'),
+      { status: response.status });
+  }
   return ManagedGetOutputV1Schema.parse(response.data);
 }
 

@@ -166,7 +166,7 @@ describe('resolveApprovalExecutor', () => {
       .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
   });
 
-  it.each(['cli', 'ui'] as const)('returns immediate retained controls to their controller across %s approval replay', surface => {
+  it.each(['cli', 'ui'] as const)('returns immediate and deferred retained controls to their controller across %s approval replay', surface => {
     for (const actionId of ['machines.managed.delete', 'machines.managed.power.set'] as const) {
       const request = requestFor(actionId, {
         homeId: 'home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
@@ -181,10 +181,13 @@ describe('resolveApprovalExecutor', () => {
       expect(resolveApprovalExecutor(targeted)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
       expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(targeted))))
         .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
-      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
+      const deferred = ApprovalRequestV2Schema.parse({ ...targeted,
         actionArgs: { homeId: 'home', managedId: 'lima-leaf', when: 'after-idle',
           ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }) },
-      }))).toEqual({ kind: 'app', placement: 'account' });
+      });
+      expect(resolveApprovalExecutor(deferred)).toEqual({ kind: 'daemon', machineId: 'retained-controller' });
+      expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse(projectApprovalRequestForPublicRead(deferred))))
+        .toEqual({ kind: 'daemon', machineId: 'retained-controller' });
     }
   });
 
@@ -292,6 +295,9 @@ describe('resolveApprovalExecutor', () => {
       .toEqual({ kind: 'daemon', machineId: 'controller' });
     expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
       actionArgs: { ...input, patch: { buildMachineId: 'future-builder' } },
+    }))).toEqual({ kind: 'daemon', machineId: 'controller' });
+    expect(resolveApprovalExecutor(ApprovalRequestV2Schema.parse({ ...targeted,
+      actionArgs: { ...input, patch: { deployerMode: 'managers' } },
     }))).toEqual({ kind: 'app', placement: 'account' });
   });
 

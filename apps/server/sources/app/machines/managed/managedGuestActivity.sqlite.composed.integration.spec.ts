@@ -23,7 +23,7 @@ import { readManagedAdmissionState } from './managedRows';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { readMachineRecipientCensusInTx, commitMachineRecipientKeyEnvelopesInTx } from '@/app/machines/machineAccess';
+import { readMachineRecipientCensusInTx, commitMachineRecipientKeyEnvelopesInTx, resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -47,7 +47,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
     afterAll(async () => { if (harness) await harness.close(); });
 
     async function setup(kind: 'account' | 'pat', actionId: 'machines.managed.power.set' | 'machines.managed.delete', mode: 'plain' | 'e2ee' = 'plain', grantGuest = true, requesterGuest = false,
-        accountExecutor?: 'guest' | 'daemon') {
+        accountExecutor?: 'guest' | 'daemon', powerIntent: 'stop' | 'suspend' = 'stop') {
         const ownerContent = tweetnacl.box.keyPair();
         const requesterContent = tweetnacl.box.keyPair();
         const owner = await db.account.create({ data: { encryptionMode: mode,
@@ -84,7 +84,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
             }
         }
         const requestId = randomUUID();
-        const intent = actionId === 'machines.managed.delete' ? 'delete' as const : 'stop' as const;
+        const intent = actionId === 'machines.managed.delete' ? 'delete' as const : powerIntent;
         const row = await db.managedMachine.create({ data: {
             homeId, custodianAccountId: owner.id, controllerMachineId: accountExecutor ? null : controller.id,
             controllerInstallationId: accountExecutor ? null : controller.installationId!,
@@ -127,10 +127,11 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
     }
 
     it.each([
-        ['guest', 'machines.managed.power.set'], ['daemon', 'machines.managed.power.set'],
-        ['guest', 'machines.managed.delete'], ['daemon', 'machines.managed.delete'],
-    ] as const)('uses the actual admitted Account %s signer for exact %s after-idle activity and drain', async (executor, actionId) => {
-        const test = await setup('account', actionId, 'plain', false, false, executor);
+        ['guest', 'machines.managed.power.set', 'stop'], ['daemon', 'machines.managed.power.set', 'stop'],
+        ['guest', 'machines.managed.power.set', 'suspend'], ['daemon', 'machines.managed.power.set', 'suspend'],
+        ['guest', 'machines.managed.delete', 'stop'], ['daemon', 'machines.managed.delete', 'stop'],
+    ] as const)('uses the actual admitted Account %s signer for exact %s/%s after-idle activity and drain', async (executor, actionId, powerIntent) => {
+        const test = await setup('account', actionId, 'plain', false, false, executor, powerIntent);
         expect(test.authorization.binding).toMatchObject({
             managedAdmission: { actionId, input: { homeId, managedId: test.row.id, when: 'after-idle' } },
             managedAccountExecutor: { enrolledMachineId: test.guest.id },
@@ -284,7 +285,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(result).toBe('credential_scope_denied');
     });
 
-    it.each(['plain', 'e2ee'] as const)('routes only exact content-free retention to a requester-owned %s guest', async mode => {
+    it.each(['plain', 'e2ee'] as const)('routes content-free retention through inherited controller Manage to a requester-owned %s guest', async mode => {
         const test = await setup('account', 'machines.managed.power.set', mode, false, true);
         await db.managedMachine.update({ where: { id: test.row.id }, data: { desired: 'start', desiredWhen: 'now',
             admittedInput: { enrollmentAccountId: test.requester.id }, retention: { kind: 'unused', afterMs: 17, effect: 'stop' } } });
@@ -309,15 +310,19 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         };
         expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD)).toMatchObject({ ok: true, result: { kind: 'idle' } });
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'begin' })).toMatchObject({ ok: true });
-        effect.mockClear();
-        for (const params of [{ ...test.managedTarget, expectedRevision: 0 }, { ...test.managedTarget, managedId: randomUUID() },
-            { ...test.managedTarget, controller: { ...test.managedTarget.controller, installationId: randomUUID() } }]) {
-            expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD, params)).toMatchObject({ ok: false });
+        if (mode === 'e2ee') {
+            // Without the guest's recipient material, the content-free bridge
+            // still admits only its exact retained target.
+            effect.mockClear();
+            for (const params of [{ ...test.managedTarget, expectedRevision: 0 }, { ...test.managedTarget, managedId: randomUUID() },
+                { ...test.managedTarget, controller: { ...test.managedTarget.controller, installationId: randomUUID() } }]) {
+                expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD, params)).toMatchObject({ ok: false });
+            }
+            expect(await call('machines.managed.get')).toMatchObject({ ok: false });
+            expect(effect).not.toHaveBeenCalled();
+            await db.managedMachine.update({ where: { id: test.row.id }, data: { intentRevision: 2, retention: { kind: 'until-delete' } } });
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'begin' })).toMatchObject({ ok: false });
         }
-        expect(await call('machines.managed.get')).toMatchObject({ ok: false });
-        expect(effect).not.toHaveBeenCalled();
-        await db.managedMachine.update({ where: { id: test.row.id }, data: { intentRevision: 2, retention: { kind: 'until-delete' } } });
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'begin' })).toMatchObject({ ok: false });
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'resume' })).toMatchObject({ ok: true });
     });
 
@@ -359,11 +364,10 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         const idle = { status: 'running', managedActivity: { kind: 'idle', since: 123 } };
         expect(await publish(idle, 1, true)).toMatchObject({ result: 'success', version: 2 });
         expect(await count()).toBe(1);
-        const before = (await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq;
         expect(await publish(idle, 2, true)).toMatchObject({ result: 'success', version: 2 });
         expect(await publish({ status: 'running', pid: 1 }, 1, true)).toMatchObject({ result: 'version-mismatch' });
         expect(await publish({ ...idle, pid: 2 }, 2)).toMatchObject({ result: 'success', version: 3 });
-        expect((await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq).toBe(before);
+        expect(await count()).toBe(1);
     });
 
     it('pushes new requester guest handler readiness through the existing managed resource feed once', async () => {
@@ -416,11 +420,11 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
                     managedGuestActivity: { machineId: test.guest.id, installationId: test.guest.installationId },
                 });
             }
-            // The bridge is scoped to the retained control, not ordinary guest access.
+            // Controller Manage also grants ordinary guest access.
             const requesterToken = await auth.createToken(test.requester.id, undefined, { kind: 'account', authority: 'present_user' });
             expect((await app.inject({ method: 'GET', url: path, headers: {
                 ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${requesterToken}`,
-            } })).statusCode).not.toBe(200);
+            } })).statusCode).toBe(200);
             await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: test.owner.id, machineId: test.controller.id,
                 principal: { kind: 'account', accountId: test.requester.id }, level: 'view' }));
             expect((await app.inject({ method: 'GET', url: path, headers })).statusCode).not.toBe(200);
@@ -599,7 +603,9 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
         expect(effect).toHaveBeenCalledTimes(1);
         effect.mockClear();
-        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: false });
-        expect(effect).not.toHaveBeenCalled();
+        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
+        expect(effect).toHaveBeenCalledTimes(1);
+        expect(await resolveMachineAdmission({ actorAccountId: test.requester.id, machineId: test.controller.id,
+            actionId: test.actionId, requireOnline: true })).toMatchObject({ kind: 'denied', code: 'access_denied' });
     });
 });

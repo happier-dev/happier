@@ -27,9 +27,9 @@ const { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction
 
 it.each([
     ['machines.managed.power.set', { when: 'now' }, true],
-    ['machines.managed.power.set', { when: 'after-idle' }, false],
+    ['machines.managed.power.set', { when: 'after-idle' }, true],
     ['machines.managed.delete', { when: 'now' }, true],
-    ['machines.managed.delete', { when: 'after-idle' }, false],
+    ['machines.managed.delete', { when: 'after-idle' }, true],
     ['machines.managed.inspect', {}, true],
     ['machines.managed.bootstrap.retry', {}, true],
     ['machines.managed.controller.update', {}, false],
@@ -77,6 +77,8 @@ describe('managed Machine rebuild origination', () => {
             expect(new URL(String(url)).origin).toBe(serverUrl);
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
             const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+            // The captured Account's mode read uses the real reachability owner first.
+            if (path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption') return Response.json({ mode: accountMode, updatedAt: 1 });
             if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
             // The Action Machine is read by id through the Machine rows reader (a532f4a1e0).
@@ -161,6 +163,7 @@ describe('managed Machine rebuild origination', () => {
             expect(parsedUrl.origin).toBe(serverUrl);
             expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
             const body: unknown = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+            if (parsedUrl.pathname === '/v1/auth/ping') return Response.json({});
             if (parsedUrl.pathname === '/v1/account/encryption') {
                 return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 });
             }
@@ -221,8 +224,10 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
         const pending = { kind: 'approval_request_created' as const, artifactId: 'setup-card', actionId: 'machines.setup.apply' as const };
         let invocationConfirmation: unknown;
         let executions = 0;
+        const requestPaths: string[] = [];
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
+            requestPaths.push(path);
             const headers = new Headers(init?.headers);
             expect(headers.get('Authorization')).toBe(`Bearer ${token}`);
             expect(headers.get(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBeNull();
@@ -256,6 +261,7 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
         onTestFinished(resetRuntimeFetch);
         const account = await captureLazyActionAccountContext(homeId);
         onTestFinished(() => account.dispose());
+        expect(account.credentialAuthorityKind).toBe('account');
         const execute = (childContext: ActionExecutorContext) => executeManagedMachineNativeAction({
             account, actionId: 'machines.setup.apply', input, context: childContext });
         const result = mode === 'authored' ? await execute(context) : await invokeHostReviewedChildV1({
@@ -264,7 +270,7 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
                 ? { admittedReview: { action: 'machines.setup.apply', role: 'template_setup_apply', surface: context.surface! } } : {}),
             execute: async (_input, childContext) => await execute(childContext),
         });
-        expect(executions).toBe(1);
+        expect(executions, JSON.stringify({ result, requestPaths })).toBe(1);
         if (mode === 'admitted' || mode === 'voice-admitted') {
             expect(result).toEqual({ ok: true, result: receipt });
             expect(invocationConfirmation).toMatchObject({ actionId: 'machines.setup.apply', accountId, requestId,

@@ -99,7 +99,7 @@ export function isManagedCreationMutationActionIdV1(actionId: string): actionId 
 /** Recovery completes only the retained enrollment policy, never unrelated creation effects. */
 export function isManagedEnrollmentRecoveryChildV1(rootActionId: string, childActionId: string): boolean {
   const isolation = childActionId === 'machines.agentIsolation.preview' || childActionId === 'machines.agentIsolation.set';
-  return rootActionId === 'machines.managed.bootstrap.retry' && (childActionId === 'machines.setup.adminAccess.set' || isolation)
+  return rootActionId === 'machines.managed.bootstrap.retry' && (childActionId === 'machines.setup.adminAccess.set' || childActionId === 'machines.roles.set' || isolation)
     || rootActionId === 'machines.managed.inspect' && isolation;
 }
 
@@ -109,14 +109,26 @@ export function isManagedPowerOrDeleteActionIdV1(actionId: string): actionId is
   return actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete';
 }
 
-/** Executor location only; Home owns authorization for each invocation. */
-export function isManagedRetainedControlInvocation(actionId: string, input: unknown): actionId is
+/** Finite foreground native controls need execution authority before their first effect. */
+export function isManagedAccountNativeControlInvocationV1(actionId: string, input: unknown): boolean {
+  return isManagedResizeActionIdV1(actionId)
+    || actionId === 'machines.managed.power.set' && readRecord(input).when === 'now';
+}
+
+/** A native control's retained-row read spends that same admitted control root. */
+export function managedAccountNativeReadEffectActionIdV1(rootActionId: string, rootInput: unknown, effectActionId: string): string {
+  return effectActionId === 'machines.managed.get' && isManagedAccountNativeControlInvocationV1(rootActionId, rootInput)
+    ? rootActionId : effectActionId;
+}
+
+/** Deferred controls keep the same executor: its reconciler owns the idle wait. Home owns admission. */
+export function isManagedRetainedControlInvocation(actionId: string, _input: unknown): actionId is
   'machines.managed.inspect' | 'machines.managed.bootstrap.retry' | 'machines.managed.power.set' | 'machines.managed.delete' | 'machines.managed.resize'
   | typeof MANAGED_CREATION_MUTATION_ACTION_IDS_V1[number] {
   return actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
     || isManagedCreationMutationActionIdV1(actionId)
     || actionId === 'machines.managed.resize'
-    || isManagedPowerOrDeleteActionIdV1(actionId) && readRecord(input).when === 'now';
+    || isManagedPowerOrDeleteActionIdV1(actionId);
 }
 
 /** Reviewed combined setup reads retain the parent root, never a generic child permission. */
@@ -126,4 +138,11 @@ export function isMachineSetupPlanRpcChildV1(input: Readonly<{
   return (input.rootActionId === 'machines.setup.plan' || input.rootActionId === 'machines.setup.apply'
     || input.rootActionId === 'machines.setup.remove')
     && input.effectActionId === 'machines.setup.plan' && input.method === RPC_METHODS.MACHINE_SETUP_PLAN;
+}
+
+/** Credential admission maps a native provisioning root to its declared role. */
+export function readManagedProvisionerCredentialRootRoleV1(actionId: string): 'check' | 'options' | 'all' | null {
+  if (actionId === 'machines.provisioners.check') return 'check';
+  if (actionId === 'machines.provisioners.options') return 'options';
+  return actionId === 'machines.managed.acquire' ? 'all' : null;
 }

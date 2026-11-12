@@ -7,9 +7,9 @@ import { reconcileExternalActionTarget, resolveExternalActionMachineTarget, reso
 
 it.each([
   ['machines.managed.power.set', { when: 'now', intent: 'stop', expectedRevision: 1 }, true],
-  ['machines.managed.power.set', { when: 'after-idle', intent: 'stop' }, false],
+  ['machines.managed.power.set', { when: 'after-idle', intent: 'stop' }, true],
   ['machines.managed.delete', { when: 'now', intent: 'delete', expectedRevision: 1, reviewedDependencies: true }, true],
-  ['machines.managed.delete', { when: 'after-idle', intent: 'delete', reviewedDependencies: true }, false],
+  ['machines.managed.delete', { when: 'after-idle', intent: 'delete', reviewedDependencies: true }, true],
   ['machines.managed.inspect', {}, true],
   ['machines.managed.bootstrap.retry', { expectedIntentRevision: 1 }, true],
   ['machines.managed.controller.update', { expectedRevision: 1, controller: null }, false],

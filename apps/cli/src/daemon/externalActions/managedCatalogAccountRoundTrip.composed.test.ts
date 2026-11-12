@@ -14,6 +14,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path';
 import { AccountSettingsSchema, FeaturesResponseSchema, AUTHORITY_CEILING_HEADER_V1, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
@@ -99,6 +100,7 @@ import { HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY } from '@/agent
 import { installForegroundAgentCliFixture } from '@/daemon/agentRuntime/foregroundAdmission.testkit';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
@@ -193,6 +195,18 @@ import { createSessionPublisherPresence } from '../../../../server/sources/app/p
 import { resolveSessionProtocolCapabilitiesFeature } from '../../../../server/sources/app/features/sessionProtocolCapabilitiesFeature';
 import { resolveMachineRpcFeature } from '../../../../server/sources/app/features/machineRpcFeature';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '../../../../server/sources/app/clientCompatibility/accountStoredContentCompatibility';
+import { verifyExternalActionMachineRpcExecution } from '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
+import { registerManagedActivityRpcHandlers } from '@/api/machine/rpcHandlers.managedActivity';
+import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import type { ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -340,7 +354,7 @@ describe('managed catalog original Account transport', () => {
     const userToken = await createAccountTokenForTests(recipient.id, { kind: 'account', authority: 'present_user' });
     const installedToken = await createAccountTokenForTests(machineCustodian.id, { kind: 'terminal', authority: 'account_automation' });
     const authorToken = await createAccountTokenForTests(author.id, { kind: 'account', authority: 'present_user' });
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     let resolveRequesterRuntime: ResolveRequesterSessionRuntimeContext;
     let credentialCustody: Awaited<ReturnType<typeof createRequesterSessionCredentialCustody>> | undefined;
     const software = await createNativeSoftwareInstallFixture({ scenario: 'native-confirm', packageName: 'hello', accountEncryptionMode: mode,
@@ -351,7 +365,7 @@ describe('managed catalog original Account transport', () => {
           || kind === 'pat-setup' && 'reviewedSetupChild' in scenario,
         startup: {
           ...(realRunner ? { onHappySessionWebhook: createOnHappySessionWebhook({
-            pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(),
+            trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(),
           }) } : {}),
           ...(surface === 'agent' ? {
             resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl, token: installedToken,
@@ -454,7 +468,7 @@ describe('managed catalog original Account transport', () => {
         resolveQualifiedConnectedAccountV4Support: () => 'indeterminate', coordinatorInput: {
           machineId, machineIdProvider: () => machineId, runtimeId: 'template-update-requester', happyHomeDir: configuration.happyHomeDir,
           logger, processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-          pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: software.connectedServiceRegistry,
+          trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: software.connectedServiceRegistry,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: software.sessionControlRuntime()!.connectedServiceAuthGroupPreTurnSwitchCoordinator,
         } }),
       recoverBootstrap: ({ sessionId, attribution, signal, onRecoveryRefused }) => resolveRequesterSessionBootstrapFromCustody({
@@ -927,7 +941,7 @@ describe('managed catalog original Account transport', () => {
           foregroundRunnerBootstrap = { agentId: parentAgentId,
             bootstrapFilePath: admitted.capability.bootstrapFilePath,
             authorityFilePath: admitted.capability.authorityFilePath };
-          const tracked = trackedSessions.get(process.pid);
+          const tracked = trackedSessionForSingleSessionProcess(trackedSessions, process.pid);
           expect(tracked).toMatchObject({ happySessionId: session.id, sessionRunnerPid: process.pid });
           const actualProcess = await processIdentity.readProcessIdentityByPid(process.pid);
           if (!actualProcess) throw new Error('Foreground process identity unavailable');
@@ -964,15 +978,15 @@ describe('managed catalog original Account transport', () => {
           happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
           path: authorityFilePath, sessionId: session.id, runner, retainedAgent,
           httpPort: software.sessionControlRuntime()!.controlPort });
-        const tracked: TrackedSession = { pid: runner.pid, sessionRunnerPid: runner.pid, startedBy: 'daemon',
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, sessionRunnerPid: runner.pid, startedBy: 'daemon',
           happySessionId: session.id, happySessionMetadataFromLocalWebhook: metadata,
           processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
           runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
           runnerAgentInvocationContext: { cwd: configuration.happyHomeDir, environment: {}, providerBindingActive: false },
           agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
           agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest };
-        trackedSessions.set(runner.pid, tracked);
-        await writeSessionMarker({ pid: runner.pid, happySessionId: session.id, startedBy: 'daemon',
+        trackedSessions.set(tracked.trackingKey, tracked);
+        await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: runner.pid, happySessionId: session.id, startedBy: 'daemon',
           cwd: configuration.happyHomeDir, processStartTimeMs: runner.processStartTimeMs,
           processCommandHash: runner.processCommandHash, processCommand: runnerCommand,
           agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath,
@@ -1290,7 +1304,7 @@ describe('managed catalog original Account transport', () => {
       expect(await ensureSessionDisplayProjectionsForRead({ serverId: uiServerId, credentials: captured.credentials,
         request: captured.request, sessionIds: [session.id], isCurrent: captured.accountLifetime.isCurrent })).toBe(true);
       const invokeAgent = async (actionId: 'template.instantiate' | 'template.updates.apply' | typeof SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action, input: unknown) => {
-        const tracked = trackedSessions.get(process.pid);
+        const tracked = trackedSessionForSingleSessionProcess(trackedSessions, process.pid);
         if (!tracked?.agentRuntimeDaemonServiceAuthorityFilePath) throw new Error('Original Agent runner authority missing');
         const previousAuthorityPath = process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;
         process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = tracked.agentRuntimeDaemonServiceAuthorityFilePath;
@@ -2912,12 +2926,12 @@ describe('managed catalog original Account transport', () => {
     } finally { softwareAccount?.dispose(); await softwareRuntime.dispose(); restoreHttp(); await app.close(); await io.close(); }
   });
 
-  it.each([
+  it.each(([
     { mode: 'plain', credentialKind: 'account' },
     { mode: 'e2ee', credentialKind: 'account' },
     { mode: 'plain', credentialKind: 'terminal' },
     { mode: 'e2ee', credentialKind: 'terminal' },
-  ] as const)('executes deferred power through CLI approval and real Home admission ($mode/$credentialKind)', async ({ mode, credentialKind }) => {
+  ] as const).flatMap(scenario => (['stop', 'suspend'] as const).map(intent => ({ ...scenario, intent }))))('executes deferred power through CLI approval and installed controller settlement ($mode/$credentialKind/$intent)', async ({ mode, credentialKind, intent }) => {
     const machineKey = new Uint8Array(32).fill(37);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
     const createAccount = async () => {
@@ -2930,20 +2944,52 @@ describe('managed catalog original Account transport', () => {
     const homeId = await getOrCreateServerIdentityId();
     const token = await createAccountTokenForTests(account.id, credentialKind === 'terminal'
       ? { kind: 'terminal', authority: 'account_automation' } : { kind: 'account', authority: 'present_user' });
-    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+    const credentials: StoredCredentials = { token, credentialProvenance: 'stored_session', encryption: mode === 'plain' ? null
       : { type: 'dataKey', machineKey, publicKey } };
-    const controller = { machineId: `deferred-controller-${mode}-${credentialKind}`,
-      installationId: `deferred-installation-${mode}-${credentialKind}` };
-    const provisioner = nativeFixture({ credentialPurposes: [], supportedIntents: ['start', 'stop', 'suspend', 'resume', 'delete'] });
+    const identityDirectory = await mkdtemp(join(tmpdir(), 'happier-deferred-identity-'));
+    const identityPath = join(identityDirectory, 'installation-identity.json');
+    const identity = await readOrCreateInstallationIdentity(identityPath);
+    const controller = { machineId: `deferred-controller-${mode}-${credentialKind}-${intent}`,
+      installationId: identity.installationId };
+    const installation = tweetnacl.sign.keyPair.fromSecretKey(Buffer.from(identity.privateKey, 'base64url'));
+    const guestInstallation = tweetnacl.sign.keyPair();
+    const guestId = `deferred-guest-${mode}-${credentialKind}-${intent}`;
+    const guestInstallationId = `${guestId}-installation`;
+    const nativeObservation: ProviderObservationV1 = { observedAt: Date.now(), availability: 'present', power: 'running', storage: 'retained' };
+    const nativeIntents: unknown[] = [];
+    const provisioner = nativeFixture({ credentialPurposes: [], privateNative: true,
+      supportedIntents: ['start', 'stop', 'suspend', 'resume', 'delete'], nativeRoleResults: { inspect: nativeObservation },
+      onNativeRole: (role, input) => {
+        if (role !== 'power') return;
+        const intent = input && typeof input === 'object' && !Array.isArray(input) ? input.intent : undefined;
+        nativeIntents.push(intent);
+        Object.assign(nativeObservation, { observedAt: Date.now(), power: intent === 'stop' ? 'stopped' : 'suspended' });
+      } });
     const manifest = PluginManifestV2Schema.parse(provisioner.runtimeRegistry.contributes.activationTargets[0]!.manifest);
     const declaration = createReleaseLessDeclarationV1(manifest);
     await db.machine.create({ data: { id: controller.machineId, accountId: account.id, installationId: controller.installationId,
-      metadata: '{}', pluginMaterializationRevision: BigInt(1) } });
+      installationPublicKey: installation.publicKey, active: true, lastActiveAt: new Date(),
+      metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
+      dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null,
+      operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+      operationProtocolCapabilitiesRevision: 1, pluginMaterializationRevision: BigInt(1) } });
+    await db.machine.create({ data: { id: guestId, accountId: account.id, installationId: guestInstallationId,
+      installationPublicKey: guestInstallation.publicKey, active: true, lastActiveAt: new Date(),
+      metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : 'opaque',
+      dataEncryptionKey: mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') : null } });
     await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
       machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id,
       version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
       archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+    const io = channel.server;
     const serverUrl = 'https://deferred-power.example';
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [configuration.activeServerId]: {
+      id: configuration.activeServerId, name: 'Deferred power', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+    } } }));
+    const inventory = createManagedActivityInventory({ producers: [{ read: () => ({ coverage: 'complete', items: [] }), subscribe: () => () => {} }] });
+    const drain = createDaemonAdmissionDrain();
     const app = Fastify().withTypeProvider<ZodTypeProvider>();
     app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
     enableErrorHandlers(app); enableAuthentication(app);
@@ -2958,7 +3004,117 @@ describe('managed catalog original Account transport', () => {
     app.addHook('onResponse', async (request, reply) => { homeResponses.push({ path: request.url, status: reply.statusCode,
       authority: request.authAuthority, kind: request.authTokenKind, signed: request.externalActionExecutionAuthorized }); });
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+    // Home discovery uses fetch while Account storage uses Axios. Both network
+    // boundaries reach the same real routes, including approval currentness.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.origin !== serverUrl) throw new Error(`Unexpected deferred Home origin: ${url.origin}`);
+      const response = await app.inject({ method: request.method as 'GET' | 'POST' | 'PATCH',
+        url: `${url.pathname}${url.search}`, headers: Object.fromEntries(request.headers.entries()),
+        ...(request.method === 'GET' || request.method === 'HEAD' ? {} : { payload: await request.text() }) });
+      return new Response(response.payload, { status: response.statusCode,
+        headers: { 'content-type': 'application/json' } });
+    });
     const policy = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.presets.create': ['cli'] } });
+    const installedCredentials: StoredCredentials = { ...credentials,
+      token: await createAccountTokenForTests(account.id, { kind: 'terminal', authority: 'account_automation' }) };
+    const unavailable = async (): Promise<never> => { throw new Error('Deferred power must not acquire provider credentials'); };
+    const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(),
+      purposeBindingOwner: createConnectedAccountPurposeBindingOwner({ store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable,
+        subscribe: () => ({ dispose() {} }) }, selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+        projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable }),
+      requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+      createRedactionLease: () => ({ add() {}, close() {} }) });
+    const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => account.id });
+    const createMachineRpc = (machineId: string, installationId: string, privateKey: Uint8Array) => new RpcHandlerManager({
+      scopePrefix: machineId, localMachineId: machineId,
+      ...(mode === 'plain' ? { encryptionMode: 'plain' as const }
+        : { encryptionMode: 'e2ee' as const, encryptionKey: machineKey, encryptionVariant: 'dataKey' as const }),
+      authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+        machineId, resolveHomeServerIdentityId: async () => homeId,
+        resolveCustodianAccountId: async () => account.id, resolveInstallationId: () => installationId,
+        verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey,
+          daemonToken: installedCredentials.token, serverHttpBaseUrl: serverUrl }),
+      }, source),
+    });
+    const controllerRpc = createMachineRpc(controller.machineId, controller.installationId, installation.secretKey);
+    const guestRpc = createMachineRpc(guestId, guestInstallationId, guestInstallation.secretKey);
+    registerManagedActivityRpcHandlers({ activity: inventory, admissionDrain: drain, rpcHandlerManager: guestRpc,
+      commitIdleEvidence: (managedTarget, idle, context) => {
+        if (!context.machineAdmission || !drain.isQuiescing()) return null;
+        const method = `${guestId}:${MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD}`;
+        const decision = { ...idle, confirmedAt: Date.now() };
+        return { context: context.machineAdmission, method, managedTarget, decision,
+          proof: signMachineInstallationProof({ privateKey: guestInstallation.secretKey, payload: {
+            version: 1, machineId: guestId, installationId: guestInstallationId, accountId: account.id,
+            rpcAdmission: { context: context.machineAdmission, method, managedTarget, managedIdleDecision: decision },
+          } }) };
+      } });
+    const native = createDaemonManagedMachineActionAdapter({ credentials: installedCredentials, machineId: controller.machineId,
+      serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
+      installationIdentity: { installationId: controller.installationId, privateKey: installation.secretKey },
+      managedProviderOperationAuthority: authority, observeActionExecution: operations.observeExecution,
+      resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+        resolveCurrentMachineId: () => controller.machineId }),
+      acquireRuntimeRegistryLease: async () => ({ registry: provisioner.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) });
+    const daemonExecutor = (admitted?: RequesterAccountActionContext) => createCliActionExecutorFromCredentials({
+      credentials: installedCredentials, readCredentials: async () => installedCredentials,
+      machineId: controller.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
+      externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: controller.installationId,
+      machineActionDirectTargetTransport: { machineId: controller.machineId,
+        invoke: (method, input, options) => controllerRpc.invokeLocal(method, input, options) },
+      managedMachineAction: native,
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted?.accountSettingsContext.settings.actionsSettingsV1 ?? policy),
+        getAccountSettings: () => admitted?.accountSettingsContext.settings ?? AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
+    registerApprovalRpcHandlers({ rpcHandlerManager: controllerRpc, actionExecutor: daemonExecutor() });
+    const rpcFailures: string[] = [];
+    // Loopback substitutes authenticated Home delivery. Both endpoints retain
+    // their real RPC codecs, admission owners, and registered domain handlers.
+    io.on('connection', socket => socket.on(SOCKET_RPC_EVENTS.CALL, (request: SocketRpcRequestPayload, reply: (value: unknown) => void) => {
+      void (async () => {
+        const token: unknown = socket.handshake.auth.token;
+        const actor = typeof token === 'string' ? await auth.verifyTokenForRoute(token) : null;
+        if (!actor) throw new Error('Loopback Account socket authentication failed');
+        const separator = request.method.indexOf(':');
+        const machineId = request.method.slice(0, separator);
+        const rpcMethod = request.method.slice(separator + 1);
+        if (machineId !== controller.machineId && machineId !== guestId) throw new Error('Unknown loopback Machine');
+        if (machineId === guestId) {
+          const admitted = await verifyExternalActionMachineRpcExecution(ExternalActionMachineRpcExecutionV1Schema.parse(request.externalActionExecution), {
+            method: request.method, requestId: request.requestId, params: request.params, event: SOCKET_RPC_EVENTS.CALL,
+          });
+          if (admitted?.managedGuestActivity?.machineId !== guestId) throw new Error('Guest activity was not admitted');
+        }
+        const admitted = await resolveMachineAdmission({ actorAccountId: actor.userId, machineId, rpcMethod,
+          callerAuthority: actor.authority });
+        if (admitted.kind !== 'admitted') throw new Error(`Loopback Machine admission refused: ${admitted.code}`);
+        const { kind: _kind, ...machineAdmission } = admitted;
+        const manager = machineId === controller.machineId ? controllerRpc : guestRpc;
+        return { ok: true, result: await manager.handleRequest({ method: request.method, params: request.params,
+          requestId: request.requestId, callerAuthority: actor.authority, machineAdmission }, undefined, 'authenticated_home_socket') };
+      })().then(reply, error => { rpcFailures.push(String(error)); reply({ ok: false, error: String(error) }); });
+    }));
+    registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc: async request => {
+      const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
+      const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+      const result = await executeExternalAction({ actionId: admitted.actionId, envelope: admitted.envelope,
+        principal: admitted.principal, executionAuthorization: admitted.executionAuthorization,
+        currentMachineId: controller.machineId, currentInstallationId: controller.installationId,
+        currentServerId: configuration.activeServerId, currentServerHttpBaseUrl: serverUrl, currentAccountId: account.id,
+        externalActionMachineRequestPrivateKey: installation.secretKey,
+        verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+          installationId: controller.installationId, privateKey: installation.secretKey, serverHttpBaseUrl: serverUrl }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: installedCredentials }), executor: daemonExecutor(),
+        resolveEncryption: async () => ({ serverIdentityId: homeId,
+          material: { type: 'dataKey', machineKey } }),
+        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({ authorization: input.authorization,
+          purpose: { kind: 'external_action' }, machineId: controller.machineId, installationId: controller.installationId,
+          installationPrivateKey: installation.secretKey, serverId: configuration.activeServerId, serverIdentityId: homeId,
+          serverHttpBaseUrl: serverUrl, ownCredentials: installedCredentials, isCurrent: async () => true, createExecutor: daemonExecutor }),
+      });
+      return { ok: true, result: result.kind === 'response' ? createExternalActionDaemonDispatchResponse(result.prepared) : result };
+    } }) });
     const makeExecutor = (credentials: StoredCredentials) => createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
       serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
       machineId: controller.machineId,
@@ -2974,18 +3130,20 @@ describe('managed catalog original Account transport', () => {
         getAccountSettings: () => AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
     const executor = makeExecutor(credentials);
     const context = { surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId } as const;
+    const identityPathDescriptor = Object.getOwnPropertyDescriptor(configuration, 'installationIdentityFile')!;
+    Object.defineProperty(configuration, 'installationIdentityFile', { ...identityPathDescriptor, value: identityPath });
     try {
       const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
         headers: { authorization: `Bearer ${token}` }, payload: { manifest } });
       expect(claim.statusCode, claim.payload).toBe(200);
-      const presetId = `deferred-preset-${mode}-${credentialKind}`;
+      const presetId = `deferred-preset-${mode}-${credentialKind}-${intent}`;
       expect(await executor.execute('machines.presets.create', { id: presetId, homeId, name: 'Deferred guest',
         owner: { kind: 'account', accountId: account.id }, controller,
         launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, context)).toMatchObject({ ok: true });
       const admitted = ManagedAdmissionOutputV1Schema.parse(await admitManagedAcquire({ custodianAccountId: account.id,
         requesterAccountId: account.id, requestEnvelopeDigest: 'deferred-power-fixture', input: {
-          requestId: `deferred-acquire-${mode}-${credentialKind}`, continuationPresent: false, input: {
+          requestId: `deferred-acquire-${mode}-${credentialKind}-${intent}`, continuationPresent: false, input: {
             enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 },
             controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -2993,10 +3151,10 @@ describe('managed catalog original Account transport', () => {
         } }));
       // The retained native resource is the OS boundary; no VM/process runs in this test.
       await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound', creationState: 'active',
+        enrolledMachineId: guestId,
         resource: { contributionRef: admitted.machine.launch.provider, schemaVersion: 1, value: {} } } });
       let intentRevision = 0;
-      for (const { permitted, intent } of [{ permitted: true, intent: 'stop' },
-        { permitted: true, intent: 'suspend' }, { permitted: false, intent: 'stop' }] as const) {
+      for (const permitted of [true, false]) {
         const actorAccount = permitted ? account : await createAccount();
         const actorCredentials = permitted ? credentials : { ...credentials, token: await createAccountTokenForTests(
           actorAccount.id, credentialKind === 'terminal' ? { kind: 'terminal', authority: 'account_automation' }
@@ -3005,6 +3163,14 @@ describe('managed catalog original Account transport', () => {
         const proposed = await actor.execute('machines.managed.power.set', {
           homeId, managedId: admitted.machine.id, when: 'after-idle', intent,
         }, { ...context, authority: 'account_automation', actionRequestId: `deferred-${intent}-${mode}-${credentialKind}-${permitted}` });
+        if (!permitted && !proposed.ok) {
+          expect(proposed).toMatchObject({ ok: false, errorCode: 'permission_denied', failureCause: {
+            phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError',
+            errorCode: 'permission_denied', httpStatus: 403,
+          } });
+          expect(nativeIntents).toEqual([intent]);
+          continue;
+        }
         expect(proposed, JSON.stringify({ proposed, homeResponses })).toMatchObject({ ok: true,
           result: { kind: 'approval_request_created', actionId: 'machines.managed.power.set' } });
         if (!proposed.ok || !proposed.result || typeof proposed.result !== 'object' || !('artifactId' in proposed.result)
@@ -3014,36 +3180,69 @@ describe('managed catalog original Account transport', () => {
           credentials: actorCredentials, serverId: configuration.activeServerId, serverHttpBaseUrl: serverUrl,
         }).approvalsGet({ artifactId }));
         expect(approval).toMatchObject({ v: 2, approval: { flow: 'deferred' }, executionOriginV1: { authority: 'account_automation' } });
-        const decided = await actor.execute('approval.request.decide', {
+        if (permitted) {
+          expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
+            .toMatchObject({ intentRevision: 0 });
+        }
+        // The automation's origin stays on the proposal; a signed-in person
+        // makes the approval decision, including for terminal-origin requests.
+        const decider = makeExecutor({ ...actorCredentials, token: await createAccountTokenForTests(
+          actorAccount.id, { kind: 'account', authority: 'present_user' }) });
+        const decided = await decider.execute('approval.request.decide', {
           artifactId, decision: 'approve',
         }, context);
         if (permitted) intentRevision += 1;
-        expect(decided, JSON.stringify({ decided, homeResponses })).toMatchObject({ ok: true, result: permitted
+        expect(decided, JSON.stringify({ decided, homeResponses, rpcFailures })).toMatchObject({ ok: true, result: permitted
           ? { status: 'executed', execution: { ok: true, result: { kind: 'accepted', managedId: admitted.machine.id, intentRevision } } }
           : { status: 'failed', execution: { ok: false, errorCode: 'permission_denied', failureCause: {
             phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError', errorCode: 'permission_denied', httpStatus: 403,
           } } } });
-        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
-          .toMatchObject({ desired: permitted ? intent : 'suspend', desiredWhen: 'after-idle', intentRevision });
+        if (permitted) {
+          if (!decided.ok || !decided.result || typeof decided.result !== 'object' || !('execution' in decided.result)) {
+            throw new Error('Missing approved deferred power execution');
+          }
+          const execution = ApprovalExecutionV2Schema.parse(decided.result.execution);
+          if (!execution.ok) throw new Error(execution.errorCode);
+          const accepted = ManagedIntentResultSchema.parse(execution.result);
+          if (accepted.kind !== 'accepted') throw new Error('Deferred power was not accepted');
+          expect(accepted.operation?.operationId).toBeTruthy();
+          if (!accepted.operation) throw new Error('Deferred power has no live controller operation');
+          expect(await operations.handlers.getV2({ operationId: accepted.operation.operationId, waitForTerminal: true }))
+            .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+          expect(approval).toMatchObject({ executionOriginV1: { machineId: controller.machineId,
+            target: { kind: 'machine', machineId: controller.machineId },
+          } });
+        }
+        const observed = await executor.execute('machines.managed.get', { homeId, managedId: admitted.machine.id }, context);
+        expect(observed).toMatchObject({ ok: true, result: { desired: intent, desiredWhen: 'after-idle', intentRevision,
+            observation: { availability: 'present', power: intent === 'stop' ? 'stopped' : 'suspended' },
+        } });
+        if (!observed.ok) throw new Error(observed.errorCode);
+        expect(ManagedMachineV1Schema.parse(observed.result).submittedNativeEffect).toBeUndefined();
+        expect(nativeIntents).toEqual([intent]);
       }
-      expect(homeResponses.filter(response => response.path.endsWith('/admit-control'))).toMatchObject([
-        { status: 200, authority: 'account_automation', kind: credentialKind },
-        { status: 200, authority: 'account_automation', kind: credentialKind },
-        { status: 403, authority: 'account_automation', kind: credentialKind },
-      ]);
+      expect(homeResponses.filter(response => response.path.endsWith('/admit-control') && response.status === 200)).toHaveLength(1);
+      expect(homeResponses.filter(response => response.path.endsWith('/submit-intent') && response.status === 200))
+        .toMatchObject([{ signed: true }]);
       const nativeSubmit = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/submit-intent',
         headers: { authorization: `Bearer ${token}` }, payload: { homeId, managedId: admitted.machine.id,
-          expectedIntentRevision: intentRevision, requestId: `deferred-suspend-${mode}-${credentialKind}-true` } });
+          expectedIntentRevision: intentRevision, requestId: `deferred-${intent}-${mode}-${credentialKind}-true` } });
       expect(nativeSubmit.statusCode, nativeSubmit.payload).toBe(403);
       expect(nativeSubmit.json()).toMatchObject({ code: 'permission_denied' });
       const terminalToken = await createAccountTokenForTests(account.id, { kind: 'terminal', authority: 'account_automation' });
       const terminalSubmit = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/submit-intent',
         headers: { authorization: `Bearer ${terminalToken}` }, payload: { homeId, managedId: admitted.machine.id,
-          expectedIntentRevision: intentRevision, requestId: `deferred-suspend-${mode}-${credentialKind}-true` } });
+          expectedIntentRevision: intentRevision, requestId: `deferred-${intent}-${mode}-${credentialKind}-true` } });
       expect(terminalSubmit.statusCode, terminalSubmit.payload).toBe(403);
       expect(terminalSubmit.json()).toMatchObject({ code: 'permission_denied' });
-      expect(homeResponses.filter(response => /\/report-intent$/.test(response.path))).toEqual([]);
-    } finally { restoreHttp(); await app.close(); }
+      expect(homeResponses.filter(response => /\/report-intent$/.test(response.path))).toMatchObject([
+        { status: 200, signed: true },
+      ]);
+    } finally {
+      Object.defineProperty(configuration, 'installationIdentityFile', identityPathDescriptor);
+      await rm(identityDirectory, { recursive: true, force: true });
+      inventory.dispose(); restoreHttp(); await app.close();
+    }
   });
 
   it('claims a release-less provisioner, saves a preset through the real Home Action adapter, and preserves it through disable/re-enable', async () => {

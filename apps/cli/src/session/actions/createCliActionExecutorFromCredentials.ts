@@ -51,6 +51,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -737,6 +738,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   happyHomeDir?: Parameters<typeof createCliActionExecutor>[0]['happyHomeDir'];
   admittedAccountEncryptionMode?: Parameters<typeof createCliActionDeps>[0]['admittedAccountEncryptionMode'];
   connectedAccountAuthenticationHost?: Parameters<typeof createCliActionDeps>[0]['connectedAccountAuthenticationHost'];
+  executeTeamCredentialBrokerAction?: Parameters<typeof createCliActionExecutor>[0]['executeTeamCredentialBrokerAction'];
   requesterSessionBootstrap?: Parameters<typeof createCliActionDeps>[0]['requesterSessionBootstrap'];
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
   providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
@@ -1059,6 +1061,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.admittedAccountEncryptionMode !== undefined
         ? { admittedAccountEncryptionMode: params.admittedAccountEncryptionMode } : {}),
       ...(params.connectedAccountAuthenticationHost ? { connectedAccountAuthenticationHost: params.connectedAccountAuthenticationHost } : {}),
+      ...(params.executeTeamCredentialBrokerAction ? { executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction } : {}),
       ...(routeHostChildAction ? { routeHostChildAction } : {}),
       ...(readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions } : {}),
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
@@ -1794,10 +1797,21 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           invocation, authority: invocation.authority, ...(context.signal ? { signal: context.signal } : {}) });
         if (selected) return { context, invocation: createOneShotPatInvocation(selected) };
       }
-      const controlControllerTarget = originalCliCaller
-        ? await resolveManagedControlControllerTarget({ actionId, rawInput: admittedInput, credentials,
-          serverHttpBaseUrl: resolveActionServerApiUrl(), ...(context.signal ? { signal: context.signal } : {}) }) : null;
-      const managedMachineDaemonIngress = requiresManagedMachineDaemonIngress(spec.id, executionPlacement, controlControllerTarget);
+      const pairedTerminal = originalCliCaller && provenance?.provenance.kind === 'terminal';
+      let controlControllerTarget: Awaited<ReturnType<typeof resolveManagedControlControllerTarget>> = null;
+      try {
+        if (originalCliCaller) controlControllerTarget = await resolveManagedControlControllerTarget({
+          actionId, rawInput: admittedInput, credentials, serverHttpBaseUrl: resolveActionServerApiUrl(),
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+      } catch (error) {
+        if (!(error instanceof ManagedMachineControllerError)) throw error;
+        return { context, invocation: createOneShotPatInvocation(async () => ({
+          ok: false, ...normalizeActionExecutorThrownError(error, actionId),
+        })) };
+      }
+      const managedMachineDaemonIngress = requiresManagedMachineDaemonIngress(spec.id, executionPlacement, controlControllerTarget,
+        pairedTerminal ? admittedInput : undefined);
       const clientAction = spec.cli !== undefined && (!settingsAction || settingsInput?.success)
         && executionPlacement === 'client';
       const declaredDaemonIngress = spec.originalExecution?.daemonIngressSurfaces?.includes('cli') === true;
@@ -1811,7 +1825,6 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         || params.machineId && params.machineId !== selectedOriginalMachine.machineId)) return { context,
           invocation: createOneShotPatInvocation(async () => routingFailure(actionId,
             selectedOriginalMachine.kind === 'rejected' ? selectedOriginalMachine.execution : actionFailure('target_unavailable'))) };
-      const pairedTerminal = originalCliCaller && provenance?.provenance.kind === 'terminal';
       let requiresSessionDaemonAdmission = false;
       let sessionDispatch: Readonly<{
         sessionId: string;
@@ -1917,6 +1930,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           signal: combineInvocationSignals(invocationSignal, context.signal) }) : null;
       const originalMachineTarget = workspaceMachineId !== undefined || sessionDispatch !== null || selectedOriginalMachine?.kind === 'ready' || (context.externalActionTarget
         ? context.externalActionTarget.kind === 'machine' : Boolean(params.machineId || liveResultMachineId));
+      const ownManagedNativeIngress = pairedTerminal && managedMachineDaemonIngress && executionPlacement === 'account'
+        && !controlControllerTarget && !originalMachineTarget;
+      if (ownManagedNativeIngress && !ownDaemon) return { context: originalContext,
+          invocation: createOneShotPatInvocation(async () => ({ ok: false, errorCode: 'daemon_unavailable',
+            error: 'daemon_unavailable', effectAttempted: false })) };
       if (originalCliCaller && hasStoredSessionCredentialProvenance(credentials) && executionPlacement === 'machine'
         && deploymentPreparationOperationForActionV1(spec.id) === 'create' && !ownDaemon && !originalMachineTarget) {
         const configuredTarget = await resolveConfiguredMachineTarget();
@@ -1970,7 +1988,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           target = { kind: 'machine', machineId: pairedSessionCreation.data.executionTarget.machineId };
         }
         const daemonControlTarget = originalDaemonTarget;
-        if (!target && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput)
+        if (!target && !ownManagedNativeIngress && requiresOriginalAccountMachineActionProof(parsedActionId.data, admittedInput)
           && ownDaemon && daemonControlTarget?.machineId) {
           target = { kind: 'machine', machineId: daemonControlTarget.machineId };
         }
@@ -2030,7 +2048,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   ...(params.onRequesterSessionCredentialDisclosure
                     ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
                   ...(requestSignal ? { signal: requestSignal } : {}) });
-                const requester = spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody === 'live_only'
+                const requester = spec.approvalResultCustody === 'live_only'
                   && params.onApprovalRequested && accountId && context.serverIdentityId
                   ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,
                     target: requesterTarget, accountId, homeId: context.serverIdentityId,
@@ -2061,7 +2079,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               ? { authorityCeiling: 'account_automation' as const }
               : {}),
           });
-          const result = spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody === 'live_only'
+          const result = spec.approvalResultCustody === 'live_only'
             && params.onApprovalRequested
             ? await executeLiveCliApprovalRequest({ onApprovalRequested: params.onApprovalRequested,
               execute: executeApprovalAction,
