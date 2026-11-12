@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { isActionOutcomeUnknownErrorCodeV1 } from '../actions/actionExecutionResult.js';
 import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
-import { ProjectContextTargetV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
+import { captureProjectContextAccountScopeV1, ProjectContextTargetV1Schema, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectVisibilitySetInputV1Schema = lazyZodSchema(() => z.strictObject({
   target: ProjectContextTargetV1Schema,
@@ -20,15 +20,15 @@ export type ProjectVisibilitySetOutputV1 = z.infer<typeof ProjectVisibilitySetOu
 
 /** Hide, Show and Undo are one field intent on the existing anchored organization row. */
 export async function setProjectVisibilityV1(
-  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'mutateOrganization'>,
+  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'normalizeServerId' | 'mutateOrganization'>,
   input: ProjectVisibilitySetInputV1,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ProjectVisibilitySetOutputV1> {
   options?.signal?.throwIfAborted();
   const request = ProjectVisibilitySetInputV1Schema.safeParse(input);
   if (!request.success) return { ok: false, errorCode: 'invalid_parameters' };
-  const scope = deps.accountScope();
-  if (!scope || scope.serverId !== request.data.target.serverId) return { ok: false, errorCode: 'project_visibility_access_denied' };
+  const scope = captureProjectContextAccountScopeV1(deps, request.data.target.serverId);
+  if (!scope) return { ok: false, errorCode: 'project_visibility_access_denied' };
   const assertCurrent = () => {
     options?.signal?.throwIfAborted();
     const current = deps.accountScope();

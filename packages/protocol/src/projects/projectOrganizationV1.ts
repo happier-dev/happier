@@ -5,7 +5,7 @@ import { QualifiedProjectKeyV1Schema } from '../workspaces/workspaceRefV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { SavedSecretReferenceV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
-import type { ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
+import { captureProjectContextAccountScopeV1, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
 
 export const ProjectOrganizationUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   projectRef: QualifiedProjectKeyV1Schema,
@@ -30,7 +30,7 @@ export type ProjectOrganizationUpdateOutputV1 = z.infer<typeof ProjectOrganizati
 
 /** Private Project metadata and reference-only bindings share the existing organization row and CAS. */
 export async function updateProjectOrganizationV1(
-  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'mutateOrganization'>,
+  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'normalizeServerId' | 'mutateOrganization'>,
   input: ProjectOrganizationUpdateInputV1,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ProjectOrganizationUpdateOutputV1> {
@@ -38,8 +38,8 @@ export async function updateProjectOrganizationV1(
   const parsed = ProjectOrganizationUpdateInputV1Schema.safeParse(input);
   if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters' };
   const request = parsed.data;
-  const scope = deps.accountScope();
-  if (!scope || scope.serverId !== request.projectRef.serverId) return { ok: false, errorCode: 'project_organization_access_denied' };
+  const scope = captureProjectContextAccountScopeV1(deps, request.projectRef.serverId);
+  if (!scope) return { ok: false, errorCode: 'project_organization_access_denied' };
   const assertCurrent = () => {
     options?.signal?.throwIfAborted();
     const current = deps.accountScope();

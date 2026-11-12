@@ -49,12 +49,24 @@ export type ProjectContextUpdateOutputV1 = z.infer<typeof ProjectContextUpdateOu
 /** The existing opened organization-row owner supplies CAS and Account-mode transport. */
 export type ProjectContextActionOwnerDepsV1 = Readonly<{
   accountScope(): Readonly<{ serverId: string; accountId: string }> | null;
+  normalizeServerId?: (serverId: string) => string;
   readArtifact(ref: PromptArtifactRefV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<PromptLibraryStoredArtifact | null>;
   mutateOrganization(input: Readonly<{
     serverId: string; projectKey: string; expectedRevision: number | 'absent'; signal?: AbortSignal;
     mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
   }>): Promise<Readonly<{ status: 'updated'; revision: number; value: ProjectAccountOrganizationV1 }> | Readonly<{ status: 'conflict'; revision: number }>>;
 }>;
+
+/** Admit the Home identity while retaining the stored organization key for CAS. */
+export function captureProjectContextAccountScopeV1(
+  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'normalizeServerId'>,
+  serverId: string,
+): ReturnType<ProjectContextActionOwnerDepsV1['accountScope']> {
+  const scope = deps.accountScope();
+  if (!scope) return null;
+  const normalize = deps.normalizeServerId ?? ((id: string) => id);
+  return normalize(scope.serverId) === normalize(serverId) ? scope : null;
+}
 
 export async function updatePersonalProjectContextV1(
   deps: ProjectContextActionOwnerDepsV1,
@@ -65,8 +77,8 @@ export async function updatePersonalProjectContextV1(
   const parsed = ProjectContextUpdateInputV1Schema.safeParse(input);
   if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters' };
   const request = parsed.data;
-  const scope = deps.accountScope();
-  if (!scope || scope.serverId !== request.target.serverId) return { ok: false, errorCode: 'project_context_access_denied' };
+  const scope = captureProjectContextAccountScopeV1(deps, request.target.serverId);
+  if (!scope) return { ok: false, errorCode: 'project_context_access_denied' };
   const assertCurrent = () => {
     options?.signal?.throwIfAborted();
     const current = deps.accountScope();

@@ -23,6 +23,35 @@ beforeEach(async () => { await homes.reset(); await loadSyncSingletonForTests();
 afterEach(async () => { await homes.reset(); });
 
 describe('Project context through the default Account Action host', () => {
+    it.each(['visibility', 'organization', 'context'] as const)('mutates %s through the stored Home alias without rewriting its organization key', async kind => {
+        const serverUrl = 'https://aliased-project-actions.test';
+        const serverId = await homes.addHome({ name: 'Aliased Home', serverUrl, accountId: 'alias-account', active: false });
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl(serverUrl, 'srv_aliased-project-actions');
+        const key = { kind: 'project-organization' as const, serverId, projectKey: 'anchor' };
+        let row: ProjectAccountRowV1 = { key, revision: 4, content: { t: 'plain', v: { key, value: {
+            hidden: true, pinned: true, promptStack: [{ id: 'entry', enabled: true, placement: 'system_append', ref: { kind: 'doc', artifactId: 'doc' } }],
+        } } } };
+        homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { select: () => ({ body: { status: 'listed', coverage: 'complete', rows: [row] } }) });
+        homes.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, { select: input => {
+            const mutation = ProjectAccountRowMutationRequestV1Schema.parse(input).mutations[0]!;
+            expect(mutation.key).toEqual(key);
+            expect(mutation.expectedRevision).toBe(4);
+            row = { key, revision: 5, content: mutation.content };
+            return { body: { status: 'updated', rows: [row], cursor: 5 } };
+        } });
+        const executor = createDefaultActionExecutor();
+        const target = { serverId, projectKey: 'anchor' };
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+        const result = kind === 'visibility'
+            ? await executor.execute('projects.visibility.set', { target, expectedRevision: 4, hidden: false }, context)
+            : kind === 'organization'
+                ? await executor.execute('projects.organization.update', { projectRef: target, expectedRevision: 4, label: 'Named' }, context)
+                : await executor.execute('projects.context.update', { target, expectedRevision: 4, intent: { kind: 'set_budget', entryId: 'entry', maxChars: 100 } }, context);
+        expect(result).toMatchObject({ ok: true, result: { ok: true, revision: 5, row: { pinned: true } } });
+        expect(homes.requestsFor(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`)).toHaveLength(1);
+    });
+
     it('does not demand Project rows for readable Session metadata without a checkout address', async () => {
         const serverId = await homes.addHome({ name: 'No checkout', serverUrl: 'https://no-checkout.test', accountId: 'owner', active: false });
         const account = await captureLazyActionAccountContext(serverId);

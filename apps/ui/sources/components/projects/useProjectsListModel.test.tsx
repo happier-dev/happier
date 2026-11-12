@@ -101,6 +101,26 @@ afterEach(async () => {
     await disconnectActiveServerConnection(); await homes.reset();
 });
 
+describe('separating a checkout after its Home learns its identity', () => {
+    it('keeps the separated checkout listed when its stored server id is a profile alias', async () => {
+        const { setServerProfileIdentityForUrl, areServerProfileIdentifiersEquivalent } = await import('@/sync/domains/server/serverProfiles');
+        await act(async () => {
+            await setServerProfileIdentityForUrl('https://projects-menu.test', 'srv_projects-home-identity');
+        });
+        expect(areServerProfileIdentifiersEquivalent(serverId, 'srv_projects-home-identity')).toBe(true);
+        const hook = await renderHook(() => useProjectsListModel());
+        try {
+        const ref = hook.getCurrent().groups.projectGroups[0]!.items[0]!;
+        expect(ref.serverId).toBe(serverId);
+        homes.requests.length = 0;
+        await act(async () => { await hook.getCurrent().groupCheckouts([ref], 'self'); });
+        expect(homes.requests.filter(request => request.path === mutationPath)).toHaveLength(2);
+        expect(rows.filter(row => row.key.kind === 'project-organization')).toContainEqual(expect.objectContaining({ key: { kind: 'project-organization', serverId, projectKey: 'ref' } }));
+        expect(hook.getCurrent().groups.projectGroups.flatMap(group => group.items).map(item => item.id)).toContain('ref');
+        } finally { await hook.unmount(); }
+    });
+});
+
 describe('"From your sessions" (TL-A 11-08)', () => {
     it('offers every folder a Session ran in that no checkout covers, on any Machine, and adds one through Project Open', async () => {
         storage.getState().applyMachines([createMachineFixture({ id: 'machine', activeAt: Date.now() })], true, { sourceServerId: serverId });

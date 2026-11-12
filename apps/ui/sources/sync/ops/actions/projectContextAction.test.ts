@@ -52,8 +52,10 @@ describe('UI private Project context Action transport', () => {
       }
       return await home.boundary.handle(`${url.pathname}${url.search}`, init) ?? new Response('{}', { status: 404 });
     });
-    storage.getState().activateProjectAccountRowsScope({ serverId: home.home.id, accountId: 'artifact-account' });
+    const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+    await setServerProfileIdentityForUrl('https://project-context.test', 'srv_project-context-owner');
     const account = await captureLazyActionAccountContext(home.home.id);
+    storage.getState().activateProjectAccountRowsScope({ serverId: account.serverId, accountId: account.accountId });
     try {
       const action = createUiProjectContextAction(account);
       const input = ProjectContextUpdateInputV1Schema.parse({ target: { serverId: home.home.id, projectKey: 'anchor' }, expectedRevision: 4,

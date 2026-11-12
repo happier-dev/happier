@@ -2,7 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { updatePersonalProjectContextV1 } from '@happier-dev/protocol/projects/projectContextV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { createUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
 /** Bind private context semantics to the captured Account's real row and Artifact owners. */
@@ -14,6 +14,7 @@ export function createUiProjectContextAction(account: LazyActionAccountContext |
       return { ok: false, errorCode: 'project_context_access_denied' };
     }
     return updatePersonalProjectContextV1({
+      normalizeServerId: resolveServerProfileScopeIdForIdentifier,
       accountScope: () => {
         try { account.assertCurrent(); return { serverId: account.serverId, accountId: account.accountId }; }
         catch { return null; }

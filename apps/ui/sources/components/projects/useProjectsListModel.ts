@@ -197,10 +197,10 @@ export function useProjectsListModel() {
     }, [openWorkspace, treeRefs]);
     const setProjectHidden = React.useCallback(async (project: QualifiedProjectKeyV1 | WorkspaceRefV1, hidden: boolean) => {
         const target = 'rootPath' in project ? projectWorkspaceRefV1(project) : project;
-        if (target.serverId !== activeServer.serverId) return false;
+        if (!areServerProfileIdentifiersEquivalent(target.serverId, activeServer.serverId)) return false;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== target.serverId) return false;
-        const row = projectOrganizations.find(candidate => candidate.key.serverId === target.serverId
+        if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, target.serverId)) return false;
+        const row = projectOrganizations.find(candidate => areServerProfileIdentifiersEquivalent(candidate.key.serverId, target.serverId)
             && candidate.key.projectKey === target.projectKey);
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         if (!lifetime.isCurrent()) return false;
@@ -297,7 +297,7 @@ export function useProjectsListModel() {
         if (!serverId) return;
         const currentLabel = resolveWorkspaceRefDisplayName(workspaceRef);
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== workspaceRef.serverId) return;
+        if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, workspaceRef.serverId)) return;
         const newName = await Modal.prompt(
             t('sessionsList.renameWorkspacePromptTitle'),
             undefined,
@@ -344,7 +344,7 @@ export function useProjectsListModel() {
         if (!id) return;
 
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== workspaceRef.serverId) return;
+        if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, workspaceRef.serverId)) return;
         let removal = await forgetProjectWorkspace({ serverId, workspaceId: id }, lifetime);
         if (removal.ok && 'kind' in removal) { rememberApproval(removal); return removal; }
 
