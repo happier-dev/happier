@@ -485,7 +485,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     expect(openAcp).not.toHaveBeenCalled();
   });
 
-  it('disposes ACP and refuses the launch when a qualified account invalidates while the opener settles', async () => {
+  it('preserves admitted ACP when a qualified account changes while the opener settles', async () => {
     const session = createSession();
     let harness!: ReturnType<typeof createConnectedAccountsHarness>;
     const openAcp = vi.fn(async () => {
@@ -507,7 +507,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       signal: new AbortController().signal,
     });
 
-    await expect(runtime.sessions.open({
+    const bound = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'happier-invalidated-during-open',
       cwd: '/repo',
@@ -519,10 +519,12 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     }, {
       protocols: { acp: { open: openAcp } },
       services: { connectedAccounts: harness.connectedAccounts },
-    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow('invalidated while opening');
+    } as unknown as AgentSessionRuntimeContext);
 
     expect(openAcp).toHaveBeenCalledTimes(1);
-    expect(session.dispose).toHaveBeenCalledWith('runtime_recovery');
+    expect(session.dispose).not.toHaveBeenCalled();
+    await bound.dispose();
+    expect(session.dispose).toHaveBeenCalledOnce();
   });
 
   it('preserves the other provider request-auth marker when direct and OAuth purposes are mixed', async () => {

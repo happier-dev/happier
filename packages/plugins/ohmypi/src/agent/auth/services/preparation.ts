@@ -213,7 +213,7 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccou
           cleanup();
           await session.dispose(reason);
         };
-        if (invalidated) void dispose('runtime_recovery');
+        // Startup already passed admission; account changes govern the next open.
         return {
           ...session,
           runtimeCapabilities: {

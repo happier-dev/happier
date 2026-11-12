@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { AgentSessionConfigurationSnapshot, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExecutionRunRuntimeContextV1, AgentSessionConfigurationSnapshot, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedAccountBindingEvent } from '@happier-dev/plugin-sdk/connected-accounts';
 import { activate, PLUGIN_MANIFEST } from '../../../index.js';
 import { prepareOhMyPiQualifiedAccounts } from './preparation.js';
+import { createOhMyPiAgentRuntime } from '../../runtime/engine.js';
 
 const roots: string[] = [];
 function privateHome() { const root = mkdtempSync(join(tmpdir(), 'n-omp-test-')); roots.push(root); return root; }
@@ -37,6 +38,35 @@ function accountBoundary(bound = true) {
 }
 
 describe('Oh My Pi selected account model preparation', () => {
+  it('keeps an admitted Session alive through account changes and checks admission on the next open', async () => {
+    const boundary = accountBoundary();
+    const notify = () => { for (const listener of boundary.listeners) void listener({ kind: 'resync', authorityChanged: true }); };
+    const dispose = vi.fn(async () => {});
+    const native = { send: vi.fn(async () => ({ status: 'admitted' as const })),
+      cancel: vi.fn(async () => ({ status: 'requested' as const })),
+      watch: () => ({ dispose() {} }), dispose };
+    // Native ACP open is the process boundary; preparation and binding stay real.
+    const open = vi.fn(async () => { notify(); return native; });
+    const context = { ...boundary.context, protocols: { acp: { open } } } as unknown as AgentSessionRuntimeContext;
+    const runtime = await createOhMyPiAgentRuntime({ plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+      agent: { id: 'ohmypi' }, signal: context.signal });
+    const request = { kind: 'create' as const, sessionId: 'admitted-session', cwd: '/workspace',
+      configuration: configuration('openai/selected'),
+      launchEnvironment: { values: { PI_CODING_AGENT_DIR: privateHome() }, unset: [] } };
+    const session = await runtime.sessions!.open(request, context);
+    try {
+      expect(dispose).not.toHaveBeenCalled();
+      await expect(session.send({ inputIds: ['continue'], input: { text: 'Continue.' }, delivery: { kind: 'newTurn', turnId: 'continue' } })).resolves.toMatchObject({ status: 'admitted' });
+      const getBinding = boundary.context.services.connectedAccounts.getBinding;
+      boundary.context.services.connectedAccounts.getBinding = async purpose => { notify(); return getBinding(purpose); };
+      await expect(runtime.sessions!.open({ ...request, sessionId: 'next-session' }, context))
+        .rejects.toThrow('invalidated before opening');
+      expect(open).toHaveBeenCalledOnce();
+    } finally { await session.dispose(); }
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(boundary.listeners.size).toBe(0);
+  });
+
   it.each([undefined, null, 'default', '   '])('refuses fresh native Session and finite launches without a model (%s) before credential delivery', async model => {
     const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {

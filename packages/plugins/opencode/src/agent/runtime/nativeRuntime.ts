@@ -146,10 +146,6 @@ async function openOpenCodeExecutionRun(
     const runtime = readOpenCodeNativeMode(prepared.request) === 'acp'
       ? await openOpenCodeAcpExecutionRun(prepared.request, context, prepared.catalogConfidence)
       : await openOpenCodeServerExecutionRun(prepared.request, context);
-    if (prepared.isInvalidated()) {
-      await runtime.dispose();
-      throw new Error('OpenCode qualified Connected Account launch was invalidated while opening the runtime.');
-    }
     return prepared.bindExecutionRun(runtime);
   } catch (error) {
     await prepared.dispose();
