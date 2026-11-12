@@ -4,9 +4,10 @@ import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../actio
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
 import { resolveUsagePageAggregation, resolveUsageComparisonQuery, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
 import { projectUsageQueryDelivery } from './projectUsageQueryDelivery.js';
+import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 
 describe('agent Usage coverage delivery', () => {
-  it('delivers source status/kind counts and Work counts below the Pi tool budget, with Session detail recovery', () => {
+  it('delivers source status/kind counts through Usage Actions below the Pi tool budget, with CLI facts and Session recovery', async () => {
     // Reload 157: 288 coverage sources / 54,688 B, 142 Sessions / 2,077
     // contributions. Preserve that shape with synthetic content-free identities.
     const sources = Array.from({ length: 288 }, (_, index) => ({
@@ -37,14 +38,26 @@ describe('agent Usage coverage delivery', () => {
           range: { startMs: 0, endMs: 100, complete: false } } }, status: 'available' }],
       work: [{ query, evidence: [], status: 'available' }],
     });
-    const cli = projectUsageQueryDelivery(rich);
+    // Substitute only the authenticated query transport. Action validation,
+    // surface selection, aggregation and delivery all run their real owners.
+    const invoke = async (batch: typeof rich, surface: 'cli' | 'agent' | 'mcp') => {
+      // Other Action families are unreachable; this fixture supplies only the
+      // authenticated Usage transport required by the production dispatcher.
+      const executor = createActionExecutor({ usageActions: { query: async () => batch } } as ActionExecutorDeps);
+      const result = await executor.execute('usage.query', {
+        queries: batch.results.map(slice => slice.requestedQuery),
+      }, { surface });
+      if (!result.ok) throw new Error(`Usage Action refused: ${result.errorCode}`);
+      return UsageQueryBatchResultSchema.parse(result.result);
+    };
+    const cli = await invoke(rich, 'cli');
     expect(cli.results[0]?.accounting?.coverage?.sources).toHaveLength(288);
     // Existing Pi TOOL_OUTPUT_MAX_BYTES, extensionSource.ts:18. No Usage cap.
     const toolBudget = 50 * 1024;
     const cliBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(cli);
     expect(cliBytes).toBeGreaterThan(toolBudget);
     for (const surface of ['agent', 'mcp'] as const) {
-      const delivery = projectUsageQueryDelivery(rich, surface);
+      const delivery = await invoke(rich, surface);
       const deliveredBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(delivery);
       expect(deliveredBytes).toBeLessThan(toolBudget);
       const slice = UsageQueryBatchResultSchema.parse(delivery).results[0]!;
@@ -61,7 +74,6 @@ describe('agent Usage coverage delivery', () => {
       expect(slice.comparison?.accounting?.coverage).toMatchObject({ sources: [],
         sourceSummary: slice.accounting!.coverage!.sourceSummary, reasons: accounting.coverage!.reasons });
       expect(projectUsageQueryDelivery(delivery, surface)).toEqual(delivery);
-      console.info('[Usage source delivery]', { surface, cliBytes, deliveredBytes });
     }
     const selected = normalizeUsageQuery({ ...query, session: 'session-0' });
     const detail = resolveUsagePageAggregation({ queries: [selected],
@@ -70,9 +82,11 @@ describe('agent Usage coverage delivery', () => {
         contributions: contributions.filter(row => row.sessionId === 'session-0') }, status: 'available' }],
       work: [{ query: selected, evidence: [], status: 'available' }],
     });
-    const recovered = UsageQueryBatchResultSchema.parse(projectUsageQueryDelivery(detail, 'agent')).results[0]!;
-    expect(recovered.accounting?.coverage?.sources).toEqual(sources.slice(0, 1));
-    expect(recovered.work?.allocations.length).toBeGreaterThan(0);
+    for (const surface of ['agent', 'mcp'] as const) {
+      const recovered = (await invoke(detail, surface)).results[0]!;
+      expect(recovered.accounting?.coverage?.sources).toEqual(sources.slice(0, 1));
+      expect(recovered.work?.allocations.length).toBeGreaterThan(0);
+    }
     expect(rich.results[0]?.accounting?.coverage?.sources).toHaveLength(288);
   });
 });
