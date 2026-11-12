@@ -4,7 +4,9 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
-import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
+import { PLUGIN_ACTION_INPUT_SCHEMAS, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { TRIAGE_ACCOUNT_ACTIONS } from '../accountDefinition.js';
 import { ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
@@ -58,12 +60,27 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
                 operands.push(operand);
                 const sessionChoice = operand.handoff.sessionChoice;
                 if (sessionChoice.kind !== 'existing' || typeof sessionChoice.session !== 'string') throw new Error('Exact Session required');
-                address = ActionSessionAddressV1Schema.parse(options && typeof options === 'object' && 'sessionAddress' in options ? options.sessionAddress : undefined);
-                if (address.sessionId !== sessionChoice.session) throw new Error('Mismatched qualified Session');
+                const selectedAddress = ActionSessionAddressV1Schema.parse(options && typeof options === 'object' && 'sessionAddress' in options ? options.sessionAddress : undefined);
+                const declaration = TRIAGE_ACCOUNT_ACTIONS[TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1].sessionTarget;
+                if (!declaration) throw new Error('Configured Action must declare its Session operand');
+                // The authorized Home reference read is the only replaced admission boundary.
+                const transport = { resolveSessionReference: async ({ sessionId, context }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) => {
+                    const authorized = [{ serverId: 'home-a', sessionId: 'same-session' }, { serverId: 'home-b', sessionId: 'same-session' }]
+                        .find(candidate => candidate.serverId === context.serverId && candidate.sessionId === sessionId);
+                    return authorized ? { kind: 'unique' as const, address: authorized } : { kind: 'none' as const };
+                } } satisfies Pick<ActionExecutorDeps, 'resolveSessionReference'>;
+                const sessionTargetsV1 = await resolveActionSessionTargets(transport, {
+                    actionId: 'action.invoke', declaration, input: operand,
+                    context: { surface: 'ui', authority: 'account_automation', serverId: selectedAddress.serverId,
+                        expectedSessionAddress: selectedAddress },
+                });
+                if (!sessionTargetsV1 || 'ok' in sessionTargetsV1) throw new PluginError({
+                    code: sessionTargetsV1 && 'ok' in sessionTargetsV1 ? sessionTargetsV1.errorCode : 'session_target_unavailable',
+                });
+                address = selectedAddress;
                 addresses.push(address);
-                // Only Action transport/admission is replaced; the configured handler and all domain owners are real.
                 const context = { ui: host, signal: new AbortController().signal,
-                    sessionTargetsV1: { targets: [address] } } as unknown as PluginAccountActionContext;
+                    sessionTargetsV1 } as unknown as PluginAccountActionContext;
                 try { return await createTriageRunConfiguredActionHandler()(input, context); }
                 catch (error) { boundaryErrors.push(error); throw error; }
             }
@@ -113,6 +130,15 @@ describe('entry existing Session handoff', () => {
             expect.objectContaining({ sessionAddress: { serverId: 'home-b', sessionId: 'same-session' } }),
         ]);
         expect(f.unexpected).toEqual([]);
+    });
+
+    it('refuses an existing Session outside the authorized corpus before the configured handler sends', async () => {
+        const f = fixture();
+        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'unavailable-home', sessionId: 'same-session' });
+        expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable',
+            failure: { codes: ['session_target_unavailable'] } });
+        expect(f.sends).toEqual([]);
+        expect(f.edits).toEqual([]);
     });
 
     it('Find uses that same qualified handoff and Ask keeps configured compose with no Fix instruction', async () => {

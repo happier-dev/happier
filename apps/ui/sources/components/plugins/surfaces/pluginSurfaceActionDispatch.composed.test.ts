@@ -4580,8 +4580,15 @@ describe('client Action declared SessionTarget admission', () => {
 
     it.each([{ ask: false, foreignHome: false, compose: false, health: false }, { ask: true, foreignHome: false, compose: false, health: false },
         { ask: false, foreignHome: true, compose: false, health: false }, { ask: false, foreignHome: false, compose: true, health: false },
-        { ask: false, foreignHome: false, compose: true, health: true }])(
-        'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and health=$health', async ({ ask, foreignHome, compose, health }) => {
+        { ask: false, foreignHome: false, compose: true, health: true },
+        ...(['owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained'] as const).map(picked => ({
+            ask: false, foreignHome: false, compose: false, health: false, picked,
+        }))])(
+        'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and health=$health and picked=$picked', async scenario => {
+        const { ask, foreignHome, compose, health } = scenario;
+        const picked = 'picked' in scenario ? scenario.picked : undefined;
+        const deniedSelection = picked === 'nonparticipant' || picked === 'otherAccount' || picked === 'unissued' || picked === 'wrongCaller' || picked === 'crossHomeConstrained';
+        const expectConfirmation = ask || Boolean(picked && !deniedSelection);
         const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { activate: activateTriageAccount } = await import('../../../../../../packages/plugins/triage/src/accountRuntime');
         const { resolveTriageActionInstructionV1 } = await import('../../../../../../packages/plugins/triage/src/sessions/actionResolution');
@@ -4619,9 +4626,12 @@ describe('client Action declared SessionTarget admission', () => {
                 declarationTransport: 'http-header-and-socket-auth-v1' },
         } });
         const qualifiedId = formatQualifiedPluginActionId({ pluginId: PLUGIN_MANIFEST.id, localId: declaration.id });
+        const handoffSessions = { ...previous.sessions };
+        if (picked === 'nonparticipant' || picked === 'otherAccount') delete handoffSessions['reviewed-session'];
+        else handoffSessions['reviewed-session'] = createSessionFixture({ id: 'reviewed-session',
+            access: createSessionAccessFixture(picked === 'participant' ? 'edit' : 'owner', { readTranscript: false }) });
         getStorage().setState({ profileScope: accountLifetime.scope, sessionLocalStateScope: accountLifetime.scope,
-            sessions: { ...previous.sessions, 'reviewed-session': createSessionFixture({ id: 'reviewed-session',
-                access: createSessionAccessFixture('owner', { readTranscript: false }) }) },
+            sessions: handoffSessions,
             settings: { ...previous.settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
                 actions: ask ? { [qualifiedId]: { approvalRequiredSurfaces: ['ui'] } } : {} }) },
         });
@@ -4733,7 +4743,10 @@ describe('client Action declared SessionTarget admission', () => {
                     environment: { environmentId: service.environmentId, environmentInstanceId: service.environmentInstanceId,
                         deploymentId: 'receipt-a', composeService: service.composeService } }] };
             },
-            resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }),
+            resolveSessionReference: async ({ sessionId }) => {
+                return picked === 'nonparticipant' || picked === 'otherAccount' ? { kind: 'none' }
+                    : { kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } };
+            },
             readSessionManager: async () => { resolutions += 1; return { kind: 'manager',
                 address: { serverId: targetHome, sessionId: manager } }; },
             isActionApprovalRequired: () => false,
@@ -4759,19 +4772,39 @@ describe('client Action declared SessionTarget admission', () => {
             const surface = { ...surfaceContext(caller.pluginId), contributionId: caller.contributionLocalId,
                 surfaceId: `surfacePlacement:${caller.pluginId}:${caller.contributionLocalId}` };
             const api = createPluginSurfaceActionHostApi({ surfaceContext: surface, callerBinding: caller,
-                callerSourceCustody: TARGET_SOURCE_CUSTODY, clientAction: {},
+                callerSourceCustody: TARGET_SOURCE_CUSTODY, clientAction: {}, actionAccountLifetime: accountLifetime,
                 resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
                 hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
-                    serverId: accountLifetime.scope.serverId, defaultSessionId: 'parent', authority: 'present_user', actionCaller: { kind: 'host' },
+                    serverId: picked === 'crossHomeConstrained' ? 'source-home' : accountLifetime.scope.serverId,
+                    defaultSessionId: picked === 'crossHomeConstrained' || picked === 'sameHomeConstrained' ? 'reviewed-session' : 'parent',
+                    ...(picked === 'crossHomeConstrained' || picked === 'sameHomeConstrained' ? { sessionListAccess: 'current_session' as const } : {}),
+                    authority: 'present_user', actionCaller: { kind: 'host' },
                 } },
             });
+            if (picked && picked !== 'unissued') {
+                const { createPluginActionInputSelector } = await import('./pluginActionInputSelectionHostApi');
+                const { Modal } = await import('@/modal');
+                const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+                    const props = config.props as Readonly<{ onResolve(selection: unknown): void }>;
+                    queueMicrotask(() => props.onResolve({ kind: 'existingSession', serverId: targetHome, sessionId: 'reviewed-session' }));
+                    return 'handoff-session-picker';
+                });
+                const hide = vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+                try {
+                    const select = createPluginActionInputSelector({ host: { accountLifetime, serverId: targetHome,
+                        targetPluginId: picked === 'wrongCaller' ? 'acme.other-plugin' : caller.pluginId }, isCurrent: accountLifetime.isCurrent });
+                    expect(await select({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } }))
+                        .toEqual({ kind: 'sessionAddress', session: { serverId: targetHome, sessionId: 'reviewed-session' } });
+                } finally { show.mockRestore(); hide.mockRestore(); }
+            }
             const request = executeActionRequest({ action: { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id },
+                ...(picked ? { sessionAddress: { serverId: targetHome, sessionId: 'reviewed-session' } } : {}),
                 input: { v: 1, handoff: { task: 'draftReleaseNotes', configuredActionId: 'fix',
                     context: { kind: 'repository', repository, ...(compose ? { workspace: {
                         workspaceId: project.id, serverId: project.serverId, machineId: project.machineId, rootPath: project.rootPath,
                     } } : {}) }, evidence: [{ kind: 'releaseNotes', repository,
                         selector: { kind: 'proposed', tagName: 'v1', targetCommitish: 'main' }, contextText: 'The original release context' }],
-                    sessionChoice: compose ? { kind: 'configured' } : { kind: 'existing', session: { selector: 'manager' } },
+                    sessionChoice: compose ? { kind: 'configured' } : { kind: 'existing', session: picked ? 'reviewed-session' : { selector: 'manager' } },
                     agentChoice: { kind: 'configured' }, delivery: compose ? 'compose' : 'send',
                 } },
             });
@@ -4782,11 +4815,15 @@ describe('client Action declared SessionTarget admission', () => {
                 agentChoice: { kind: 'profile', profileId: 'profile-investigate' }, delivery: 'compose',
             }) : await api.handleRequest({ ...request, surface });
             const handoffResult = health && result && 'ok' in result && result.ok ? result.result : result;
-            expect(confirmationSnapshots, JSON.stringify({ result, confirmations })).toEqual(ask ? [{ sentCount: 0, resolutions: 1, catalogueReads: 0 }] : []);
-            expect(resolutions, JSON.stringify({ result, sent })).toBe(compose ? 0 : 1);
-            expect(catalogueReads, JSON.stringify({ result, sent })).toBe(1);
-            expect(confirmations).toBe(ask ? 1 : 0);
-            if (compose) {
+            expect(confirmationSnapshots, JSON.stringify({ result, confirmations })).toEqual(expectConfirmation ? [{ sentCount: 0, resolutions: picked ? 0 : 1, catalogueReads: 0 }] : []);
+            expect(resolutions, JSON.stringify({ result, sent })).toBe(compose || picked ? 0 : 1);
+            expect(catalogueReads, JSON.stringify({ result, sent })).toBe(deniedSelection ? 0 : 1);
+            expect(confirmations).toBe(expectConfirmation ? 1 : 0);
+            if (deniedSelection) {
+                expect(result).toMatchObject({ code: expect.stringMatching(/invalid_payload|unavailable/) });
+                if (picked === 'crossHomeConstrained') expect(result).toMatchObject({ diagnostics: ['action_scope_restricted'] });
+                expect(sent).toEqual([]);
+            } else if (compose) {
                 expect(handoffResult, JSON.stringify(handoffResult)).toMatchObject({ v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } });
                 expect(sent).toEqual([]);
                 expect(newSessionNavigation).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/new' }));
@@ -5106,6 +5143,82 @@ describe('plugin-surface action branch selection', () => {
                 callerInputConstraints: { models: null, permissionModes: ['read-only'] }, workspaceWrites: 'deny' }]);
         } finally { api.dispose?.(); }
     });
+    it.each(['host', 'contributed', 'unrelated'] as const)('keeps picked parent proof separate from child admission: %s', async childKind => {
+        const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
+        const childSessionId = childKind === 'unrelated' ? 'unrelated-session' : 'parent-session';
+        const child = createClientActionActivation({ pluginId: 'acme.child-target', accountLifetime,
+            sessionTarget: { field: 'destination.sessionId', cardinality: 'one' },
+            handler: async (_input, context) => ({ admitted: context.sessionTargetsV1 ?? null,
+                result: await context.ui.executeAction('session.message.send', { sessionId: childSessionId,
+                    message: 'Continue the admitted child Session', idempotencyKey: 'admitted-child-send' },
+                    { sessionAddress: { serverId: accountLifetime.scope.serverId, sessionId: childSessionId } }) }),
+        });
+        const activation = createClientActionActivation({ pluginId: 'acme.relay-parent', accountLifetime,
+            sessionTarget: { field: 'sessionId', cardinality: 'one' },
+            handler: async (_input, context) => childKind === 'host'
+                ? context.ui.executeAction('session.message.send', { sessionId: 'child-session',
+                    message: 'Continue the child Session', idempotencyKey: 'independent-child-send' })
+                : context.ui.executeAction({ pluginId: child.action.pluginId, localId: child.action.id },
+                    { destination: { sessionId: childSessionId } },
+                    { sessionAddress: { serverId: accountLifetime.scope.serverId, sessionId: childSessionId } }),
+        });
+        const projection = { ...activation.projection,
+            actionsById: { ...activation.projection.actionsById, ...child.projection.actionsById },
+            installedPackagesById: { ...activation.projection.installedPackagesById, ...child.projection.installedPackagesById },
+            reactNativeBundlesById: { ...activation.projection.reactNativeBundlesById, ...child.projection.reactNativeBundlesById } };
+        const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+            hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        });
+        const sent: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.() ?? [],
+            resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: accountLifetime.scope.serverId, sessionId: sessionId! } }),
+            isActionApprovalRequired: () => false,
+            sessionSendMessage: async request => { sent.push(request); return { status: 'accepted', localId: 'child-input' }; },
+            invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+            }),
+        }));
+        const unregister = registerCurrentUiContextActionPort(createPort);
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+            const props = config.props as Readonly<{ onResolve(selection: unknown): void }>;
+            queueMicrotask(() => props.onResolve({ kind: 'existingSession', serverId: accountLifetime.scope.serverId, sessionId: 'parent-session' }));
+            return 'parent-session-picker';
+        });
+        const hide = vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+        try {
+            await activation.composition.reconcile([activation.activation, child.activation]);
+            const { createPluginActionInputSelector } = await import('./pluginActionInputSelectionHostApi');
+            const select = createPluginActionInputSelector({ host: { accountLifetime, serverId: accountLifetime.scope.serverId,
+                targetPluginId: CALLER_PLUGIN_ID }, isCurrent: accountLifetime.isCurrent });
+            const selected = await select({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } });
+            expect(selected).toMatchObject({ kind: 'sessionAddress' });
+            const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(), callerBinding: mountedCallerBinding(),
+                actionAccountLifetime: accountLifetime, clientAction: {}, callerSourceCustody: TARGET_SOURCE_CUSTODY,
+                resolveContributedAction: identity => resolveExactClientAction(activation.action)(identity) ?? resolveExactClientAction(child.action)(identity),
+                hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                    serverId: accountLifetime.scope.serverId, authority: 'present_user', actionCaller: { kind: 'host' },
+                } },
+            });
+            const result = await api.handleRequest(executeActionRequest({ action: { pluginId: activation.action.pluginId, localId: activation.action.id },
+                input: { sessionId: 'parent-session' }, sessionAddress: { serverId: accountLifetime.scope.serverId, sessionId: 'parent-session' } }));
+            if (childKind === 'unrelated') {
+                expect(result).toMatchObject({ code: 'unavailable', diagnostics: ['session_address_unsupported'] });
+                expect(sent).toEqual([]);
+            } else {
+                expect(result).toMatchObject(childKind === 'host' ? { status: 'accepted', localId: 'child-input' } : {
+                    admitted: { actionId: 'action.invoke', field: 'input.destination.sessionId',
+                        targets: [{ serverId: accountLifetime.scope.serverId, sessionId: 'parent-session' }] },
+                    result: { status: 'accepted', localId: 'child-input' } });
+                expect(sent).toHaveLength(1);
+                expect(sent[0]).toMatchObject({ sessionId: childKind === 'host' ? 'child-session' : 'parent-session', serverId: accountLifetime.scope.serverId });
+            }
+        } finally { unregister(); await activation.composition.unload(); show.mockRestore(); hide.mockRestore(); }
+    });
+
     it.each(['Ask-first', 'default', 'waived'] as const)(
         'evaluates a nested host Action independently of its admitted parent: %s',
         async (policy) => {
@@ -6130,6 +6243,9 @@ describe('plugin-surface action branch selection', () => {
                 return opened.kind === 'direct' ? opened.outcome : null;
             })();
             expect(outcome).toMatchObject({ ok: true, result: { kind: 'sessionAddress', session: { sessionId: 'chosen' } } });
+            const { validateContributedActionSessionAddressV1 } = await import('@happier-dev/protocol/actions/executor/sessionTargets');
+            expect(validateContributedActionSessionAddressV1({ selectionScope: accountLifetime, callerPluginId: CALLER_PLUGIN_ID,
+                sessionAddress: { serverId: accountLifetime.scope.serverId, sessionId: 'chosen' } })).toMatchObject({ ok: true });
             expect(show.mock.calls.at(-1)?.[0].chrome).toMatchObject({ anchor, phonePresentation: 'sheet' });
         } finally { await activation.composition.unload(); show.mockRestore(); hide.mockRestore(); }
     });

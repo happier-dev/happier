@@ -47,7 +47,7 @@ import { runTracedExternalActionInnerStage } from '@/daemon/externalActions/exte
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { observeContributedActionRead } from './resourceActions';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
@@ -662,11 +662,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const spec = getActionSpec(actionId);
         let sessionAddress: import('@happier-dev/plugin-sdk/sessions').ActionSessionAddressV1 | undefined;
         if (options?.sessionAddress !== undefined) {
-            if (contributionRef) throw createPluginActionHandlerNotStartedError({
-                code: 'session_address_unsupported', message: 'An exact Session address requires a host Session Action',
-            });
-            const scoped = validateActionSessionAddressV1({ sessionTarget: spec.sessionTarget,
-                input: canonicalInput, sessionAddress: options.sessionAddress });
+            const scoped = contributionRef
+                ? validateContributedActionSessionAddressV1({ sessionAddress: options.sessionAddress,
+                    admittedSessionTargets: params.seed.approvalContext?.sessionTargetsV1 })
+                : validateActionSessionAddressV1({ sessionTarget: spec.sessionTarget,
+                    input: canonicalInput, sessionAddress: options.sessionAddress });
             if (!scoped.ok) throw createPluginActionHandlerNotStartedError({ code: scoped.errorCode, message: scoped.error });
             const source = params.seed.approvalContext;
             const home = source?.serverId?.trim();

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { Modal } from '@/modal';
@@ -19,7 +20,7 @@ function mount() {
     const handler = createPluginActionInputSelectionHostApiHandler({ host: {
         serverId: 'server-a', machineId: 'machine-a', targetPluginId: 'acme.pr', accountLifetime: lifetime, signal: controller.signal,
     }, isCurrent: lifetime.isCurrent, anchor });
-    return { handler, controller };
+    return { handler, controller, lifetime };
 }
 afterEach(() => vi.restoreAllMocks());
 
@@ -29,12 +30,20 @@ describe('mounted Session address selection', () => {
         // Modal presentation is the real person/platform boundary; selection admission remains real.
         const show = vi.spyOn(Modal, 'show').mockImplementation(config => { shown.resolve(config.props as Awaited<typeof shown.promise>); return 'picker'; });
         vi.spyOn(Modal, 'hide').mockImplementation(() => {});
-        const selecting = mount().handler(request);
+        const mounted = mount();
+        const selecting = mounted.handler(request);
         const props = await shown.promise;
         expect(show.mock.calls[0]?.[0].chrome).toMatchObject({ phonePresentation: 'sheet', anchor });
         expect(props).toMatchObject({ sourceServerId: 'server-a', selectionOnly: true });
         props.onResolve({ kind: 'existingSession', serverId: 'server-a', sessionId: 'chosen' });
-        expect(await selecting).toEqual({ kind: 'sessionAddress', session: { serverId: 'server-a', sessionId: 'chosen' } });
+        const sessionAddress = { serverId: 'server-a', sessionId: 'chosen' };
+        expect(await selecting).toEqual({ kind: 'sessionAddress', session: sessionAddress });
+        expect(validateContributedActionSessionAddressV1({ sessionAddress: JSON.parse(JSON.stringify(sessionAddress)),
+            selectionScope: mounted.lifetime, callerPluginId: 'acme.pr' })).toEqual({ ok: true, sessionAddress });
+        expect(validateContributedActionSessionAddressV1({ sessionAddress, selectionScope: mount().lifetime,
+            callerPluginId: 'acme.pr' })).toMatchObject({ ok: false, errorCode: 'session_address_unsupported' });
+        expect(validateContributedActionSessionAddressV1({ sessionAddress, selectionScope: mounted.lifetime,
+            callerPluginId: 'acme.other' })).toMatchObject({ ok: false, errorCode: 'session_address_unsupported' });
     });
 
     it('retires the native picker on cancellation', async () => {

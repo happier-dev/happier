@@ -9,11 +9,13 @@ import {
     normalizeActionsSettingsV1,
     type ActionExecutorContext,
     type ActionExecutorDeps,
+    type ActionDefinitionV1,
 } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 
 import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
 import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
@@ -60,6 +62,7 @@ type TestActionExecutorOverrides = Partial<Pick<
     | 'resolveSessionReference'
     | 'invokeContributedAction'
     | 'isActionApprovalRequired'
+    | 'listContributedActionDefinitions'
 >>;
 
 function createActionExecutorForTest(overrides: TestActionExecutorOverrides = {}) {
@@ -308,6 +311,86 @@ describe('plugin invocation ActionsService', () => {
             sessionId: address.sessionId, message: 'Must not send after cancellation', idempotencyKey: 'must-not-send-after-cancel',
         }, options)).rejects.toMatchObject({ name: 'PluginError' });
         expect(sent).toHaveLength(1);
+    });
+
+    it('admits contributed exact Session addresses only from host targets and resolves the child declaration independently', async () => {
+        const address = { serverId: 'bound-home', sessionId: 'admitted-session' };
+        const pluginId = 'example.session-author';
+        const child = { pluginId: 'example.session-recipient', localId: 'update' };
+        const definition: ActionDefinitionV1 = {
+            kindVersion: 1, id: 'example.session-recipient/actions/update', title: 'Update', description: 'Update one Session',
+            safety: 'safe', sideEffectClass: 'write', placements: [], slash: null, bindings: null, examples: null,
+            surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
+            sessionTarget: { field: 'recipient.sessionId', cardinality: 'one' },
+            inputSchema: { type: 'object' },
+        };
+        const resolveSessionReference: NonNullable<ActionExecutorDeps['resolveSessionReference']> = async ({ sessionId, context }) => ({
+            kind: 'unique', address: { serverId: context.serverId!, sessionId: sessionId! },
+        });
+        const admitted = await resolveActionSessionTargets({ ...createUnavailableActionTransportDeps(), resolveSessionReference }, {
+            actionId: 'session.message.send', declaration: { field: 'sessionId', cardinality: 'many' },
+            input: { sessionId: address.sessionId }, context: { surface: 'plugin', authority: 'account_automation',
+                serverId: address.serverId, expectedSessionAddress: address },
+        });
+        if (!admitted || 'ok' in admitted) throw new Error('Host target admission must succeed');
+        const effects: Parameters<InvokeContributedAction>[0][] = [];
+        const invokeContributedAction: InvokeContributedAction = async request => {
+            effects.push(request);
+            return { status: 'executed', value: { updated: true } };
+        };
+        const service = (options: {
+            admission?: typeof admitted | null;
+            home?: string;
+            definition?: ActionDefinitionV1;
+            currentSessionOnly?: boolean;
+        } = {}) => {
+            const admission = options.admission === undefined ? admitted : options.admission;
+            const seed: Parameters<typeof createPluginInvocationActionsService>[0]['seed'] = {
+                plugin: { id: pluginId, version: '1.0.0' },
+                contribution: { id: 'update', qualifiedId: pluginId + '/actions/update' },
+                occurrenceId: 'session-address-occurrence',
+                sourceCustody: { kind: 'development', registeredRootId: 'session-address-root' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+                surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                approvalContext: { serverId: options.home ?? address.serverId, runtimeAccountId: 'bound-account',
+                    ...(admission ? { sessionTargetsV1: admission } : {}) },
+                ...(options.currentSessionOnly ? { session: { id: 'caller-session' }, sessionListAccess: 'current_session' } : {}),
+            };
+            return createPluginInvocationActionsService({ seed, invokeContributedAction,
+                actionExecutor: createActionExecutorForTest({
+                    listContributedActionDefinitions: () => [options.definition ?? definition],
+                    resolveSessionReference,
+                    invokeContributedAction: createHostContributedActionInvoker({ invokeContributedAction,
+                        revalidatePluginActionCallerMaterialization: async () => true,
+                        revalidatePluginActionCallerOccurrence: async () => true,
+                    }),
+                }),
+            });
+        };
+        const input = { recipient: { sessionId: address.sessionId }, message: 'Continue admitted work' };
+        await expect(service().execute(child, input, { sessionAddress: address })).resolves.toEqual({ updated: true });
+        expect(effects).toHaveLength(1);
+        expect(effects[0]).toMatchObject({ input, approvalContext: { expectedSessionAddress: address,
+            sessionTargetsV1: { actionId: 'action.invoke', field: 'input.recipient.sessionId', targets: [address] },
+        } });
+        // A parent's admitted target permits the routing option, never an inherited child operand or authority.
+        expect(effects[0]!.approvalContext!.sessionTargetsV1!.actionId).not.toBe(admitted.actionId);
+        await expect(service({ admission: null }).execute(child, input, { sessionAddress: address }))
+            .rejects.toMatchObject({ code: 'session_address_unsupported' });
+        await expect(service().execute(child, input, { sessionAddress: { ...address, sessionId: 'unadmitted-session' } }))
+            .rejects.toMatchObject({ code: 'session_address_unsupported' });
+        await expect(service({ home: 'foreign-home' }).execute(child, input, { sessionAddress: address }))
+            .rejects.toMatchObject({ code: 'plugin_action_session_address_unavailable' });
+        for (const sessionId of ['different-session', { selector: 'self', of: address.sessionId }]) {
+            await expect(service().execute(child, { ...input, recipient: { sessionId } }, { sessionAddress: address }))
+                .rejects.toMatchObject({ code: 'session_address_mismatch' });
+        }
+        const { sessionTarget: omitted, ...withoutSessionTarget } = definition;
+        await expect(service({ definition: withoutSessionTarget }).execute(child, input, { sessionAddress: address }))
+            .rejects.toMatchObject({ code: 'session_address_unsupported' });
+        await expect(service({ currentSessionOnly: true }).execute(child, input, { sessionAddress: address }))
+            .rejects.toMatchObject({ code: 'session_target_unavailable' });
+        expect(effects).toHaveLength(1);
     });
 
     it.each(['source', 'source-machine', 'source-with-materialization', 'materialization'] as const)('stamps the exact %s origin through production services and the real target handler', async (kind) => {

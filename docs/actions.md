@@ -360,9 +360,15 @@ already holds an exact Home/Session result. This is a routing constraint, not a
 selector or grant: the Action's declared operand must contain exactly one plain
 Session-id string matching the address, and canonical resolution must yield
 that same single qualified target before policy or effects. Selector objects,
-reserved selector shorthand and contributed-Action references do not accept
-this option. The host retains its original authorization anchor, captured
-Account, explicit credential fences and retirement cancellation. CLI execution
+reserved selector shorthand do not accept this option. Contributed-Action
+references accept it only for a tuple issued by the host Session picker to the
+same plugin in the captured Account lifetime, or inherited from a containing
+Action's host-admitted `sessionTargetsV1`. A raw plugin-authored tuple supplies
+neither. The canonical resolver binds the Action's declared exact operand and
+checks the caller's authorized Session corpus before producing that snapshot;
+the plugin never supplies the snapshot. The host retains its original
+authorization anchor, captured Account, explicit credential fences and retirement
+cancellation. CLI execution
 cannot use the option to leave its admitted Home. Omitting it preserves existing
 selection and fanout behavior; no qualified-string grammar is introduced.
 

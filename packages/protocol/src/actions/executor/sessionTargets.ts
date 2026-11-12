@@ -243,6 +243,45 @@ export function readActionSessionTargetOperands(input: Readonly<Record<string, u
   return visit(input, field.split('.'), []);
 }
 
+// A host picker result crosses JSON bridges, so identity is its qualified tuple.
+// Custody stays private to the existing Account lifetime and immediate plugin;
+// a plugin-supplied tuple alone never creates a selection.
+const selectedSessionAddresses = new WeakMap<object, Map<string, Set<string>>>();
+
+function sessionAddressKey(address: ActionSessionAddressV1): string {
+  return JSON.stringify([address.serverId, address.sessionId]);
+}
+
+export function registerHostSelectedActionSessionAddressV1(
+  selectionScope: object, callerPluginId: string, address: ActionSessionAddressV1,
+): void {
+  let callers = selectedSessionAddresses.get(selectionScope);
+  if (!callers) { callers = new Map(); selectedSessionAddresses.set(selectionScope, callers); }
+  let addresses = callers.get(callerPluginId);
+  if (!addresses) { addresses = new Set(); callers.set(callerPluginId, addresses); }
+  addresses.add(sessionAddressKey(address));
+}
+
+/** Only host-private picker custody or a containing Action's admitted targets may route a contributed call. */
+export function validateContributedActionSessionAddressV1(input: Readonly<{
+  sessionAddress: unknown;
+  selectionScope?: object;
+  callerPluginId?: string;
+  admittedSessionTargets?: ActionResolvedSessionTargetsV1;
+}>): Readonly<{ ok: true; sessionAddress: ActionSessionAddressV1 }> | ActionExecuteFailure {
+  const parsed = ActionSessionAddressV1Schema.safeParse(input.sessionAddress);
+  if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  const address = parsed.data;
+  const targets = input.admittedSessionTargets?.targets;
+  const admitted = targets?.length === 1 && targets[0]!.serverId === address.serverId
+    && targets[0]!.sessionId === address.sessionId;
+  const selected = input.selectionScope && input.callerPluginId
+    ? selectedSessionAddresses.get(input.selectionScope)?.get(input.callerPluginId)?.has(sessionAddressKey(address))
+    : false;
+  if (!admitted && !selected) return { ok: false, errorCode: 'session_address_unsupported', error: 'session_address_unsupported' };
+  return { ok: true, sessionAddress: address };
+}
+
 /** An exact routing option can bind only the same one concrete declared operand. */
 export function validateActionSessionAddressV1(input: Readonly<{
   sessionTarget: ActionSessionTargetDeclarationV1 | undefined;
@@ -409,6 +448,11 @@ export async function resolveActionSessionTargets(
   args: SessionTargetsRequest,
 ): Promise<ActionResolvedSessionTargetsV1 | ActionExecuteFailure | null> {
   try {
+    if (args.context.expectedSessionAddress) {
+      const exact = validateActionSessionAddressV1({ sessionTarget: args.declaration,
+        input: args.input, sessionAddress: args.context.expectedSessionAddress });
+      if (!exact.ok) return exact;
+    }
     if (args.declaration.field.includes('*')) {
       const operands: NonNullable<ActionResolvedSessionTargetsV1['operands']> = [];
       const targets = new Map<string, ActionSessionAddress>();

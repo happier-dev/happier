@@ -9,6 +9,9 @@ import {
     type PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
 
+import { registerHostSelectedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
@@ -174,6 +177,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
         if (!parsed.success) return errorPayload('invalid_payload', 'select_action_input_request_invalid');
         const mergedSignal = mergeAbortSignals([input.host.signal, options?.signal]);
         const signal = mergedSignal.signal;
+        let selectedSessionAddress: ActionSessionAddressV1 | undefined;
         try {
             const result = await (async (): Promise<PluginUiJsonValueV1> => {
                 if (signal?.aborted) return errorPayload('unavailable', 'select_action_input_aborted');
@@ -222,9 +226,8 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                         try {
                             const selected = await presentation.result;
                             if (!selected || selected.kind !== 'existingSession') return { kind: 'cancelled' };
-                            return readBoundedSelectionResult({ kind: 'sessionAddress', session: {
-                                serverId: selected.serverId, sessionId: selected.sessionId,
-                            } });
+                            selectedSessionAddress = { serverId: selected.serverId, sessionId: selected.sessionId };
+                            return readBoundedSelectionResult({ kind: 'sessionAddress', session: selectedSessionAddress });
                         } finally {
                             signal?.removeEventListener('abort', cancel);
                         }
@@ -342,7 +345,11 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                 && input.host.isCurrent?.() !== false
                 && input.host.accountLifetime?.isCurrent() !== false;
             if (!hostIsCurrent) return errorPayload('stale_surface', signal?.aborted ? 'select_action_input_aborted' : 'host_retired');
-            return signal?.aborted ? errorPayload('unavailable', 'select_action_input_aborted') : result;
+            if (signal?.aborted) return errorPayload('unavailable', 'select_action_input_aborted');
+            if (selectedSessionAddress && input.host.accountLifetime && input.host.targetPluginId) {
+                registerHostSelectedActionSessionAddressV1(input.host.accountLifetime, input.host.targetPluginId, selectedSessionAddress);
+            }
+            return result;
         } finally {
             mergedSignal.dispose();
         }

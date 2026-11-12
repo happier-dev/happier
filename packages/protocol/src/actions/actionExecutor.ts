@@ -2337,6 +2337,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // snapshot is also the sole selection used by preparation and replay.
     let admittedInput: unknown = bound.input ?? {};
     const sessionTarget = readActionSessionTargetDeclaration(actionId, admittedInput, ctx);
+    if (ctx.expectedSessionAddress && !sessionTarget && !hostInternal && !options?.sessionTargetLeaf) {
+      return { ok: false, errorCode: 'session_address_unsupported', error: 'session_address_unsupported' };
+    }
     if (sessionTarget && !options?.sessionTargetLeaf) {
       if (ctx.sessionTargetsV1) {
         const snapshot = ActionResolvedSessionTargetsV1Schema.safeParse(ctx.sessionTargetsV1);

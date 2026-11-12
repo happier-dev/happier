@@ -15,8 +15,8 @@ import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmit
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
-import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
-import { normalizeSessionTargetV1, type ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { readActionSessionTargetField, readActionSessionTargetOperands, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
@@ -320,6 +320,8 @@ export type PluginSurfaceActionCurrentIntentPresenter = (
 ) => Promise<PluginActionCurrentIntentResult>;
 
 export type DispatchPluginSurfaceActionInput = Readonly<{
+    /** Containing Action admission proof; routing custody only, never child execution context. */
+    admittedParentSessionTargetsV1?: ActionResolvedSessionTargetsV1;
     /** Existing host Account admission, independent of a selected Machine. */
     actionAccountLifetime?: ServerAccountScopeLifetime;
     /** UI-owned trigger location for input selection requested by a local Action. */
@@ -676,6 +678,7 @@ function nestedClientHostAction(
     if (!binding) return undefined;
     return { ...binding, context: { ...binding.context,
         sessionTargetsV1: undefined,
+        expectedSessionAddress: undefined,
         // Only host Action children consume the host's review. Contributed
         // calls keep their own Plugin caller and ordinary approval path.
         hostReviewedChild: hostActionChild ? binding.context?.hostReviewedChild : undefined,
@@ -731,6 +734,8 @@ function clientActionExecuteAction(
                 actionRequestId: input.actionRequestId,
                 onDaemonActionOperationAdmitted: input.onDaemonActionOperationAdmitted,
                 callerPluginId: selection.action.pluginId,
+                ...(options?.sessionAddress !== undefined && input.hostAction?.context?.sessionTargetsV1
+                    ? { admittedParentSessionTargetsV1: input.hostAction.context.sessionTargetsV1 } : {}),
                 ...(selection.registration.accountLifetime ? { actionAccountLifetime: selection.registration.accountLifetime } : {}),
                 ...(selected ? {
                     callerSourceCustody: invocation.clientActionBinding.sourceCustody,
@@ -1030,7 +1035,7 @@ async function contributedInvocationAuthority(
     input: DispatchPluginSurfaceActionInput,
     targetServerId?: string | null,
 ): Promise<ActionRequiredAuthority> {
-    if (input.resourceCaller || input.invocation?.kind === 'clientPluginAction') return 'account_automation';
+    if (input.resourceCaller || input.invocation?.kind === 'clientPluginAction' || resolveMountedPluginActionCaller(input)) return 'account_automation';
     if (input.hostAction?.context?.authority) return input.hostAction.context.authority;
     const serverId = (targetServerId ?? input.contributedAction?.serverId ?? input.hostAction?.context?.serverId)?.trim();
     const surface = input.invocationSurface ?? 'ui';
@@ -1289,9 +1294,9 @@ async function admitContributedActionSessionTargets(
         && (declaredSessionTarget.field.includes('*')
             ? readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field).length > 0
             : readActionSessionTargetField(normalizedInput, declaredSessionTarget.field) !== undefined);
-    if (hasSessionOperand) {
+    if (hasSessionOperand || input.sessionAddress !== undefined) {
         const snapshot = input.hostAction?.context?.sessionTargetsV1;
-        if (snapshot) {
+        if (snapshot && declaredSessionTarget) {
             if (snapshot.actionId !== 'action.invoke' || snapshot.field !== `input.${declaredSessionTarget.field}`) {
                 return clientActionFailure('approval_stale');
             }
@@ -1325,7 +1330,10 @@ async function prepareContributedActionInvocation(
     if (!prepare) return clientActionFailure('action_prepare_unavailable');
     const caller = resolveMountedPluginActionCaller(input);
     const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
-    const context = mountedHostActionContext(input, caller, clientCaller, 'action.invoke');
+    const inheritedContext = mountedHostActionContext(input, caller, clientCaller, 'action.invoke');
+    const context = input.sessionAddress === undefined ? inheritedContext
+        : routePluginActionSessionContext(inheritedContext, input.sessionAddress);
+    if (!context) return failure('unavailable', 'action_scope_restricted');
     const invocationSurface = input.invocationSurface ?? 'ui';
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
@@ -1641,6 +1649,8 @@ async function executeClientContributedAction(
                             actionRequestId: input.actionRequestId,
                             actionAccountLifetime: accountLifetime,
                             callerPluginId: current.action.pluginId, callerSourceCustody: accountOrigin.sourceCustody,
+                            ...(options.sessionAddress !== undefined && nestedHostAction?.context?.sessionTargetsV1
+                                ? { admittedParentSessionTargetsV1: nestedHostAction.context.sessionTargetsV1 } : {}),
                             action, input: value,
                             machineAvailability: options.machineAvailability ?? input.machineAvailability,
                             ...(options.sessionAddress === undefined ? {} : { sessionAddress: options.sessionAddress }),
@@ -2125,8 +2135,22 @@ export async function dispatchPluginSurfaceAction(
         }
         return executeHostAction(input, hostActionId.data as ActionId);
     }
-    if (input.sessionAddress !== undefined) return failure('invalid_payload', 'session_address_unsupported');
+    if (input.sessionAddress !== undefined) {
+        const address = validateContributedActionSessionAddressV1({ sessionAddress: input.sessionAddress,
+            selectionScope: input.actionAccountLifetime, callerPluginId: input.callerPluginId,
+            admittedSessionTargets: input.hostAction?.context?.sessionTargetsV1 ?? input.admittedParentSessionTargetsV1 });
+        if (!address.ok) return failure('invalid_payload', address.errorCode);
+    }
     return executeContributedAction(input);
+}
+
+/** Exact routing retains the original caller's Home and Account constraints. */
+function routePluginActionSessionContext(context: ActionExecutorContext, address: ActionSessionAddressV1): ActionExecutorContext | null {
+    const constrained = context.surface === 'agent' || context.actionCaller?.kind === 'session'
+        || context.sessionListAccess === 'current_session' || context.sessionListAccess === 'led_subtree'
+        || context.sessionListAccess === 'unavailable';
+    if (constrained && (!context.serverId || !areServerProfileIdentifiersEquivalent(address.serverId, context.serverId))) return null;
+    return { ...context, serverId: address.serverId, expectedSessionAddress: address };
 }
 
 async function executeHostAction(
@@ -2154,18 +2178,9 @@ async function executeHostAction(
         const address = validateActionSessionAddressV1({ sessionTarget: getActionSpec(actionId).sessionTarget,
             input: input.input, sessionAddress: input.sessionAddress });
         if (!address.ok) return failure('invalid_payload', address.errorCode);
-        // The incumbent executor captures the requested Home's Account and
-        // retains expectedAccountId, credential constraints and caller policy.
-        const constrained = context.surface === 'agent' || context.actionCaller?.kind === 'session'
-            || context.sessionListAccess === 'current_session' || context.sessionListAccess === 'led_subtree'
-            || context.sessionListAccess === 'unavailable';
-        if (constrained && (!context.serverId
-            || !areServerProfileIdentifiersEquivalent(address.sessionAddress.serverId, context.serverId))) {
-            return failure('unavailable', 'action_scope_restricted');
-        }
-        // Routing never changes the existing Session authorization anchor.
-        context = { ...context, serverId: address.sessionAddress.serverId,
-            expectedSessionAddress: address.sessionAddress };
+        const routedContext = routePluginActionSessionContext(context, address.sessionAddress);
+        if (!routedContext) return failure('unavailable', 'action_scope_restricted');
+        context = routedContext;
     }
     const reviewedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
     const result = reviewedParent ? await invokeHostReviewedChildV1({
