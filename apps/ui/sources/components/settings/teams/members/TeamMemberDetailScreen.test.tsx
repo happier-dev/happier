@@ -120,6 +120,16 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     await harness.reset();
@@ -132,10 +142,11 @@ afterEach(() => {
 });
 
 describe('TeamMemberDetailScreen management source', () => {
-    it('removes a member only after shared Action confirmation and preserves a declined removal', async () => {
+    it('confirms an explicit Ask member removal locally and preserves a declined removal', async () => {
         const serverId = await addHome(teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageMembers: true, manageOwners: true }),
         }));
+        await harness.requireUiApproval(serverId, 'teams.members.remove');
         harness.answer(serverId, MEMBER_GET_PATH, {
             body: teamMembershipFixture({ capabilities: { ...NO_MEMBER_CAPABILITIES, remove: true } }),
         });

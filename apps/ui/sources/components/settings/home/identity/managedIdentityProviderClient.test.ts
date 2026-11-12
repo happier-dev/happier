@@ -1,24 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
-    buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import {
     DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
-import {
-    type ApprovalRequestV2} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
     type ManagedIdentityProviderOwnerV1,
 } from '@happier-dev/protocol/identity/providers';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { useManagedIdentityProviders } from './useManagedIdentityProviders';
 import type { ActionApprovalContinuation, ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 const serverFetchMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 vi.mock('@/sync/http/client', async () => {
     const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
@@ -50,7 +50,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     });
 });
 
-import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -106,54 +106,18 @@ async function readApprovalScope(actionId: 'identity.providers.list' | 'identity
     return scope;
 }
 
-function continuation(registration: ActionApprovalRegistration | undefined): ActionApprovalContinuation {
-    if (!registration || typeof registration === 'string') throw new Error('Expected a result-bearing approval');
-    return registration;
-}
-
-function approvedListArtifact(input: Readonly<{
-    approval: ActionApprovalContinuation;
-    scope: ServerAccountScope;
-    owner: ManagedIdentityProviderOwnerV1;
-    unreadableCount: number;
-}>): DecryptedArtifact {
-    const request: ApprovalRequestV2 = {
-        v: 2,
-        status: 'executed',
-        createdAtMs: 1,
-        updatedAtMs: 2,
-        createdBy: { surface: 'system' },
-        requestedSurface: 'ui',
-        executionOriginV1: {
-            v: 1,
-            authority: 'present_user',
-            surface: 'ui',
-            caller: { kind: 'host' },
-            ...input.scope,
-            actionId: 'identity.providers.list',
-            requestId: 'read-request',
-        },
-        actionId: 'identity.providers.list',
-        actionArgs: { owner: input.owner },
-        summary: 'Read managed providers',
-        decision: { kind: 'approve', decidedAtMs: 2 },
-        execution: { executedAtMs: 2, ok: true, result: { items: [], unreadableCount: input.unreadableCount } },
-    };
-    return {
-        id: input.approval.artifactId,
-        title: null,
-        header: buildApprovalRequestArtifactHeaderV1(request),
-        body: JSON.stringify(request),
-        headerVersion: 1,
-        bodyVersion: 1,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 2,
-        isDecrypted: true,
-    };
-}
-
-beforeEach(() => {
+beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     runtimeFetchMock.mockReset();
     serverFetchMock.mockReset();
     getCredentialsForServerUrlMock.mockReset();
@@ -187,7 +151,7 @@ describe('createManagedIdentityProviderClient', () => {
         expect(teams).toMatchObject({ ok: false, failure: { code: 'home_unreachable', retryable: true } });
     });
 
-    it('retains a configured approval for a removal-preview read until its terminal result', async () => {
+    it('does not issue an Ask removal-preview read when its local confirmation is declined', async () => {
         const scope = await readApprovalScope('identity.providers.remove.preview');
         const onApprovalFailed = vi.fn();
         const result = await createManagedIdentityProviderClient(scope).execute(
@@ -196,72 +160,44 @@ describe('createManagedIdentityProviderClient', () => {
             { onApprovalFailed },
         );
 
-        expect(result.kind).toBe('approval_pending');
-        if (result.kind !== 'approval_pending') throw new Error('Expected approval to await a decision');
-        result.approval.onTerminal?.('rejected');
-        expect(onApprovalFailed).toHaveBeenCalledWith('approval_rejected');
+        expect(result).toMatchObject({ kind: 'failed', failure: { code: 'approval_canceled' } });
+        expect(onApprovalFailed).not.toHaveBeenCalled();
         expect(runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith('/v1/identity/providers/remove/preflight'))).toHaveLength(0);
     });
 
     it.each<ManagedIdentityProviderOwnerV1>([{ kind: 'home' }, { kind: 'team', teamId: 'team-1' }])(
-        'consumes an approved $kind provider read in the mounted list without issuing it again',
+        'confirms an Ask $kind provider read locally and displays the Home result',
         async (owner) => {
             const scope = await readApprovalScope();
+            const { Modal } = await import('@/modal');
+            vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
             const onApprovalPending = vi.fn<(registration: ActionApprovalRegistration) => void>();
             const hook = await renderHook(() => useManagedIdentityProviders(scope, owner, onApprovalPending));
 
-            await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(1));
-            expect(hook.getCurrent().state).toEqual({ kind: 'loading' });
-            const approval = continuation(onApprovalPending.mock.calls[0]?.[0]);
-            await act(async () => {
-                await approval.onExecuted(approvedListArtifact({ approval, scope, owner, unreadableCount: 3 }));
-            });
-
-            expect(hook.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 3, refreshing: false, stale: false });
-            expect(onApprovalPending).toHaveBeenCalledTimes(1);
-            expect(runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith('/v1/identity/providers/list'))).toHaveLength(0);
+            await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 0, refreshing: false, stale: false }));
+            expect(Modal.confirm).toHaveBeenCalledOnce();
+            expect(onApprovalPending).not.toHaveBeenCalled();
+            expect(runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith('/v1/identity/providers/list'))).toHaveLength(1);
         },
     );
 
-    it('releases a rejected read for explicit retry and settles the new approval', async () => {
+    it('allows a declined Ask read to be retried with local confirmation', async () => {
         const scope = await readApprovalScope();
         const owner = { kind: 'home' } as const;
         const onApprovalPending = vi.fn<(registration: ActionApprovalRegistration) => void>();
         const hook = await renderHook(() => useManagedIdentityProviders(scope, owner, onApprovalPending));
-        await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(1));
-        await act(async () => continuation(onApprovalPending.mock.calls[0]?.[0]).onTerminal?.('rejected'));
-
-        expect(hook.getCurrent().state).toEqual({ kind: 'unavailable', failure: { code: 'approval_rejected', retryable: true } });
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', failure: { code: 'approval_canceled' } }));
+        expect(runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith('/v1/identity/providers/list'))).toHaveLength(0);
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         await act(async () => hook.getCurrent().refresh());
-        await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(2));
-        const approval = continuation(onApprovalPending.mock.calls[1]?.[0]);
-        await act(async () => {
-            await approval.onExecuted(approvedListArtifact({ approval, scope, owner, unreadableCount: 4 }));
-        });
-        expect(hook.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 4, stale: false });
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 0, stale: false }));
+        expect(onApprovalPending).not.toHaveBeenCalled();
+        expect(runtimeFetchMock.mock.calls.filter(([request]) => request.url.endsWith('/v1/identity/providers/list'))).toHaveLength(1);
     });
 
-    it('ignores approval results after the Team query changes or a new refresh supersedes them', async () => {
-        const scope = await readApprovalScope();
-        const onApprovalPending = vi.fn<(registration: ActionApprovalRegistration) => void>();
-        const hook = await renderHook((teamId: string) => useManagedIdentityProviders(scope, { kind: 'team', teamId }, onApprovalPending), { initialProps: 'team-1' });
-        await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(1));
-        const previousTeam = continuation(onApprovalPending.mock.calls[0]?.[0]);
-        await hook.rerender('team-2');
-        await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(2));
-        const supersededRefresh = continuation(onApprovalPending.mock.calls[1]?.[0]);
-        await act(async () => hook.getCurrent().refresh());
-        await vi.waitFor(() => expect(onApprovalPending).toHaveBeenCalledTimes(3));
-        const approval = continuation(onApprovalPending.mock.calls[2]?.[0]);
-        await act(async () => {
-            await approval.onExecuted(approvedListArtifact({ approval, scope, owner: { kind: 'team', teamId: 'team-2' }, unreadableCount: 2 }));
-            await previousTeam.onExecuted(approvedListArtifact({ approval: previousTeam, scope, owner: { kind: 'team', teamId: 'team-1' }, unreadableCount: 1 }));
-            supersededRefresh.onTerminal?.('rejected');
-        });
-
-        expect(hook.getCurrent().state).toMatchObject({ kind: 'ready', unreadableCount: 2, stale: false });
-    });
-
+    // Query-change isolation remains covered through the real immediate read below;
+    // own-UI Ask reads no longer create deferred self-approval results.
     it('does not retain another owner’s projection when the mounted query changes Team', async () => {
         const serverId = (await upsertServerProfile({ serverUrl: 'https://home-provider-scope.example', name: 'Scope Home' })).id;
         const scope = createServerAccountScope(serverId, 'account-1')!;

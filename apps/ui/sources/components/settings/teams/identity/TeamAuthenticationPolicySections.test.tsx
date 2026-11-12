@@ -4,7 +4,6 @@ import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
@@ -199,6 +198,16 @@ async function waitForPressable(
 }
 
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     resetTeamActionClientForTests();
@@ -545,7 +554,7 @@ describe('TeamAuthenticationPolicySections', () => {
         });
     });
 
-    it('clears the pending approval notice when the shared approval settles terminally', async () => {
+    it('leaves admission unchanged when local Ask confirmation is declined and allows a confirmed retry', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageAuthentication: true }),
         });
@@ -555,22 +564,15 @@ describe('TeamAuthenticationPolicySections', () => {
         await waitForPressable(screen, 'team-admission-mode:provisioned');
         await screen.pressByTestIdAsync('team-admission-mode:provisioned');
 
-        await waitForTestId(screen, 'team-admission-approval-pending');
+        const { Modal } = await import('@/modal');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
         expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
-
-        // The person rejected it in the Inbox. Nothing can execute this mutation
-        // now, so the section must stop saying it is waiting.
-        const approvalArtifactId = harness.artifacts(serverId).list()[0]?.id;
-        if (!approvalArtifactId) throw new Error('Expected the pending approval Artifact');
-        await expect(decideApprovalAsInbox(serverId, approvalArtifactId, 'reject'))
-            .resolves.toMatchObject({ ok: true });
-
-        await vi.waitFor(() => {
-            expect(collectRenderedTestIds(screen.tree.toJSON()))
-                .not.toContain('team-admission-approval-pending');
-        });
-        expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-admission-approval-pending');
         await waitForPressable(screen, 'team-admission-mode:provisioned');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await screen.pressByTestIdAsync('team-admission-mode:provisioned');
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
     });
 
     it('abandons an edited draft without telling the Home anything', async () => {

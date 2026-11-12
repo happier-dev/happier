@@ -6,7 +6,6 @@ import { accountDisplayProfileFixture, collectRenderedTestIds, renderScreen, sta
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -116,6 +115,16 @@ async function waitForTestId(
 }
 
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
     resetTeamsSnapshotsForTests();
     resetTeamsDirectoryEngineForTests();
     await harness.reset();
@@ -157,27 +166,28 @@ describe('TeamMembersScreen', () => {
         expect(contentContainerStyle.paddingBottom).toBeGreaterThanOrEqual(floatingTabBarHeight);
     });
 
-    it('finishes approved leave even when the own-entry row was virtualized away', async () => {
+    it('finishes a locally confirmed Ask leave even when the own-entry row was virtualized away', async () => {
         const serverId = await addHome(teamSummaryFixture({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave: true }) }));
         const { Modal } = await import('@/modal');
-        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+        let settleConfirmation!: (confirmed: boolean) => void;
+        vi.spyOn(Modal, 'confirm').mockImplementationOnce(() => new Promise(resolve => { settleConfirmation = resolve; }));
         await harness.requireUiApproval(serverId, 'teams.members.leave');
         harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null } });
         harness.answer(serverId, '/v1/teams/members/leave', { body: { status: 'removed', membershipId: 'membership-1' } });
         harness.answer(serverId, '/v1/teams/list', { body: { items: [], nextCursor: null } });
         const screen = await renderMembers(serverId);
         await waitForTestId(screen, 'team-members-leave:membership-1');
-        await screen.pressByTestIdAsync('team-members-leave:membership-1');
-        await waitForTestId(screen, 'team-approval');
+        act(() => screen.pressByTestId('team-members-leave:membership-1'));
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
         await act(async () => {
             virtualizedBoundary.mountLimit = 0;
             virtualizedBoundary.updateViewport?.();
         });
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-leave:membership-1');
         expect(routerReplace).not.toHaveBeenCalled();
-        const artifact = harness.artifacts(serverId).list()[0];
-        if (!artifact) throw new Error('leave_approval_artifact_missing');
-        await expect(decideApprovalAsInbox(serverId, artifact.id, 'approve')).resolves.toMatchObject({ ok: true });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(0);
+        await act(async () => settleConfirmation(true));
         await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/teams'));
         expect(harness.requestsFor('/v1/teams/members/leave')).toHaveLength(1);
     });

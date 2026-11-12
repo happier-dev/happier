@@ -31,6 +31,7 @@ vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
     return { ...createReactNavigationNativeMock(), NavigationContext: React.createContext({}) };
 });
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('@/sync/http/client', async () => {
     const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
@@ -146,7 +147,17 @@ function directorySource(id: string) {
     } as const;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
     runtimeFetchMock.mockReset();
     serverFetchMock.mockReset();
     getCredentialsForServerUrlMock.mockReset();
@@ -791,7 +802,7 @@ describe('createIdentityAdministrationClient', () => {
         });
     });
 
-    it('classifies a deferred Team identity mutation as approval-pending without parsing it as domain output', async () => {
+    it('settles an explicitly confirmed Ask identity mutation from its real Home response', async () => {
         const serverId = (await upsertServerProfile({
             serverUrl: 'https://home-approval.example',
             name: 'Approval Home',
@@ -813,27 +824,22 @@ describe('createIdentityAdministrationClient', () => {
                 },
             },
         });
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        runtimeFetchMock.mockResolvedValue(new Response(JSON.stringify({ connection: connection(false) }), { status: 200 }));
         const onApprovalPending = vi.fn();
         const result = await createIdentityAdministrationClient(scope, { onApprovalPending }).execute(
             'teams.identity.connections.disable',
             { v: 1, teamId: 'team-1', connectionId: 'connection-1', expectedRevision: 1 },
         );
 
-        expect(result).toMatchObject({
-            ok: false,
-            approvalPending: true,
-            artifactId: expect.any(String),
-            failure: { code: 'approval_pending', retryable: false },
-        });
-        expect(runtimeFetchMock).not.toHaveBeenCalled();
-        expect(onApprovalPending).toHaveBeenCalledWith(expect.objectContaining({
-            artifactId: expect.any(String),
-            onExecuted: expect.any(Function),
-            onTerminal: expect.any(Function),
-        }));
+        expect(result).toEqual({ ok: true, value: { connection: connection(false) } });
+        expect(Modal.confirm).toHaveBeenCalled();
+        expect(runtimeFetchMock.mock.calls[0]?.[0]?.url).toBe('https://home-approval.example/v1/teams/identity/connections/disable');
+        expect(onApprovalPending).not.toHaveBeenCalled();
     });
 
-    it('threads directory and external-Group terminal approval results through the shared continuation', async () => {
+    it('sends no directory or external-Group mutation when local Ask confirmation is declined', async () => {
         const serverId = (await upsertServerProfile({
             serverUrl: 'https://home-directory-approval.example',
             name: 'Directory approval Home',
@@ -860,32 +866,26 @@ describe('createIdentityAdministrationClient', () => {
             },
         });
         const onApprovalPending = vi.fn();
-        const sourceFailure = vi.fn();
-        const mappingFailure = vi.fn();
         const client = createIdentityAdministrationClient(scope, { onApprovalPending });
 
-        await client.executeDirectory('teams.directory.sources.create', {
+        const sourceResult = await client.executeDirectory('teams.directory.sources.create', {
             v: 1,
             teamId: 'team-1',
             kind: 'github_organization',
             displayName: 'happier-dev',
             githubAppInstallationId: 'installation-1',
-        }, { onApprovalFailed: sourceFailure });
-        await client.executeExternalGroupBinding('teams.externalGroupBindings.set', {
+        });
+        const mappingResult = await client.executeExternalGroupBinding('teams.externalGroupBindings.set', {
             v: 1,
             teamId: 'team-1',
             owner: { kind: 'directory_source', directorySourceId: 'source-1' },
             externalGroupId: 'external-1',
             target: { kind: 'directory_created' },
-        }, { onApprovalFailed: mappingFailure });
+        });
 
-        expect(onApprovalPending).toHaveBeenCalledTimes(2);
-        const sourceContinuation = onApprovalPending.mock.calls[0]?.[0];
-        const mappingContinuation = onApprovalPending.mock.calls[1]?.[0];
-        sourceContinuation.onTerminal?.('rejected');
-        mappingContinuation.onTerminal?.('failed');
-        expect(sourceFailure).toHaveBeenCalledWith('approval_rejected');
-        expect(mappingFailure).toHaveBeenCalledWith('approval_failed');
+        expect(sourceResult).toMatchObject({ ok: false, failure: { code: 'approval_canceled' } });
+        expect(mappingResult).toMatchObject({ ok: false, failure: { code: 'approval_canceled' } });
+        expect(onApprovalPending).not.toHaveBeenCalled();
         expect(runtimeFetchMock).not.toHaveBeenCalled();
     });
 

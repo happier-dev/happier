@@ -1,9 +1,8 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDirectorySourceRemovalPreflightV1Schema, TeamDirectorySourceSummaryV1Schema, type TeamDirectorySourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
@@ -15,7 +14,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 
-// Keep the real Actions policy, Artifact lifecycle, response parser and hook
+// Keep the real Actions policy, response parser and hook
 // state transitions. Only the Home network and device credential store change.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -101,34 +100,34 @@ async function renderSource(scope: ServerAccountScope) {
     }, { initialProps: { sourceId: 'source-1' } });
 }
 
-describe('mounted directory read approvals', () => {
+describe('mounted directory reads with local Ask confirmation', () => {
     beforeEach(async () => {
+        const { Modal } = await import('@/modal');
+        // Modal is the host boundary. Reuse this fixture's person-choice controller
+        // for both ordinary confirmations and the real Action review dialog.
+        vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+            if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+                const props = config.props as { onAnswer(confirmed: boolean): void };
+                queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+            }
+            return 'action-review';
+        });
+        vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
         standardCleanup();
         await harness.reset();
     });
     afterEach(() => standardCleanup());
 
-    it('delivers the approved source list and continuation page without replaying either read', async () => {
+    it('confirms source and continuation reads locally without replaying either read', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'teams.directory.sources.list');
         harness.answer(scope.serverId, LIST_PATH, { body: { items: [directorySource('source-1')], nextCursor: 'page-2' } });
         harness.answer(scope.serverId, `${LIST_PATH}?cursor=page-2`, { body: { items: [directorySource('source-2')], nextCursor: null } });
         const hook = await renderList(scope);
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(1));
-        expect(hook.getCurrent().directory.state).toEqual({ kind: 'loading' });
-        const firstId = harness.artifacts(scope.serverId).list()[0]!.id;
-
-        await expect(decideApprovalAsInbox(scope.serverId, firstId, 'approve')).resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
         await waitForHomeGovernance(() => expect(hook.getCurrent().directory.state).toMatchObject({
             kind: 'ready', items: [{ id: 'source-1' }], nextCursor: 'page-2',
         }));
-        let loadMore!: Promise<void>;
-        await act(async () => { loadMore = hook.getCurrent().directory.loadMore(); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(2));
-        expect(hook.getCurrent().directory.state).toMatchObject({ kind: 'ready', items: [{ id: 'source-1' }], loadingMore: true });
-        const secondId = harness.artifacts(scope.serverId).list()[1]!.id;
-        await decideApprovalAsInbox(scope.serverId, secondId, 'approve');
-        await act(async () => { await loadMore; });
+        await act(async () => { await hook.getCurrent().directory.loadMore(); });
 
         expect(hook.getCurrent().directory.state).toMatchObject({
             kind: 'ready', items: [{ id: 'source-1' }, { id: 'source-2' }], nextCursor: null, loadingMore: false,
@@ -136,74 +135,72 @@ describe('mounted directory read approvals', () => {
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(1);
         expect(harness.requestsFor(`${LIST_PATH}?cursor=page-2`)).toHaveLength(1);
         await hook.rerender();
-        expect(harness.artifacts(scope.serverId).list()).toHaveLength(2);
+        expect(harness.artifacts(scope.serverId).list()).toHaveLength(0);
     });
 
-    it('shows a rejected read as retryable and completes a fresh explicit retry', async () => {
+    it('sends no declined Ask read and completes a locally confirmed retry', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'teams.directory.sources.list');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         harness.answer(scope.serverId, LIST_PATH, { body: { items: [], nextCursor: null } });
         const hook = await renderList(scope);
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(1));
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[0]!.id, 'reject');
         await waitForHomeGovernance(() => expect(hook.getCurrent().directory.state).toMatchObject({
-            kind: 'unavailable', failure: { code: 'approval_rejected', retryable: true },
+            kind: 'unavailable', failure: { code: 'approval_canceled' },
         }));
+        expect(harness.requestsFor(LIST_PATH)).toHaveLength(0);
 
         await act(async () => hook.getCurrent().directory.refresh());
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(2));
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[1]!.id, 'approve');
         await waitForHomeGovernance(() => expect(hook.getCurrent().directory.state).toMatchObject({ kind: 'ready', items: [] }));
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(1);
+        expect(harness.artifacts(scope.serverId).list()).toHaveLength(0);
     });
 
-    it('ignores an old Team read after the mounted scope changes', async () => {
+    it('ignores an old Team read whose local confirmation settles after the mounted scope changes', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'teams.directory.sources.list');
+        const { Modal } = await import('@/modal');
+        let confirmOldRead!: (accepted: boolean) => void;
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { confirmOldRead = resolve; }));
         harness.answer(scope.serverId, LIST_PATH, { body: { items: [directorySource('source-old')], nextCursor: null } });
         harness.answer(scope.serverId, '/v1/teams/team-2/directory-sources', { body: { items: [directorySource('source-new', 'team-2')], nextCursor: null } });
         const hook = await renderList(scope);
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(1));
-        const oldId = harness.artifacts(scope.serverId).list()[0]!.id;
+        await waitForHomeGovernance(() => expect(Modal.confirm).toHaveBeenCalledOnce());
         await hook.rerender({ scope, teamId: 'team-2' });
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(2));
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[1]!.id, 'approve');
         await waitForHomeGovernance(() => expect(hook.getCurrent().directory.state).toMatchObject({ kind: 'ready', items: [{ id: 'source-new' }] }));
-        await decideApprovalAsInbox(scope.serverId, oldId, 'approve');
+        await act(async () => confirmOldRead(true));
         expect(hook.getCurrent().directory.state).toMatchObject({ kind: 'ready', items: [{ id: 'source-new' }] });
     });
 
-    it('awaits the approved source and removal preview and releases preview custody on unmount', async () => {
+    it('confirms source and removal preview locally and cancels the pending preview on unmount', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'teams.directory.sources.get');
         harness.answer(scope.serverId, SOURCE_PATH, { body: directorySource('source-1') });
         harness.answer(scope.serverId, PREVIEW_PATH, { body: removalImpact });
         const hook = await renderSource(scope);
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(1));
-        expect(hook.getCurrent().directory.state).toEqual({ kind: 'loading' });
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[0]!.id, 'approve');
         await waitForHomeGovernance(() => expect(hook.getCurrent().directory.state).toMatchObject({ kind: 'ready', item: { id: 'source-1' } }));
         await act(async () => { await harness.requireUiApproval(scope.serverId, 'teams.directory.sources.remove.preview'); });
 
         let preview!: ReturnType<ReturnType<typeof hook.getCurrent>['directory']['readRemovalImpact']>;
         await act(async () => { preview = hook.getCurrent().directory.readRemovalImpact(); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(2));
-        expect(hook.getCurrent().directory.pendingAction).toBe('removal-impact');
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[1]!.id, 'approve');
         await act(async () => { await expect(preview).resolves.toEqual({ ok: true, value: removalImpact }); });
         expect(hook.getCurrent().directory.pendingAction).toBeNull();
         expect(harness.requestsFor(SOURCE_PATH)).toHaveLength(1);
         expect(harness.requestsFor(PREVIEW_PATH)).toHaveLength(1);
 
+        const { Modal } = await import('@/modal');
+        let confirmPreview!: (accepted: boolean) => void;
+        vi.mocked(Modal.confirm).mockClear().mockImplementationOnce(() => new Promise(resolve => { confirmPreview = resolve; }));
         await act(async () => { preview = hook.getCurrent().directory.readRemovalImpact(); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(3));
+        await waitForHomeGovernance(() => expect(Modal.confirm).toHaveBeenCalledOnce());
         await hook.unmount();
+        await act(async () => confirmPreview(true));
         await expect(preview).resolves.toMatchObject({ ok: false, failure: { code: 'aborted' } });
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[2]!.id, 'approve');
-        await expect(preview).resolves.toMatchObject({ ok: false, failure: { code: 'aborted' } });
+        expect(harness.requestsFor(PREVIEW_PATH)).toHaveLength(1);
+        expect(harness.artifacts(scope.serverId).list()).toHaveLength(0);
     });
 
-    it('withdraws loaded people when an approved continuation read loses Home authority', async () => {
+    it('withdraws loaded people when a locally confirmed continuation read loses Home authority', async () => {
         const scope = await addHome();
         const peoplePath = `${SOURCE_PATH}/people?limit=50`;
         harness.answer(scope.serverId, peoplePath, { body: {
@@ -230,9 +227,6 @@ describe('mounted directory read approvals', () => {
         harness.answer(scope.serverId, continuationPath, { status: 403, body: { error: 'forbidden' } });
         let loadMore!: Promise<void>;
         await act(async () => { loadMore = hook.getCurrent().people.loadMore(); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(scope.serverId).list()).toHaveLength(1));
-        expect(hook.getCurrent().people.rows).toMatchObject([{ id: 'person-1' }]);
-        await decideApprovalAsInbox(scope.serverId, harness.artifacts(scope.serverId).list()[0]!.id, 'approve');
         await act(async () => { await loadMore; });
 
         expect(hook.getCurrent().people).toMatchObject({ rows: [], status: 'error', hasMore: false, error: { kind: 'forbidden', retryable: false } });

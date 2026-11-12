@@ -91,6 +91,17 @@ async function renderReach(serverId: string) {
 }
 
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     resetHomeSettingsEngineForTests();
     resetHomeSettingsSnapshotsForTests();
     const { resetHomeGovernanceSnapshotsForTests } = await import('@/sync/store/home/governance/homeGovernanceSnapshots');
@@ -104,18 +115,6 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationReachScreen', () => {
-    it('uses the Action Ask policy for retiring direct connections without a caller dialog', async () => {
-        const home = await addHome();
-        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
-        harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
-        await harness.requireUiApproval(home, 'home.reachability.iroh.set');
-        const screen = await renderReach(home);
-        const { Modal } = await import('@/modal');
-        await act(async () => { void screen.findByTestId('home-reach-iroh-switch')?.props.onValueChange(false); });
-        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(1));
-        expect(harness.requestsFor(IROH_SET)).toHaveLength(0);
-        expect(Modal.confirm).not.toHaveBeenCalled();
-    });
     it.each(['owner', 'admin'] as const)('offers public-link configuration only to the Home %s', async (role) => {
         const projection = homeGovernanceProjectionFixture();
         const home = await addHome({
@@ -212,8 +211,9 @@ describe('HomeAdministrationReachScreen', () => {
         expect(screen.findByTestId('home-reach-retry')).toBeNull();
     });
 
-    it('asks before retiring direct connections and only then turns them off', async () => {
+    it('confirms an explicit Ask policy locally before retiring direct connections', async () => {
         const home = await addHome();
+        await harness.requireUiApproval(home, 'home.reachability.iroh.set');
         harness.answer(home, SETTINGS_GET, { body: reachSettings() });
         harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
         harness.answer(home, IROH_SET, {
@@ -228,6 +228,7 @@ describe('HomeAdministrationReachScreen', () => {
         });
         expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(harness.requestsFor(IROH_SET)).toHaveLength(0);
+        expect(harness.artifacts(home).list()).toHaveLength(0);
 
         vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         await act(async () => {
