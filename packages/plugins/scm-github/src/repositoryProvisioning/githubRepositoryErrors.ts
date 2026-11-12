@@ -10,15 +10,17 @@ type ProvisioningFailure = Extract<ScmRepositoryCloneOutput, { success: false }>
 
 export class GithubRepositoryProvisioningError extends Error {
   readonly errorCode: ScmOperationErrorCode;
+  readonly httpStatus?: number;
   readonly retryNotBeforeMs?: number;
   readonly remediation?: ProvisioningFailure['remediation'];
   readonly failureCause?: ProvisioningFailure['failureCause'];
 
   constructor(message: string, errorCode: ScmOperationErrorCode,
-    details?: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation' | 'failureCause'>) {
+    details?: Pick<ProvisioningFailure, 'retryNotBeforeMs' | 'remediation' | 'failureCause'> & { httpStatus?: number }) {
     super(message);
     this.name = 'GithubRepositoryProvisioningError';
     this.errorCode = errorCode;
+    this.httpStatus = details?.httpStatus;
     this.retryNotBeforeMs = details?.retryNotBeforeMs;
     this.remediation = details?.remediation;
     this.failureCause = details?.failureCause;
@@ -38,8 +40,9 @@ export function createGithubRepositoryAuthRequiredError(
 
 export function createGithubRepositoryNotFoundError(
   message = 'GitHub repository was not found',
+  httpStatus?: number,
 ): GithubRepositoryProvisioningError {
-  return new GithubRepositoryProvisioningError(message, SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND);
+  return new GithubRepositoryProvisioningError(message, SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND, { httpStatus });
 }
 
 export function createGithubRepositoryCommandFailedError(
@@ -87,7 +90,7 @@ export function isGithubRepositoryAuthRequiredError(error: unknown): boolean {
     && (error as { errorCode?: unknown }).errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED;
 }
 
-export function isGithubRepositoryNotFoundError(error: unknown): boolean {
+export function isGithubRepositoryNotFoundError(error: unknown): error is GithubRepositoryProvisioningError {
   return Boolean(error)
     && typeof error === 'object'
     && (error as { errorCode?: unknown }).errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND;

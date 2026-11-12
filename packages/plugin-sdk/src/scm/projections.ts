@@ -1126,7 +1126,7 @@ export type ScmRepositoryCloneInput = {
     destinationParentPath: string;
     destinationDirectoryName: string;
     protocol: ScmCloneProtocol;
-    initialCheckout?: { branch: 'main' | null; commit: string };
+    initialCheckout?: { branch: 'main' | null; commit: string } | { branch: 'main'; revision: 'latest-stable' };
     confirmed: true;
     authorizationToken: 'clone-repository';
 };
@@ -1142,6 +1142,8 @@ export type ScmRepositoryCloneTargetDescription = {
     auth?: ScmHostingRepositoryAuthSummary;
     repository: ScmHostingRepositorySummary;
     targets: ScmRepositoryCloneTarget[];
+    /** Resolved by the hosting provider when latest-stable was requested. */
+    initialCheckoutRef?: string;
 };
 
 export type ScmRepositoryCloneOutput =

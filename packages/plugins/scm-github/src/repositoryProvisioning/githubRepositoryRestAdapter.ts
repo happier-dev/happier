@@ -39,6 +39,8 @@ import {
   resolveGithubRepositoryHost,
 } from './githubRepositoryApiBase.js';
 import { mapGithubRepositorySummary } from './githubRepositoryMapping.js';
+import { mapGithubLatestStableReleaseV1 } from '../releases/mapping.js';
+import { decodeGithubRepositoryMetadata } from '../triage/repositories.js';
 
 type GithubRestResponse = ScmForgeHttpResponse;
 
@@ -69,8 +71,8 @@ export type GithubRepositoryRestAdapter = Readonly<{
   ): Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
   createRepository(input: ScmHostingProviderRepositoryCreateInput): Promise<ScmHostingRepositorySummary>;
   getRepository(input: ScmHostingProviderRepositoryGetInput): Promise<ScmHostingRepositorySummary | null>;
-  getRepositoryForClone(input: ScmHostingProviderRepositoryGetInput): Promise<Readonly<{
-    repository: ScmHostingRepositorySummary | null; auth: ScmHostingRepositoryAuthSummary;
+  getRepositoryForClone(input: ScmHostingProviderRepositoryGetInput & Readonly<{ revision?: 'latest-stable' }>): Promise<Readonly<{
+    repository: ScmHostingRepositorySummary | null; auth: ScmHostingRepositoryAuthSummary; initialCheckoutRef?: string;
   }>>;
 }>;
 
@@ -152,7 +154,7 @@ function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext, anonymo
       // GitHub answered about this exact repository: deleted, renamed, or masked
       // by a credential that cannot see it. Retrying cannot change the answer.
       if (isGithubInaccessibleResourceFailure(failure)) {
-        throw createGithubRepositoryNotFoundError();
+        throw createGithubRepositoryNotFoundError(undefined, context.status);
       }
       break;
   }
@@ -285,13 +287,13 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
   }
 
   async function readRepository(input: ScmHostingProviderRepositoryGetInput,
-    auth?: Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>): Promise<ScmHostingRepositorySummary | null> {
+    auth?: Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>): Promise<Readonly<{ repository: ScmHostingRepositorySummary; raw: unknown }> | null> {
     try {
       const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}`, { method: 'GET' }, input.runtimeServices, input.signal, auth);
       const mapped = mapGithubRepositorySummary({ provider: input.provider, raw,
         fallbackNameWithOwner: `${input.owner}/${input.repositoryName}` });
       if (!mapped) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid repository payload');
-      return mapped;
+      return { repository: mapped, raw };
     } catch (error) {
       if (isGithubRepositoryNotFoundError(error)) return null;
       throw error;
@@ -369,18 +371,38 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       return mapped;
     },
     async getRepository(input) {
-      return readRepository(input);
+      return (await readRepository(input))?.repository ?? null;
     },
     async getRepositoryForClone(input) {
       const auth = await resolveToken(input.provider, input.runtimeServices, true);
-      const repository = await readRepository(input, auth);
+      const observed = await readRepository(input, auth);
+      const repository = observed?.repository ?? null;
       // Only observed public visibility admits no-auth cloning, not a saved locator.
       if (!auth.token && repository?.visibility !== 'public') throw createGithubRepositoryAuthRequiredError(
         'This repository is not publicly readable. Connect a GitHub account with repository access or sign in with GitHub CLI on this machine.',
         'scm.repository_auth.account_required');
       const summary: ScmHostingRepositoryAuthSummary = auth.token ? createAuthSummary(auth.profileKey, auth.account)
         : { state: 'authenticated', profileKind: 'no_auth' };
-      return { repository, auth: summary };
+      if (input.revision === undefined || !repository || !observed) return { repository, auth: summary };
+      const metadata = decodeGithubRepositoryMetadata(observed.raw);
+      if (!metadata) throw createGithubRepositoryCommandFailedError('GitHub returned invalid repository identity');
+      let initialCheckoutRef: string;
+      try {
+        const { raw } = await requestJson(input.provider, `/repos/${repoPath(input)}/releases/latest`,
+          { method: 'GET' }, input.runtimeServices, input.signal, auth);
+        const release = mapGithubLatestStableReleaseV1(raw, {
+          repository: { kind: 'github', deployment: input.provider.baseUrl, repository: repository.nameWithOwner },
+          repositoryId: metadata.repositoryId,
+          repositoryVisibility: repository.visibility === 'public' ? 'public' : 'private',
+        });
+        if (!release) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid latest release');
+        initialCheckoutRef = `refs/tags/${release.tagName}`;
+      } catch (error) {
+        // The same credential just established repository readability. Only no release falls back.
+        if (!isGithubRepositoryNotFoundError(error) || error.httpStatus !== 404) throw error;
+        initialCheckoutRef = 'HEAD';
+      }
+      return { repository, auth: summary, initialCheckoutRef };
     },
   });
 }

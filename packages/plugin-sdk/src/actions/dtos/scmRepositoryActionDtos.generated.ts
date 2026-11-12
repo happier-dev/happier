@@ -23,6 +23,9 @@ export type ScmRepositoryActionInputById = {
         initialCheckout?: undefined | {
             branch: 'main' | null;
             commit: string;
+        } | {
+            branch: 'main';
+            revision: 'latest-stable';
         };
     };
     readonly "scm.repository.init": {

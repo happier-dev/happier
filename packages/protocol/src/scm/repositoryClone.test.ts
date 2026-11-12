@@ -18,14 +18,17 @@ function readProtocolSchema<TValue = unknown>(name: string, entrypoint: object =
 }
 
 describe('SCM repository clone protocol contracts', () => {
-  it('admits only an exact full commit for an initial main or detached checkout of a fresh clone', () => {
+  it('admits an exact commit or use-time latest stable on main for a fresh clone', () => {
     const request = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
       repository: { nameWithOwner: 'octocat/Hello-World' }, destinationParentPath: '/parent',
       destinationDirectoryName: 'checkout', protocol: 'https', confirmed: true, authorizationToken: 'clone-repository' };
     const initialCheckout = { branch: 'main', commit: '1'.repeat(40) };
     expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...request, initialCheckout }).success).toBe(true);
     expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...request, initialCheckout: { ...initialCheckout, branch: null } }).success).toBe(true);
+    expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...request, initialCheckout: { branch: 'main', revision: 'latest-stable' } }).success).toBe(true);
     for (const invalid of [
+      { branch: null, revision: 'latest-stable' },
+      { branch: 'main', revision: 'latest-stable', commit: '1'.repeat(40) },
       { ...initialCheckout, commit: 'main' },
       { ...initialCheckout, commit: 'v1.0.0' },
       { ...initialCheckout, branch: 'feature' },

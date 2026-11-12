@@ -211,15 +211,16 @@ export function createGithubRepositoryProvisioningAdapter(params?: Readonly<{
       }
       const lookup = { provider: input.provider, owner: repositorySelector.owner,
         repositoryName: repositorySelector.repositoryName,
+        ...(input.revision ? { revision: input.revision } : {}),
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}) };
       const lookupResult = await restAdapter.getRepositoryForClone?.(lookup);
       if (!lookupResult) throw createGithubRepositoryAuthRequiredError();
       if (!lookupResult.repository) throw createGithubRepositoryNotFoundError();
-      return describeRepositoryCloneTargets({
+      return { ...describeRepositoryCloneTargets({
         provider: input.provider,
         repository: lookupResult.repository,
         auth: lookupResult.auth,
-      });
+      }), ...(lookupResult.initialCheckoutRef ? { initialCheckoutRef: lookupResult.initialCheckoutRef } : {}) };
     },
     async createRepository(input: ScmHostingProviderRepositoryCreateInput) {
       requireBoundAccountHost(input.provider);

@@ -107,7 +107,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     throw privateProjectCheckoutRefusal();
   const choice = input.materialization;
   if (choice.kind === 'clone') {
-    if (choice.initialCheckout && input.ref !== undefined && input.ref !== choice.initialCheckout.commit) return refused('invalid_materialization');
+    if (choice.initialCheckout && input.ref !== undefined && (!('commit' in choice.initialCheckout) || input.ref !== choice.initialCheckout.commit)) return refused('invalid_materialization');
     const commit = ScmCommitOidSchema.safeParse(input.ref);
     const initialCheckout = choice.initialCheckout ?? (commit.success ? { branch: null, commit: commit.data } : undefined);
     if (!input.selector) return refused('source_unavailable');

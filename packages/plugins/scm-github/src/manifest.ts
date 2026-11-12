@@ -1,3 +1,5 @@
+import { GITHUB_HOSTING_OPERATION_ACTIONS_V1 } from './actions/hosting.js';
+import { GITHUB_HOSTING_OPERATION_ACTION_IDS_V1 } from './actions/hostingActionIds.js';
 import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
 import { GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA, GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA } from './observations/githubProviderContracts.js';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
@@ -788,6 +790,7 @@ function createGithubPlugin(): GithubPlugin {
   // The Event observer activates this plugin independently of Triage use. Keep
   // Action contracts available here, but initialize Triage execution on invocation.
   actions: {
+    ...GITHUB_HOSTING_OPERATION_ACTIONS_V1,
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: {
       title: 'Publish preview status',
       description: 'Publishes one admitted own-server preview receipt to its exact GitHub pull-request head.',
@@ -2099,6 +2102,7 @@ function createGithubPlugin(): GithubPlugin {
         kind: 'github',
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: GITHUB_CONNECTED_ACCOUNT_ID,
+        operationActions: GITHUB_HOSTING_OPERATION_ACTION_IDS_V1,
         resolveRefAction: GITHUB_OVERVIEW_TARGET_ACTION_ID,
         projectReadinessAction: GITHUB_PROJECT_READINESS_ACTION_ID_V1,
       },

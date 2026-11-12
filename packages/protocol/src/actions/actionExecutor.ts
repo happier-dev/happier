@@ -2538,10 +2538,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         memoryDuplicateReview = current.duplicateReview;
         admittedInput = bindMemoryWriteApprovalInputV1(actionId, admittedInput, memoryAdmission);
       } catch (error) {
-        const code = ctx.signal?.aborted ? 'cancelled' : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-          ? error.code : 'memory_exposure_unavailable';
-        return { ok: false, errorCode: code, error: code,
-          ...(!ctx.signal?.aborted && error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
+        if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        return { ok: false, ...normalizeActionExecutorThrownError(error) };
       }
     }
     if (isActionFamilyId(actionId, ActionOperationActionIdV1Schema) && ctx.serverId
@@ -5329,6 +5327,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           actionId,
           input: parsed.data,
           context: ctx,
+          executeHostingProviderAction: (action, providerInput, purposeBindingSelection) => invokeHostReviewedChildV1({
+            parent: { actionId, input: projectNativeJsonValueForTransport(parsed.data) as Record<string, JsonValue> },
+            context: ctx,
+            child: { action, role: 'scm_hosting_operation', input: providerInput },
+            ...(purposeBindingSelection ? { invocationServices: { connectedAccountPurposeBindingSelection: purposeBindingSelection } } : {}),
+            admittedReview: { action, role: 'scm_hosting_operation', surface: ctx.surface ?? 'cli' },
+            execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext),
+          }),
           executeCanonicalAction: async (nestedActionId, nestedInput, options) => {
             // Only detached Run control is Machine-bound. A retained, separately
             // admitted Session namespace keeps the incumbent Session RPC route.

@@ -11,6 +11,7 @@ import type {
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
 import type { ConnectedAccountRef } from '../connectedAccounts.js';
+import type { ScmHostingOperationActionsV1 } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 
 export type { ScmHostingProviderKind, ScmHostingProviderRef } from '../protocol/hostingRepositoryIdentity.js';
 import type { ScmHostingProviderKind, ScmHostingProviderRef } from '../protocol/hostingRepositoryIdentity.js';
@@ -37,6 +38,8 @@ export type HostingProviderContribution = {
      * requester's Account executor and verifies the exact repository echo.
      */
     projectReadinessAction?: string;
+    /** Finite remote provider methods implemented by declared Account Actions. */
+    operationActions?: ScmHostingOperationActionsV1;
     metadata?: Record<string, PluginJsonValueV2>;
 };
 
@@ -317,6 +320,7 @@ export type HostingProviderRepositoryGetInput = Readonly<{
 }>;
 
 export type HostingProviderRepositoryDescribeCloneTargetsInput = Readonly<{
+    revision?: 'latest-stable';
     runtimeServices?: HostingProviderRuntimeServices;
     signal?: AbortSignal;
     provider: ScmHostingProviderRef;

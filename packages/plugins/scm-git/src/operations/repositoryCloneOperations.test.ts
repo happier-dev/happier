@@ -7,6 +7,11 @@ import {
 } from '@happier-dev/plugin-sdk/scm';
 import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
+import { createGitScmBackendRuntimeRegistration } from '../backend.js';
+import { createScmHostingProviderRuntimeServicesForTest } from '../testkit/scmRuntime.test-support.js';
 
 import {
     cloneWithRealGitRuntime,
@@ -82,6 +87,37 @@ describe('git repository clone operation', () => {
             request: { ...request, initialCheckout: { branch, commit: newer } } });
         expect(repeated).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH });
         expect(runGit(response.destinationPath, ['rev-parse', 'main'])).toBe(branch === null ? newer : pin);
+    });
+
+    it.each(['refs/tags/v1.0.0', 'HEAD'])('materializes latest stable or default branch at %s on main with original history', async initialCheckoutRef => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const source = join(dirname(remotePath), 'source');
+        runGit(source, ['branch', '-m', 'develop']);
+        const stable = runGit(source, ['rev-parse', 'HEAD']);
+        runGit(source, ['tag', '-a', 'v1.0.0', '-m', 'Stable release']);
+        writeFileSync(join(source, 'README.md'), 'development after stable\n');
+        runGit(source, ['add', 'README.md']);
+        runGit(source, ['commit', '-m', 'advance development']);
+        runGit(source, ['push', remotePath, 'develop', '--tags']);
+        runGit(remotePath, ['symbolic-ref', 'HEAD', 'refs/heads/develop']);
+        const expected = initialCheckoutRef === 'HEAD' ? runGit(source, ['rev-parse', 'HEAD']) : stable;
+        const description = { ...makeCloneTargetDescription(remotePath), initialCheckoutRef };
+        const registration = createGitScmBackendRuntimeRegistration();
+        if (!registration.runtime) throw new Error('Git clone runtime unavailable');
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+            executableDefinition: registration.runtime, registration,
+            hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(makeProviderRegistry(description)),
+        })]);
+        const response = await cloneWithRealGitRuntime(({ request }) => runScmRepositoryCloneRoute({ request, workingDirectory: parent, registry }),
+            { context: makeContext(parent), request: { ...makeRequest(parent, remotePath), initialCheckout: { branch: 'main', revision: 'latest-stable' } } });
+        expect(response.success).toBe(true);
+        if (!response.success) throw new Error(response.error);
+        expect(runGit(response.destinationPath, ['branch', '--show-current'])).toBe('main');
+        expect(runGit(response.destinationPath, ['rev-parse', 'HEAD'])).toBe(expected);
+        expect(runGit(response.destinationPath, ['rev-list', 'HEAD'])).toBe(runGit(source, ['rev-list', expected]));
+        expect(response.snapshot?.branch).toMatchObject({ head: 'main', headOid: expected, detached: false });
     });
 
     it('refuses an unregistered provider or an unrecognized deployment before creating a checkout', async () => {

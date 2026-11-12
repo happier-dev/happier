@@ -1,6 +1,7 @@
 import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
 import * as mod from './githubRepositoryRestAdapter.js';
+import { createGithubRepositoryProvisioningAdapter } from './createRepositoryWithAuthFallback.js';
 
 const githubProvider: ScmHostingProviderRef = {
   id: 'scm.github',
@@ -32,6 +33,42 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST repository provisioning adapter', () => {
+  it.each([200, 404, 403, 410])('resolves latest stable only, falls back on no release, preserves HTTP failure (%s)', async status => {
+    const requests: string[] = [];
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'release-test-token' }),
+      fetcher: async url => {
+        requests.push(url);
+        if (url.endsWith('/releases/latest')) return status === 200 ? jsonResponse({
+          id: 7, tag_name: 'v1.0.0', target_commitish: 'develop', name: 'Stable', body: null,
+          draft: false, prerelease: false, assets: [], created_at: '2026-01-01T00:00:00Z',
+          published_at: '2026-01-02T00:00:00Z', html_url: 'https://github.com/alice/starter/releases/tag/v1.0.0',
+        }) : jsonResponse({ message: status === 404 ? 'Not Found' : 'Forbidden' }, { status });
+        return jsonResponse({ id: 42, full_name: 'alice/starter', html_url: 'https://github.com/alice/starter',
+          clone_url: 'https://github.com/alice/starter.git', visibility: 'public', default_branch: 'develop' });
+      },
+    }) });
+    const result = adapter.describeCloneTargets({ provider: githubProvider, repository: { nameWithOwner: 'alice/starter' }, revision: 'latest-stable' });
+    if (status === 403 || status === 410) await expect(result).rejects.toMatchObject({ errorCode: status === 403 ? 'REMOTE_REJECTED' : 'REMOTE_NOT_FOUND' });
+    else await expect(result).resolves.toMatchObject({ initialCheckoutRef: status === 200 ? 'refs/tags/v1.0.0' : 'HEAD' });
+    expect(requests).toEqual(['https://api.github.com/repos/alice/starter', 'https://api.github.com/repos/alice/starter/releases/latest']);
+  });
+
+  it.each(['draft', 'prerelease', 'malformed'])('does not fall back when the latest-release response is %s', async mode => {
+    const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'invalid-release-test-token' }),
+      fetcher: async url => url.endsWith('/releases/latest') ? jsonResponse(mode === 'malformed' ? {} : {
+        id: 7, tag_name: 'v2.0.0', target_commitish: 'develop', name: 'Unstable',
+        draft: mode === 'draft', prerelease: mode === 'prerelease', assets: [],
+        created_at: '2026-01-01T00:00:00Z', published_at: '2026-01-02T00:00:00Z',
+        html_url: 'https://github.com/alice/starter/releases/tag/v2.0.0',
+      }) : jsonResponse({ id: 42, full_name: 'alice/starter', html_url: 'https://github.com/alice/starter',
+        clone_url: 'https://github.com/alice/starter.git', visibility: 'public', default_branch: 'develop' }),
+    }) });
+    await expect(adapter.describeCloneTargets({ provider: githubProvider, repository: { nameWithOwner: 'alice/starter' }, revision: 'latest-stable' }))
+      .rejects.toMatchObject({ errorCode: 'COMMAND_FAILED' });
+  });
+
   it('uses the host-selected native login to discover a private clone without requiring an imported account', async () => {
     const adapter = mod.createGithubRepositoryRestAdapter({
       fetcher: async (_url, init) => new Headers(init?.headers).get('authorization') === 'Bearer native-test-token'

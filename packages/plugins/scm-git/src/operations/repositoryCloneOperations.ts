@@ -67,6 +67,7 @@ type CloneTargetSelectionResult =
     | Readonly<{
         ok: true;
         repository: ScmHostingRepositorySummary;
+        initialCheckout?: { branch: 'main' | null; commit: string };
         target: ScmRepositoryCloneTarget & { protocol: 'ssh' | 'https' };
     }>
     | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
@@ -304,10 +305,20 @@ async function describeCloneTargets(input: Readonly<{
     try {
         const description = await adapter.describeCloneTargets({
             provider: registeredProvider,
+            ...(input.request.initialCheckout && 'revision' in input.request.initialCheckout
+                ? { revision: input.request.initialCheckout.revision } : {}),
             repository: sanitizeRepositorySelector(input.request.repository),
             runtimeServices: await readRuntimeServices(input.deps),
         });
-        return selectCloneTarget(description, input.request.protocol, registeredProvider);
+        const selected = selectCloneTarget(description, input.request.protocol, registeredProvider);
+        if (!selected.ok) return selected;
+        const requested = input.request.initialCheckout;
+        if (!requested) return selected;
+        const commit = 'commit' in requested ? requested.commit : description.initialCheckoutRef;
+        if (!commit) {
+            return { ok: false, response: errorResponse('The hosting provider cannot resolve latest stable releases.', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
+        }
+        return { ...selected, initialCheckout: { branch: requested.branch, commit } };
     } catch (error) {
         const failure = classifyHostingProviderError(error);
         return {
@@ -388,13 +399,13 @@ export function createGitRepositoryCloneOperation(
                 return mapCloneCommandFailure(clone);
             }
 
-            if (request.initialCheckout) {
+            if (cloneTarget.initialCheckout) {
                 let checkout: ScmExecResult;
                 try {
                     checkout = await checkoutInitialClone({
                         path: reservedDestination.cloneDestinationPath,
-                        commit: request.initialCheckout.commit,
-                        branch: request.initialCheckout.branch,
+                        commit: cloneTarget.initialCheckout.commit,
+                        branch: cloneTarget.initialCheckout.branch,
                         runCommand,
                         timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
                     });

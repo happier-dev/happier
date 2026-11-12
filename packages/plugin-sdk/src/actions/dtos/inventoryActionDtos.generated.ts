@@ -511,6 +511,9 @@ export type InventoryActionInputById = {
             initialCheckout?: undefined | {
                 branch: 'main' | null;
                 commit: string;
+            } | {
+                branch: 'main';
+                revision: 'latest-stable';
             };
         } | {
             kind: 'attach';
@@ -605,6 +608,10 @@ export type InventoryActionResultById = {
             readiness?: 'checking' | 'needsSignIn' | 'notInstalled' | 'ready' | 'unknown' | 'unsupported' | undefined;
         }[];
         defaultTargetKey?: string | undefined;
+        executionTarget?: undefined | {
+            serverId: string;
+            machineId: string;
+        };
     };
     readonly "machines.agents.list": {
         items: {
@@ -632,6 +639,7 @@ export type InventoryActionResultById = {
                 mode: 'managed' | 'manual' | 'none' | 'vendor_recipe';
                 sizeBytes: null | number;
                 guideUrl: null | string;
+                executionScope?: 'machine' | 'member' | undefined;
             };
             dependencies: {
                 key: string;

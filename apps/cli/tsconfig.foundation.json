@@ -1807,7 +1807,6 @@
     "../../packages/protocol/src/projects/projectVisibilityV1.ts",
     "../../packages/protocol/src/projects/projectWorkspaceActionsV1.ts",
     "../../packages/protocol/src/projects/sources/projectSourceV1.ts",
-    "../../packages/protocol/src/projects/starters/projectStarterV1.ts",
     "../../packages/protocol/src/projects/workspaceRefKeyV1.ts",
     "../../packages/protocol/src/prompts/buildAppendSystemPromptBaseV1.ts",
     "../../packages/protocol/src/prompts/changeTitleInstructionV1.ts",

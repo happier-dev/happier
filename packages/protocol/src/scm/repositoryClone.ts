@@ -48,7 +48,7 @@ export type ScmRepositoryCloneRepositorySelector =
   z.infer<typeof ScmRepositoryCloneRepositorySelectorSchema>;
 
 /** Durable repository selection excludes credentials and executable clone inputs. */
-function isCredentialFreeRepositoryLocator(value: string): boolean {
+export function isCredentialFreeRepositoryLocator(value: string): boolean {
   const normalized = value.trim();
   if (!normalized || /[\u0000-\u001f\u007f]/.test(normalized)) return false;
   // Git's SCP spelling carries a username, never a password, query or fragment.
@@ -112,13 +112,18 @@ export type ScmHostingRepositoryResolveAddressResponseV1 = z.infer<typeof ScmHos
 /** Source-contained folder selection shares clone's traversal boundary. */
 export const ScmRepositoryContainedSubdirV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.refine(value => !hasUnsafePathInput(value) && !/^(?:[/\\]|[A-Za-z]:)/.test(value), 'Repository subdirectory must be relative and contained')));
 
+export const ScmRepositoryCloneRevisionSchema = z.literal('latest-stable');
+
 export const ScmRepositoryCloneInputSchema = lazyZodSchema(() => z.strictObject({
     provider: ScmHostingProviderRefSchema,
     repository: ScmRepositoryCloneRepositorySelectorSchema,
     destinationParentPath: z.string().check(z.trim(), z.minLength(1), z.refine((value) => !hasUnsafePathInput(value), 'Destination parent path must not use home expansion or traversal segments')),
     destinationDirectoryName: z.string().check(z.trim(), z.minLength(1), z.refine((value) => value !== '.' && value !== '..' && !/[\/\\]/.test(value) && !hasUnsafePathInput(value), 'Destination directory name must be a single safe path segment')),
     protocol: SourceControlCloneProtocolSchema,
-    initialCheckout: z.optional(z.strictObject({ branch: z.nullable(z.literal('main')), commit: ScmCommitOidSchema })),
+    initialCheckout: z.optional(z.union([
+      z.strictObject({ branch: z.nullable(z.literal('main')), commit: ScmCommitOidSchema }),
+      z.strictObject({ branch: z.literal('main'), revision: ScmRepositoryCloneRevisionSchema }),
+    ])),
     confirmed: z.literal(true),
     authorizationToken: ScmRepositoryCloneAuthorizationTokenSchema,
   }));
@@ -137,6 +142,7 @@ export const ScmRepositoryCloneTargetDescriptionSchema = lazyZodSchema(() => z.l
     auth: z.optional(ScmHostingRepositoryAuthSummarySchema),
     repository: ScmHostingRepositorySummarySchema,
     targets: z.array(ScmRepositoryCloneTargetSchema).check(z.minLength(1)),
+    initialCheckoutRef: z.optional(z.string().check(z.minLength(1))),
   }));
 export type ScmRepositoryCloneTargetDescription =
   z.infer<typeof ScmRepositoryCloneTargetDescriptionSchema>;

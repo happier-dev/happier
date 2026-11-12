@@ -1,3 +1,8 @@
+import { readScmHostingBearerToken, readScmHostingBasicCredentials } from '@happier-dev/plugin-sdk/scm/hosting';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { ConnectedAccountHttpHeadersRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { ScmHostingProviderRefSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -28,7 +33,7 @@ import type {
 } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { clonePluginPlainData } from '@/plugins/runtime/plainData';
-import { readHostingProviderExecutionAuthority } from './executionAuthority';
+import { readHostingProviderExecutionAuthority, readScmHostingActionExecutor } from './executionAuthority';
 import { normalizeConnectedAccountConfiguredBase } from '@/plugins/runtime/connectedAccounts/configuredOrigins';
 
 type ScmHostingProviderRuntimeRegistryInput = Readonly<{
@@ -38,6 +43,7 @@ type ScmHostingProviderRuntimeRegistryInput = Readonly<{
         systemTools?: ResolvedExecutablePluginRuntimeRegistry['contributes']['systemTools'];
     }>;
     scmHostingProvidersById: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
+    actionsById?: ResolvedExecutablePluginRuntimeRegistry['actionsById'];
     envAllowedNamesByPluginId?: ResolvedExecutablePluginRuntimeRegistry['envAllowedNamesByPluginId'];
     managedDependencies?: Pick<StablePluginManagedDependenciesHost, 'resolveExecutable'>;
     resolveConnectedAccountPurposeBindingOwner?: () => (
@@ -45,6 +51,7 @@ type ScmHostingProviderRuntimeRegistryInput = Readonly<{
         // Optional: a host that cannot list accounts recognizes no configured deployment, which
         // is exactly what an absent projection should mean.
         & Partial<Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'listAccounts'>>
+        & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'resolveCurrentSessionPurposeBindingSnapshot'>>
     ) | null;
 }>;
 
@@ -203,39 +210,9 @@ function resolveHttpsOrigin(host: string): string | null {
 function createScmConnectedAccountMaterializationRequest(origin: string) {
     return ConnectedAccountHttpHeadersRequestSchema.parse({
         kind: 'httpHeaders',
-        origin,
+        origin: origin,
         headerNames: ['authorization'],
     });
-}
-
-function readHttpHeader(
-    headers: Readonly<Record<string, string>>,
-    name: string,
-): string | null {
-    const entry = Object.entries(headers).find(
-        ([candidate]) => candidate.toLowerCase() === name.toLowerCase(),
-    );
-    return entry?.[1]?.trim() || null;
-}
-
-function readBearerToken(headers: Readonly<Record<string, string>>): string | null {
-    const authorization = readHttpHeader(headers, 'authorization');
-    const match = authorization?.match(/^Bearer\s+(.+)$/i);
-    return match?.[1]?.trim() || null;
-}
-
-function readBasicCredentials(
-    headers: Readonly<Record<string, string>>,
-): Readonly<{ username: string; password: string }> | null {
-    const authorization = readHttpHeader(headers, 'authorization');
-    const match = authorization?.match(/^Basic\s+([A-Za-z0-9+/]+={0,2})$/i);
-    if (!match?.[1]) return null;
-    const decoded = Buffer.from(match[1], 'base64').toString('utf8');
-    const separator = decoded.indexOf(':');
-    if (separator <= 0) return null;
-    const username = decoded.slice(0, separator).trim();
-    const password = decoded.slice(separator + 1);
-    return username && password ? { username, password } : null;
 }
 
 /**
@@ -296,7 +273,8 @@ async function resolveScmHostingConfiguredDeployments(
 
 function createHostScmHostingProviderRegistry(
     input: ScmHostingProviderRuntimeRegistryInput,
-    configuredDeploymentsByProviderId?: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments>,
+    configuredDeploymentsByProviderId: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments> | undefined,
+    signal: AbortSignal,
 ): ResolvedScmHostingProviderRegistry {
     const providers: ScmHostingProviderDescriptor[] = (input.contributes.scmHostingProviders ?? [])
         .flatMap((provider) => {
@@ -319,6 +297,42 @@ function createHostScmHostingProviderRegistry(
     return createScmHostingProviderRegistry({
         providers,
         runtimeRegistrations,
+        async prepareHostingProviderOperation({ action, input: actionInput }) {
+            const execute = readScmHostingActionExecutor();
+            const providerId = readRecord(readRecord(actionInput).provider).id;
+            const authorization = typeof providerId === 'string' ? resolveProviderPurposeAuthorization(input, providerId) : null;
+            const owner = input.resolveConnectedAccountPurposeBindingOwner?.();
+            const snapshot = authorization && owner?.resolveCurrentSessionPurposeBindingSnapshot
+                ? await owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes: [authorization], signal }) : null;
+            if (!action || !execute) {
+                if (snapshot?.teamResourceSelections.length) {
+                    throw new PluginError({ code: 'plugin_connected_account_team_resource_unavailable',
+                        message: 'This SCM hosting operation has no admitted Team credential Action',
+                        details: { reason: 'scm_hosting_operation_action_unavailable' } });
+                }
+                return undefined;
+            }
+            const actionPurposes = input.actionsById ? resolveRegistryConnectedAccountActionPurposeAuthorizations({
+                registry: { actionsById: input.actionsById }, qualifiedActionId: formatQualifiedPluginActionId(action),
+            }) : null;
+            const matching = authorization && actionPurposes?.filter(candidate =>
+                candidate.serviceRefs.length === authorization.serviceRefs.length
+                && candidate.serviceRefs.every(service => authorization.serviceRefs.some(declared =>
+                    service.pluginId === declared.pluginId && service.localId === declared.localId)));
+            if (!authorization || !snapshot || !matching || matching.length !== 1) {
+                throw new PluginError({ code: 'plugin_connected_account_team_resource_unavailable',
+                    message: 'SCM hosting Action credential selection is unavailable' });
+            }
+            const purpose = matching[0]!.purpose;
+            const teamResourceSelections = snapshot.teamResourceSelections.map(selection => ({
+                purpose, teamId: selection.teamId, selection: selection.selection,
+            }));
+            // Team selection owns its subsequent Action admission; its legacy disclosed
+            // account projection must not turn into an unrelated personal binding.
+            const bindings = teamResourceSelections.length ? [] : snapshot.bindings.map(binding => ({ ...binding, purpose }));
+            return async () => await execute(action, actionInput, { purposes: [purpose], purposeBindings: { v: 1, bindings,
+                ...(teamResourceSelections.length ? { teamResourceSelections } : {}) } });
+        },
         ...(configuredDeploymentsByProviderId
             ? { configuredDeploymentsByProviderId }
             : {}),
@@ -335,6 +349,7 @@ export function createHostScmHostingProviderRuntimeServices(
         return createHostScmHostingProviderRegistry(
             input,
             await resolveScmHostingConfiguredDeployments(input, signal),
+            signal,
         );
     };
     const captureHostingAuthAuthority = (providerId: string) => {
@@ -478,7 +493,7 @@ export function createHostScmHostingProviderRuntimeServices(
             if (!resultSnapshot) {
                 return { kind: 'missing', reason: 'unsupported_materialization' };
             }
-            const token = readBearerToken(resultSnapshot.headers);
+            const token = readScmHostingBearerToken(resultSnapshot.headers);
             if (!token) return { kind: 'missing', reason: target.kind === 'unbound' ? 'account_unbound' : 'credential_unavailable' };
             return {
                 kind: 'available',
@@ -528,7 +543,7 @@ export function createHostScmHostingProviderRuntimeServices(
             if (!resultSnapshot) {
                 return { kind: 'missing', reason: 'unsupported_materialization' };
             }
-            const credentials = readBasicCredentials(resultSnapshot.headers);
+            const credentials = readScmHostingBasicCredentials(resultSnapshot.headers);
             if (!credentials) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }

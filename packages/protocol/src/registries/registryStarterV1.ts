@@ -1,11 +1,11 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { isCredentialFreeRepositoryLocator } from '../scm/repositoryClone.js';
 
 const text = z.string().check(z.trim(), z.minLength(1));
 
 export const RegistryStarterV1Schema = lazyZodSchema(() => z.strictObject({
-  repository: z.string().check(z.url(), z.refine(value => /^https:\/\//i.test(value), 'Starter repositories require HTTPS')),
-  path: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  repository: z.string().check(z.url(), z.refine(value => /^https:\/\//i.test(value) && isCredentialFreeRepositoryLocator(value), 'Starter repositories require credential-free HTTPS')),
   title: text,
   description: text,
   tags: z.array(text).check(z.minLength(1)),

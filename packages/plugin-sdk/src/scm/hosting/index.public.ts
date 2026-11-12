@@ -43,3 +43,6 @@ export { readCurrentHostingProviderRuntimeServices } from '../hostingProvider.js
 export { requestForgeJson } from '../hostingProvider.js';
 export { resolveScmHostingProviderFollowupAllowedBaseUrl } from '../hostingProvider.js';
 export { runWithHostingProviderRuntimeServices } from '../hostingProvider.js';
+
+export { createHostingProviderOperationActions } from '../hostingOperationActions.js';
+export { readScmHostingBearerToken, readScmHostingBasicCredentials } from '../hostingCredentials.js';

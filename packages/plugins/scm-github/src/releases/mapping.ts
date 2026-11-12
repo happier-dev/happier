@@ -47,6 +47,12 @@ export function mapGithubReleaseV1(value: unknown, target: Pick<ForgeReleaseV1, 
     return parsed.success ? parsed.data : null;
 }
 
+/** The native latest endpoint excludes drafts and prereleases; malformed responses are failures. */
+export function mapGithubLatestStableReleaseV1(value: unknown, target: Pick<ForgeReleaseV1, 'repository' | 'repositoryId' | 'repositoryVisibility'>): ForgeReleaseV1 | null {
+    const release = mapGithubReleaseV1(value, target);
+    return release && !release.draft && !release.prerelease ? release : null;
+}
+
 /** GitHub's generated draft tag is native write identity, not a tag people chose to display. */
 export function projectGithubReleaseIdentityV1(release: Pick<ForgeReleaseV1, 'draft' | 'tagName' | 'name'>): Readonly<{
     tagName: string | null; name: string | null;

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
+import { GITHUB_HOSTING_OPERATION_ACTION_IDS_V1 } from '../actions/hostingActionIds.js';
 import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { ForgeReleaseActionResultSchemasV1 } from '@happier-dev/triage-protocol/releases/v1';
@@ -35,6 +36,35 @@ async function harness(respond: Parameters<typeof createStubGithubTransport>[0][
 }
 
 describe('registered release Actions through real GitHub admission', () => {
+  it('retains latest-stable clone selection through the declared Account Action contract', async () => {
+    const stub = createStubGithubTransport({ nativeMaterialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture' } },
+      respond: request => new URL(request.url).pathname.endsWith('/releases/latest')
+        ? { status: 200, body: release(7, { draft: false, published_at: stamp }) }
+        : { status: 200, body: { id: 42, full_name: 'acme/widgets', private: true,
+          html_url: 'https://github.com/acme/widgets', clone_url: 'https://github.com/acme/widgets.git', default_branch: 'develop' } } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: stub.context.services.http, connectedAccounts: stub.context.services.connectedAccounts,
+    } });
+    const paths: string[] = [];
+    // Repository provisioning's established transport is fetch beneath the
+    // shared GitHub Account request owner; only that system boundary is mocked.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      paths.push(path);
+      return new Response(JSON.stringify(path.endsWith('/releases/latest')
+        ? release(7, { draft: false, published_at: stamp })
+        : { id: 42, full_name: 'acme/widgets', private: true,
+          html_url: 'https://github.com/acme/widgets', clone_url: 'https://github.com/acme/widgets.git', default_branch: 'develop' }), { status: 200 });
+    });
+    try {
+      const result = await plugin.invokeAction(GITHUB_HOSTING_OPERATION_ACTION_IDS_V1.describeCloneTargets, {
+        provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'acme/widgets' }, revision: 'latest-stable',
+      });
+      expect(result).toMatchObject({ initialCheckoutRef: 'refs/tags/v7' });
+      expect(paths).toEqual(['/repos/acme/widgets', '/repos/acme/widgets/releases/latest']);
+    } finally { fetchMock.mockRestore(); await plugin.dispose(); }
+  });
   it('reads the selected Account release through the same HTTP owner without Machine services', async () => {
     const transport = createStubGithubTransport({ respond: request => new URL(request.url).pathname === '/repos/acme/widgets'
       ? { status: 200, body: { id: 42, full_name: 'acme/widgets', private: true } }

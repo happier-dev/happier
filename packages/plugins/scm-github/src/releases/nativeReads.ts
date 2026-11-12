@@ -12,7 +12,7 @@ import { classifyGithubResponseFailure, classifyGithubTransportFailure } from '.
 import { buildGithubApiUrl, buildGithubRepositoryKey, parseGithubRoutingToken } from '../triage/locator.js';
 import { decodeGithubRepositoryMetadata } from '../triage/repositories.js';
 import { readValidatedGithubFollowUpPage } from '../triage/scan/link.js';
-import { mapGithubReleaseAssetV1, mapGithubReleaseV1, releaseRecord } from './mapping.js';
+import { mapGithubReleaseAssetV1, mapGithubReleaseV1, mapGithubLatestStableReleaseV1, releaseRecord } from './mapping.js';
 import type { ReleaseReadOperationV1 } from './reads.js';
 
 export const releaseFailure = (code: string): TriageSourceFailureV1 => ({ class: 'unsupportedContract', code });
@@ -89,9 +89,8 @@ export async function readReleaseResource<K extends ReadOperation>(admitted: Adm
             return { kind: 'value' as const, ...validator, value: { rows, omittedRowCount: body.length - rows.length,
                 projectionTruncated: false, continuation, incomplete: next.kind === 'invalid' || (next.kind === 'next' && continuation === null) ? 'pagination' as const : null } };
         }
-        const release = mapGithubReleaseV1(body, admitted.target);
-        if (!release || (operation === 'readRelease' && release.releaseId !== releaseId)
-            || (operation === 'readLatestRelease' && (release.draft || release.prerelease))) return unavailable(releaseFailure('github_release_response_invalid'));
+        const release = operation === 'readLatestRelease' ? mapGithubLatestStableReleaseV1(body, admitted.target) : mapGithubReleaseV1(body, admitted.target);
+        if (!release || (operation === 'readRelease' && release.releaseId !== releaseId)) return unavailable(releaseFailure('github_release_response_invalid'));
         return { kind: 'value' as const, value: release, ...validator };
     })();
     // The operation-indexed schema preserves the correlated public result type.

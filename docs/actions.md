@@ -1077,6 +1077,9 @@ changing props or editing a draft never supplies a gesture. External credentials
 and Session RPC authority remain excluded. A binding declares one Action reference
 or a named map of references, then preparation selects a declared key; the shared
 host owner rejects an undeclared selection as `invalid_action` without execution.
+RNW author fixtures reuse that binding lifecycle through the public semantic
+adapter's explicit `actionBindings` option. Their configured test executor owns
+test decisions; a successful fixture press does not establish runtime UI authority.
 Home may relay that
 exact Account UI press to its Machine with the same present-user default. A raw plugin
 `hostApi.executeAction` call retains plugin/automation authority, including when
@@ -1112,6 +1115,16 @@ A request still requiring confirmation receives the review-carrying refusal.
 A digest without a readable preview
 keeps the refusal in the UI. This is unreleased 0.3 behavior; no self-approval
 Artifact or caller-asserted presentation marker is required.
+The approval policy owns this disposition for immediate execution, prepared runs,
+native forwarding and contributed Actions. Execution placement does not change a
+person's caller or authority, and preparation does not create a second confirmation
+requirement. A mounted presenter and a headless receiving Machine consume the same
+prepared review; digest-bearing confirmations are checked against that review in
+both cases. Actual missing secret values, target choices and binding choices retain
+their existing input-acquisition flow: a Boolean confirmation cannot supply them.
+The originating UI renders carried reviews through the same family presenters as
+retained approvals, whether the review appears in a step or in a dialog. Host-specific
+annotations supplement those facts instead of replacing them with Action API hints.
 In unreleased 0.3 source, a member's Source clone with an unprepared destination
 returns `workspace_private_checkout_review_required` and the native owner's
 `destinationReview`. Open carries the prepared private path through this same
@@ -5683,6 +5696,36 @@ in the existing run-start failure envelope (`details.executionRunStart.runCreati
 In a fan-out start only that backend's item
 fails. Unknown, checking or unreadable readiness admits, and launch stays the authority.
 
+## Agent/MCP operation admission (0.3 development source)
+
+An Action whose catalog spec declares `operation` returns to an Agent/MCP caller
+when the receiving host admits it. The acknowledgement contains
+`{ status: 'accepted', operationId, machineId }`; use the original invocation's
+Home when addressing that Machine. This is not the
+Action's completed result. Use the existing `action.operations.get` Action and
+Activity observations to follow that same operation and read its terminal result.
+Do not submit the effect again merely because it is still running. Receiving-host
+execution keeps its existing operation cancellation and requester custody lifetime;
+the MCP call adds no timer or operation state. Approved replay still waits for the
+real terminal result so an approval receipt cannot settle on admission alone.
+UI and CLI retain their existing observation behavior. Native finite Project
+Actions and Project open retain their existing domain admission receipts and
+operation addresses, owned by those domain runtimes.
+
+Ordinary replayable Agent/MCP approval requests return
+`approval_request_created` with their existing Artifact handle before a person
+answers. Read `approval.request.get` for their status and settled receipt. This
+includes Account-target plugin Actions with ordinary inputs: execution placement
+alone does not require live-only input custody. Declared secret inputs and explicit
+`approvalInputCustody: 'live_only'` keep their existing live continuation contract;
+a vendor timeout can still end that invocation. No secret is added to durable
+approval storage to avoid that timeout.
+
+Actions without an operation declaration retain their existing result contracts.
+A long arbitrary command, contributed effect, explicit wait or external transport
+may still outlast a vendor's tool timeout. Such paths require an owner decision
+about their existing lifecycle; MCP does not manufacture an operation record.
+
 ## Operations outcome links (0.3 development source)
 
 Operations Investigate uses the configured Triage handoff owner for placement:
@@ -7358,6 +7401,16 @@ only by the Board adapter, never trusted from agent input. A host without the Bo
 transport reports `unsupported_action`.
 
 ## Session-spawn model choices (0.3 development source)
+
+Public browser Session creation forwards the authored recipe to the receiving
+daemon's `session.spawn_new` Action owner. The browser does not prepare another
+local spawn admission, including when its caller uses `prepare`. The receiving
+owner supplies approval refusals to the existing browser confirmation flow.
+Already admitted private birth continuations retain their enclosing Action's
+authority; forwarding a public recipe does not turn it into such a continuation.
+Native Account-plugin remote birth admits once at its initiating Account runtime;
+the selected Machine consumes that admitted child/root through private lifecycle
+transport. The receiving Machine does not admit it again or retarget the child.
 
 Host Voice Session creation uses the ordinary `session.spawn_new` executor and
 approval policy. Its admitted Home and Account supply the opaque creation
@@ -10517,6 +10570,18 @@ Available facts include the actual SSH endpoints and their source ranges; unavai
 facts name `requiredFact`. Desired posture is never treated as observed SSH
 exposure. A provider-specific membership review reads only its selected provider.
 
+While an Ask password question is pending, its operation supports cancellation.
+Cancelling aborts the question and settles the operation as Cancelled before an
+elevated process starts; closing the question view alone does not cancel it.
+
+SSH firewall review and private-workload firewall reconciliation inventory the
+owned Caddy bindings inside that same protected CHECK. The daemon account's
+Docker permissions do not decide whether Ask can inspect them. The native Caddy
+observer remains the binding authority: missing Docker, denied access or malformed
+inventory returns its classified fact and remedy, rather than an empty binding
+list. Only a successful empty native inventory establishes that no owned Caddy
+container exists.
+
 Reviewing an explicit first posture uses the same native observation as its plan
 basis while `posture` stays null. Configure observes those facts again and rejects
 `plan_changed` before saving if they differ from the reviewed digest. Unavailable
@@ -10599,15 +10664,19 @@ daemon startup path. A stored running observation cannot hide a vendor-side stop
 
 ## Project starter creation (0.3 development)
 
-`projects.starters.create` composes the bundled Project starter catalog with the
-existing Project open, SCM publication and Source creation Actions. The review
-covers the selected starter's exact commit, Machine and destination, repository
+`projects.starters.create` consumes the registry's whole-repository starter
+descriptor and composes the existing Project open, SCM publication and Source
+creation Actions. The review covers the selected starter, Machine and destination, repository
 owner/name and visibility (private by default). Agent invocation requires Ask;
 a person's designed review directly confirms the operation. Children execute
 through the existing host-child executor under that admission.
 
-SCM clones the whole starter with `main` at its pin, publishes that
-branch to the person's hosted repository and rebinds `origin`. The Source owner
+At use time, the canonical SCM clone owner resolves the latest stable release,
+falling back to the default branch when the repository has no stable release. It establishes
+local `main`, publishes that branch with its original history to the person's
+hosted repository and rebinds `origin`. The resolved SHA is returned as information;
+it is not a catalog pin or another confirmation gate. Subdirectory starters are
+not supported. The Source owner
 projects hosted discovery into its credential-free selector and saves the normal
 Source. Project open registers the published checkout and associates its Source,
 so the Project takes the new repository's identity rather than the upstream
@@ -10618,8 +10687,13 @@ uses existing Session creation as a separately represented effect.
 
 Disconnected SCM returns `scm_account_required` with the existing SCM connect
 remediation before checkout or publication. A later failure retains completed
-repository/Source/workspace facts in a typed partial result. Recover through
-those existing owners; never automatically create another repository. This is
+repository/Source/workspace facts in a typed partial result. After publication,
+that result includes an opaque `resume` value. An explicit retry passes it with
+the original reviewed input, reuses the published checkout and skips completed
+SCM effects. If a Source was acknowledged, retry opens the Project against that
+Source instead of creating another one. Before publication completes, recovery
+remains with the existing SCM owners. Never automatically create another
+repository. This is
 development source behavior, not a statement of released UI availability.
 Matching Protocol and SDK readers refresh together; older hosts do not expose
 this new Action. Existing clone, publication, Source and Session contracts remain

@@ -1,3 +1,4 @@
+import { runWithScmHostingActionExecutor } from '../hostingProviders/executionAuthority';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FileReviewNoteV1, FileReviewNoteOperationV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
@@ -78,6 +79,7 @@ export type ExecuteScmActionOperationParams = Readonly<{
     /** Host admission for stored provenance; undefined explicitly asks for unscoped access. */
     authorizeSession?: (sessionId: string | undefined) => Promise<boolean>;
     executeCanonicalAction?: Parameters<ScmActionExecute>[0]['executeCanonicalAction'];
+    executeHostingProviderAction?: Parameters<ScmActionExecute>[0]['executeHostingProviderAction'];
     /** Exact host-stamped caller context, never parsed from SCM Action input. */
     actionContext?: ActionExecutorContext;
     executeReviewedMarks?: (evidence: ScmComparison | ScmReviewedMarksSource, request: ScmReviewedUnmarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
@@ -1206,11 +1208,11 @@ export async function executeScmActionOperation(
     }
     const result = params.actionId === 'scm.diffSummary.generate' || params.actionId === 'scm.diffSummary.draftPullRequest'
         ? await params.executeDiffSummary?.({ request })
-        : await runLocalScmAction({
+        : await runWithScmHostingActionExecutor(params.executeHostingProviderAction, () => runLocalScmAction({
             ...params,
             actionId: params.actionId,
             input: request,
-        });
+        }));
     if (result === undefined) {
         throw new Error(`SCM action operation is unavailable: ${params.actionId}`);
     }

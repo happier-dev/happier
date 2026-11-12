@@ -1706,8 +1706,6 @@ export {
   VoiceAvailabilityPlatformSchema,
   VoiceConversationCapabilitiesSchema,
   VoiceConversationProviderRoleSchema,
-  VoiceConversationToolCapabilitiesSchema,
-  VoiceConversationToolEffectCallsSchema,
   VoiceCredentialAccessPhaseSchema,
   VoiceCredentialDeclarationSchema,
   VoiceCredentialBindingIdentityV1Schema,
@@ -1736,8 +1734,6 @@ export {
   type VoiceAvailabilityPlatform,
   type VoiceConversationCapabilities,
   type VoiceConversationProviderRole,
-  type VoiceConversationToolCapabilities,
-  type VoiceConversationToolEffectCalls,
   type VoiceCredentialAccessPhase,
   type VoiceCredentialDeclaration,
   type VoiceCredentialBindingIdentityV1,
@@ -9874,7 +9870,6 @@ export {
 } from './sessions/control/sessionProviderCliAttachPrepareV1.js';
 export * from './reviews/reviewPublicationEvidence.js';
 export * from './projects/openProjectV1.js';
-export * from './projects/starters/projectStarterV1.js';
 export * from './projects/openProjectDraftV1.js';
 export {
   GlassSurfaceMaterialSchema,

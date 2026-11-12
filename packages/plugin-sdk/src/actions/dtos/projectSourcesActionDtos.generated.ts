@@ -17,6 +17,29 @@ export type ProjectSourcesActionInputById = {
             name: string;
             visibility?: 'private' | 'public' | undefined;
         };
+        resume?: undefined | {
+            directory: string;
+            repositoryUrl: string;
+            repository: {
+                provider: {
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                };
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            commit: string;
+            sourceId?: string | undefined;
+        };
     };
     readonly "projects.deploymentDefaults.set": {
         serverId: string;
@@ -238,6 +261,29 @@ export type ProjectSourcesActionResultById = {
             workspaceId: string;
             machineId: string;
             rootPath: string;
+        };
+        resume?: undefined | {
+            directory: string;
+            repositoryUrl: string;
+            repository: {
+                provider: {
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                };
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            commit: string;
+            sourceId?: string | undefined;
         };
         remediation?: undefined | {
             [x: string]: unknown;

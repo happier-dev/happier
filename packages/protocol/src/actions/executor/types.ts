@@ -420,6 +420,12 @@ export type ScmActionExecute = (args: Readonly<{
   actionId: ScmActionId;
   input: unknown;
   context: ActionExecutorContext;
+  /** Host-private finite provider child; the issuer retains this admitted root and requester. */
+  executeHostingProviderAction?: (
+    action: Readonly<{ pluginId: string; localId: string }>,
+    input: import('../../json/strictJsonValue.js').JsonValue,
+    purposeBindingSelection?: Pick<import('../../connect/connectedAccountInvocationPurposeBinding.js').ConnectedAccountInvocationPurposeBinding, 'purposes' | 'purposeBindings'>,
+  ) => Promise<ActionExecuteResult>;
   /**
    * Re-enter the exact current Action boundary for SCM's source reads and run
    * admission. This carries the original host-stamped context; it is not a
@@ -683,8 +689,9 @@ export type ActionExecutorContext = Readonly<{
     sourceRevision?: string;
     observation?: Readonly<{
       signal: AbortSignal;
-      emit(result: import('../../local/services/nativeLogsV1.js').ManagedServiceNativeLogResultV1): void;
-      retire(): void;
+      emit(result: import('../../local/services/nativeLogsV1.js').ManagedServiceNativeLogResultV1,
+        delivery?: 'pages'): void | Promise<void>;
+      retire(error?: import('../../plugins/errors.js').PluginErrorContract): void;
       accept(subscription: Readonly<{ dispose(): void | Promise<void> }>): void;
     }>;
   }>;
@@ -1302,6 +1309,8 @@ export type HostReviewedChildInvocationServicesV1 = Readonly<{
   templateSkillSessionId?: string;
   /** Same host-admitted purpose seed; carried beside, never inside, child operands. */
   connectedAccountPurposeBinding?: import('../../connect/connectedAccountInvocationPurposeBinding.js').ConnectedAccountInvocationPurposeBinding;
+  /** SCM-owned selected purposes; the committed target fills its own finite admission facts. */
+  connectedAccountPurposeBindingSelection?: Pick<import('../../connect/connectedAccountInvocationPurposeBinding.js').ConnectedAccountInvocationPurposeBinding, 'purposes' | 'purposeBindings'>;
   /** Exact retained descriptor returned by Home admission; never a child business operand. */
   managedMachine?: import('../../machines/managed/managedMachineV1.js').ManagedMachineV1;
   managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;

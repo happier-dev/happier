@@ -1,3 +1,10 @@
+import { ScmHostingOperationSchemasV1 } from '@happier-dev/protocol/scm/hostingProviderOperations';
+import type { ScmHostingOperationActionsV1, ScmHostingOperationV1 } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectPluginActionFailureCode } from '@happier-dev/protocol/plugins/actions/invocation';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ActionExecuteResult, JsonValue } from '@happier-dev/protocol';
 import { ScmHostingProviderKindSchema } from '@happier-dev/protocol/scm/pullRequests';
 import type { ScmHostingProviderContribution, ScmHostingProviderKind } from '@happier-dev/protocol';
 import type {
@@ -206,21 +213,28 @@ function readScmHostingProviderUrlSafety(
     });
 }
 
+/** Host-only preparation captures the selected credential before any remote effect. */
+export type PrepareScmHostingProviderOperation = (input: Readonly<{
+    action?: Readonly<{ pluginId: string; localId: string }>;
+    input: JsonValue;
+}>) => Promise<(() => Promise<ActionExecuteResult>) | undefined>;
+
 function bindRuntimeCapability<TCapability extends object>(
     binding: ScmHostingProviderRuntimeBinding,
     target: TCapability,
+    operationActions?: ScmHostingOperationActionsV1,
+    prepareOperation?: PrepareScmHostingProviderOperation,
 ): TCapability {
-    const boundMethods = new WeakMap<Function, Function>();
-
+    const boundMethods = new Map<PropertyKey, Function>();
     // Registration already published a frozen, receiver-bound callback map.
     // This consumer adds only its execution-authority context at invocation;
     // rebuilding descriptors here would create a second runtime topology.
     return createGuardedRuntimeView({
         owner: target,
-        guard: (value) => {
+        guard: (value, property) => {
             if (typeof value !== 'function') return value;
             const method = value as (...args: readonly unknown[]) => unknown;
-            const cached = boundMethods.get(method);
+            const cached = boundMethods.get(property);
             if (cached) return cached;
             const bound = Object.freeze((...args: readonly unknown[]) => runWithHostingProviderExecutionAuthority(
                 {
@@ -228,9 +242,34 @@ function bindRuntimeCapability<TCapability extends object>(
                     occurrenceId: binding.occurrenceId,
                     contributionId: binding.registration.id,
                 },
-                () => Reflect.apply(method, target, args),
+                () => {
+                    const operation = prepareOperation && typeof property === 'string'
+                        && Object.hasOwn(ScmHostingOperationSchemasV1, property) ? property as ScmHostingOperationV1 : null;
+                    if (!operation || !prepareOperation) return Reflect.apply(method, target, args);
+                    const localId = operationActions?.[operation];
+                    if (operationActions && !localId) throw Object.assign(new Error('SCM hosting Action is unavailable'), {
+                        errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, effectNotApplied: true,
+                    });
+                    const { runtimeServices: _services, signal: _signal, ...input } = readRecord(args[0]);
+                    return (async () => {
+                        const invoke = await prepareOperation({
+                            ...(localId ? { action: { pluginId: binding.pluginId, localId } } : {}),
+                            input: projectNativeJsonValueForTransport(input),
+                        });
+                        if (!invoke) return Reflect.apply(method, target, args);
+                        const result = await invoke();
+                        if (result.ok) return result.result;
+                        const details = readRecord(result.details);
+                        const evidence = readRecord(details.details ?? details);
+                        throw Object.assign(new Error(result.error, { cause: result }), {
+                            errorCode: projectPluginActionFailureCode(result.errorCode),
+                            ...(evidence.effectNotApplied === true ? { effectNotApplied: true } : {}),
+                            ...(typeof evidence.retryNotBeforeMs === 'number' ? { retryNotBeforeMs: evidence.retryNotBeforeMs } : {}),
+                        });
+                    })();
+                },
             ));
-            boundMethods.set(method, bound);
+            boundMethods.set(property, bound);
             return bound;
         },
     }) as TCapability;
@@ -424,6 +463,7 @@ function resolveSafeCompareUrl(
 export function createScmHostingProviderRegistry(params: Readonly<{
     providers: readonly ScmHostingProviderDescriptor[];
     runtimeRegistrations?: readonly ScmHostingProviderRuntimeBinding[];
+    prepareHostingProviderOperation?: PrepareScmHostingProviderOperation;
     /** Keyed by qualified provider id; see `ScmHostingProviderConfiguredDeployments`. */
     configuredDeploymentsByProviderId?: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments>;
 }>): ResolvedScmHostingProviderRegistry {
@@ -558,24 +598,28 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
         },
         getPullRequests(id) {
-            const runtime = providersById.get(id)?.runtime;
+            const descriptor = providersById.get(id);
+            const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.pullRequests;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
         },
         getPullRequestCheckout(id) {
-            const runtime = providersById.get(id)?.runtime;
+            const descriptor = providersById.get(id);
+            const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.pullRequestCheckout;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
         },
         getRepositoryPublishing(id) {
-            const runtime = providersById.get(id)?.runtime;
+            const descriptor = providersById.get(id);
+            const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.repositoryPublishing;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
         },
         getRepositoryClone(id) {
-            const runtime = providersById.get(id)?.runtime;
+            const descriptor = providersById.get(id);
+            const runtime = descriptor?.runtime;
             const capability = runtime?.registration.adapter.repositoryClone;
-            return runtime && capability ? bindRuntimeCapability(runtime, capability) : undefined;
+            return runtime && capability ? bindRuntimeCapability(runtime, capability, descriptor?.operationActions, params.prepareHostingProviderOperation) : undefined;
         },
         listDeployments(input = {}) {
             const deployments = new Map<string, ScmHostingProviderResolvedRemote>();
