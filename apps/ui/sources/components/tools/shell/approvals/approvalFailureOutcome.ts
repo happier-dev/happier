@@ -188,7 +188,8 @@ export function presentApprovalFailureOutcome(approval: ApprovalRequest, failure
         reason: fillOutcome ? fillOutcome.detail
             : serviceStartFailure ? resolveReasonCopy({ kind: 'localServiceAction', ...serviceStartFailure,
                 serviceName: serviceStartFailure.serviceName ?? undefined }).body
-                    : presented.reason,
+                    : approval.actionId === 'doc.edit.propose' && approval.status === 'outcome_unknown'
+                ? t('artifacts.browser.proposal.publicationUnknown') : presented.reason,
         message: presented.message,
         code: presented.code,
         technicalDetails,

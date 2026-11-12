@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { t } from '@/text';
 import { ApprovalRequestV1Schema, ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
@@ -36,6 +38,21 @@ function approval(result: unknown = response) {
 }
 
 describe('approval failure outcome', () => {
+    it('directs an unconfirmed Doc suggestion back to its thread while retaining diagnostic evidence', () => {
+        const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose',
+            settle: request => ({ ...request, status: 'outcome_unknown', updatedAtMs: 30,
+                decision: { kind: 'approve', decidedAtMs: 20 },
+                execution: { executedAtMs: 30, ok: false, effectAttempted: true,
+                    errorCode: 'approval_execution_outcome_unknown', error: 'Publication acknowledgement was lost' } }) });
+        const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header!, artifact.body!);
+        if (parsed?.family !== 'built_in') throw new Error('Expected built-in approval');
+        const failure = readApprovalExecutionFailure(parsed.request);
+        if (!failure) throw new Error('Expected recorded failure');
+        const outcome = presentApprovalFailureOutcome(parsed.request, failure);
+        expect(outcome.reason).toBe(t('artifacts.browser.proposal.publicationUnknown'));
+        expect(outcome.code).toBe('approval_execution_outcome_unknown');
+        expect(outcome.message).toBe('Publication acknowledgement was lost');
+    });
     it('presents typed command evidence without disclosing opaque command or environment data', () => {
         const failure = { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
             details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } };

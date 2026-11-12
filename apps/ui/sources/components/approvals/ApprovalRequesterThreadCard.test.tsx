@@ -8,6 +8,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { listDiscussionRequesterApprovals } from '@/sync/domains/artifacts/approvalArtifacts';
 import { buildDiscussionRequesterApprovalArtifact } from '@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { getStorage } from '@/sync/domains/state/storage';
 import { useDiscussionRequesterApprovals } from '@/sync/store/hooks';
 
@@ -108,7 +109,7 @@ describe('ApprovalRequesterThreadCard operation actor', () => {
       const approvals = useDiscussionRequesterApprovals({ serverId: 'server-1', discussionId: 'discussion-1' }, []);
       return <>{approvals.map(approval => <ApprovalRequesterThreadCard key={approval.artifact.id} approval={approval} serverId="server-1" />)}</>;
     }
-    getStorage().setState({ isDataReady: true });
+    getStorage().setState({ isDataReady: true, profileScope: { serverId: 'server-1', accountId: 'alice' } });
     getStorage().getState().applyArtifacts([artifact]);
     const screen = await renderScreen(<OriginThread />);
     expect(screen.findByTestId('session-discussion-waiting-approval-review')).toBeTruthy();
@@ -128,6 +129,27 @@ describe('ApprovalRequesterThreadCard operation actor', () => {
     await screen.unmount();
     const reopened = await renderScreen(<OriginThread />);
     expect(reopened.getTextContent()).toContain(t('automations.detail.runMeta.dispatchState.outcomeUnknown'));
+    await reopened.pressByTestIdAsync('session-discussion-waiting-approval-dismiss');
+    expect(reopened.findByTestId('session-discussion-waiting-approval')).toBeNull();
+    expect(getStorage().getState().artifacts[unknown.id]).toEqual(unknown);
+    await reopened.unmount();
+    const afterDismissal = await renderScreen(<OriginThread />);
+    expect(afterDismissal.findByTestId('session-discussion-waiting-approval')).toBeNull();
+    // An open decision remains reachable even if it carries an earlier dismissal.
+    await React.act(async () => getStorage().getState().applyArtifacts([buildDiscussionRequesterApprovalArtifact({
+      requesterAccountId: 'alice', actionId: 'doc.edit.propose', settle: request => ({ ...request, updatedAtMs: 40 }),
+    })]));
+    expect(afterDismissal.findByTestId('session-discussion-waiting-approval-review')).toBeTruthy();
+  });
+
+  it('dismisses a requester-bound unknown result through the same device-local owner', async () => {
+    getStorage().setState({ profileScope: { serverId: 'server-1', accountId: 'alice' } });
+    const screen = await renderCard(request => ({ ...decided(request), status: 'outcome_unknown',
+      execution: { executedAtMs: 30, ok: false, effectAttempted: true,
+        errorCode: 'approval_execution_outcome_unknown', error: 'Publication acknowledgement was lost' } }));
+    expect(screen.findByTestId('approval-requester-thread-receipt-uncertain')).toBeTruthy();
+    await screen.pressByTestIdAsync('approval-requester-thread-dismiss');
+    expect(screen.findByTestId(`approval-requester-thread-card-${approvalOf().artifact.id}`)).toBeNull();
   });
 
   it('opens an own-agent Doc redo approval in place without presenting cross-person consent', async () => {
@@ -153,10 +175,14 @@ describe('ApprovalRequesterThreadCard operation actor', () => {
     if (!approval) throw new Error('Missing requester approval');
     const screen = await renderScreen(<ApprovalRequesterThreadCard approval={approval} serverId="server-1" />);
     expect(screen.findByTestId('approval-requester-thread-machine-offline')).toBeNull();
+    const machine = createMachineFixture({ id: 'machine-1', active: false, activeAt: 1 });
     await React.act(async () => getStorage().setState({
-      machineListByServerId: { 'server-1': [createMachineFixture({ id: 'machine-1', active: false, activeAt: 1 })] },
+      machineListByServerId: { 'server-1': [machine] },
       machineListStatusByServerId: { 'server-1': 'idle' },
     }));
+    // Retained inventory is unobserved until the presence owner admits an answer.
+    expect(screen.findByTestId('approval-requester-thread-machine-offline')).toBeNull();
+    await React.act(async () => publishMachineActivity(machine, machine, []));
     expect(screen.findByTestId('approval-requester-thread-machine-offline')).toBeTruthy();
     expect(screen.findByTestId('approval-requester-thread-open')).toBeTruthy();
     expect(screen.findByTestId('approval-requester-thread-waiting')).toBeTruthy();

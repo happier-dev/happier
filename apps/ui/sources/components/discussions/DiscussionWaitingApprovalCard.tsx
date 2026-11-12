@@ -5,6 +5,9 @@ import { useRouter, type Href } from 'expo-router';
 import { approvalArtifactBodyMatchesHeaderV1, type ParsedApprovalArtifactBodyV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { DiscussionDraftAnswer, readDiscussionDraftApproval } from '@/components/approvals/discussionDraftApproval';
 
+import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { useFailedApprovalDismissal } from '@/components/tools/shell/approvals/failedApprovalDismissal';
+import { ApprovalDecisionFooter } from '@/components/tools/shell/approvals/ApprovalDecisionFooter';
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { ApprovalInlineDecisionBar, ApprovalInlineFields, useInlineApprovalDecision } from '@/components/approvals/ApprovalInlineDecision';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -37,7 +40,12 @@ export const DiscussionWaitingApprovalCard = React.memo(function DiscussionWaiti
     [artifact],
   );
   const request = parsed?.family === 'built_in' && parsed.request.v === 2 && parsed.request.status === 'open' ? parsed.request : null;
+  const failure = parsed?.family === 'built_in' ? readApprovalExecutionFailure(parsed.request) : null;
+  const { dismissed, dismiss } = useFailedApprovalDismissal();
+  const dismissFailure = React.useCallback(() => dismiss(props.approvalId), [dismiss, props.approvalId]);
+  if (failure && dismissed[props.approvalId] !== undefined) return null;
   const fallback = props.fallback ?? <WaitingApprovalReview approvalId={props.approvalId} serverId={props.serverId}
+    onDismiss={failure ? dismissFailure : undefined}
     title={parsed && parsed.request.status !== 'open'
       ? formatApprovalStatusLabel(parsed.family === 'built_in'
         ? resolveApprovalDisplayStatus(parsed.request) : parsed.request.status) : undefined} />;
@@ -46,21 +54,22 @@ export const DiscussionWaitingApprovalCard = React.memo(function DiscussionWaiti
 });
 
 /** Specialized requests retain the same full review in place as requester-bound thread cards. */
-function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: string; title?: string }>) {
+function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: string; title?: string; onDismiss?: () => void }>) {
   const [reviewRequested, setReviewRequested] = React.useState(false);
   const review = useInPlaceApprovalReview({ approvalId: props.approvalId, serverId: props.serverId, approvalPending: reviewRequested });
   const openReview = React.useCallback(() => {
     setReviewRequested(true);
     review.reopen();
   }, [review.reopen]);
-  return <SurfaceStateCard
+  return <View><SurfaceStateCard
     testID="session-discussion-waiting-approval"
     size="line"
     kind="warning"
     accessibilitySemantics="status"
     title={props.title ?? t('session.collaboration.discussion.home.approvalPending')}
     action={{ testID: 'session-discussion-waiting-approval-review', label: t('approvals.review'), onPress: openReview }}
-  />;
+  />{props.onDismiss ? <ApprovalDecisionFooter isDeciding={false}
+    testIDPrefix="session-discussion-waiting-approval" onDismiss={props.onDismiss} /> : null}</View>;
 }
 
 type BuiltInApproval = Extract<ParsedApprovalArtifactBodyV1, { family: 'built_in' }>;

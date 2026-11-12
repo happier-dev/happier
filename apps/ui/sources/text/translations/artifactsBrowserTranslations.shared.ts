@@ -186,6 +186,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         compare: string;
         cantEdit: string;
         failed: string;
+        publicationUnknown?: string;
         acceptedByYou: (params: Readonly<{ n: number }>) => string;
         acceptedBy: (params: Readonly<{ who: string; n: number }>) => string;
         declinedByYou: string;
@@ -390,6 +391,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             compare: 'Compare',
             cantEdit: 'Only people who can edit this document can accept it.',
             failed: 'Couldn’t save your decision. Try again.',
+            publicationUnknown: 'Check the Doc thread for the suggested edit before trying again.',
             acceptedByYou: ({ n }) => `You accepted the edit · now version ${n}`,
             acceptedBy: ({ who, n }) => `${who} accepted the edit · now version ${n}`,
             declinedByYou: 'You declined the suggestion · the document didn’t change',

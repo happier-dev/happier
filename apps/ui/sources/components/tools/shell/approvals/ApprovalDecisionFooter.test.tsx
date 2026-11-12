@@ -35,8 +35,9 @@ describe('ApprovalDecisionFooter', () => {
   it('blocks competing decisions while the answer is in flight', async () => {
     const decide = vi.fn();
     const screen = await renderScreen(<ApprovalDecisionFooter isDeciding onApprove={decide} onReject={decide} />);
-    expect(screen.findByTestId('approval-prompt-approve')?.props.disabled).toBe(true);
-    expect(screen.findByTestId('approval-prompt-reject')?.props.disabled).toBe(true);
+    // Busy web controls retain focus; the accessibility state describes their refusal.
+    expect(screen.findByTestId('approval-prompt-approve')?.props.accessibilityState?.disabled).toBe(true);
+    expect(screen.findByTestId('approval-prompt-reject')?.props.accessibilityState?.disabled).toBe(true);
     await screen.pressByTestIdAsync('approval-prompt-approve');
     await screen.pressByTestIdAsync('approval-prompt-reject');
     expect(decide).not.toHaveBeenCalled();

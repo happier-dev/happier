@@ -7,9 +7,32 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 afterEach(standardCleanup);
 
+const { InlineTextField } = await import('./InlineTextField');
+
 describe('InlineTextField web geometry', () => {
+    it('keeps rapid title typing local while its writer republishes normalized values without update-depth warnings', async () => {
+        const warnings = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            function Title() {
+                const [value, setValue] = React.useState('');
+                return <InlineTextField editor={{ value, placeholder: 'Name', accessibilityLabel: 'Name',
+                    onChangeText: next => setValue(next.trim()), testID: 'rapid-title' }} style={{}} />;
+            }
+            const screen = await renderScreen(<Title />);
+            const field = () => screen.findHostByTestId('rapid-title')!;
+            await act(async () => field().props.onFocus());
+            const title = 'Bakery launch plan r17 ';
+            for (let length = 1; length <= title.length; length += 1) {
+                await act(async () => field().props.onChangeText(title.slice(0, length)));
+                expect(field().props.value).toBe(title.slice(0, length));
+            }
+            await act(async () => field().props.onBlur());
+            expect(field().props.value).toBe(title.trim());
+            expect(warnings.mock.calls.filter(args => args.some(value => String(value).includes('Maximum update depth')))).toHaveLength(0);
+        } finally { warnings.mockRestore(); }
+    });
+
     it('uses the initial content-size event without forcing another textarea layout', async () => {
-        const { InlineTextField } = await import('./InlineTextField');
         let measurements = 0;
         const input = { style: { height: '64px' }, get scrollHeight() { measurements += 1; return 64; } };
         const screen = await renderScreen(<InlineTextField editor={{ value: 'A wrapped title', placeholder: 'Name',
@@ -26,7 +49,6 @@ describe('InlineTextField web geometry', () => {
     });
 
     it('shrinks a wrapped title when its available width increases without changing its text', async () => {
-        const { InlineTextField } = await import('./InlineTextField');
         // DOM layout is the system boundary; the real field owns its measured height.
         let scrollHeight = 64;
         const input = { style: { height: '64px' }, get scrollHeight() { return scrollHeight; }, focus: vi.fn(), blur: vi.fn() };
@@ -44,7 +66,6 @@ describe('InlineTextField web geometry', () => {
     });
 
     it('at rest shows a long title clamped to its resting lines, keeps the full value editable, and opens it on focus', async () => {
-        const { InlineTextField } = await import('./InlineTextField');
         const long = 'Run the shell command: sleep 1500 (wait for it to finish; do not touch any file). Then reply.';
         const screen = await renderScreen(<InlineTextField editor={{ value: long, placeholder: 'Name',
             accessibilityLabel: 'Name', onChangeText: () => {}, testID: 'title' }} style={{ fontSize: 24 }} restingLines={2} />);
@@ -65,7 +86,6 @@ describe('InlineTextField web geometry', () => {
     });
 
     it('keeps the same input when an initially empty clamped title receives its first value', async () => {
-        const { InlineTextField } = await import('./InlineTextField');
         function Title() {
             const [value, setValue] = React.useState('');
             return <InlineTextField editor={{ value, placeholder: 'Name', accessibilityLabel: 'Name',

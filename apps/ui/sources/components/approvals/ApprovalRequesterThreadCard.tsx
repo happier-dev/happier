@@ -11,6 +11,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { ApprovalDecisionFooter } from '@/components/tools/shell/approvals/ApprovalDecisionFooter';
+import { useFailedApprovalDismissal } from '@/components/tools/shell/approvals/failedApprovalDismissal';
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { ApprovalOpenButton } from '@/components/tools/shell/approvals/ApprovalOpenButton';
 import {
@@ -78,6 +80,9 @@ const RequesterConfirmationThreadCard = React.memo(
       'approve' | 'reject' | null
     >(null);
     const state = resolveApprovalRequesterThreadState(parsed, recordedDecision);
+    const settledFailure = state.kind === 'failed' || state.kind === 'uncertain';
+    const { dismissed, dismiss } = useFailedApprovalDismissal();
+    const dismissFailure = React.useCallback(() => dismiss(artifact.id), [artifact.id, dismiss]);
     const executor = resolveApprovalExecutor(parsed.request);
     const executionMachineId = executor.kind === 'daemon' ? executor.machineId
       : executor.kind === 'live_invocation' ? executor.daemonMachineId : null;
@@ -279,9 +284,12 @@ const RequesterConfirmationThreadCard = React.memo(
           size="small" display="secondary" title={t('approvals.review')}
           onPress={openReview}
         /> : null}
+        {settledFailure ? <ApprovalDecisionFooter isDeciding={false}
+          testIDPrefix="approval-requester-thread" onDismiss={dismissFailure} /> : null}
         </>
       ) : null;
 
+    if (settledFailure && dismissed[artifact.id] !== undefined) return null;
     return (
       <ApprovalPromptChrome
         testID={`approval-requester-thread-card-${artifact.id}`}
