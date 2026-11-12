@@ -234,7 +234,7 @@ export function createExternalMcpServer(params: Readonly<{
                 invocation, authority: invocation.authority, ...(context?.signal ? { signal: context.signal } : {}) });
               if (selected) return await selected();
             }
-            if (isControllerDeploymentMutationAction(actionId)) {
+            if (isControllerDeploymentMutationAction(actionId, input)) {
               const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
               const deploymentAction = deps.deploymentAction;
