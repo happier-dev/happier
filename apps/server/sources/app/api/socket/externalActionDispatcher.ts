@@ -131,6 +131,8 @@ type ResolveMachine = (params: Readonly<{
     requiredExternalActionExecutionAuthorization?: true;
     requiredSessionInputAdmissionProtocolVersion?: 2;
     requireOnline?: boolean;
+    /** Delivery of a root this dispatch already admitted and minted: prove only its exact installation. */
+    admittedDelivery?: true;
     /** Retain only the canonical admission produced by this successful resolution. */
     onAdmission?: (admission: SocketRpcMachineAdmissionContextV1) => void;
 } & Partial<MachineOperationRequesterContext>>) => Promise<MachineResolution>;
@@ -386,13 +388,17 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
         // replay effect (`use`), not the public decision RPC (`custodian_only`).
         // The relay route already decided an admitted finite native root's carrier;
         // dispatch only proves that exact installation is still the custodian's.
+        // Delivery of a root admitted and minted by this dispatch is part of that admitted work
+        // (O-DEPLOY 2026-11-12, audit A1): it proves the exact installation, never re-runs admission.
         const finiteRoot = params.executionBinding && params.actionId === params.executionBinding.actionId
             && params.accountId === params.executionBinding.accountId && params.machineId === params.executionBinding.machineId
-            && readAdmittedFiniteOperationPrincipal(params.executionBinding) ? params.executionBinding : undefined;
+            && (params.admittedDelivery || readAdmittedFiniteOperationPrincipal(params.executionBinding)) ? params.executionBinding : undefined;
+        const admittedRoot = finiteRoot && !retainedHandoff
+            ? await readAdmittedExternalActionMachineInTx(db, finiteRoot, finiteRoot.machineId, finiteRoot.installationId) : null;
         const admission = retainedHandoff
             ? await readAdmittedExternalActionHandoffMachineInTx(db, retainedHandoff, params.machineId)
             : finiteRoot
-            ? await readAdmittedExternalActionMachineInTx(db, finiteRoot, finiteRoot.machineId, finiteRoot.installationId)
+            ? admittedRoot && { ...admittedRoot, role: finiteRoot.admittedMachineRole ?? admittedRoot.role }
             : handoff
             ? await resolveMachineAdmission({ actorAccountId: params.accountId,
                 machineId: params.machineId, requiredRole: 'use',
@@ -565,6 +571,7 @@ function createExactMachineDaemonGuard(params: Readonly<{
             const availability = await params.resolveMachine({
                 accountId: params.accountId,
                 machineId: params.machineId,
+                admittedDelivery: true,
                 onAdmission: admission => { machineAdmission = admission; },
                 actionId: params.actionId,
                 callerAuthority: params.callerAuthority,

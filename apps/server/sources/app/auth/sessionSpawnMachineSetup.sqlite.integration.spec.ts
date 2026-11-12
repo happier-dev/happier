@@ -14,7 +14,8 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
     encodeReviewedActionChildHttpProofV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
-    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { auth } from './auth';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
@@ -163,6 +164,12 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                 expect(await dispatch({ actionId: 'session.spawn_new', principal, executionAuthorization: capturedAuthorization,
                     envelope: { ...envelope, input: { ...envelope.input, directory: { kind: 'path', path: '/tampered' } } } }))
                     .toMatchObject({ kind: 'placement_error', code: 'credential_scope_denied' });
+                // The admitted root delivers only to its own Machine: redirecting it to another target is refused.
+                const elsewhere = { kind: 'machine' as const, machineId: randomUUID() };
+                expect(await dispatch({ actionId: 'session.spawn_new', principal, executionAuthorization: capturedAuthorization,
+                    envelope: { ...envelope, target: elsewhere, input: { ...envelope.input,
+                        executionTarget: { serverId: homeId, machineId: elsewhere.machineId } } } }))
+                    .toMatchObject({ kind: 'placement_error' });
             } else {
                 expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
                     machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
@@ -354,7 +361,9 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             const principal = await verifyCurrentExternalActionPrincipal(leaf.binding);
             const workflowAdmission = await verifyWorkflowExternalActionRequesterAuthorization({ authorization: parent,
                 origin: workflowActionOrigin, publisherAccountId: f.account.id, publisherCustodianAccountId: custodian.id,
-                publisherMachineId: f.machine.id, publisherInstallationId: f.machine.installationId! });
+                publisherMachineId: f.machine.id, publisherInstallationId: f.machine.installationId!, target,
+                // The route spends the child's exact Setup operands against the parent scope (72105c7511a).
+                preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: 'machines.setup.apply', envelope }) });
             if (!principal || !workflowAdmission) throw new Error('Expected verified retained Workflow requester');
             let guardedTarget = false;
             const dispatch = createExternalActionDaemonDispatcher({ io: new Server(), forwardRpc: async request => {

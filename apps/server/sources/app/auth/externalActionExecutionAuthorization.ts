@@ -496,7 +496,11 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || (input.origin.reviewedChild?.actionId ?? binding.actionId) !== MACHINE_SETUP_APPLY_ACTION_ID_V1
         || deriveMachineSetupCombinedRunIdV1({ homeId: binding.serverIdentityId, accountId: binding.accountId,
             requestId: binding.requestId, reviewedChild: input.origin.reviewedChild }) !== input.origin.runId) return null;
-    const scope = binding.deploymentPreparationAdmission;
+    // A spawn-reviewed Setup parent admitted only its own Machine; its reviewed child digest pins the plan.
+    const spawnSetupScope: Extract<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission']>,
+        { operation: 'setup' }> | undefined = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            ? { operation: 'setup', machineTargets: [binding.machineId], deployments: [] } : undefined;
+    const scope = binding.deploymentPreparationAdmission ?? spawnSetupScope;
     const child = input.preparationAdmission;
     const target = input.target ?? binding.target;
     // Every child operand spends a reviewed parent fact, never new permission.
