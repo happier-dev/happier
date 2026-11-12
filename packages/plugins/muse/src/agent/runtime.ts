@@ -328,7 +328,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
         return result.status === 'requested'
           ? { ok: true, status: 'interrupted' }
           : { ok: false, status: result.status === 'notRunning' ? 'not_safe' : 'interrupt_failed',
-            ...('diagnostic' in result ? { error: result.diagnostic.code } : {}) };
+            ...(result.diagnostic ? { error: result.diagnostic.code } : {}) };
       },
     });
     if (typeof native.providerId === 'string' && typeof native.modelId === 'string') {
