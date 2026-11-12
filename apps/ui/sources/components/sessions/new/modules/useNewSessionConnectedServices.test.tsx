@@ -323,6 +323,45 @@ afterEach(async () => {
 });
 
 describe('new Session Connected Accounts from the machine catalog', () => {
+    it.each(['pi', 'opencode', 'ohMyPi'] as const)('offers own Muse for %s and authors the direct launch binding', async (agentId) => {
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+        const serviceKey = buildQualifiedPluginContributionKey(service);
+        const catalog = { enabledAgentIds: [agentId] };
+        const entry = getResolvedBackendCatalogEntries(catalog).find(candidate => candidate.builtInAgentId === agentId);
+        if (!entry) throw new Error('Expected bundled target');
+        const accountAgent = resolveNewSessionConnectedServicesAgent({
+            projection: { phase: 'ready', inputs: null }, selectedBackendTargetKey: entry.backendTargetKey, catalog,
+        });
+        expect(accountAgent?.connectedAccounts).toContainEqual(expect.objectContaining({ service }));
+        profileState.current = { connectedAccountsV4: [v4Account({ ...service, accountId: 'own-muse', kind: 'oauth' })],
+            connectedAccountGroupsV4: [] };
+        const hook = await renderHook(() => {
+            const [options, setOptions] = React.useState<Record<string, Record<string, unknown>>>({});
+            return useNewSessionConnectedServicesAgentOptions({
+                staticAgentId: entry.catalogAgentId, runtimeCarrierAgentId: entry.agentId,
+                selectedMachineId: 'machine-muse', targetServerId: null, selectedBackendTargetKey: entry.backendTargetKey,
+                connectedAccounts: accountAgent?.connectedAccounts, agentIdentity: accountAgent?.identity,
+                setBackendNewSessionOptionStateByTargetKey: setOptions,
+                agentOptionState: options[entry.backendTargetKey] ?? null,
+                settings: { connectedServicesDefaultProfileByServiceId: {} }, router: { push: vi.fn() },
+            });
+        });
+        const popover = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip);
+        if (typeof popover.renderContent !== 'function') throw new Error('Expected picker');
+        const content = popover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+        const picker = await renderScreen(<AuthProvider initialCredentials={null}>{content}</AuthProvider>);
+        const step: SelectionListStep = picker.findByType(SelectionList).props.rootStep;
+        const option = step.sections.flatMap(section => 'options' in section ? section.options : [])
+            .find(row => row.id === createConnectedServiceOptionId(serviceKey, 'own-muse'));
+        expect(option).toBeDefined();
+        expect(option?.disabled).not.toBe(true);
+        await act(async () => { option?.onSelect?.(); });
+        expect(hook.getCurrent().agentNewSessionOptions).toMatchObject({ connectedServices: {
+            v: 2, bindingsByServiceId: { [serviceKey]: { source: 'connected', selection: 'profile', profileId: 'own-muse' } },
+        } });
+    });
+
     it('keeps both Claude subscription choices and the open overlay through offline recovery and background projection refresh', async () => {
         const { AuthProvider } = await import('@/auth/context/AuthContext');
         const wrapPicker = (content: React.ReactElement) => <AuthProvider initialCredentials={null}>{content}</AuthProvider>;
@@ -2074,6 +2113,29 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
 
+        await hook.unmount();
+    });
+
+    it('names the selected Team credential in the Actions summary', async () => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const selection = { source: 'team_resource' as const, resourceId: 'resource-muse', deliveryMode: 'brokered' as const };
+        const resource = {
+            id: 'resource-muse', teamId: 'team-1', displayName: 'Muse Code', sourceOwnerDisplayName: null, resourceRevision: 1,
+            readiness: { kind: 'available' as const }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
+            sessionUsePolicy: 'personal_allowed' as const, providerModels: [], connectedServiceSelections: [selection],
+            sourcePresentation: { kind: 'connected_service' as const, service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+        };
+        const hook = await renderHook(() => useNewSessionConnectedServices({
+            agentCore: null, defaultAuthAgentId: 'claude',
+            defaultAuthConsumer: { pluginId: 'happier.agent.claude', localId: 'claude' }, connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS,
+            agentOptionState: { [CONNECTED_SERVICES_BINDINGS_KEY]: { [CLAUDE_SERVICE_KEY]: selection } },
+            settings: { connectedServicesDefaultProfileByServiceId: {} }, targetServerId: activeHomeId,
+            teamCredentialResources: [resource], teamNameById: { 'team-1': 'Engineering' },
+            router: { push: vi.fn() }, setAgentOptionStateForCurrentAgent: vi.fn(),
+        }));
+        await waitForHomeGovernance(() => expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
+            .toContain('Muse Code'));
         await hook.unmount();
     });
 
