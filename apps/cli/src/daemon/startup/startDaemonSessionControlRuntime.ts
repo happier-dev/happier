@@ -1339,12 +1339,7 @@ export async function startDaemonSessionControlRuntime(
       typeof startDaemonControlServer
     >[0]['beforeShutdown'];
     admissionDrain?: DaemonAdmissionDrain;
-    onHappySessionWebhook: (
-      sessionId: string,
-      sessionMetadata: Metadata,
-      reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
-      sessionCreationOutcome?: SessionCreationOutcome,
-    ) => Promise<void>;
+    onHappySessionWebhook: ReturnType<typeof import('../sessions/onHappySessionWebhook').createOnHappySessionWebhook>;
     setOnTrackedSessionPidPromoted?: (
       handler: (
         input: Readonly<{

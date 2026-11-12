@@ -79,6 +79,7 @@ import type { WidgetDefinitionActionDepsV1 } from '../../widgets/definitionActio
 import type { WidgetLayoutFragmentActionDepsV1 } from '../../widgets/fragmentActionsV1.js';
 import type { MachinesAgentsSignInStartInput, MachinesAgentsSignInStatusInput, MachinesAgentsSignInStartOutput, AgentSignInStatusResponse, MachinesAgentsSignInCancelInput, MachinesAgentsSignInCancelOutput } from '../../daemon/agentSignIn.js';
 import type { z } from '../../zodRuntimePolicy.js';
+import type { ProjectsListInputSchema } from '../specs/projects.js';
 import type { AccountHomeContinuationInputV1 } from '../accountHomeContinuationV1.js';
 import type {
   ProjectSourcesListInputV1, ProjectSourcesReadInputV1, ProjectSourcesCreateInputV1,
@@ -2161,7 +2162,7 @@ export type ActionExecutorDeps = Readonly<{
    * cannot list projects" from "you have no matching project" — the two need
    * different words in front of a reader.
    */
-  projectsList?: (args: Readonly<{ serverId?: string; machineId?: string; limit?: number; includeHidden?: boolean }>, context?: ActionExecutorContext) => Promise<unknown>;
+  projectsList?: (args: Readonly<z.infer<typeof ProjectsListInputSchema>>, context?: ActionExecutorContext) => Promise<unknown>;
   /** Exact answering-client page catalog; no Machine or page-body acquisition. */
   projectsPagesList?: (args: ProjectPagesListInputV1, context?: ActionExecutorContext) => Promise<ProjectPagesListOutputV1 | ActionExecuteFailure>;
   /**

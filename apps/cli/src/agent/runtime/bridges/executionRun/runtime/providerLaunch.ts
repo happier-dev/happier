@@ -245,7 +245,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
         happyHomeDir: input.happyHomeDir,
     });
     const { resolvePrerequisites, createAuthorizationAttempt, ...launchInput } = createExecutionRunProviderPreparation(providerInput, lease);
-    const direct = await prepareDirectProviderLaunch({
+    const direct = await prepareDirectProviderLaunch<never>({
         signal: input.signal,
         ...launchInput,
         scope: { kind: 'execution_run', executionRunId: input.runId },

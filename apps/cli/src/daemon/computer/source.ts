@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { clearTimeout, setTimeout } from 'node:timers';
 import { computerTargetKeyV1, resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 import { normalizeBrowserActiveTargetRect, BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { ComputerTargetV1, ComputerInputOperationV1, ComputerActionResultV1, ComputerAccessV1, BrowserActiveTargetV1, ComputerControlStatusResponseV1, ComputerCaptureGeometryV1, ComputerAccessibilityNodeV1, MachineLiveStreamControlSidebandV1, SessionImageMediaReferenceV1 } from '@happier-dev/protocol';
