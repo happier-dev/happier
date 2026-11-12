@@ -1,6 +1,7 @@
 import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources.js';
 
 import { readFileSync } from 'node:fs';
+import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -409,7 +410,7 @@ describe('Triage plugin manifest', () => {
   });
 
   it('names the product, not the program, everywhere a user can read it', () => {
-    expect(PLUGIN_MANIFEST.displayName).toBe('PRs, Issues & Tasks');
+    expect(PLUGIN_MANIFEST.displayName).toBe(TRIAGE_DISPLAY_NAME);
     expect(`${PLUGIN_MANIFEST.displayName} ${PLUGIN_MANIFEST.description}`).not.toMatch(/triage/iu);
   });
 

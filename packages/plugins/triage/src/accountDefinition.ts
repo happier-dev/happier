@@ -528,6 +528,6 @@ export type TriageAccountDefinition = Pick<DefinePluginInput<TriageAccountAction
 }>;
 
 export const TRIAGE_ACCOUNT_DEFINITION: TriageAccountDefinition = {
-  id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0', displayName: 'PRs, Issues & Tasks',
+  id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0', displayName: TRIAGE_DISPLAY_NAME,
   actions: TRIAGE_ACCOUNT_ACTIONS, resources: TRIAGE_ACCOUNT_RESOURCES,
 } as const;
