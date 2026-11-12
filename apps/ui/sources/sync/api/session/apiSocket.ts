@@ -1,3 +1,4 @@
+import { clearMachineRpcDirectRouteGrants } from '@/sync/domains/machines/peer/mediation/rpc/routeGrant';
 import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/attachManagedSessionHumanPresenceSocket';
 import { attachManagedSessionConsumptionSocket } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
 import { notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
@@ -329,7 +330,7 @@ export type SyncSocketMessageContext = Readonly<{
     serverId: string | null;
 }>;
 
-type SyncSocketMessageHandler = (data: any, context: SyncSocketMessageContext) => void;
+type SyncSocketMessageHandler = (data: any, context: SyncSocketMessageContext) => void | Promise<unknown>;
 
 /**
  * Inbound machine-scoped reverse-RPC handler. Receives the already-decrypted request params and
@@ -367,7 +368,7 @@ class ApiSocket {
     private encryption: Encryption | null = null;
     private liveStreamTransport: ReturnType<typeof createMachineLiveStreamSocketTransport> | null = null;
     private messageHandlers: Map<string, Set<SyncSocketMessageHandler>> = new Map();
-    private reconnectedListeners: Set<() => void> = new Set();
+    private reconnectedListeners: Set<() => void | Promise<unknown>> = new Set();
     private sessionConsumptionAdmittedListeners = new Set<(event: Readonly<{ serverId: string; sessionIds: readonly string[] }>) => void>();
     private statusListeners: Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void> = new Set();
     private connectionStateListeners: Set<(state: ManagedConnectionState) => void> = new Set();
@@ -582,6 +583,7 @@ class ApiSocket {
     }
 
     disconnect(options?: Readonly<{ preserveHttpRequests?: boolean; visibilityPause?: boolean }>) {
+        clearMachineRpcDirectRouteGrants();
         this.visibilityPauseOnDetach = options?.visibilityPause === true;
         if (this.visibilityPauseOnDetach && this.socketTransport) this.pausedSockets.add(this.socketTransport);
         if (this.accountEncryptionObservation) {
@@ -685,7 +687,7 @@ class ApiSocket {
     // Listener Management
     //
 
-    onReconnected = (listener: () => void) => {
+    onReconnected = (listener: () => void | Promise<unknown>) => {
         this.reconnectedListeners.add(listener);
         return () => this.reconnectedListeners.delete(listener);
     };
@@ -735,7 +737,7 @@ class ApiSocket {
         }
     }
 
-    onTransferRelayV2Envelope(handler: (payload: TransferRelayV2SendEnvelope) => void) {
+    onTransferRelayV2Envelope(handler: (payload: TransferRelayV2SendEnvelope) => void | Promise<unknown>) {
         return this.onMessage(TRANSFER_RELAY_V2_SOCKET_EVENT, handler);
     }
 
@@ -743,7 +745,7 @@ class ApiSocket {
         this.send(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
     }
 
-    onMachineLiveStreamRelayEnvelope(handler: (payload: MachineLiveStreamRelayEnvelopeV1) => void) {
+    onMachineLiveStreamRelayEnvelope(handler: (payload: MachineLiveStreamRelayEnvelopeV1) => void | Promise<unknown>) {
         return this.onMessage(MACHINE_LIVE_STREAM_SOCKET_EVENT, handler);
     }
 
@@ -1539,6 +1541,7 @@ class ApiSocket {
     //
 
     private updateStatus(status: 'disconnected' | 'connecting' | 'connected' | 'error') {
+        if (status !== 'connected') clearMachineRpcDirectRouteGrants();
         if (this.currentStatus !== status) {
             this.currentStatus = status;
             this.statusListeners.forEach(listener => listener(status));
@@ -1752,7 +1755,7 @@ class ApiSocket {
                 }
                 statusDemandTransport?.resend();
                 if (this.hasConnectedOnce && this.pendingReconnectNotification) {
-                    this.reconnectedListeners.forEach((listener) => listener());
+                    this.reconnectedListeners.forEach((listener) => this.observeSubscriberResult(listener()));
                 }
                 this.hasConnectedOnce = true;
                 this.pendingReconnectNotification = false;
@@ -1807,7 +1810,7 @@ class ApiSocket {
             emit: (wire) => socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, wire),
             deliver: (decoded) => {
                 for (const handler of Array.from(this.messageHandlers.get(MACHINE_LIVE_STREAM_SOCKET_EVENT) ?? [])) {
-                    handler(decoded, messageContext);
+                    this.observeSubscriberResult(handler(decoded, messageContext));
                 }
             },
             isCurrent: () => this.socket === socket && this.config === installedConfig && installedConfig?.isCurrent?.() !== false,
@@ -1932,7 +1935,9 @@ class ApiSocket {
                 return;
             }
             if (event === 'ephemeral') {
-                if (machineRequestScope) {
+                // Only a machine-activity ephemeral can heal Machine reachability; stream and activity
+                // ephemerals arrive per token/heartbeat and are parsed by their own consumers.
+                if (machineRequestScope && (data as { type?: unknown } | null)?.type === 'machine-activity') {
                     const update = EphemeralUpdateSchema.safeParse(data);
                     if (update.success && update.data.type === 'machine-activity'
                         && update.data.active === true && update.data.reconnected === true) {
@@ -1950,7 +1955,7 @@ class ApiSocket {
                         return;
                     }
                     for (const handler of Array.from(handlers)) {
-                        handler(data, messageContext);
+                        this.observeSubscriberResult(handler(data, messageContext));
                     }
                 },
             );
@@ -2075,6 +2080,15 @@ class ApiSocket {
             default:
                 this.updateStatus('disconnected');
         }
+    }
+
+    private observeSubscriberResult(result: void | Promise<unknown>): void {
+        if (!result) return;
+        // Preserve typed refusals on the existing error channel. Unexpected failures
+        // are published there too, so settling a subscriber never hides its failure.
+        void result.catch((error: unknown) => {
+            this.setError(error instanceof Error ? error : new Error(String(error)));
+        });
     }
 
     private clearError() {
