@@ -6,7 +6,10 @@ import type { CollectionSpacesV1 } from '@happier-dev/protocol/collections/space
 import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { admitHomeCredential } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionListViewFilterDefaults, buildSessionListSelectionScopeSignature } from './sessionListViewFilters';
+import { useSessionListViewFilterController } from './useSessionListViewFilterController';
 import {
     readRetainedSessionListPaneState,
     resetSessionListPaneRetentionForTests,
@@ -24,20 +27,12 @@ const harness = vi.hoisted(() => ({
     },
     resolutions: new Map<string, { kind: 'bound'; scope: { serverId: string; accountId: string } } | { kind: 'resolving' }>(),
     requestedServerIds: [] as string[],
-    credentialObservers: new Set<(event: { serverId: string }) => void>(),
     hideInactiveSessions: false,
     accountScope: null as { serverId: string; accountId: string } | null,
     settingsVersion: null as number | null,
     spaceCatalog: { v: 1, spaces: [] } as CollectionSpacesV1,
 }));
 
-
-vi.mock('@/sync/runtime/orchestration/homeAccountChange', () => ({
-    subscribeHomeCredentialChange: (observer: (event: { serverId: string }) => void) => {
-        harness.credentialObservers.add(observer);
-        return () => harness.credentialObservers.delete(observer);
-    },
-}));
 
 vi.mock('@/hooks/session/useSessionListSelectionState', () => ({
     useSessionListSelectionState: () => harness.selection,
@@ -82,7 +77,6 @@ afterEach(() => {
     harness.selection = { activeServerId: 'home-a', allowedServerIds: ['home-a', 'home-b'] };
     harness.resolutions = new Map();
     harness.requestedServerIds = [];
-    harness.credentialObservers.clear();
     harness.hideInactiveSessions = false;
     harness.accountScope = null;
     harness.settingsVersion = null;
@@ -126,7 +120,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
         harness.spaceCatalog = { v: 1, spaces: [{ id: 'saved', name: 'Saved', entityKind: 'sessionWork',
             icon: { kind: 'icon', name: 'list' }, filter, includeNeedsYouEverywhere: true }] };
         await selectCollectionSpace(harness.accountScope, 'sessionWork', 'saved');
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController());
         expect(hook.getCurrent().selectedSpaceId).toBe('saved');
         expect(hook.getCurrent().filters).toMatchObject({ source: 'direct', includeInactive: true, homeServerIds: ['home-a'] });
@@ -140,7 +133,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
     });
 
     it('keeps archived drafts separate from the active context', async () => {
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const active = await renderHook(() => useSessionListViewFilterController('active'));
         await act(async () => active.getCurrent().setSearchQuery('active draft'));
         const archived = await renderHook(() => useSessionListViewFilterController('archived'));
@@ -154,7 +146,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
         ]);
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook((show: 'sessions' | 'runs' | 'both') => useSessionListViewFilterController(
             'active', { kind: 'global' }, show,
         ), { initialProps: 'sessions' });
@@ -173,7 +164,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
         ]);
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController());
 
         await act(async () => hook.getCurrent().updateFilters((current) => ({
@@ -222,7 +212,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
         ]);
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController());
 
         expect(hook.getCurrent().filters.source).toBe('all');
@@ -236,7 +225,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
 
     it('stores inactive selection in the filter and restores the settings default on reset', async () => {
         harness.hideInactiveSessions = true;
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController('active', { kind: 'global' }, 'sessions'));
         expect(hook.getCurrent().includeInactive).toBe(false);
         await act(async () => hook.getCurrent().setIncludeInactive(true));
@@ -250,7 +238,6 @@ describe('useSessionListViewFilterController retention lifetime', () => {
 
     it('forces archived inactive admission without changing the active retained filter', async () => {
         harness.hideInactiveSessions = true;
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const active = await renderHook(() => useSessionListViewFilterController('active'));
         const archived = await renderHook(() => useSessionListViewFilterController('archived'));
         await act(async () => archived.getCurrent().setIncludeInactive(false));
@@ -264,18 +251,19 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
         ]);
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController());
 
         expect(hook.getCurrent().filters.source).toBe('all');
     });
 
     it('binds Team retention only to its exact Home and resets it while replacement resolves', async () => {
+        // The real credential owner publishes a cross-realm Account replacement.
+        admitHomeCredential('home-a', { token: createAccountTokenForTests('account-a') });
+        admitHomeCredential('home-b', { token: createAccountTokenForTests('account-b') });
         harness.resolutions = new Map([
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
         ]);
-        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController(
             'active',
             { kind: 'team', team: { serverId: 'home-a', teamId: 'team-a' } },
@@ -300,13 +288,13 @@ describe('useSessionListViewFilterController retention lifetime', () => {
 
         // An unrelated Home mutation has no Team-A contribution to retire.
         act(() => {
-            for (const observer of harness.credentialObservers) observer({ serverId: 'home-b' });
+            admitHomeCredential('home-b', { token: createAccountTokenForTests('replacement-b') });
         });
         expect((await hook.rerender()).filters.searchQuery).toBe('team private');
 
         // Credential mutation retires Account A synchronously before its replacement resolves.
         act(() => {
-            for (const observer of harness.credentialObservers) observer({ serverId: 'home-a' });
+            admitHomeCredential('home-a', { token: createAccountTokenForTests('replacement-a') });
         });
         harness.resolutions = new Map([['home-a', { kind: 'resolving' }]]);
         const resolvingReplacement = await hook.rerender();
