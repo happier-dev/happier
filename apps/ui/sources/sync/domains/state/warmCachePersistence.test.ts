@@ -63,6 +63,8 @@ import { SESSION_LIST_DOCUMENT_ADMISSION, admitOpenedSessionListDisplayProjectio
     hasCurrentSessionListDisplayMetadata } from '@/sync/domains/session/sessionDocumentAdmission';
 import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildSessionListCacheEntryFromRenderable, readSessionListWarmCacheDisplay } from './warmCacheAdapters';
+import { buildLinkedExternalSessionMetadataV1, buildLinkedExternalSessionQualifiedIdentityV1 } from '@happier-dev/protocol/sessions/external/linkedSessionMetadata';
+import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 
 describe('warmCachePersistence', () => {
     beforeEach(async () => {
@@ -339,6 +341,30 @@ describe('warmCachePersistence', () => {
         expect(loadSessionListWarmCacheEntries('server-a', 'account-b')).toEqual({});
     });
 
+    it('restores complete produced external-session identity through the cold stored reader', () => {
+        const metadata = buildLinkedExternalSessionMetadataV1({}, {
+            v: 1, agentId: 'codex', machineId: 'machine-1', remoteSessionId: 'remote-1',
+            source: { kind: 'codexHome', home: 'user' },
+            qualifiedIdentity: buildLinkedExternalSessionQualifiedIdentityV1({
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceKind: 'codexHome',
+            }),
+            linkedAtMs: 42,
+            runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+            linkData: { conversation: { id: 'remote-1' } },
+        });
+        const row = buildSessionListRenderableFromSession(createSessionFixture({
+            id: 'external-identity', metadata: { ...metadata, path: '/repo', host: 'box' },
+        }));
+        const entry = buildSessionListCacheEntryFromRenderable(row);
+        saveSessionListWarmCacheEntries('identity-home', 'identity-account', { 'external-identity': entry });
+        const key = 'session-list-warm-cache-v1:identity-home:identity-account';
+        // Exercise the cold parser through persisted bytes rather than its unchanged-byte memory shortcut.
+        store.set(key, JSON.stringify(JSON.parse(store.get(key)!), null, 2));
+        const restored = loadSessionListWarmCacheEntries('identity-home', 'identity-account')['external-identity'];
+        expect(restored?.externalSessionV1).toEqual(metadata.externalSessionV1);
+        expect(areSessionListRenderableExternalSessionIdentitiesEqual(restored?.externalSessionV1, entry.externalSessionV1)).toBe(true);
+    });
+
     it('persists canonical external-session agent identity without providerId', () => {
         store.set(
             'session-list-warm-cache-v1:server-a:account-a',
@@ -408,6 +434,23 @@ describe('warmCachePersistence', () => {
         });
         expect(loadSessionListWarmCacheEntries('server-a', 'account-a').s1?.externalSessionV1)
             .not.toHaveProperty('codexBackendMode');
+    });
+
+    it('declines persisted external-session affinity rejected by the linked-session owner', () => {
+        store.set('session-list-warm-cache-v1:conflicting-home:conflicting-account', JSON.stringify({
+            s1: {
+                sessionId: 's1', metadataVersion: 2, agentStateVersion: 3,
+                updatedAt: 20, createdAt: 10, active: true, activeAt: 20, archivedAt: null, path: '/repo',
+                externalSessionV1: {
+                    v: 1, agentId: 'codex', machineId: 'machine-1', remoteSessionId: 'remote-1',
+                    source: { kind: 'codexHome', home: 'user' },
+                    codexBackendMode: 'mcp_resume',
+                    runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+                },
+            },
+        }));
+
+        expect(loadSessionListWarmCacheEntries('conflicting-home', 'conflicting-account')).toEqual({});
     });
 
     it('rehydrates rollback eligibility from persisted session list entries', () => {

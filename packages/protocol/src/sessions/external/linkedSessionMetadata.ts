@@ -206,7 +206,7 @@ const ReleasedLinkedExternalSessionV1Schema = lazyZodSchema(() => (<I extends z.
     normalizeLegacyLinkedExternalSessionIdentity(value),
   )), LinkedExternalSessionV1Schema));
 
-const CompatibleLinkedExternalSessionV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeReleasedLinkedExternalSessionRuntime), LinkedExternalSessionV1Schema));
+export const CompatibleLinkedExternalSessionV1Schema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(normalizeReleasedLinkedExternalSessionRuntime), LinkedExternalSessionV1Schema));
 
 export type LinkedExternalSessionV1 = z.infer<typeof LinkedExternalSessionV1Schema>;
 

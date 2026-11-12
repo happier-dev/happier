@@ -4,13 +4,10 @@ import { MMKV } from 'react-native-mmkv';
 import { ArtifactCoarseKindV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
-import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
-import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { CompatibleLinkedExternalSessionV1Schema } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeActivityStateSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import { PluginAgentExternalSessionLinkDataSchema } from '@happier-dev/protocol/plugins/contributions/agentExternalSessions';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
@@ -410,17 +407,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     host: z.optional(z.nullable(z.string())),
     machineId: z.optional(z.nullable(z.string())),
     flavor: z.optional(z.nullable(z.string())),
-    externalSessionV1: z.optional(z.nullable((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => normalizeLinkedExternalSessionMetadataV1({ externalSessionV1: value }, 'stored')
-            ?.externalSessionV1 ?? value), z.looseObject({
-            v: z.literal(1),
-            agentId: z.string().check(z.minLength(1)),
-            machineId: z.string().check(z.minLength(1)),
-            remoteSessionId: z.string().check(z.minLength(1)),
-            source: ExternalSessionsSourceSchema,
-            runtimeDescriptorV1: zMini.optional(RuntimeDescriptorV1Schema),
-            linkData: zMini.optional(PluginAgentExternalSessionLinkDataSchema),
-            codexBackendMode: z.optional(z.never()),
-        })))),
+    externalSessionV1: z.optional(z.nullable(CompatibleLinkedExternalSessionV1Schema)),
     hiddenSystemSession: z.optional(z.boolean()),
     // The Bot marker (`metadata.bot`), flattened like the fields above. Without it a cold-restored
     // Bot reads as an ordinary Session until its metadata changes, so the Bots roster loses it.
