@@ -69,7 +69,10 @@ export function* projectUsageAnalyticsBatchDelivery(batch: UsageAnalyticsQueryBa
       // Context windows and account/connection attribution belong to other detail consumers.
       const { context: _context, connectedAccount: _account, providerConnectionId: _connection,
         providerAttribution: _attribution, providerSource: _providerSource, ...work } = row;
-      return work;
+      // Work consumes monetary bases and overlap witnesses, not tariff savings
+      // detail. The summary above retains aggregate breakdowns for other views.
+      const { breakdown: _breakdown, ...cost } = row.cost;
+      return { ...work, cost };
     }) : value.contributions ?? [];
     let offset = input.contributionOffset ?? 0;
     // The caller's existing top-N clause is the detail page's requested row count,

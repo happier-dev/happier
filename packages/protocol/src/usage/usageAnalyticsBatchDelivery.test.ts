@@ -2,6 +2,9 @@ import { expect, it } from 'vitest';
 import { UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema,
   type UsageAnalyticsContribution, type UsageAnalyticsQueryBatchResponse } from './usageAnalyticsContracts.js';
 import { encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from './usageAnalyticsBatchDelivery.js';
+import { allocateUsageOutcomes } from './usageOutcomeAllocation.js';
+import { aggregateUsageContributionCosts } from './usageAggregation.js';
+import { resolveUsageCostBasis } from './usageCostFacts.js';
 
 const query = UsageAnalyticsQueryRequestSchema.parse({ topLimit: 20 });
 const tokens = { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 };
@@ -17,6 +20,40 @@ const value = { v: 1 as const,
   totals: { eventCount: rows.length, tokens, cost: { reportedUsd: 0, estimatedUsd: 1, currency: 'USD' } }, contributions: rows };
 const batch: UsageAnalyticsQueryBatchResponse = { v: 1, results: [{ query, value }] };
 const input = { queries: [query], includeContributions: false, contributionQueries: [query] };
+
+it('delivers no unused cost-breakdown bytes to Work while conserving every contribution and money basis', () => {
+  // Account A's 7D census on reload150: 25,442 contributions; its only cost
+  // breakdown is cacheSavingsUsd. Work renders amounts, never savings detail.
+  const contributions = Array.from({ length: 25_442 }, (_, index) => ({
+    ...rows[index % rows.length]!, id: `work-${index}`,
+    cost: { ...rows[index % rows.length]!.cost, breakdown: { cacheSavingsUsd: index / 1000 } },
+  }));
+  const response = { ...batch, results: [{ query, value: { ...value, contributions } }] };
+  const deliver = (work: boolean) => [...projectUsageAnalyticsBatchDelivery(response, input, true, work ? 'work' : undefined)]
+    .map(encodeUsageAnalyticsBatchDelivery);
+  const rich = deliver(false);
+  const compact = deliver(true);
+  const delivered = compact.map(chunk => UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(JSON.stringify(chunk))))
+    .flatMap(chunk => chunk.contributionPages ?? []).flatMap(page => page.rows);
+  expect(delivered.reduce((sum, row) => sum + (row.cost.breakdown === undefined ? 0 : JSON.stringify(row.cost.breakdown).length), 0)).toBe(0);
+  expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(rich).length);
+  expect(delivered.map(row => row.id)).toEqual(contributions.map(row => row.id));
+  expect(delivered.map(row => row.tokens)).toEqual(contributions.map(row => row.tokens));
+  for (const mode of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {
+    expect(delivered.map(row => resolveUsageCostBasis(row.cost, mode)))
+      .toEqual(contributions.map(row => resolveUsageCostBasis(row.cost, mode)));
+    expect(resolveUsageCostBasis(aggregateUsageContributionCosts(delivered, mode), mode))
+      .toEqual(resolveUsageCostBasis(aggregateUsageContributionCosts(contributions, mode), mode));
+  }
+  const allocated = allocateUsageOutcomes({ contributions: delivered, evidence: [] });
+  expect(allocated.allocations).toHaveLength(contributions.length);
+  expect(new Set(allocated.allocations.map(row => row.contribution.id)).size).toBe(contributions.length);
+  expect(allocated.allocations.reduce((sum, row) => sum + row.contribution.tokens.total!, 0)).toBe(contributions.length);
+  expect(allocated.allocations.every(row => row.outcome === null)).toBe(true);
+  // Rich exports retain their admitted detail.
+  expect(rich.flatMap(chunk => chunk.contributionPages ?? []).every(page =>
+    'values' in page.rows && page.rows.values.some(value => value !== null && typeof value === 'object' && 'breakdown' in value))).toBe(true);
+});
 
 it('shrinks repeated contribution operands within each requested page and preserves every admitted value', () => {
   const original = [...projectUsageAnalyticsBatchDelivery(batch, input, true, 'work')];
