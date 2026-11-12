@@ -229,6 +229,7 @@ import { narrowSessionModelPickerToAllowedModels, readEffectiveAllowedModelRef, 
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from "@/sync/domains/server/serverProfiles";
 import { useAttachmentsUploadConfig } from "@/components/sessions/attachments/useAttachmentsUploadConfig";
 import { useAttachmentDraftManager } from "@/components/sessions/attachments/useAttachmentDraftManager";
+import { SessionDraftAdmissionContext } from "@/components/sessions/drafts/sessionDraftAdmission";
 import { sendableAttachmentDrafts } from "@/components/sessions/attachments/attachmentDraftModel";
 import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, resolveSessionAttachmentDraftScope, sessionAttachmentDraftKey, type SessionAttachmentDraftScope, writeSessionAttachmentDrafts } from "@/components/sessions/attachments/sessionAttachmentDraftStore";
 import { AttachmentUploadCancelled, buildSessionAttachmentIngressMeta, uploadAttachmentDraftsToSession } from "@/components/sessions/attachments/uploadAttachmentDraftsToSession";
@@ -712,6 +713,7 @@ export function useSessionComposerController({
         externalTranscriptAuthority.kind === 'server_snapshot',
     );
     const router = useDestinationRouter();
+    const draftsAdmitted = React.useContext(SessionDraftAdmissionContext);
     const composerTextStore = useComposerTextStore(() => {
         if (!isEmbedWindowContext() || !sessionAccountScope) return '';
         const draft = getSessionDraftSnapshot(sessionAccountScope, { kind: 'session', sessionId })?.document;
@@ -2879,7 +2881,8 @@ export function useSessionComposerController({
         accountLifetime: sessionAccountLifetime,
         retainProjectionOnAccountRetirement: isEmbedWindowContext(),
         session,
-        active: surfacePresented,
+        // Custody (adopting, seeding initial prompts) waits for this Session's own draft read.
+        active: surfacePresented && draftsAdmitted,
     });
     const sessionDraftAddress = React.useMemo(() => ({
         kind: 'session' as const,
@@ -4045,7 +4048,7 @@ export function useSessionComposerController({
             composerOptionsInput={composerOptionsInput}
             discovery={resolveSessionModelDiscoveryContext}
             selectedModelId={existingSessionSelectedModelRef?.providerConnectionId ? undefined : existingSessionSelectedModelRef?.modelId ?? 'default'}
-            renderDetail={({ modelOptions: existingSessionNativeModels, modelOptionsContext, canEnterCustomModel, probe }) => {
+            renderDetail={({ modelOptions: existingSessionNativeModels, modelOptionsContext, canEnterCustomModel, probe, connectedServices }) => {
                 const existingSessionSelectedModelOptionControls = (() => {
                     if (!agentId) return null;
                     if (existingSessionSelectedModelRef?.providerConnectionId) return null;
@@ -4078,6 +4081,7 @@ export function useSessionComposerController({
                         fillAvailableSpace
                         multiColumn
                         agentTargetKey={modelPickerAgentTargetKey}
+                        connectedServices={connectedServices}
                         declarationContext={declarationContext}
                         nativeModels={existingSessionNativeModels}
                         providerGroups={providerGroups}
@@ -5816,7 +5820,8 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
         current: agentCatalogCurrent,
     } : undefined, [currentSessionAgentCatalogEntry, agentCatalogMachineId, sessionRouteServerId, agentCatalogCurrent]);
-    const input = shouldShowInput ? (
+    // The editor mounts once this Session's draft is hydrated, so nothing typed can race its first load.
+    const input = shouldShowInput && draftsAdmitted ? (
         <PluginContextualResourceStoreProvider>
             <View>
             {/* The cards above the input and the input share the column's room through one owner (SessionComposerColumn). */}
@@ -7349,13 +7354,13 @@ export function useSessionComposerController({
                                         // An unavailable ACK does not revoke custody already
                                         // published by canonical Pending or the transcript.
                                         if (acceptCanonicalOutboundHandoff(result.localId, clearAttachmentsAfterProjectionHandoff)) {
-                                            Modal.alert(t('common.error'), result.errorMessage ?? t('common.unavailable'));
+                                            alertComposerActionResultFailure(result);
                                             return { status: 'accepted' };
                                         }
                                         if (result.persistence === 'none' && canRestoreFailedAttachmentHandoffSnapshot()) {
                                             restoreAfterFailedOutboundHandoff(attachmentDraftsForRestore);
                                         }
-                                        Modal.alert(t('common.error'), result.errorMessage ?? t('errors.failedToSendMessage'));
+                                        alertComposerActionResultFailure(result);
                                         return {
                                             status: 'rejected',
                                             reason: {
@@ -7614,13 +7619,13 @@ export function useSessionComposerController({
                                 if (result.type === 'wake_failed') presentSubmitWakeFailure(result);
                                 if (result.type === 'send_failed' || result.type === 'rejected') {
                                     if (acceptCanonicalOutboundHandoff(result.localId, () => admissionHandoff.accept())) {
-                                        Modal.alert(t('common.error'), result.errorMessage ?? t('common.unavailable'));
+                                        alertComposerActionResultFailure(result);
                                         return { status: 'accepted' };
                                     }
                                     if (result.persistence === 'none') {
                                         restoreAfterFailedOutboundHandoff();
                                     }
-                                    Modal.alert(t('common.error'), result.errorMessage ?? t('errors.failedToSendMessage'));
+                                    alertComposerActionResultFailure(result);
                                     return {
                                         status: 'rejected',
                                         reason: {
@@ -7836,6 +7841,7 @@ export function useSessionComposerController({
         externalSessionTakeoverInFlight: externalSessionTakeover.takeoverInFlight,
         externalSessionTakeoverPreflightInFlight: externalSessionTakeover.takeoverPreflightInFlight,
         externalSessionOperationShell,
+        externalSessionOperationPresentation,
         isHiddenSystemSessionSession,
         sessionAccountScope,
         router,

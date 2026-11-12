@@ -55,6 +55,7 @@ vi.mock('@/components/sessions/agentInput', () => ({
 
 const { installSessionPaneRuntimeTestHarness } = await import('../panes/sessionPaneRuntimeTestHarness');
 const admitted = createDeferred<void>();
+let rejectArchived = false;
 const submitted: Array<Readonly<{ localId: string; content: ReturnType<typeof SessionStoredMessageContentSchema.parse> }>> = [];
 const runtime = installSessionPaneRuntimeTestHarness({
     features: () => {
@@ -77,6 +78,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
             requestedAction: PendingRequestedActionV1Schema.parse(body.requestedAction) };
         submitted.push(message);
         await admitted.promise;
+        if (rejectArchived) return Response.json({ error: 'session_input_archived', code: 'session_input_archived' }, { status: 409 });
         return Response.json({ localId: message.localId, requestedAction: message.requestedAction,
             pending: { ...message, messageRole: 'user', status: 'queued', createdAt: 1, updatedAt: 1, position: 1 } });
     },
@@ -90,7 +92,7 @@ const { createSessionDraftPersistenceStorage } = await import('@/sync/ops/sessio
 const { createSessionDraftRepository, flushSessionDraftLocally, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 
 describe('mounted ordinary composer Send with a browser draft conflict', () => {
-    it('admits the current local message while preserving the other tab draft', async () => {
+    it('retains conflicting drafts through accepted and archived-refused Sends', async () => {
         const scope = runtime.accountScope;
         if (!scope) throw new Error('Expected the restored Account');
         const ref = { kind: 'session', sessionId: 's1' } as const;
@@ -142,6 +144,19 @@ describe('mounted ordinary composer Send with a browser draft conflict', () => {
             await vi.waitFor(() => expect(text()).toBe(''));
             const saved = [...(await records.listBrowserRecords('session-drafts-repository-v1:')).values()];
             expect(saved.some(value => value.includes('other tab saved text'))).toBe(true);
+
+            // The Home may archive the Session after it was painted. A refused
+            // Send keeps the new draft and uses the existing admission label.
+            rejectArchived = true;
+            const { Modal } = await import('@/modal');
+            const { t } = await import('@/text');
+            vi.mocked(Modal.alert).mockClear();
+            await act(async () => { input().props.onChangeText('keep this refused message'); });
+            await act(async () => { await input().props.onSend(); });
+            expect(submitted).toHaveLength(2);
+            await vi.waitFor(() => expect(vi.mocked(Modal.alert).mock.calls.map(call => call[1]))
+                .toContain(t('session.pendingMessages.admissionRejected.archived')));
+            expect(text()).toBe('keep this refused message');
         } finally {
             admitted.resolve();
             await screen.unmount();
