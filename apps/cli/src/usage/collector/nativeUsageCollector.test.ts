@@ -18,6 +18,38 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
+    it('wakes mounted readers once after a disabled source root changes durably', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-push-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        const descriptor = (root: string) => ({ agent: { pluginId: 'fixture.agent', localId: 'agent' },
+            source: { kind: 'fixture', root }, sourceKey: root, root, supported: true });
+        const observed: Promise<unknown>[] = [];
+        const collector = createNativeUsageCollector({ authority, storage, store,
+            budgetRegistry: new ExecutionBudgetRegistry(), discoverSources: async () => [descriptor(directory)],
+            resolveRoot: async (_source, root) => descriptor(root ?? directory),
+            readAccounting: async () => { throw new Error('Disabled source must not harvest'); },
+            subscribeSource: async () => { throw new Error('Disabled source must not watch'); },
+            publisher: { publish: async () => { throw new Error('Disabled source must not publish accounting'); } },
+            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+            onSourceSettled: () => { observed.push(store.load()); },
+        });
+        try {
+            const [source] = await collector.discover();
+            const baselineWakes = observed.length;
+            const changed = await collector.setRoot(source.sourceId, join(directory, 'replacement'));
+            expect(observed).toHaveLength(baselineWakes + 1);
+            expect((await Promise.all(observed)).at(-1)).toMatchObject({ sources: [
+                { sourceId: source.sourceId, consented: false },
+                { sourceId: changed.sourceId, root: join(directory, 'replacement'), consented: false },
+            ] });
+            expect(await collector.get()).toContainEqual(changed);
+            await collector.get();
+            await collector.setRoot(changed.sourceId, join(directory, 'replacement'));
+            expect(observed).toHaveLength(baselineWakes + 1);
+        } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
+    });
     it('reactivates a consented source when its watch boundary retires without a metadata change', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-retirement-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });

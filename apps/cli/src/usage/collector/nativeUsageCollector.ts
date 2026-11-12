@@ -43,7 +43,7 @@ export type NativeUsageCollectorDependencies = Readonly<{
     publisher: Pick<ReturnType<typeof createUsageObservationPublisher>, 'publish'>;
     deleteHistory(source: NativeUsageCaptureSource, dateRange?: UsageSourceDateRangeV1): Promise<{ success: true; deletedEventCount: number }>;
     budgetRegistry: ExecutionBudgetRegistry;
-    /** Content-free reader wake after this source's finite capture/publication settles. */
+    /** Content-free reader wake after capture/publication or a root change settles. */
     onSourceSettled?(): void;
 }>;
 
@@ -358,6 +358,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             return effects.inLock(async () => {
                 checkSignal(signal);
                 const old = requireSource(sourceId);
+                const previous = sources.map(view);
                 const descriptor = projectCaptureSourceDescriptor(await input.resolveRoot(old, root));
                 checkSignal(signal);
                 await retire(sourceId);
@@ -371,6 +372,8 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                     }
                     else next.push({ ...descriptor, sourceId: replacementId, consented: false, pending: [] });
                 });
+                // Disabled roots have no capture task to publish their settled metadata.
+                if (!isDeepStrictEqual(previous, sources.map(view))) input.onSourceSettled?.();
                 return view(requireSource(replacementId));
             });
         },
