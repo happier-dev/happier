@@ -196,6 +196,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     providerLaunch?: ExecutionRunProviderLaunchServices;
@@ -308,6 +310,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     resolveProvidersFeatureEnabled: opts.resolveProvidersFeatureEnabled,
                     resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
                     ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
+                    ...(opts.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: opts.resolveManagedPurposeBindingIntentSelection } : {}),
+                    managedProviderAccountAuthority: opts.managedProviderAccountAuthority,
                     ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
                     ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
                     retainCleanup: providerResources.register,
@@ -674,6 +678,8 @@ export function createExecutionRunRuntime(opts: Readonly<{
     machineId?: string;
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readModelProjection?: ProviderRuntimeModelProjectionReader;
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     providerLaunch?: ExecutionRunProviderLaunchServices;
@@ -783,6 +789,8 @@ export function createExecutionRunRuntime(opts: Readonly<{
                 ? { resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot }
                 : {}),
             ...(opts.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: opts.resolveManagedPurposeBindingIntent } : {}),
+            ...(opts.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: opts.resolveManagedPurposeBindingIntentSelection } : {}),
+            managedProviderAccountAuthority: opts.managedProviderAccountAuthority,
             ...(opts.readModelProjection ? { readModelProjection: opts.readModelProjection } : {}),
             ...(opts.prepareManagedEndpoint ? { prepareManagedEndpoint: opts.prepareManagedEndpoint } : {}),
             ...(opts.providerLaunch ? { providerLaunch: opts.providerLaunch } : {}),

@@ -1171,6 +1171,7 @@ export async function startDaemonSessionControlRuntime(
     runtimeActionExecute?: RuntimeActionExecute;
     acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     managedProviderOperationAuthority?: import('../connectedServices/purposeBindings/managedProviderOperationAuthority').ManagedProviderOperationAuthority;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     readManagedMachinePolicyCurrent?: Parameters<
       typeof createDaemonManagedMachineActionAdapter
     >[0]['readPolicyCurrent'];
@@ -1392,6 +1393,7 @@ export async function startDaemonSessionControlRuntime(
     resolveManagedPurposeBindingIntent?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['resolveManagedPurposeBindingIntent'];
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
     activateSessionPurposeBindings?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['activateSessionPurposeBindings'];
@@ -1621,6 +1623,10 @@ export async function startDaemonSessionControlRuntime(
     params.admissionDrain?.isPublicationQuiescing ??
     params.isShuttingDown ??
     (() => false);
+  const managedProviderAccountAuthorityFor = (context: RequesterSessionRuntimeContext | null) => context
+    ? params.managedProviderOperationAuthority
+      ? context.createManagedProviderAccountAuthority(params.managedProviderOperationAuthority) : null
+    : params.managedProviderAccountAuthority;
   const requesterRuntimeAccess = params.resolveRequesterSessionRuntimeContext
     ? { resolve: params.resolveRequesterSessionRuntimeContext, release: params.releaseRequesterSessionRuntimeContext }
     : null;
@@ -1824,6 +1830,8 @@ export async function startDaemonSessionControlRuntime(
         }),
         predictiveSwitchGuard: context ? context.predictiveSwitchGuard : connectedServicePredictiveSwitchGuard,
         resolveManagedPurposeBindingIntent: context?.resolveManagedPurposeBindingIntent ?? params.resolveManagedPurposeBindingIntent,
+        resolveManagedPurposeBindingIntentSelection: context ? context.resolveManagedPurposeBindingIntentSelection : params.resolveManagedPurposeBindingIntentSelection,
+        managedProviderAccountAuthority: managedProviderAccountAuthorityFor(context),
         connectedAccountRequestAuthRegistry,
         connectedAccountRequestAuthHttpPort: connectedAccountRequestAuthHttpPort ?? undefined,
         resolveProvidersFeatureEnabled: () => resolveDaemonProvidersFeatureEnabled({
@@ -4126,6 +4134,8 @@ export async function startDaemonSessionControlRuntime(
               requesterRuntime.connectedServiceQuotasCoordinator,
             resolveManagedPurposeBindingIntent:
               requesterRuntime.resolveManagedPurposeBindingIntent,
+            resolveManagedPurposeBindingIntentSelection: requesterRuntime.resolveManagedPurposeBindingIntentSelection,
+            managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requesterRuntime),
             activateSessionPurposeBindings:
               requesterRuntime.activateSessionPurposeBindings,
             activatePurposeBindings: requesterRuntime.activatePurposeBindings,
@@ -4514,6 +4524,8 @@ export async function startDaemonSessionControlRuntime(
                         spawnParams.resolveManagedPurposeBindingIntent,
                     }
                   : {}),
+                ...(spawnParams.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: spawnParams.resolveManagedPurposeBindingIntentSelection } : {}),
+                managedProviderAccountAuthority: spawnParams.managedProviderAccountAuthority,
                 ...(spawnParams.activateSessionPurposeBindings
                   ? {
                       activateSessionPurposeBindings:
@@ -6804,6 +6816,8 @@ export async function startDaemonSessionControlRuntime(
                       requester.subscribeAccountSettingsSnapshot,
                     resolveManagedPurposeBindingIntent:
                       requester.resolveManagedPurposeBindingIntent,
+                    resolveManagedPurposeBindingIntentSelection: requester.resolveManagedPurposeBindingIntentSelection,
+                    managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requester),
                   }
                 : {}),
               ...(activateSessionPurposeBindings
@@ -12095,10 +12109,12 @@ export async function startDaemonSessionControlRuntime(
         } catch { return false; }
       };
       const purposeResolver = requester ? requester.resolveManagedPurposeBindingIntent : params.resolveManagedPurposeBindingIntent;
+      const purposeSelectionResolver = requester ? requester.resolveManagedPurposeBindingIntentSelection : params.resolveManagedPurposeBindingIntentSelection;
       if (!await isCurrent()) return null;
       // Returned closures borrow the exact tracked runtime; PID retirement owns it.
       accountReturned = true;
       return { accountId: rootAccountId, credentials, isCurrent, isCurrentPidOwner,
+        managedProviderAccountAuthority: managedProviderAccountAuthorityFor(requester),
         ...(requester ? { savedSecretOperationContext: requester.bootstrap.savedSecretOperationContext } : {}),
         release: async () => await releaseSessionAccountContext(requester),
         readCurrentAccountSettingsSnapshot: () => isCurrentPidOwner() ? readSnapshot() : null,
@@ -12113,6 +12129,8 @@ export async function startDaemonSessionControlRuntime(
           if (!await isCurrent()) throw createForegroundProviderError('provider_authorization_changed');
           return binding;
         } } : {}),
+        ...(purposeSelectionResolver ? { resolveManagedPurposeBindingIntentSelection: (input: Parameters<typeof purposeSelectionResolver>[0]) =>
+          withSessionAccountHome(requester, () => purposeSelectionResolver(input)) } : {}),
         withHome: <T>(read: () => Promise<T>) => runWithServerHttpBaseUrl(params.serverBaseUrl, read),
       };
     } finally {
@@ -12267,6 +12285,8 @@ export async function startDaemonSessionControlRuntime(
           ...(serverSnapshot ? { serverSnapshot } : {}) }).state === 'enabled',
         isCurrent: async () => await context.isCurrent() && await account.isCurrent(),
         ...(account.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: account.resolveManagedPurposeBindingIntent } : {}),
+        ...(account.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: account.resolveManagedPurposeBindingIntentSelection } : {}),
+        managedProviderAccountAuthority: account.managedProviderAccountAuthority,
         readModelProjection: createAccountScopedProviderModelProjectionReader({ serverUrl: params.serverBaseUrl,
           readCredentials: async () => await account.isCurrent() ? account.credentials : null,
           readAccountSettingsSnapshot: account.readAccountSettingsSnapshot,

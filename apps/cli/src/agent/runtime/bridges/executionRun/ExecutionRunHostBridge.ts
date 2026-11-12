@@ -345,6 +345,8 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
   resolveRunReportPolicy?: (signal?: AbortSignal) => Promise<FollowPolicyV1>;
   resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+  resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+  managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   prepareManagedEndpoint?: ExecutionRunManagedProviderEndpointPreparer;
   resolveVoicePromptPreparation?: (args: Readonly<{
@@ -448,6 +450,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly resolveAccountSettings: ExecutionRunHostBridgeOptions['resolveAccountSettings'];
   private readonly resolveRunReportPolicy: ExecutionRunHostBridgeOptions['resolveRunReportPolicy'];
   private readonly resolveManagedPurposeBindingIntent: ExecutionRunHostBridgeOptions['resolveManagedPurposeBindingIntent'];
+  private readonly resolveManagedPurposeBindingIntentSelection: ExecutionRunHostBridgeOptions['resolveManagedPurposeBindingIntentSelection'];
+  private readonly managedProviderAccountAuthority: ExecutionRunHostBridgeOptions['managedProviderAccountAuthority'];
   private readonly readModelProjection: ExecutionRunHostBridgeOptions['readModelProjection'];
   private readonly prepareManagedEndpoint: ExecutionRunHostBridgeOptions['prepareManagedEndpoint'];
   /** Rebuildable projection of the marker owner's retained terminal completions. Taking never consumes. */
@@ -1224,6 +1228,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     this.resolveAccountSettings = opts.resolveAccountSettings;
     this.resolveRunReportPolicy = opts.resolveRunReportPolicy;
     this.resolveManagedPurposeBindingIntent = opts.resolveManagedPurposeBindingIntent;
+    this.resolveManagedPurposeBindingIntentSelection = opts.resolveManagedPurposeBindingIntentSelection;
+    this.managedProviderAccountAuthority = opts.managedProviderAccountAuthority;
     this.readModelProjection = opts.readModelProjection;
     this.prepareManagedEndpoint = opts.prepareManagedEndpoint;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
@@ -1555,6 +1561,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         ? { resolveAccountSettingsSnapshot: accountSnapshotResolver }
         : {}),
       ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
+      ...(this.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: this.resolveManagedPurposeBindingIntentSelection } : {}),
+      managedProviderAccountAuthority: this.managedProviderAccountAuthority,
       ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
       ...(this.prepareManagedEndpoint ? { prepareManagedEndpoint: async (input) => {
         const runId = opts.runId;
@@ -2434,6 +2442,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             accountSettingsSnapshot,
             savedSecretOperationContext: accountSnapshotResolver?.readOperationContext?.() ?? undefined,
             ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
+            ...(this.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: this.resolveManagedPurposeBindingIntentSelection } : {}),
+            managedProviderAccountAuthority: this.managedProviderAccountAuthority,
             ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
           });
         },

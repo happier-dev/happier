@@ -76,6 +76,26 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
   });
 });
 
+it('refuses unavailable Account authority without falling back to the daemon gateway owner', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'managed-start-account-authority-' }, async ({ homeDir }) => {
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller, physicalGateway: true });
+    const gateway = fixture.gateway!;
+    const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir,
+      controller, accountAuthority: null });
+    try {
+      const projection = await custody.acquire({ identity: gateway.identity,
+        contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`,
+        request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
+        operationClaim: { kind: 'providerBroker', operation: { kind: 'session', sessionId: 'requester-session' } },
+        signal: new AbortController().signal, isAuthorizationCurrent: () => true, revalidateAuthorization: async () => true });
+      expect(projection).toBeNull();
+      expect(existsSync(join(gateway.directory, 'gateway-started'))).toBe(false);
+    } finally { await fixture.cleanup(); }
+  });
+});
+
 it('finishes an admitted physical gateway Start across policy drift and refuses the next Start', async () => {
   await withConfiguredDaemonTestHome({ prefix: 'managed-start-admission-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();

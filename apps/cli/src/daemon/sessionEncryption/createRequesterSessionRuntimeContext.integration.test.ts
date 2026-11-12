@@ -231,10 +231,10 @@ let openedRunPluginRuntime = false;
 beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
 afterEach(async () => { await channel.close(); });
 afterAll(async () => { if (openedRunPluginRuntime) await runPluginRuntimeController.shutdown(); });
-it.each(['settings-key-subscriptions', 'usage-owner', 'refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'startup-settings-cancel', 'startup-settings-forbidden', 'startup-settings-unbound', 'untracked-lifetime', 'profile-unavailable', 'action-policy', 'action-home-recovery', 'run-home-recovery', 'run-purpose-home-recovery', 'run-binding-home-recovery', 'authorization-observations', 'warm-account', 'currentness-phase', 'resolution-currentness', 'spawn-currentness', 'background-home-failure', 'background-refresh-owned-by-quota', 'startup-home-failure', 'refresh-observations', 'request-auth-observations', 'follow-wake', 'follow-rules', 'follow-source', 'follow-receiver', 'follow-pending', 'follow-idle-source'] as const)('keeps requester %s isolated from active Alice', async (surface) => {
+it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owner', 'refresh', 'settings-refresh-failure', 'startup-settings-recovery', 'startup-settings-cancel', 'startup-settings-forbidden', 'startup-settings-unbound', 'untracked-lifetime', 'profile-unavailable', 'action-policy', 'action-home-recovery', 'run-home-recovery', 'run-purpose-home-recovery', 'run-binding-home-recovery', 'authorization-observations', 'warm-account', 'currentness-phase', 'resolution-currentness', 'spawn-currentness', 'background-home-failure', 'background-refresh-owned-by-quota', 'startup-home-failure', 'refresh-observations', 'request-auth-observations', 'follow-wake', 'follow-rules', 'follow-source', 'follow-receiver', 'follow-pending', 'follow-idle-source'] as const)('keeps requester %s isolated from active Alice', async (surface) => {
   const actionPolicySurface = surface === 'action-policy' || surface === 'action-home-recovery' || surface === 'authorization-observations';
   const runSurface = surface === 'run-home-recovery' || surface === 'run-purpose-home-recovery' || surface === 'run-binding-home-recovery';
-  const runPurposeSurface = surface === 'run-purpose-home-recovery' || surface === 'run-binding-home-recovery';
+  const runPurposeSurface = surface === 'managed-provider-authority' || surface === 'run-purpose-home-recovery' || surface === 'run-binding-home-recovery';
   const runService = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
   const runCredentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
   const directory = await mkdtemp(join(tmpdir(), 'requester-profiles-'));
@@ -594,6 +594,52 @@ it.each(['settings-key-subscriptions', 'usage-owner', 'refresh', 'settings-refre
     }
     runtime = await runtimeConstruction;
     if (!runtime) throw new Error('Missing real requester runtime');
+    if (surface === 'managed-provider-authority') {
+      const { createManagedProviderOperationAuthority } = await import('../connectedServices/purposeBindings/managedProviderOperationAuthority');
+      const { createConnectedAccountPurposeBindingOwner } = await import('../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner');
+      const { createConnectedAccountRequestAuthSubjectRegistry } = await import('../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry');
+      const { readFile } = await import('node:fs/promises');
+      const unavailable = async (): Promise<never> => { throw new Error('Requester used the daemon Account owner'); };
+      const daemonOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'alice',
+        store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+        selectTarget: unavailable,
+        resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Alice work account' } : null,
+        resolveCredentialRevision: async () => runCredentialRevision,
+        materializeAccount: async request => {
+          request.credentialRevisionBasis?.captureCredentialRevision(runCredentialRevision);
+          return { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-alice-subscription' } };
+        },
+        projectTargetAccounts: unavailable, assertTargetAccountMaterializable: async () => {} });
+      const requestAuthRegistry = createConnectedAccountRequestAuthSubjectRegistry();
+      const original = createManagedProviderOperationAuthority({ materializationBaseDir: join(directory, 'managed-provider'),
+        purposeBindingOwner: daemonOwner, requestAuthRegistry, resolveRequestAuthHttpPort: () => 43123,
+        createRedactionLease: () => ({ add() {}, close() {} }) });
+      const authority = runtime.createManagedProviderAccountAuthority(original);
+      expect(await authority.readCredentials()).toBe(runtime.bootstrap.credentials);
+      expect(authority.connectedAccountsOwner).toBe(runtime.connectedAccountsOwner);
+      const pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: directory,
+        controller: runPluginRuntimeController, runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+      const purpose = { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' };
+      const binding = { purpose, target: { kind: 'account' as const, account: { service: runService, accountId: 'work' } } };
+      const materialization = { kind: 'httpHeaders' as const, origin: 'https://chatgpt.com', headerNames: ['authorization'] };
+      let activation: Awaited<ReturnType<typeof original.activate>> | undefined;
+      try {
+        activation = await authority.operationAuthority.activate({ identity: purpose.consumer, operationId: 'requester-managed',
+          purposes: [purpose], purposeBindings: { v: 1, bindings: [binding] }, requestAuthUses: [{ purpose, materialization }], isCurrent: () => true });
+        if (!activation.requestAuth) throw new Error('Missing requester managed capability');
+        const document: unknown = JSON.parse(await readFile(activation.requestAuth.capabilityPath, 'utf8'));
+        if (!document || typeof document !== 'object' || !('capability' in document)) throw new Error('Invalid capability fixture');
+        const subject = requestAuthRegistry.authenticate(document.capability);
+        if (!subject?.bindingAuthority) throw new Error('Missing requester binding authority');
+        const signal = new AbortController().signal;
+        const resolved = await runWithServerHttpBaseUrl('https://bob-home.test', () => subject.bindingAuthority!.resolveCurrentBinding({ binding, signal }));
+        expect(resolved?.account).toEqual(binding.target.account);
+        if (!resolved) throw new Error('Missing requester account');
+        const headers = await runWithServerHttpBaseUrl('https://bob-home.test', () => subject.bindingAuthority!.materializeHeaders({ binding, resolved, materialization, signal }));
+        expect(headers.headers.authorization).toBe('Bearer fixture-bob-subscription');
+      } finally { await activation?.cleanup(); await pluginRuntime.dispose(); }
+      return;
+    }
     if (surface === 'usage-owner') {
       const recordKey = { providerId: 'openai-codex', accountSubjectId: 'provider-bob', subjectKind: 'account' as const, quotaScope: 'account' as const };
       const source = { serviceId: 'happier.agent.codex/openai-codex', profileId: 'primary', bindingKind: 'group_member' as const, groupId: 'pool', groupGeneration: 7 };

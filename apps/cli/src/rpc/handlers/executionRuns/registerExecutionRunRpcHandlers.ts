@@ -155,6 +155,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   /** Settings snapshot bound to the runtime owner's Account/Home, never ambient active state. */
   resolveAccountSettingsSnapshot?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveAccountSettingsSnapshot'];
   resolveManagedPurposeBindingIntent?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveManagedPurposeBindingIntent'];
+  resolveManagedPurposeBindingIntentSelection?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveManagedPurposeBindingIntentSelection'];
+  managedProviderAccountAuthority?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['managedProviderAccountAuthority'];
   readModelProjection?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['readModelProjection'];
   prepareManagedEndpoint?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['prepareManagedEndpoint'];
   /** Same invocation holder initialized by the Session owner's Settings admission. */
@@ -298,6 +300,8 @@ export function registerExecutionRunRpcHandlers(
       ? { resolveAccountSettingsSnapshot: ctx.resolveAccountSettingsSnapshot }
       : {}),
     ...(ctx.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: ctx.resolveManagedPurposeBindingIntent } : {}),
+    ...(ctx.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: ctx.resolveManagedPurposeBindingIntentSelection } : {}),
+    managedProviderAccountAuthority: ctx.managedProviderAccountAuthority,
     ...(ctx.readModelProjection ? { readModelProjection: ctx.readModelProjection } : {}),
     ...(ctx.prepareManagedEndpoint ? { prepareManagedEndpoint: ctx.prepareManagedEndpoint } : {}),
     ...(ctx.machineId ? { machineId: ctx.machineId } : {}),

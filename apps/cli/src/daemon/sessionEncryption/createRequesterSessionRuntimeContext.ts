@@ -244,6 +244,11 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     try { await dispose(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Requester Account runtime startup failed'); }
     throw error;
   }
+  const createManagedProviderAccountAuthority: RequesterSessionRuntimeContext['createManagedProviderAccountAuthority'] = operationAuthority => Object.freeze({
+    readCredentials: async () => bootstrap.credentials,
+    operationAuthority: operationAuthority.forPurposeBindingOwner(purposes),
+    connectedAccountsOwner: purposes.owner,
+  });
   return Object.freeze({ bootstrap, isCurrent, api, sessionFollowRuleCache, sessionFollowRunRoutes,
     bindSessionFollowSourceReconciliation: followSourceReconciliation.bind,
     readAccountSettingsSnapshot: readSnapshot, refreshAccountSettings, readAccountLaunchProfiles,
@@ -253,6 +258,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     },
     activeServerDir, connectedServicesMaterializationBaseDir, qualifiedConnectedAccountApi,
     connectedAccountsOwner: purposes.owner,
+    createManagedProviderAccountAuthority,
     resolveCurrentRequestAuthBinding: purposes.resolveCurrentRequestAuthBinding,
     materializeRequestAuthBearer: purposes.materializeRequestAuthBearer,
     resolveCurrentSessionPurposeBindingSnapshot: purposes.resolveCurrentSessionPurposeBindingSnapshot,
@@ -264,6 +270,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     authGroupSwitchCoordinator: input.coordinatorInput.connectedServiceAuthGroupPreTurnSwitchCoordinator,
     predictiveSwitchGuard: input.coordinatorInput.connectedServicePredictiveSwitchGuard ?? undefined,
     resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
+    resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
     activateSessionPurposeBindings: purposes.activateSessionPurposeBindings, activatePurposeBindings: purposes.activatePurposeBindings,
     dispose,
   });

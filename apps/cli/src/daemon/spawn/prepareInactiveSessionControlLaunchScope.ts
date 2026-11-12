@@ -1,4 +1,5 @@
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
@@ -38,7 +39,7 @@ export type InactiveSessionControlLaunchAdmission = Pick<ConnectedAdmission,
   | 'activatePurposeBindings' | 'processEnv' | 'serverContract' | 'prepareAgentIsolationMember'
   | 'providerAccountUsageStore' | 'createConnectedServiceLaunchAuthGroupCoordinator' | 'predictiveSwitchGuard'> & Pick<ProviderAdmission,
   'savedSecretOperationContext' | 'providerRuntimeHomeDir' | 'resolveProvidersFeatureEnabled'
-  | 'resolveManagedPurposeBindingIntent' | 'readModelProjection'> & Readonly<{
+  | 'resolveManagedPurposeBindingIntent' | 'resolveManagedPurposeBindingIntentSelection' | 'managedProviderAccountAuthority' | 'readModelProjection'> & Readonly<{
     connectedAccountsOwner?: InactiveSessionControlLaunchScope['connectedAccountsOwner'];
     agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     assertCurrent(): Promise<void>;
@@ -152,7 +153,8 @@ export async function prepareInactiveSessionControlLaunchScope(
       }
     }
     const child = await prepareDaemonSpawnChildEnvironment({
-      ...(connected.agentLaunchMaterials?.memberIdentity ? { memberAgentCliLaunch: { signal } } : {}),
+      memberAgentCliLaunch: createMemberAgentCliLaunchContext({ material: connected.agentLaunchMaterials,
+        managedHappierBinaryPath: admission.agentIsolation?.managedHappierBinaryPath, signal }),
       savedSecretOperationContext: admission.savedSecretOperationContext,
       options: connected.options, existingSessionMetadata: adapterParams.metadata, resolvedAgentId: agentId,
       effectiveModelSelection: persisted.selection ?? options.modelSelection, terminal: options.terminal,

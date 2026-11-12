@@ -26,6 +26,7 @@ import { logger } from '@/ui/logger';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
 
 import type { ProviderConnectionServiceDeps } from './service/types';
+import type { ManagedProviderInvocationAccountAuthority } from '@/plugins/runtime/providerBindings/runtimeTypes';
 
 export type PublicManagedProviderRuntimeStartOperation = NonNullable<
   ProviderConnectionServiceDeps['startManagedProviderRuntime']
@@ -98,6 +99,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
   machineId: string;
   happyHomeDir: string;
   controller?: PluginReloadController;
+  accountAuthority?: ManagedProviderInvocationAccountAuthority | null;
   operationClaim?: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
   modelCatalogs?: ManagedProviderExplicitStartCustodyRequest['modelCatalogs'];
   retirementGroup?: ManagedProviderExplicitStartCustodyRequest['retirementGroup'];
@@ -107,6 +109,9 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
 }>): (request: Parameters<PublicManagedProviderRuntimeStartOperation>[0]) =>
   Promise<ManagedProviderEndpointAccessProjection> {
   return async (request) => {
+    if (input.accountAuthority === null) {
+      throw createProviderErrorV1('provider_endpoint_unavailable', { machineId: input.machineId });
+    }
     const parsed = parseProviderContributionIdentityV1(request.contributionKey);
     if (
       !parsed
@@ -196,6 +201,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
           launchResourceScope.register(release);
           try {
             const invocationServices = await createInvocationServices({
+              ...(input.accountAuthority ? { accountAuthority: input.accountAuthority } : {}),
               ...(sharedGateway ? { sharedGateway } : {}),
               identity: request.identity,
               purposeBindings: request.purposeBindings,
@@ -320,11 +326,14 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
   machineId: string;
   happyHomeDir: string;
   controller?: PluginReloadController;
+  runtimeRegistryLease?: PluginRuntimeRegistryLease;
+  accountAuthority?: ManagedProviderInvocationAccountAuthority | null;
 }>): ManagedProviderExplicitStartCustody {
   const withRegistry = async <T>(
     read: (registry: ResolvedExecutablePluginRuntimeRegistry) => Promise<T>,
     fallback: T,
   ): Promise<T> => {
+    if (input.runtimeRegistryLease) return await read(input.runtimeRegistryLease.registry);
     let lease: PluginRuntimeRegistryLease | null = null;
     try {
       lease = await acquireAuthoritativePluginRuntimeRegistryLease({
@@ -341,6 +350,7 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
   const withRegistryRequired = async <T>(
     read: (registry: ResolvedExecutablePluginRuntimeRegistry) => Promise<T>,
   ): Promise<T> => {
+    if (input.runtimeRegistryLease) return await read(input.runtimeRegistryLease.registry);
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
       happyHomeDir: input.happyHomeDir,
       ...(input.controller ? { controller: input.controller } : {}),
@@ -390,7 +400,7 @@ export function createManagedProviderExplicitStartCustody(input: Readonly<{
           throw createProviderErrorV1('provider_authorization_changed', { machineId: input.machineId });
         }
         request.signal.throwIfAborted();
-        return await start(request);
+        return await start({ ...request, ...(input.runtimeRegistryLease ? { runtimeRegistryLease: input.runtimeRegistryLease } : {}) });
       } catch (error) {
         const providerError = ProviderErrorV1Schema.safeParse(error);
         try {

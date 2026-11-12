@@ -117,6 +117,7 @@ export type RequesterSessionRuntimeContext = Readonly<{
   qualifiedConnectedAccountApi: ConnectedServiceQualifiedAuthGroupApi;
   qualifiedConnectedAccountEstablishedRuntimeOwner: QualifiedConnectedAccountEstablishedRuntimeOwner;
   connectedAccountsOwner: StablePluginConnectedAccountsOwner;
+  createManagedProviderAccountAuthority(operationAuthority: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority['operationAuthority']): import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority;
   resolveCurrentRequestAuthBinding: DaemonConnectedAccountPurposeBindingRuntime['resolveCurrentRequestAuthBinding'];
   materializeRequestAuthBearer: DaemonConnectedAccountPurposeBindingRuntime['materializeRequestAuthBearer'];
   resolveCurrentSessionPurposeBindingSnapshot: DaemonConnectedAccountPurposeBindingRuntime['resolveCurrentSessionPurposeBindingSnapshot'];
@@ -132,7 +133,7 @@ export type RequesterSessionRuntimeContext = Readonly<{
   dispose(): Promise<void>;
 }> & Pick<ExecuteSpawnSessionRequestParams,
   'connectedServiceRefreshCoordinator' | 'connectedServiceQuotasCoordinator'
-  | 'predictiveSwitchGuard' | 'resolveManagedPurposeBindingIntent'
+  | 'predictiveSwitchGuard' | 'resolveManagedPurposeBindingIntent' | 'resolveManagedPurposeBindingIntentSelection'
   | 'activateSessionPurposeBindings' | 'activatePurposeBindings'>;
 
 /** Protected bearer custody can report a refusal; it grants no executable authority. */
