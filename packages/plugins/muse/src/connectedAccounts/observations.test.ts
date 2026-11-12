@@ -10,15 +10,27 @@ describe('Muse sourced observations', () => {
     expect(read.status).toBe('supported');
     expect(parseMuseUsageObservation(usage)).toEqual(read);
     expect(parseMuseUsageObservation({ schemaVersion: 1, asOfMs: usage.observedAtMs,
-      allowance: { tier: usage.tier, weekly: usage.weekly, window: usage.window } })).toEqual(read);
+      allowance: { weekly: usage.weekly, window: usage.window } })).toEqual(read);
   });
+  it('uses the native refresh display tier and distinguishes no subscription from no usage', () => {
+    const usage = { observedAtMs: 1700000000000, tier: 'native-tier-id', weekly: { usedPercent: 12 } };
+    expect(parseMuseUsageObservation({ usage, tierName: 'Native subscription', subscriptionActive: true }))
+      .toMatchObject({ status: 'supported', observation: { planLabel: 'Native subscription' } });
+    expect(parseMuseUsageObservation({ tierName: 'Native subscription', subscriptionActive: true }))
+      .toEqual({ status: 'unavailable', reason: 'server_sent_no_usage' });
+    const bare = parseMuseUsageObservation(usage);
+    expect(bare.status === 'supported' && bare.observation).not.toHaveProperty('planLabel');
+    expect(parseMuseUsageObservation({ subscriptionActive: false }))
+      .toEqual({ status: 'unavailable', reason: 'no_allowance' });
+  });
+
   it('preserves source time, partial windows and over-quota without guessing durations', () => {
     expect(parseMuseUsageObservation({ usage: {
       observedAtMs: 1700000000000, tier: 'native-tier',
       weekly: { usedPercent: 135, resetsAtMs: 1700001000000 },
       window: { usedPercent: 40, windowDurationMins: 300 },
     } })).toMatchObject({ status: 'supported', observation: {
-      observedAtMs: 1700000000000, planLabel: 'native-tier', limits: [
+      observedAtMs: 1700000000000, limits: [
         { id: 'weekly', utilizationPct: 135, isExhausted: true, resetsAtMs: 1700001000000 },
         { id: 'window', utilizationPct: 40, windowDurationMs: 18000000 },
       ],

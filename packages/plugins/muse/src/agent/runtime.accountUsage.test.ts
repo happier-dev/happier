@@ -25,12 +25,15 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
   const nativeSample = readMuseRecord(usageMessage.params);
   const changed = { ...nativeSample, observedAtMs: Number(nativeSample.observedAtMs) + 1,
     weekly: { ...readMuseRecord(nativeSample.weekly), usedPercent: 9 } };
-  // Characterized usage/read response, populated before the first turn.
+  // Real login capture has an empty usage/read cache. The native refresh
+  // result adds tierName/subscriptionActive to the same observed usage payload.
   const usageRequest = captured.rows.find(row => readMuseRecord(readMuseRecord(row).message).method === 'usage/read');
   const usageReadId = readMuseRecord(readMuseRecord(usageRequest).message).id;
-  const rows = captured.rows.flatMap(row => readMuseRecord(row).direction === 'recv'
+  const rows = captured.rows.flatMap(row => row === usageRequest
+    ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), method: 'usage/refresh' } }]
+    : readMuseRecord(row).direction === 'recv'
     && readMuseRecord(readMuseRecord(row).message).id === usageReadId
-    ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), result: { usage: nativeSample } } }]
+    ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), result: { usage: nativeSample, tierName: 'Native subscription', subscriptionActive: true } } }]
     : row === usageRow
     ? [{}, { schemaVersion: 999 }, nativeSample, nativeSample, changed, {}, { schemaVersion: 999 }].map(params => ({
         ...readMuseRecord(row), message: { ...usageMessage, params },
@@ -92,20 +95,24 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
   try {
     const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
       ...(selected ? { launchEnvironment: { values: environment, unset: [] } } : {}) });
-    // A cached native sample must reach the real owner even without a model turn.
+    // Existing credentials have no initial cache: refresh must publish before a turn.
     await vi.waitFor(() => expect(results).toEqual(['snapshot_advanced']));
+    expect(store.listSnapshots()[0]?.planLabel).toBe('Native subscription');
     expect(store.listSnapshots()[0]?.meters.map(meter => meter.meterId)).toEqual(['weekly', 'window']);
     session.watch(events.recordRuntimeEvent);
     await session.send({ inputIds: ['usage-input'], input: { text: 'Reply with exactly PEBBLE. Do not use tools.' },
       delivery: { kind: 'newTurn', turnId: 'usage-turn' } });
     await events.until('turn-complete');
-    await vi.waitFor(() => expect(results).toEqual(['snapshot_advanced', 'duplicate', 'duplicate', 'snapshot_advanced']));
-    expect(retained[1]).toBe(retained[0]);
-    expect(retained[2]).toBe(retained[0]);
-    expect(retained[3]).not.toBe(retained[0]);
+    await vi.waitFor(() => expect(results).toEqual(['snapshot_advanced', 'snapshot_advanced', 'duplicate', 'snapshot_advanced']));
+    // Refresh carries a display label; bare notifications carry only a tier id.
+    // Their first projection differs, then equal bare samples are duplicates.
+    expect(retained[1]).not.toBe(retained[0]);
+    expect(retained[1]).not.toHaveProperty('planLabel');
+    expect(retained[2]).toBe(retained[1]);
+    expect(retained[3]).not.toBe(retained[2]);
     expect(retained[0]).toMatchObject({ providerId: 'meta', observedAtMs: nativeSample.observedAtMs,
       fetchedAtMs: nativeSample.observedAtMs, staleAfterMs: 1, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
-      planLabel: nativeSample.tier, meters: [
+      planLabel: 'Native subscription', meters: [
         { meterId: 'weekly', used: 1, remainingPct: 99, resetsAt: 1794787200000 },
         { meterId: 'window', used: 5, remainingPct: 95, resetsAt: 1794232717000, windowDurationMs: 18000000 },
       ],
@@ -129,7 +136,7 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
       expect(fixture.boundaryRequests.filter(request => request.path === '/v4/connect/qualified/credential')).toEqual([]);
     }
     expect(fixture.launchCount).toBe(1);
-    expect((await fixture.readAudit()).methods).toEqual(['initialize', 'initialized', 'session/start', 'usage/read', 'turn/start']);
+    expect((await fixture.readAudit()).methods).toEqual(['initialize', 'initialized', 'session/start', 'usage/refresh', 'turn/start']);
   } finally {
     events.dispose();
     await fixture.dispose();

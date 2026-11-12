@@ -240,13 +240,14 @@ async function openMuseConversation<SessionId extends string | undefined>(
     }
     const nativeSessionId = native.sessionId;
     if (sessionServices && sessionId) {
-      // Read the existing MSP cache once; usage/refresh mints a key. Optional
-      // allowance data must not delay Session readiness or the first turn.
-      void msp.client.request('usage/read', {}, { signal: context.signal })
+      // Refresh once through the existing native host: imported credentials can
+      // leave its cache empty. Native refresh mints a key; do not retry or poll.
+      // Optional allowance data must not delay readiness or the first turn.
+      void msp.client.request('usage/refresh', {}, { signal: context.signal })
         .then(params => recordMuseUsageObservation({ params, accountUsage: sessionServices.accountUsage,
           sessionId, env: request.launchEnvironment?.values, signal: context.signal, logger: context.services.logger }))
         .catch(error => {
-          if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage read was unavailable', {
+          if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage refresh was unavailable', {
             ...(error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {}),
           });
         });

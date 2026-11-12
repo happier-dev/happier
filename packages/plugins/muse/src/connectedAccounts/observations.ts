@@ -18,7 +18,8 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
   // MSP notifications carry SubscriptionUsage directly; reads carry { usage }.
   const rawUsage = root.usage ?? root.allowance ?? ('observedAtMs' in root ? root : undefined);
   const usage = museRecord(rawUsage);
-  if (!usage) return { status: 'unavailable', reason: rawUsage === undefined || rawUsage === null ? 'server_sent_no_usage' : 'malformed' };
+  if (!usage) return { status: 'unavailable', reason: rawUsage === undefined || rawUsage === null
+    ? root.subscriptionActive === false ? 'no_allowance' : 'server_sent_no_usage' : 'malformed' };
   const observedAtMs = usage.observedAtMs ?? usage.asOfMs ?? root.asOfMs;
   if (!timestamp(observedAtMs)) return { status: 'unavailable', reason: 'malformed' };
   const limits: MuseQuotaObservation['limits'][number][] = [];
@@ -37,7 +38,10 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
     });
   }
   if (limits.length === 0) return { status: 'unavailable', reason: 'server_sent_no_usage' };
-  const planLabel = typeof usage.tier === 'string' ? usage.tier.trim() : '';
+  // Native usage.tier is an internal id. Only refresh supplies its display name;
+  // the existing canonical allowance envelope already carries a display tier.
+  const displayTier = root.tierName ?? (root.schemaVersion === 1 ? usage.tier : undefined);
+  const planLabel = typeof displayTier === 'string' ? displayTier.trim() : '';
   return { status: 'supported', observation: { observedAtMs, ...(planLabel ? { planLabel } : {}), limits } };
 }
 
@@ -79,8 +83,8 @@ export function parseMuseMintCompletionObservation(value: unknown, fetchedAtMs: 
       ...(window.window_duration_mins == null ? {} : { windowDurationMins: window.window_duration_mins }),
     };
   }
-  const parsed = parseMuseUsageObservation({ usage: { observedAtMs: fetchedAtMs,
-    ...(typeof root.subs_tier_name === 'string' ? { tier: root.subs_tier_name } : {}), ...windows } });
+  const parsed = parseMuseUsageObservation({ tierName: root.subs_tier_name,
+    usage: { observedAtMs: fetchedAtMs, ...windows } });
   if (parsed.status !== 'supported') return undefined;
   return { v: 1, providerId: 'meta', observedAtMs: parsed.observation.observedAtMs, fetchedAtMs,
     source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',

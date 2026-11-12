@@ -9,10 +9,13 @@ export async function recordMuseUsageObservation(input: Readonly<{
   sessionId: string;
   env?: Readonly<Record<string, string>>;
   signal: AbortSignal;
-  logger: Pick<AgentSessionRuntimeContext['services']['logger'], 'warn'>;
+  logger: Pick<AgentSessionRuntimeContext['services']['logger'], 'debug' | 'warn'>;
 }>): Promise<void> {
   const parsed = parseMuseUsageObservation(input.params);
-  if (parsed.status !== 'supported') return;
+  if (parsed.status !== 'supported') {
+    input.logger.debug('Muse usage observation unavailable', { status: parsed.status, reason: parsed.reason });
+    return;
+  }
   const source = await input.accountUsage.resolveSourceContext({ serviceId: MUSE_ACCOUNT_SERVICE_ID,
     env: input.env }, { signal: input.signal });
   const providerId = museAccountDescriptor.usageIdentity.providerId;
@@ -29,7 +32,10 @@ export async function recordMuseUsageObservation(input: Readonly<{
     },
     ...(source ? { source: { serviceId: source.serviceId, env: input.env } } : {}),
   }, { signal: input.signal });
-  if (result.status !== 'recorded') input.logger.warn('Muse usage observation was not recorded', {
+  if (result.status === 'recorded') input.logger.debug('Muse usage observation recorded', {
+    status: result.status, providerId, sourceQualified: source !== null,
+  });
+  else input.logger.warn('Muse usage observation was not recorded', {
     status: result.status, reason: result.reason,
   });
 }
