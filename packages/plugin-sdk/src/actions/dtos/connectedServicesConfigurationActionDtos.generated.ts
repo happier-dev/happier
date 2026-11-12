@@ -31,6 +31,16 @@ export type ConnectedServicesConfigurationActionInputById = {
             localId: string;
         };
     };
+    readonly "connectedServices.accounts.testConnection": {
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        machineId?: string | undefined;
+    };
     readonly "connectedServices.catalog.list": {
         refresh?: boolean | undefined;
     };
@@ -934,6 +944,11 @@ export type ConnectedServicesConfigurationActionResultById = {
             observedAtMs: null | number;
         };
         healthBasis: 'credentials';
+    };
+    readonly "connectedServices.accounts.testConnection": {
+        status: 'needsReauth' | 'networkUnavailable' | 'ok' | 'unsupported';
+        reason?: string | undefined;
+        code?: string | undefined;
     };
     readonly "connectedServices.catalog.list": {
         status: 'partial' | 'ready' | 'unavailable';

@@ -257,6 +257,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         if (control.success) {
             expect(method).toBe(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD);
             expect(control.data.machineId).toBe(machineId);
+            if (control.data.command.operation === 'testConnection') expect(machineId).toBe(selection.selectedTarget?.machineId);
             controlCommands.push(control.data.command);
             return await handleControl(control.data.command);
         }
@@ -3513,6 +3514,52 @@ describe('ConnectedAccountSetupController real ownership', () => {
         }
         expect(authenticationCommands).toEqual([]);
         expect(controlCommands.filter((command) => command.operation === 'revokeAccount')).toEqual([]);
+    });
+
+    it('tests the focused account through the shared Action from Sign-in and overflow, then explains unsupported', async () => {
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service, accountId: 'account-1' },
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision,
+            configurationReady: true, configurationRevision: null });
+        const other = { ...saved, ref: { service, accountId: 'account-2' } };
+        installDescription({ ...described, accounts: [] });
+        storage.getState().applyProfile({ ...profileDefaults, id: 'account-a', connectedAccountsV4: [saved, other] });
+        const nativeControl = handleControl;
+        let supported = true;
+        handleControl = command => command.operation === 'testConnection'
+            ? { status: 'connectionTested', result: supported ? { status: 'ok' }
+                : { status: 'unsupported', reason: 'This service does not offer a connection test.' } }
+            : nativeControl(command);
+        const screen = await focusedScreen(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')).not.toBeNull());
+        await screen.pressByTestIdAsync('qualified-account-detail:action:test-connection');
+        await vi.waitFor(() => expect(screen.getTextContent(), JSON.stringify({ commands: controlCommands, paths: httpRequests.map(request => request.pathname) })).toContain('connectedServicesSettings.testConnectionSucceeded'));
+        expect(controlCommands.filter(command => command.operation === 'testConnection')).toEqual([
+            { operation: 'testConnection', account: saved.ref },
+        ]);
+        supported = false;
+        const menu = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'test-connection'))!;
+        await act(async () => { await menu.props.onSelect('test-connection'); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('This service does not offer a connection test.'));
+        const unavailable = screen.findAllByType(DropdownMenu).find(candidate => candidate.props.items.some((item: { id: string }) => item.id === 'test-connection'))!;
+        expect(unavailable.props.items.find((item: { id: string }) => item.id === 'test-connection')).toMatchObject({ disabled: true });
+        expect(controlCommands.filter(command => command.operation === 'testConnection')).toHaveLength(2);
+        // The entity owner remounts local Action state by the full qualified account identity.
+        platform.params = { ...service, accountId: 'account-2' };
+        await screen.update(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.disabled).not.toBe(true));
+        expect(screen.getTextContent()).not.toContain('This service does not offer a connection test.');
+        const late = deferredReply();
+        handleControl = command => command.operation === 'testConnection' ? late.promise : nativeControl(command);
+        const pending = screen.pressByTestIdAsync('qualified-account-detail:action:test-connection');
+        await vi.waitFor(() => expect(controlCommands.filter(command => command.operation === 'testConnection')).toHaveLength(3));
+        platform.params = { ...service, accountId: 'account-1' };
+        await screen.update(<InjectedAuthProvider credentials={account.credentials}><ConnectedAccountServiceView /></InjectedAuthProvider>);
+        await act(async () => late.resolve({ status: 'connectionTested', result: {
+            status: 'unsupported', reason: 'A late result for the other account.',
+        } }));
+        await pending;
+        expect(screen.getTextContent()).not.toContain('A late result for the other account.');
+        expect(screen.findHostByTestId('qualified-account-detail:action:test-connection')?.props.disabled).not.toBe(true);
     });
 
     it('opens the canonical credential Share sheet from the account header overflow', async () => {

@@ -17,6 +17,20 @@ precedence for its declared id; the host retains generic OpenAI and Anthropic
 wire codecs for custom connections. Model-name interpretation and explicit
 `reportsModelLoadState` facts belong to the Provider declaration and its parser.
 
+### Connected Account connection tests (0.3 development)
+
+`connectedServices.accounts.testConnection` is the shared explicit test for a
+saved qualified account. UI and CLI use the Action executor; the established
+Connected Account owner invokes the service runtime's optional `testConnection`
+callback with read-only credential custody. A probe reads account, usage or
+model metadata without inference, token refresh or credential mutation. Local
+credential presence alone does not establish a successful remote test.
+
+The result distinguishes `ok`, `needsReauth`, `networkUnavailable` and
+`unsupported`, with secret-free reasons. A service or credential mode without a
+characterized no-usage probe returns `unsupported`. ProviderConnection catalog
+tests and Channel transport tests retain their distinct resource owners.
+
 ### Passive managed gateway families (0.3 development)
 
 The gateway chooser Action preserves matching passive declarations in

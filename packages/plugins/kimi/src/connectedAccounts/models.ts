@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { z } from 'zod';
 
 const modelResponse = z.object({ data: z.array(z.object({
@@ -36,4 +37,13 @@ export function buildKimiSelectedModelConfig(value: unknown, apiBase: string, de
   if (!Object.hasOwn(models, selected)) return modelSelectionRequired();
   return { default_model: selected, models,
     providers: { 'happier:kimi-code': { type: 'kimi', base_url: apiBase, api_key_env: 'HAPPIER_KIMI_ACCESS_TOKEN' } } };
+}
+
+export async function requestKimiModels(input: Readonly<{
+  http: ConnectedAccountPortableReadContext['services']['http']; apiBase: string; token: string;
+  deviceId: string | null; signal: AbortSignal;
+}>) {
+  return input.http.request({ url: `${input.apiBase.replace(/\/+$/u, '')}/models`, method: 'GET', redirect: 'error',
+    headers: { Authorization: `Bearer ${input.token}`, ...(input.deviceId ? { 'X-Msh-Device-Id': input.deviceId } : {}) },
+  }, { signal: input.signal });
 }

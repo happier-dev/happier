@@ -5,6 +5,21 @@ description: Select and materialize host-managed account credentials.
 
 Use `context.services.connectedAccounts` for host-managed account connections. Access is purpose-bound: a plugin declares why one contribution needs an account, and the host/user binds that purpose to one compatible account or account group. Plugins cannot enumerate unrelated accounts or choose a group member.
 
+## Connection tests in development
+
+In unreleased 0.3 source, a Connected Account runtime can implement optional
+`testConnection(context, options)`. Use the selected account's read-only
+credential context and an authenticated account, usage or model metadata
+request. Do not generate inference, refresh credentials or exchange an API key
+for another token as part of this test.
+
+Return `status: 'ok' | 'needsReauth' | 'networkUnavailable' | 'unsupported'`,
+with an optional secret-free `reason` and `code`. Return `unsupported` with a
+plain reason for a credential mode without a characterized safe probe. The host
+also returns unsupported when the callback is absent; it does not substitute
+`status()` or infer remote success from stored credentials. UI and CLI callers
+use the shared `connectedServices.accounts.testConnection` Action.
+
 ## Authentication-mode presentation in development
 
 In unreleased 0.3 development source, a manual authentication mode can declare

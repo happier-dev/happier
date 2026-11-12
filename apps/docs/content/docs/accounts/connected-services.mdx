@@ -115,6 +115,26 @@ happens on the machine. Account-specific credentials and in-progress sign-in
 configuration remain machine operations. If a save's outcome is unknown, read
 the saved configuration before deciding whether to retry; do not assume it failed.
 
+## Test a connection in 0.3 development
+
+Open a saved account and choose **Test connection**, either in its details or
+the **⋯** menu. Happier checks the selected account with a read-only service
+request that does not generate a response or spend inference usage. The result
+says whether the connection works, needs sign-in again, cannot reach the service,
+or has no supported test. An unsupported test stays visible with its reason.
+
+The CLI exposes the same operation through the
+`connectedServices.accounts.testConnection` Action. A successful test confirms
+the probed endpoint accepts the account; it does not guarantee access to every
+model or feature.
+
+```bash
+happier actions invoke connectedServices.accounts.testConnection --input-json '{"account":{"service":{"pluginId":"your-plugin-id","localId":"your-service-id"},"accountId":"your-account-id"}}' --json
+```
+
+Use the saved account's qualified identity. If its sign-in method requires a
+Machine, include `machineId` in the input with the Machine you selected.
+
 ## GitHub CLI import in 0.3 development
 
 In development builds, **Import GitHub CLI login** saves a machine's existing

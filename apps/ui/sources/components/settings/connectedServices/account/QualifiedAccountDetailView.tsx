@@ -102,6 +102,13 @@ export type QualifiedAccountDetailViewProps = Readonly<{
     keySection?: React.ReactNode;
     sharedWithTeamsAdministration?: React.ReactNode;
     onReconnect?: () => void;
+    /** One shared Action, presented in Sign-in and overflow for every connected account. */
+    testConnection?: Readonly<{
+        run(): void | Promise<void>;
+        pending: boolean;
+        disabledReason?: string;
+        message?: string;
+    }>;
     onRefresh?: () => void;
     refreshing?: boolean;
     onConfigureAccount?: () => void;
@@ -268,6 +275,10 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
     // "email · ChatGPT Pro · in Codex pool" (lab `s2svc:account`): one line of facts, read left to right.
     const factSeparator = <Text style={stylesheet.factSeparator} accessibilityElementsHidden importantForAccessibility="no">·</Text>;
+    const connectionTest = props.testConnection;
+    const connectionTestUnavailable = connectionTest?.disabledReason
+        ?? (!connectionTest ? t('connectedServicesSettings.testConnectionUnsupported') : undefined);
+    const connectionTestTitle = t('connectedServicesSettings.testConnection');
     const hasSignInRow = Boolean(onReconnect || props.authenticationModeTitle || props.signInFlow);
     const defaultControl = props.agentDefaults ? (
         <AgentDefaultMenuButton
@@ -378,18 +389,22 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ? <RoundButton testID={`${testID}:refresh`} display="inverted" title={t('common.refresh')} leading={<Icon name="arrow-clockwise" size={14} />} loading={props.refreshing} disabled={props.refreshing} onPress={props.onRefresh} />
                         : null}
                     {/* The ⋯ menu holds rare actions, on a phone too: the provider's raw id is copied from here, never a page row. */}
-                    {rename || onReconnect || onDisconnect || providerAccount || share ? <PageHeaderMenu
+                    <PageHeaderMenu
                         triggerTestID={`${testID}:more`}
                         accessibilityLabel={t('connectedServicesPool.moreActions')}
                         onOpenChange={onMenuOpenChange}
                         actions={[
                             ...(rename ? [{ id: 'rename', title: t('connectedServicesPool.rename'), onSelect: () => setRenameOpen(true) }] : []),
                             ...(providerAccount ? [{ id: 'copy-account-id', title: t('connectedServicesSettings.detailCopyAccountId'), onSelect: () => copyProviderAccountId(providerAccount) }] : []),
+                            { id: 'test-connection', title: connectionTestTitle,
+                                disabled: !connectionTest || Boolean(connectionTestUnavailable), loading: connectionTest?.pending,
+                                subtitle: connectionTestUnavailable ?? connectionTest?.message,
+                                onSelect: () => connectionTest?.run() },
                             ...(onReconnect ? [{ id: 'reconnect', title: t('connectedServicesSettings.signInAgain'), onSelect: onReconnect }] : []),
                             ...(share ? [{ id: 'share', testID: `${testID}:share`, title: t('secretsSettings.share'), onSelect: (intent?: PageHeaderMenuIntent) => share(intent?.anchor) }] : []),
                             ...(onDisconnect ? [{ id: 'disconnect', title: t('connectedServicesSettings.detailRemoveAccount'), destructive: true, loading: disconnectPending, onSelect: handleDisconnect }] : []),
                         ]}
-                    /> : null}
+                    />
                 </View>}
             />
             {signedOut ? (
@@ -413,8 +428,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
 
             {/* Lab `s2svc:account`: identity, Usage, Used by and pools, then Sign-in with where it works and the
                 machine its operations run on, configuration, sharing, and removal last. */}
-            {hasSignInRow || props.includedApiKey || props.worksOnSection || props.machineScopeLine ? (
-                <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
+            <ItemGroup title={t('connectedServicesSettings.detailSignInTitle')}>
                     {hasSignInRow ? <Item
                         testID={`${testID}:sign-in`}
                         title={props.authenticationModeTitle ?? t('connectedServices.detail.actions.reconnect')}
@@ -438,6 +452,23 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                         ) : undefined}
                         rightElementOutsidePressable
                     /> : null}
+                    <Item
+                        testID={`${testID}:test-connection`}
+                        title={connectionTestTitle}
+                        subtitle={connectionTestUnavailable ?? connectionTest?.message}
+                        mode="info"
+                        showChevron={false}
+                        rightElement={<RoundButton
+                            testID={`${testID}:action:test-connection`}
+                            size="small"
+                            display="secondary"
+                            title={connectionTestTitle}
+                            loading={connectionTest?.pending}
+                            disabled={!connectionTest || Boolean(connectionTestUnavailable) || connectionTest.pending}
+                            onPress={() => { void connectionTest?.run(); }}
+                        />}
+                        rightElementOutsidePressable
+                    />
                     {props.signInFlow ? <SectionContentRow>{props.signInFlow}</SectionContentRow> : null}
                     {/* A fact, not a control: the key exists because the account connected; its value stays sealed. */}
                     {props.includedApiKey ? <Item
@@ -449,8 +480,7 @@ export const QualifiedAccountDetailView = React.memo(function QualifiedAccountDe
                     /> : null}
                     {props.worksOnSection ?? null}
                     {props.machineScopeLine ?? null}
-                </ItemGroup>
-            ) : null}
+            </ItemGroup>
             {props.machineSetupSection ?? null}
 
             {props.onConfigureAccount ? (

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import type { ConnectedAccountEstablishedRuntimeRegistry, ConnectedAccountRuntimeEstablishedOperation, ConnectedAccountRuntimeEstablishedInvocation } from '@happier-dev/cli-common/connectedAccounts';
 import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { ConnectedAccountAuthenticationModeUnavailableError, createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
     executeConnectedAccountAuthenticationCommand, type ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
@@ -232,6 +234,35 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         },
         controlCommand(machineId, command, options): Promise<ConnectedAccountDaemonControlResponse> {
             return withHome(async () => {
+                if (command.operation === 'testConnection') {
+                    try {
+                        const declared = input.contributions.describe(command.account.service);
+                        const credential = await persistence.attempts.accounts.readExact(command.account);
+                        const placement = resolveCredentialedConnectedAccountAuthenticationPlacement(
+                            declared?.descriptor.authentication, machineId, credential?.authenticationModeId);
+                        if (placement.kind !== 'account') return machineId
+                            ? options.native(machineId, command) : unavailable('connected_account_authentication_mode_unavailable');
+                        const selected = await select(command.account.service);
+                        const registry = {
+                            connectedAccountContributions: { describe: (ref: typeof selected.ref) => input.contributions.describe(ref) },
+                            resolveConnectedAccountRuntime: async (ref: typeof selected.ref) => ref.pluginId === selected.ref.pluginId
+                                && ref.localId === selected.ref.localId ? selected : null,
+                            connectedAccountRuntimeInvoker: { invokeEstablished: <TOperation extends ConnectedAccountRuntimeEstablishedOperation>(invocation: ConnectedAccountRuntimeEstablishedInvocation<TOperation>) => input.invoker.invokeEstablished({ ...invocation, lease: selected }) },
+                        } satisfies ConnectedAccountEstablishedRuntimeRegistry;
+                        const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+                            credentials: input.credentials, configuration: persistence.configuration,
+                            configurationOwner: runtime(selected).configuration,
+                            getAccountEncryptionMode: (signal, options) => getAccountEncryptionMode({ ...options, ...(signal ? { signal } : {}) }),
+                            reloadController: {
+                                async acquireRuntimeRegistry() { return { registry, async release() {} }; },
+                                isRuntimeRegistryCurrent: candidate => candidate === registry && selected.isCurrent(),
+                            },
+                            isAccountRuntimeCurrent: async () => selected.isCurrent() && (!input.operationContext || await input.operationContext.isCurrent()),
+                        });
+                        return { status: 'connectionTested', result: await owner.invoke({ account: command.account,
+                            operation: { kind: 'testConnection' }, ...(options.signal ? { signal: options.signal } : {}) }) };
+                    } catch (error) { return unavailable(failureCode(error)); }
+                }
                 if (command.operation === 'listPendingAttempts') {
                     if (machineId) return options.native(machineId, command);
                     const pending = await api.listPending({ service: command.service });

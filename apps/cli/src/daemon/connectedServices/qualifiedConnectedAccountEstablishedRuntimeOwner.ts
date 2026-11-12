@@ -1,12 +1,11 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
-import { createConnectedAccountEstablishedRuntimeOwner, readQualifiedConnectedAccountCredentialMaterial as readCredentialMaterial, type QualifiedConnectedAccountEstablishedRuntimeOwner as PortableEstablishedRuntimeOwner, type QualifiedConnectedAccountScheduledReceipt as PortableScheduledReceipt, type QualifiedConnectedAccountMaterialSnapshot, type QualifiedConnectedAccountScheduledOperationOptions, type QualifiedConnectedAccountEstablishedInvocationBasis, type QualifiedConnectedAccountCredentialMutationPreparationInput, type QualifiedConnectedAccountCredentialReplacementPreparation } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountEstablishedRuntimeOwner, readQualifiedConnectedAccountCredentialMaterial as readCredentialMaterial, type ConnectedAccountEstablishedRuntimeRegistry, type QualifiedConnectedAccountEstablishedRuntimeOwner as PortableEstablishedRuntimeOwner, type QualifiedConnectedAccountScheduledReceipt as PortableScheduledReceipt, type QualifiedConnectedAccountMaterialSnapshot, type QualifiedConnectedAccountScheduledOperationOptions, type QualifiedConnectedAccountEstablishedInvocationBasis, type QualifiedConnectedAccountCredentialMutationPreparationInput, type QualifiedConnectedAccountCredentialReplacementPreparation } from '@happier-dev/cli-common/connectedAccounts';
 import { readQualifiedConnectedAccountConfigurationV4, readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { requireConnectedAccountCryptoMaterial as requireCryptoMaterial, resolveConnectedAccountCryptoMaterial as resolveCryptoMaterial } from './accountScopedCryptoMaterial';
 import type { AccountEncryptionModeReadOptions, ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { StoredCredentials } from '@/persistence';
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { ConnectedAccountDaemonPersistence } from './ConnectedAccountDaemonRuntime';
 import type { ConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -100,12 +99,12 @@ export function readQualifiedConnectedAccountCredentialIdentity(
   };
 }
 
-export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
+export function createQualifiedConnectedAccountEstablishedRuntimeOwner<TRegistry extends ConnectedAccountEstablishedRuntimeRegistry<Quota>>(
   params: Readonly<{
-    reloadController: Pick<
-      PluginReloadController,
-      'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'
-    >;
+    reloadController: Readonly<{
+      acquireRuntimeRegistry(): Promise<Readonly<{ registry: TRegistry; release(): Promise<void> }>>;
+      isRuntimeRegistryCurrent(registry: TRegistry): boolean;
+    }>;
     credentials: StoredCredentials;
     isAccountRuntimeCurrent?: (signal?: AbortSignal) => Promise<boolean>;
     runAccountOperation?: <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
@@ -123,7 +122,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner(
 
   const material = resolveCryptoMaterial(params.credentials);
   const randomBytes = params.randomBytes ?? ((length: number) => new Uint8Array(nodeRandomBytes(length)));
-  return createConnectedAccountEstablishedRuntimeOwner<Quota, Awaited<ReturnType<PluginReloadController['acquireRuntimeRegistry']>>['registry']>({
+  return createConnectedAccountEstablishedRuntimeOwner<Quota, TRegistry>({
     ...params,
     readScope: createEstablishedAccountReadScope(params),
     readCredential: input => (params.readCredential ?? readQualifiedConnectedAccountCredentialV4)({ ...input, token: params.credentials.token }),

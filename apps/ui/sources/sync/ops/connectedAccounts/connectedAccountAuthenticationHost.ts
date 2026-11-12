@@ -190,6 +190,20 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     };
     const controlCommand = async (machineId: string | undefined,
         command: ConnectedAccountDaemonControlCommand): Promise<ConnectedAccountDaemonControlResponse> => {
+        if (command.operation === 'testConnection') {
+            const service = command.account.service;
+            if (!hasAccountArtifact(service)) return machineId ? nativeControl(machineId, command)
+                : unavailable('connected_account_authentication_mode_unavailable');
+            const saved = await persistence.accounts.readExact(command.account);
+            if (!saved) return unavailable('connected_account_not_found');
+            const placement = await modePlacement(service);
+            if (!saved.authenticationModeId || !placement.modeIds.includes(saved.authenticationModeId)) {
+                return machineId ? nativeControl(machineId, command)
+                    : unavailable(placement.machineUnavailableCode ?? 'connected_account_authentication_mode_unavailable');
+            }
+            return { status: 'connectionTested', result: await (await runtime(await selection(service)))
+                .testConnection({ account: command.account, signal }) };
+        }
         if (command.operation === 'listPendingAttempts') {
             if (machineId) return nativeControl(machineId, command);
             const pending = await api.listPending({ service: command.service });

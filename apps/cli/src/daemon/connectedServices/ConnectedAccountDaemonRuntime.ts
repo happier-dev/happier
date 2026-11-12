@@ -682,6 +682,11 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                         await lease.release();
                     }
                 }
+                if (command.operation === 'testConnection') {
+                    return Object.freeze({ status: 'connectionTested' as const,
+                        result: await params.revocation.establishedRuntimeOwner.invoke({ account: command.account,
+                            operation: { kind: 'testConnection' }, ...(options?.signal ? { signal: options.signal } : {}) }) });
+                }
                 if (command.operation === 'revokeAccount') {
                     const operationTransport =
                         params.resolvePeerOperationTransport?.({

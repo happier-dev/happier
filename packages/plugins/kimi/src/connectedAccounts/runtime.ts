@@ -13,6 +13,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isPermanentRequestStatus } from '@happier-dev/plugin-sdk/http';
 import { z } from 'zod';
 import { fetchKimiQuota } from './quota.js';
+import { requestKimiModels } from './models.js';
 import { KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV, KIMI_CODE_ANTHROPIC_BASE_ENV, KIMI_SELECTED_CODE_API_KEY_ENV } from './service.js';
 
 export const KIMI_OAUTH_CLIENT_ID = '17e5f671-d194-4dfb-9706-5516cb48c098';
@@ -81,8 +82,7 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
   const deviceId = await context.credentials.get('deviceId', options);
   if (request.kind === 'files') {
     if (!request.fileIds.includes('config.toml')) return { kind: 'files', files: {} };
-    const response = await context.services.http.request({ url: `${apiBase}/models`, method: 'GET', redirect: 'error',
-      headers: { Authorization: `Bearer ${token}`, ...(deviceId ? { 'X-Msh-Device-Id': deviceId } : {}) } }, { signal: options?.signal ?? context.signal });
+    const response = await requestKimiModels({ http: context.services.http, apiBase, token, deviceId, signal: options?.signal ?? context.signal });
     if (response.status !== 200) {
       const failure = classifyProviderLimitEvidence({ status: response.status });
       throw Object.assign(new PluginError({ code: 'provider_unavailable', message: 'Kimi account models are unavailable',
@@ -111,7 +111,28 @@ export async function materializeKimiCredentials(request: ConnectedAccountMateri
     ...(kind ? { credentialKind: kind } : {}), ...(apiKind ? { apiKind } : {}), ...(deviceId ? { deviceId } : {}) }, ...(expiry ? { expiresAt: Number(expiry) } : {}) };
 }
 
+const testConnection: NonNullable<ConnectedAccountPortableRuntime['testConnection']> = async (context, options) => {
+  const signal = options?.signal ?? context.signal;
+  signal.throwIfAborted();
+  const token = await context.credentials.get('accessToken', { signal });
+  if (!token) return { status: 'needsReauth', code: 'kimi_credentials_unavailable', reason: 'Reconnect Kimi to test its connection.' };
+  const deviceId = await context.credentials.get('deviceId', { signal });
+  const apiBase = await selectedBase(context);
+  let response;
+  try {
+    response = await requestKimiModels({ http: context.services.http, apiBase, token, deviceId, signal });
+  } catch {
+    signal.throwIfAborted();
+    return { status: 'networkUnavailable', code: 'kimi_test_transport_unavailable', reason: 'Kimi could not be reached.' };
+  }
+  signal.throwIfAborted();
+  if (response.status >= 200 && response.status < 300) return { status: 'ok' };
+  return { status: response.status === 401 ? 'needsReauth' : response.status === 403 ? 'unsupported' : 'networkUnavailable',
+    code: `kimi_test_http_${response.status}`, reason: `Kimi returned HTTP ${response.status} for the connection check.` };
+};
+
 export const kimiPortableAccountRuntime: ConnectedAccountPortableRuntime = {
+  testConnection,
   authentication: { modes: { 'api-key': manualMode } },
   async materialize(request, context, options) { return materializeKimiCredentials(request, context, await selectedBase(context), options); },
 };
@@ -172,6 +193,7 @@ export function createKimiConnectedAccountRuntime(): ConnectedAccountRuntime {
       } },
       'api-key': manualMode,
     } },
+    testConnection,
     async status(context) { return health(context); },
     async enrichCredentialContext(context, options) {
       if (await context.credentials.get('apiKind', options) === 'platform') return { status: 'unavailable', diagnostic: diagnostic('kimi_identity_unavailable') };

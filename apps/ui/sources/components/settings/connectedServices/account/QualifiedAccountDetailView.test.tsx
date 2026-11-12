@@ -102,6 +102,24 @@ function hasTitle(root: ReactTestInstance, title: string): boolean {
     return root.findAll((node) => node.props?.title === title).length > 0;
 }
 
+it('offers the same connection test from Sign-in and overflow, including unsupported accounts', async () => {
+    const run = vi.fn(async () => {});
+    const screen = await renderDetail({ testConnection: { run, pending: false } });
+    await screen.pressByTestIdAsync('qualified-account-detail:action:test-connection');
+    const menu = screen.root.findByType(DropdownMenu);
+    expect(menu.props.items.some((item: { id: string }) => item.id === 'test-connection')).toBe(true);
+    await act(async () => { await menu.props.onSelect('test-connection'); });
+    expect(run).toHaveBeenCalledTimes(2);
+    await screen.update(<QualifiedAccountDetailView account={ACCOUNT} serviceLabel="Codex"
+        presentation={{ primaryLabel: 'Work account', accessibilityLabel: 'Work account' }}
+        testConnection={{ run, pending: false, disabledReason: 'This service does not offer a connection test.' }} />);
+    const row = screen.root.findAll(node => node.props.testID === 'qualified-account-detail:test-connection' && node.props.subtitle)[0];
+    expect(row?.props.subtitle).toBe('This service does not offer a connection test.');
+    const unsupportedMenu = screen.root.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'test-connection');
+    expect(unsupportedMenu.disabled).toBe(true);
+    expect(unsupportedMenu.subtitle).toBe('This service does not offer a connection test.');
+});
+
 it('leaves usage refresh to its Usage section on a wide page (lab s2svc:account)', async () => {
     const refresh = vi.fn();
     const screen = await renderDetail({ onRefresh: refresh });

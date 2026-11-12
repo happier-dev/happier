@@ -39,6 +39,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       reason: 'Connect the selected xAI account and read its identity and usage.',
       scope: { targets: [
         { kind: 'fixedOrigin', origin: 'https://auth.x.ai' },
+        { kind: 'fixedOrigin', origin: 'https://api.x.ai' },
         { kind: 'fixedOrigin', origin: 'https://cli-chat-proxy.grok.com' },
       ], methods: ['GET', 'POST'] },
     }],

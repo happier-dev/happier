@@ -223,6 +223,11 @@ async function invokeCurrentConnectedAccountCallback(
                             : await runtime.enrichCredentialContext!(mutationContext, options);
                     },
                 );
+            case 'testConnection':
+                return await settleCallback(() => runtime.testConnection
+                    ? runtime.testConnection(context, options)
+                    : { status: 'unsupported', code: 'connected_account_connection_test_unsupported',
+                        reason: 'This service does not provide a connection test.' });
             case 'status':
                 return await settleCallback(
                     () => {

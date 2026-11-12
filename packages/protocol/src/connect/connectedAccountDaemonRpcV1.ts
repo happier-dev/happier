@@ -233,8 +233,17 @@ export const ConnectedAccountRevokeCommandV1Schema = lazyZodSchema(() => z.stric
   managedResourceDispositions: z.optional(z.array(ManagedResourceDispositionV1Schema)),
 }));
 
+/** A read-only provider probe; reasons and codes contain no credential values. */
+export const ConnectedAccountConnectionTestResultSchema = z.strictObject({
+  status: z.enum(['ok', 'needsReauth', 'networkUnavailable', 'unsupported']),
+  reason: z.optional(z.string()),
+  code: z.optional(z.string()),
+});
+export type ConnectedAccountConnectionTestResult = z.infer<typeof ConnectedAccountConnectionTestResultSchema>;
+
 export const ConnectedAccountDaemonControlCommandSchema =
   lazyZodSchema(() => z.discriminatedUnion('operation', [
+    z.strictObject({ operation: z.literal('testConnection'), account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
     z.strictObject({
       operation: z.literal('listPendingAttempts'),
       service: asProtocolZod(ConnectedAccountServiceIdentityV1Schema),
@@ -445,6 +454,7 @@ export const ConnectedAccountPendingAttemptsResponseSchema = lazyZodSchema(() =>
 
 export const ConnectedAccountDaemonControlResponseSchema =
   lazyZodSchema(() => z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('connectionTested'), result: ConnectedAccountConnectionTestResultSchema }),
     ConnectedAccountPendingAttemptsResponseSchema,
     z.strictObject({
       status: z.literal('described'),

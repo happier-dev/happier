@@ -95,7 +95,10 @@ export type ConnectedAccountHostRuntimeInvoker = Readonly<{
     invokeEstablished<
         TOperation extends ConnectedAccountRuntimeEstablishedOperation,
     >(
-        input: ConnectedAccountRuntimeEstablishedInvocation<TOperation>,
+        input: ConnectedAccountRuntimeEstablishedInvocation<TOperation> & Readonly<{
+            /** The Account host keeps the exact portable runtime it already selected. */
+            lease?: ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease;
+        }>,
     ): Promise<ConnectedAccountRuntimeEstablishedResult<TOperation>>;
 }>;
 
@@ -320,11 +323,11 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
     }
 
     async function createEstablishedContext(
-        input: ConnectedAccountRuntimeEstablishedInvocation,
+        input: ConnectedAccountRuntimeEstablishedInvocation & Readonly<{ lease?: ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease }>,
     ): Promise<EstablishedInvocationContext> {
         assertEstablishedTarget(input);
 
-        const lease = await observeMaterializationPhase('runtime_registry', () => params.resolveRuntime(input.target.account.service));
+        const lease = input.lease ?? await observeMaterializationPhase('runtime_registry', () => params.resolveRuntime(input.target.account.service));
         if (lease?.owner === 'host') {
             if (!sameService(lease.ref, input.target.account.service)) throw new Error('Connected-account established runtime is unavailable');
             const lifetime = createPluginInvocationLifetime(input.signal);

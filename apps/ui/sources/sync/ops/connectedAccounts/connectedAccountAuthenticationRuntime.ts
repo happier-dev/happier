@@ -1,4 +1,4 @@
-import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
+import { ConnectedAccountAuthenticationModeUnavailableError, createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
     createConnectedAccountAttemptConfigurationStore,
     parseConnectedAccountConfigurationRecordContent, invokeConnectedAccountAuthenticationRuntime,
     executeConnectedAccountAuthenticationCommand,
@@ -6,6 +6,7 @@ import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccoun
     type ConnectedAccountAttemptTransactionRecord,
     type ConnectedAccountPurposeMaterializationInput, type QualifiedConnectedAccountEstablishedRuntimeOwner,
     type ConnectedAccountConfigurationRecord, type ConnectedAccountConfigurationTarget } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 import { replaceConnectedServiceConfigurationCatalogV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { QualifiedConnectedAccountConfigurationPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -30,6 +31,7 @@ export type UiConnectedAccountAuthenticationRuntime = Readonly<{
     materialize(request: ConnectedAccountPurposeMaterializationInput & Readonly<{
         registerRawForRedaction(value: string): void;
     }>): Promise<ConnectedAccountMaterialization>;
+    testConnection(request: Readonly<{ account: ConnectedAccountPurposeMaterializationInput['account']; signal?: AbortSignal }>): Promise<ConnectedAccountConnectionTestResult>;
     readConfiguredEndpoints: QualifiedConnectedAccountEstablishedRuntimeOwner['readConfiguredEndpoints'];
     execute(command: ConnectedAccountDaemonCommand, signal?: AbortSignal,
         addressedRecord?: ConnectedAccountAttemptTransactionRecord): Promise<ConnectedAccountAttemptResponse>;
@@ -167,7 +169,7 @@ export async function createUiConnectedAccountAuthenticationRuntime(input: Reado
         configuration, runtime: {
             async admit(request) {
                 const descriptor = mode(request.modeId);
-                if (!descriptor || !input.selected.runtime.authentication.modes[request.modeId]) throw new Error('connected_account_authentication_mode_unavailable');
+                if (!descriptor || !input.selected.runtime.authentication.modes[request.modeId]) throw new ConnectedAccountAuthenticationModeUnavailableError();
                 return { service: input.declaration.service, descriptor,
                     authenticationModeCardinality: input.declaration.descriptor.authentication.modes.length === 1 ? 'single' : 'multiple',
                     occurrenceId: input.declaration.occurrenceId, sourceCustody: input.declaration.sourceCustody };

@@ -38,12 +38,13 @@ export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-com
 export { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 export type {
     PluginConnectedAccountAuthenticationModeV2,
+    PluginConnectedAccountAccessOnlyExportV1,
     PluginConnectedAccountAuthenticationV2,
     PluginConnectedAccountConfigurationFieldV2,
     PluginConnectedAccountConfigurationV2,
     PluginConnectedAccountDescriptorContributionV2,
 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
-export { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+export { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 import {
     ConnectedServiceQuotaFetchError as QuotaFetchError,
@@ -77,6 +78,8 @@ import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationM
 import type { PluginConnectedAccountPortableAuthenticationContext } from './services/connectedAccounts.js';
 import type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 export type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
+import type { ConnectedAccountConnectionTestResult } from '@happier-dev/cli-common/connectedAccounts';
+export type { ConnectedAccountConnectionTestResult } from '@happier-dev/cli-common/connectedAccounts';
 
 export {
     addSafeEpochMilliseconds,
@@ -248,7 +251,7 @@ export type ConnectedAccountPortableRuntime = Readonly<{
     authentication: Readonly<{
         modes: Readonly<Record<string, CommonAuthenticationModeRuntime<PluginConnectedAccountPortableAuthenticationContext>>>;
     }>;
-}> & Partial<Pick<ConnectedAccountEstablishedRuntime<ConnectedAccountPortableReadContext>, 'materialize'>>;
+}> & Partial<Pick<ConnectedAccountEstablishedRuntime<ConnectedAccountPortableReadContext>, 'materialize' | 'testConnection'>>;
 
 /** Authentication-only registrations remain valid portable runtimes. @realm any */
 export type ConnectedAccountAuthenticationRuntime = ConnectedAccountPortableRuntime;
@@ -477,6 +480,11 @@ export interface ConnectedAccountRuntime {
         }>
         | Readonly<{ status: 'outcomeUnknown'; diagnostic: import('./diagnostics.js').PluginDiagnosticData }>
     >;
+    /** Explicit no-usage provider check. Local credential status never substitutes this capability. */
+    testConnection?(
+        context: PluginConnectedAccountReadContext,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ConnectedAccountConnectionTestResult>;
     status(
         context: PluginConnectedAccountReadContext,
         options?: Readonly<{ signal?: AbortSignal }>,

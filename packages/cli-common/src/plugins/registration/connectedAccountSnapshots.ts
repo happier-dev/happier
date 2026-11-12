@@ -7,7 +7,7 @@ const authenticationCallbacks = {
     begin: true, complete: true, poll: true, cancel: true, reconcile: true,
 } satisfies Record<Exclude<UnionKeys<ConnectedAccountAuthenticationModeRuntime<unknown>>, 'kind'>, true>;
 const establishedCallbacks = {
-    refresh: true, revoke: true, status: true, quota: true,
+    refresh: true, revoke: true, status: true, quota: true, testConnection: true,
     materialize: true, enrichCredentialContext: true,
 } satisfies Record<Exclude<keyof ConnectedAccountEstablishedRuntime<object>, 'recoveryCredits'>, true>;
 const recoveryCallbacks = { read: true, consume: true } satisfies Record<

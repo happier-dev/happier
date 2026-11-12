@@ -13,7 +13,7 @@ type Http = Parameters<NonNullable<ConnectedAccountRuntime['quota']>>[0]['servic
 type Period = Readonly<{ resetsAtMs: number; windowDurationMs: number }>;
 
 const BILLING_URL = 'https://cli-chat-proxy.grok.com/v1/billing';
-const CREDITS_URL = `${BILLING_URL}?format=credits`;
+export const CREDITS_URL = `${BILLING_URL}?format=credits`;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -99,15 +99,20 @@ export function parseXaiBilling(payload: unknown, sourceUrl?: string): Quota['li
   return limits;
 }
 
+export async function requestXaiBilling(input: Readonly<{
+  http: Pick<Http, 'request'>; accessToken: string; url: string; signal?: AbortSignal;
+}>) {
+  return input.http.request({ url: input.url, method: 'GET', redirect: 'error',
+    headers: { Authorization: `Bearer ${input.accessToken}`, Accept: 'application/json', 'X-XAI-Token-Auth': 'xai-grok-cli' },
+  }, { signal: input.signal });
+}
+
 async function fetchBilling(input: Readonly<{
   http: Pick<Http, 'request'>; accessToken: string; url: string; nowMs: number; signal?: AbortSignal;
 }>): Promise<unknown> {
   let response: Awaited<ReturnType<Http['request']>>;
   try {
-    response = await input.http.request({
-      url: input.url, method: 'GET', redirect: 'error',
-      headers: { Authorization: `Bearer ${input.accessToken}`, Accept: 'application/json', 'X-XAI-Token-Auth': 'xai-grok-cli' },
-    }, { signal: input.signal });
+    response = await requestXaiBilling(input);
   } catch {
     input.signal?.throwIfAborted();
     throw new QuotaFetchError('xAI billing request failed', { quotaFetchErrorCode: 'network' });

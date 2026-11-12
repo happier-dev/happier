@@ -45,6 +45,11 @@ function createConnectedServiceConfigurationActionSpecs() {
     title: 'List connected accounts and pools', description: 'Read saved qualified accounts, pools and credential health from this Account without contacting providers or requiring a Machine.',
     bindings: { mcpToolName: 'connected_services_accounts_list' }, inputSchema: inputs['connectedServices.accounts.list'], outputSchema: outputs['connectedServices.accounts.list'],
     inputHints: { fields: [{ path: 'service', title: 'Qualified service', widget: 'json' }] } },
+  { ...common, id: 'connectedServices.accounts.testConnection', approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
+    executionPlacementForInput: input => inputs['connectedServices.accounts.testConnection'].parse(input).machineId ? 'machine' : 'account',
+    title: 'Test connection', description: 'Check the exact connected account with its service-provided no-usage probe. Services without a probe return a plain unsupported reason.',
+    bindings: { mcpToolName: 'connected_services_accounts_test_connection' }, inputSchema: inputs['connectedServices.accounts.testConnection'], outputSchema: outputs['connectedServices.accounts.testConnection'],
+    inputHints: { fields: [{ path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'machineId', title: 'Selected Machine when native execution is required', widget: 'text' }] } },
   { ...common, id: 'connectedServices.catalog.list', approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
     title: 'List connected-service setup choices', description: 'Read admitted services, sign-in methods, gateway contributions and unavailable prerequisites without starting setup. Explicit refresh retries demanded projections; returned facts may still be loading.',
     bindings: { mcpToolName: 'connected_services_catalog_list' }, inputSchema: inputs['connectedServices.catalog.list'], outputSchema: outputs['connectedServices.catalog.list'], inputHints: { fields: [

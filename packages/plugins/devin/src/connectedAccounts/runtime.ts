@@ -30,6 +30,11 @@ async function localHealth(context: ReadContext, options?: { signal?: AbortSigna
   };
 }
 
+async function requestProfile(context: Pick<ReadContext, 'services'>, token: string, signal: AbortSignal) {
+  return context.services.http.request({ url: 'https://api.devin.ai/v3/self', method: 'GET', redirect: 'error',
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }, { signal });
+}
+
 /** Devin's exchange adapter; attempts, PKCE/state validation and settlement remain host-owned. */
 export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
   return {
@@ -64,9 +69,7 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
           if (!token) return { status: 'outcomeUnknown', diagnostic: diagnostic('unsupported_session', 'Devin returned an unsupported session representation.') };
           let profile: Record<string, unknown> | null = null;
           try {
-            const result = await context.services.http.request({ url: 'https://api.devin.ai/v3/self', redirect: 'error',
-              headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-            }, { signal });
+            const result = await requestProfile(context, token, signal);
             if (result.status >= 200 && result.status < 300) profile = object(result.body);
           } catch (error) { if (signal.aborted) throw error; }
           await save(context, { sessionToken: token, credentialMode: 'session', apiServerUrl: DEVIN_DEFAULT_API_SERVER, nativeGeneration: DEVIN_NATIVE_GENERATION, nativeMetadata: JSON.stringify(DEVIN_SESSION_METADATA) }, signal);
@@ -89,6 +92,26 @@ export function createDevinConnectedAccountRuntime(): ConnectedAccountRuntime {
         },
       },
     } },
+    async testConnection(context, options) {
+      const signal = options?.signal ?? context.signal;
+      signal.throwIfAborted();
+      const mode = await context.credentials.get('credentialMode', { signal });
+      const token = await context.credentials.get(mode === 'enterprise' ? 'seatToken' : 'sessionToken', { signal });
+      if (!token) return { status: 'needsReauth', code: 'devin_credentials_unavailable', reason: 'Reconnect Devin to test its connection.' };
+      if (mode !== 'session') return { status: 'unsupported', code: 'devin_seat_test_unsupported', reason: 'A read-only connection check is not available for Devin enterprise seat credentials.' };
+      const metadata = object(new TextEncoder().encode(await context.credentials.get('nativeMetadata', { signal }) ?? '{}'));
+      if (metadata?.devin_api_url !== undefined && metadata.devin_api_url !== 'https://api.devin.ai') return { status: 'unsupported', code: 'devin_test_endpoint_unsupported', reason: 'A connection check is not available for this Devin API server.' };
+      let response;
+      try { response = await requestProfile(context, token, signal); }
+      catch {
+        signal.throwIfAborted();
+        return { status: 'networkUnavailable', code: 'devin_test_transport_unavailable', reason: 'Devin could not be reached.' };
+      }
+      signal.throwIfAborted();
+      if (response.status >= 200 && response.status < 300) return { status: 'ok' };
+      return { status: response.status === 401 ? 'needsReauth' : response.status === 403 ? 'unsupported' : 'networkUnavailable',
+        code: `devin_test_http_${response.status}`, reason: `Devin returned HTTP ${response.status} for the connection check.` };
+    },
     async status(context, options) { return localHealth(context, options); },
     async refresh(context, options) {
       return { ...await localHealth(context, options), status: 'unavailable',

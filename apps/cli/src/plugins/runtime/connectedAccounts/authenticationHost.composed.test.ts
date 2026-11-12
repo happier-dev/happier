@@ -99,6 +99,12 @@ it('continues a refused manual Account attempt in a fresh host', async () => {
             expect(completed, JSON.stringify(completed))
                 .toMatchObject({ status: 'connected', attemptId: begun.attemptId, account: { service: fixture.service } });
             expect(fixture.promotedResourceCount).toBe(1);
+            if (completed.status !== 'connected') throw new Error('Expected connected fixture account');
+            for (const machineId of [undefined, 'selected-machine']) {
+                expect(await resumed.controlCommand(machineId, { operation: 'testConnection', account: completed.account }, { native }))
+                    .toMatchObject({ status: 'connectionTested', result: { status: 'unsupported',
+                        code: 'connected_account_connection_test_unsupported', reason: expect.any(String) } });
+            }
             expect(fixture.machineRequests).toBe(0);
         });
     } finally {

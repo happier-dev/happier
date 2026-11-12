@@ -1,3 +1,5 @@
+import type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+export type { ConnectedAccountConnectionTestResult } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { RequestAuthFactsV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import type { ConnectedAccountMaterializationRequest } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -48,6 +50,7 @@ export interface ConnectedAccountEstablishedRuntime<Context extends object, TQuo
     enrichCredentialContext?(context: Context & Readonly<{ operation: Readonly<{ operationId: string; configurationRevision: string }>; stagedCredentials: ConnectedAccountCredentialStore }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountHealthResult | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>>;
     refresh(context: Context & Readonly<{ operation: Readonly<{ operationId: string; configurationRevision: string }>; stagedCredentials: ConnectedAccountCredentialStore }>, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountHealthResult | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>>;
     revoke(context: Context, options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ status: 'remoteRevoked' | 'remoteUnsupported'; diagnostic?: PluginDiagnosticData }> | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>>;
+    testConnection?(context: Context, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountConnectionTestResult>;
     status(context: Context, options?: Readonly<{ signal?: AbortSignal }>): Promise<ConnectedAccountHealthResult>;
     quota?(context: Context, options?: Readonly<{ signal?: AbortSignal }>): Promise<TQuota>;
     materialize(request: ConnectedAccountMaterializationRequest, context: Context, options?: Readonly<{ signal?: AbortSignal; existingFiles?: Readonly<Record<string, Uint8Array>> }>): Promise<ConnectedAccountMaterialization>;
@@ -55,6 +58,7 @@ export interface ConnectedAccountEstablishedRuntime<Context extends object, TQuo
 export type ConnectedAccountRuntimeEstablishedOperation =
     | Readonly<{ kind: 'refresh'; operationId: string; stagedCredentials: ConnectedAccountCredentialStore }>
     | Readonly<{ kind: 'enrichCredentialContext'; operationId: string; stagedCredentials: ConnectedAccountCredentialStore }>
+    | Readonly<{ kind: 'testConnection' }>
     | Readonly<{ kind: 'status' }>
     | Readonly<{ kind: 'quota' }>
     | Readonly<{ kind: 'recoveryCredits.read' }>
@@ -79,6 +83,7 @@ export type ConnectedAccountRuntimeEstablishedResult<TOperation extends Connecte
     TOperation['kind'] extends 'recoveryCredits.read' ? Awaited<ReturnType<NonNullable<ConnectedAccountEstablishedRuntime<object, TQuota>['recoveryCredits']>['read']>> | null
     : TOperation['kind'] extends 'recoveryCredits.consume' ? Awaited<ReturnType<NonNullable<ConnectedAccountEstablishedRuntime<object, TQuota>['recoveryCredits']>['consume']>> | null
     : TOperation['kind'] extends 'refresh' | 'enrichCredentialContext' ? Awaited<ReturnType<ConnectedAccountEstablishedRuntime<object, TQuota>['refresh']>>
+    : TOperation['kind'] extends 'testConnection' ? ConnectedAccountConnectionTestResult
     : TOperation['kind'] extends 'status' ? ConnectedAccountHealthResult
     : TOperation['kind'] extends 'quota' ? (TQuota & Readonly<{ recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1; recoveryCreditDetails?: ConnectedServiceQuotaRecoveryCreditDetailsByIdV1 }>) | null
     : TOperation['kind'] extends 'revoke' ? Awaited<ReturnType<ConnectedAccountEstablishedRuntime<object, TQuota>['revoke']>>

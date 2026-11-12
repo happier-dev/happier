@@ -20,7 +20,7 @@ export function createUiConnectedAccountEstablishedMaterializer(input: Readonly<
     persistence: ReturnType<typeof createUiConnectedAccountCredentialPersistence>;
     configuration: OwnerPorts['configuration'];
     configurationOwner: NonNullable<OwnerPorts['configurationOwner']>;
-}>): Pick<UiConnectedAccountAuthenticationRuntime, 'materialize' | 'readConfiguredEndpoints'> {
+}>): Pick<UiConnectedAccountAuthenticationRuntime, 'materialize' | 'readConfiguredEndpoints' | 'testConnection'> {
     const { registration } = input.selected;
     const lifetime = registration.accountLifetime;
     const version = registration.pluginVersion;
@@ -100,6 +100,9 @@ export function createUiConnectedAccountEstablishedMaterializer(input: Readonly<
         });
     };
     return {
+        testConnection(request) {
+            return createOwner().invoke({ ...request, operation: { kind: 'testConnection' } });
+        },
         materialize(request: ConnectedAccountPurposeMaterializationInput & Readonly<{
             registerRawForRedaction(value: string): void;
         }>) {

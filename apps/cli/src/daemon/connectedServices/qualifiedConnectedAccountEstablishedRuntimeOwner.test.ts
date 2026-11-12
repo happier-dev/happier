@@ -174,6 +174,12 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         cancelStatus?.abort();
         return { status: 'connected' as const };
       },
+      testConnection: async (context: Pick<Parameters<NonNullable<ConnectedAccountRuntime['testConnection']>>[0], 'account' | 'credentials' | 'configuration'>) => {
+        expect(context.account).toEqual(target);
+        expect(await context.credentials.get('token0')).toBe('native-token');
+        if (configured) expect(context.configuration.values.endpoint).toBe('https://provider.example');
+        return { status: 'ok' as const };
+      },
       quota: async (context: Pick<Parameters<NonNullable<ConnectedAccountRuntime['quota']>>[0], 'credentials'>) => {
         if (await context.credentials.get('token0') !== 'native-token') throw new Error('Quota credential unavailable');
         return { observedAtMs: 1_000_000, limits: [{ id: 'window', used: 1, remaining: 9 }] };
@@ -320,6 +326,11 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     // Initial snapshot, one context admission and one detached-result
     // qualification before the materialized credential leaves the host.
     expect(credentialReads).toBe(3);
+    const beforeConnectionTest = { account: accountCurrentnessChecks, credential: credentialReads };
+    await expect(owner.invoke({ account: target, operation: { kind: 'testConnection' } }))
+      .resolves.toEqual({ status: 'ok' });
+    expect(accountCurrentnessChecks - beforeConnectionTest.account).toBe(1);
+    expect(credentialReads - beforeConnectionTest.credential).toBe(1);
     // OAuth resource validation uses this public read before each request. It
     // is one preparation, just like materialization: nested field reads must
     // not each repeat the same Home/Machine/Session admission.
@@ -896,6 +907,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         modes: [{
           id: 'manual-token',
           kind: 'manual',
+          accessOnlyExport: { contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+            accessTokenKey: 'token', expiresAtMsKey: 'expiresAtMs', metadataKeys: [] },
           outcomeReconciliation: 'none',
           fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
           configuration: {
@@ -1013,6 +1026,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const snapshot = await owner.readMaterialSnapshot({ account });
     expect(snapshot).toMatchObject({
       authenticationModeId: 'manual-token',
+      accessOnlyExport: { contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+        accessTokenKey: 'token', expiresAtMsKey: 'expiresAtMs', metadataKeys: [] },
       credentialRevision: requestAuthCredentialRevision,
       configurationRevision: scope === 'account' ? 'configuration-1' : null,
       contributionContractVersion: 'plugin-contract-1',

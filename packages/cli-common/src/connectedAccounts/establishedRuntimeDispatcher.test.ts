@@ -84,3 +84,33 @@ describe('established runtime callback cancellation', () => {
         )).rejects.toBe(failure);
     });
 });
+
+
+describe('explicit connection tests', () => {
+    it.each(['ok', 'needsReauth', 'networkUnavailable', 'unsupported'] as const)('returns the explicit provider check outcome %s without calling status', async status => {
+        const dispatcher = createConnectedAccountEstablishedRuntimeDispatcher();
+        const input = { ...invocation(new AbortController().signal, 'status'), operation: { kind: 'testConnection' as const } };
+        const outcome = await dispatcher.invokeEstablishedRuntime({
+            async testConnection() { return { status, reason: 'Provider check result', code: 'probe_result' }; },
+            async status() { throw new Error('local_status_is_not_a_connection_test'); },
+        }, { id: 'oauth', title: 'Cloud', authentication: { defaultModeId: 'oauth', modes: [] } }, {}, input, () => {}, async () => {});
+        expect(outcome).toEqual({ status, reason: 'Provider check result', code: 'probe_result' });
+    });
+    it('settles unsupported when the runtime only implements local status', async () => {
+        const dispatcher = createConnectedAccountEstablishedRuntimeDispatcher();
+        const input = { ...invocation(new AbortController().signal, 'status'), operation: { kind: 'testConnection' as const } };
+        const outcome = await dispatcher.invokeEstablishedRuntime({
+            async status() { throw new Error('local_status_is_not_a_connection_test'); },
+        }, { id: 'oauth', title: 'Cloud', authentication: { defaultModeId: 'oauth', modes: [] } }, {}, input, () => {}, async () => {});
+        expect(outcome).toMatchObject({ status: 'unsupported', code: 'connected_account_connection_test_unsupported' });
+        expect(outcome.reason).toBeTruthy();
+    });
+    it('redacts registered credentials from the plain reason and code', async () => {
+        const dispatcher = createConnectedAccountEstablishedRuntimeDispatcher();
+        const input = { ...invocation(new AbortController().signal, 'status'), operation: { kind: 'testConnection' as const } };
+        const outcome = await dispatcher.invokeEstablishedRuntime({
+            async testConnection() { return { status: 'needsReauth' as const, reason: 'secret-bearer rejected', code: 'secret-bearer' }; },
+        }, { id: 'oauth', title: 'Cloud', authentication: { defaultModeId: 'oauth', modes: [] } }, {}, input, () => {}, async () => {}, text => text.replaceAll('secret-bearer', '[redacted]'));
+        expect(JSON.stringify(outcome)).not.toContain('secret-bearer');
+    });
+});

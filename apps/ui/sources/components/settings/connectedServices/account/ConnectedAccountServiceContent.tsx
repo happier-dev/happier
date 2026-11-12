@@ -127,6 +127,8 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
     isControllerCurrent(): boolean;
     /** Explicit page execution admission; null keeps Account data readable without machine effects. */
     machineId?: string | null;
+    /** Test placement uses the selected Machine even when its optional Account augmentation is absent. */
+    testConnectionMachineId?: string;
     machineSetupSection?: React.ReactNode;
     machineScopeLine?: React.ReactNode;
     /** The selected account retains its page while this controller-owned sign-in runs. */
@@ -415,6 +417,9 @@ export const ConnectedAccountServiceContent = React.memo(function ConnectedAccou
         const authenticationMode = props.modes.find((mode) => mode.id === account.authenticationModeId) ?? null;
         return (
             <QualifiedAccountDetail
+                key={JSON.stringify([props.serverId, account.ref.service.pluginId, account.ref.service.localId, account.ref.accountId])}
+                serverId={props.serverId}
+                testConnectionMachineId={props.testConnectionMachineId}
                 machineId={props.machineId}
                 machineSetupSection={props.machineSetupSection}
                 machineScopeLine={props.machineScopeLine}

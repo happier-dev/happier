@@ -166,10 +166,39 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
     // Account-token expiry is not the lifetime of the separately minted inference key.
     return museAccountConnectedResult(context.credentials, options);
   },
+  async testConnection(context, options) {
+    const signal = options?.signal ?? context.signal;
+    signal.throwIfAborted();
+    const [key, mode, nativeBase] = await Promise.all(['inferenceKey', 'credentialMode', 'nativeApiBaseUrl'].map(name => read(context.credentials, name, { signal })));
+    if (!key || !mode) return { status: 'needsReauth', code: 'muse_credentials_unavailable', reason: 'Reconnect Muse to test its connection.' };
+    const base = mode === 'native' ? nativeBase.replace(/\/+$/u, '') : `${META_API_ORIGIN}/v1`;
+    // Meta's documented authenticated read is /v1/models; MSP usage/read is only a local cache.
+    if (base !== `${META_API_ORIGIN}/v1`) return { status: 'unsupported', code: 'muse_test_endpoint_unsupported', reason: 'A connection check is not available for this Muse API server.' };
+    let response;
+    try {
+      response = await context.services.http.request({ url: `${base}/models`, method: 'GET', redirect: 'error',
+        headers: { ...META_HEADERS, Authorization: `Bearer ${key}` } }, { signal });
+    } catch {
+      signal.throwIfAborted();
+      return { status: 'networkUnavailable', code: 'muse_test_transport_unavailable', reason: 'Muse could not be reached.' };
+    }
+    signal.throwIfAborted();
+    if (response.status >= 200 && response.status < 300) return { status: 'ok' };
+    return { status: response.status === 401 ? 'needsReauth' : response.status === 403 ? 'unsupported' : 'networkUnavailable',
+      code: `muse_test_http_${response.status}`, reason: `Muse returned HTTP ${response.status} for the connection check.` };
+  },
   async quota() { return readMuseQuotaObservation(); },
   async materialize(request, context, options) {
     const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(context.credentials, name, options)));
-    if (!mode || !key) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
+    if (!mode || (!key && (request.kind === 'httpHeaders' || mode !== 'native'))) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Muse credentials are unavailable; reconnect the account.' });
+    if (!key) {
+      const [token, mechanism] = await Promise.all(['accountToken', 'nativeMechanism'].map(name => read(context.credentials, name, options)));
+      if (!token || mechanism !== '"oauth"' || !expiry || !Number.isFinite(Number(expiry)) || Number(expiry) <= Date.now()) {
+        throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable or expired; reconnect the account.' });
+      }
+      // Native Muse reads this access-only login from its isolated home and acquires its own inference key.
+      if (request.kind === 'environment') return { kind: 'environment', env: {} };
+    }
     if (request.kind === 'environment') {
       const env: Record<string, string> = request.keys.includes(META_API_KEY_ENV_KEY) ? { [META_API_KEY_ENV_KEY]: key } : {};
       if (request.keys.includes(MUSE_CODE_CREDENTIAL_ENV_KEY)) {
@@ -197,7 +226,12 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
     if (request.fileIds.includes(MUSE_NATIVE_AUTH_FILE_ID)) {
       const meta = await readNativeMeta(context.credentials, options);
       if (!meta.access_token) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable; reconnect the account.' });
-      files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(meta)));
+      if (!key) {
+        const { api_key: _custodianInferenceKey, ...accessOnlyMeta } = meta;
+        files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify({ schema_version: 1, providers: { meta: accessOnlyMeta } }));
+      } else {
+        files[MUSE_NATIVE_AUTH_FILE_ID] = new TextEncoder().encode(JSON.stringify(buildMuseNativeAuth(meta)));
+      }
     }
     return { kind: 'files', files };
   },

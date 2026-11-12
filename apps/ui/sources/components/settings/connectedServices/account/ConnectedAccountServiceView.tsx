@@ -475,15 +475,17 @@ const ConnectedAccountServiceController = React.memo(
     const hasSupportedBrowserMachine = hasOnlineBrowserMachine && targetSelection.pickerRows.some(row =>
         isMachineAdministrationCandidateSelectable(row.candidate)
         && readConnectedAccountBrowserSignInMachineSupport(row.machine) === 'supported');
-    const executionTarget = machineRequired ? targetSelection.resolveExecutionTarget() : null;
+    const selectedExecutionTarget = targetSelection.resolveExecutionTarget();
+    const executionTarget = machineRequired ? selectedExecutionTarget : null;
     const selectedBrowserMachineSupport = browserRequiresMachine && executionTarget !== null
         ? readConnectedAccountBrowserSignInMachineSupport(executionTarget.machine) : null;
     const selectedBrowserMachineNeedsUpdate = selectedBrowserMachineSupport === 'cli_update_required';
-    const machineId = targetSelection.selectedTargetServerMatchesActiveAccount
-        && (selectedBrowserMachineSupport === null || selectedBrowserMachineSupport === 'supported')
-        && executionTarget?.target.serverIdentityId === targetSelection.selectedTarget?.serverIdentityId
-        && executionTarget?.target.machineId === targetSelection.selectedTarget?.machineId
-        ? executionTarget?.machine.id ?? '' : '';
+    const selectedMachineId = targetSelection.selectedTargetServerMatchesActiveAccount
+        && selectedExecutionTarget?.target.serverIdentityId === targetSelection.selectedTarget?.serverIdentityId
+        && selectedExecutionTarget?.target.machineId === targetSelection.selectedTarget?.machineId
+        ? selectedExecutionTarget?.machine.id ?? '' : '';
+    const machineId = machineRequired && (selectedBrowserMachineSupport === null || selectedBrowserMachineSupport === 'supported')
+        ? selectedMachineId : '';
     const browserMachineUnavailableCode = !machineId && !attempt && !configuration
         && browserRequiresMachine && accountAuthenticationModes?.status === 'available'
         ? selectedBrowserMachineNeedsUpdate || hasOnlineBrowserMachine && !hasSupportedBrowserMachine
@@ -1905,6 +1907,7 @@ const ConnectedAccountServiceController = React.memo(
                 && !(route.focus !== null && route.focus.kind !== 'account' && authenticationFlowActive) ? (
                 <ConnectedAccountServiceContent
                     machineId={focusedAccountHasMachineAugmentation ? machineId || null : null}
+                    testConnectionMachineId={selectedMachineId || undefined}
                     signInFlow={focusedScreenOwnsScroll && route.focus?.kind === 'account' && (attempt || configuration || errorCode)
                         ? accountDetailAvailable && errorCode && errorPhase === 'load' && !attempt && !configuration
                             ? <SurfaceStateCard testID="qualified-account-detail:live-unavailable" size="line" kind="unavailable" title={t('common.unavailable')} />
@@ -2029,10 +2032,14 @@ export function ConnectedAccountServiceView() {
         useProjectedConnectedServicesRegistry();
     const activeServer = useActiveServerSnapshot();
     const activeAccountScope = useActiveServerAccountScope();
+    const focusedRoute = React.useMemo(
+        () => resolveQualifiedConnectedAccountSettingsRoute(params, connectedServicesRegistry.entries),
+        [connectedServicesRegistry.entries, params],
+    );
     const [machineRequired, setMachineRequired] = React.useState(false);
     const targetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
-        { enabled: machineRequired },
+        { enabled: machineRequired || focusedRoute?.focus?.kind === 'account' },
     );
     const controllerKey = [
         activeAccountScope
@@ -2046,10 +2053,6 @@ export function ConnectedAccountServiceView() {
         asStringParam(params.groupId),
     ].join('\u0000');
 
-    const focusedRoute = React.useMemo(
-        () => resolveQualifiedConnectedAccountSettingsRoute(params, connectedServicesRegistry.entries),
-        [connectedServicesRegistry.entries, params],
-    );
     const navigation = useNavigation();
     React.useLayoutEffect(() => {
         // Every screen of this route is an entity page whose `PageHeader` names the service,

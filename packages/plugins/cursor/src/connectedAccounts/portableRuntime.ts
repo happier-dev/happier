@@ -54,7 +54,30 @@ const materialize: NonNullable<ConnectedAccountPortableRuntime['materialize']> =
 };
 
 /** Portable manual entry and native delivery share the host's credential custody. */
-export const cursorPortableAccountRuntime: ConnectedAccountPortableRuntime = { authentication, materialize };
+const testConnection: NonNullable<ConnectedAccountPortableRuntime['testConnection']> = async (context, options) => {
+  const signal = options?.signal ?? context.signal;
+  signal.throwIfAborted();
+  const oauth = await context.credentials.get('credentialKind', { signal }) === 'oauth';
+  const token = await context.credentials.get(oauth ? 'accessToken' : API_KEY_CREDENTIAL_KEY, { signal });
+  if (!token) return { status: 'needsReauth', code: 'cursor_credentials_unavailable', reason: 'Reconnect Cursor to test its connection.' };
+  // CLI API keys first acquire tokens at /auth/exchange_user_api_key; a test must not do that.
+  if (!oauth) return { status: 'unsupported', code: 'cursor_api_key_test_unsupported', reason: 'Cursor API-key checks require a sign-in token exchange. A read-only connection check is not available for this mode.' };
+  let response;
+  try {
+    response = await context.services.http.request({ url: 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetMe', method: 'POST', redirect: 'error',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/proto', 'Connect-Protocol-Version': '1', 'x-cursor-client-type': 'cli' },
+      body: new Uint8Array() }, { signal });
+  } catch {
+    signal.throwIfAborted();
+    return { status: 'networkUnavailable', code: 'cursor_test_transport_unavailable', reason: 'Cursor could not be reached.' };
+  }
+  signal.throwIfAborted();
+  if (response.status >= 200 && response.status < 300) return { status: 'ok' };
+  return { status: response.status === 401 ? 'needsReauth' : response.status === 403 ? 'unsupported' : 'networkUnavailable',
+    code: `cursor_test_http_${response.status}`, reason: `Cursor returned HTTP ${response.status} for the connection check.` };
+};
+
+export const cursorPortableAccountRuntime: ConnectedAccountPortableRuntime = { authentication, materialize, testConnection };
 
 export function activate(api: PluginAccountApi): void {
   api.connectedAccounts.register('cursor-account', cursorPortableAccountRuntime);
@@ -76,7 +99,7 @@ const readHealth: ConnectedAccountRuntime['status'] = async (context, options) =
 };
 
 export const cursorConnectedAccountRuntime: ConnectedAccountRuntime = {
-  authentication, materialize,
+  authentication, materialize, testConnection,
   status: readHealth,
   async refresh(context, options) {
     return await context.credentials.get('credentialKind', options) === 'oauth' ? refreshCursorSubscription(context, options) : readHealth(context, options);

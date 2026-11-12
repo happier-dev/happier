@@ -6,7 +6,7 @@ import {
   type ConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readXaiCredential, type XaiCredential } from './credential.js';
-import { fetchXaiQuota } from './quota.js';
+import { fetchXaiQuota, requestXaiBilling, CREDITS_URL } from './quota.js';
 import { readXaiPolicyReason, xaiDiagnostic as diagnostic } from './failures.js';
 import { serializeGrokSelectedAuth } from './nativeAuth.js';
 import { GROK_XAI_CLIENT_ID, GROK_XAI_ISSUER, GROK_CONNECTED_ACCOUNT_MODE_ENV, XAI_SELECTED_API_KEY_ENV } from './service.js';
@@ -58,6 +58,33 @@ export async function saveCredential(credential: XaiCredential, context: Connect
 
 export function createXaiPortableConnectedAccountRuntime(): ConnectedAccountRuntime {
   return {
+    async testConnection(context, options) {
+      const signal = options?.signal ?? context.signal;
+      signal.throwIfAborted();
+      const stored = await context.credentials.get(XAI_CREDENTIAL_KEY, { signal });
+      let credential: XaiCredential;
+      try { credential = readXaiCredential(stored); }
+      catch {
+        signal.throwIfAborted();
+        return { status: 'needsReauth', code: 'xai_credentials_unavailable', reason: 'Reconnect xAI to test its connection.' };
+      }
+      let response;
+      try {
+        response = credential.mode === 'subscription'
+          ? await requestXaiBilling({ http: context.services.http, accessToken: credential.accessToken, url: CREDITS_URL, signal })
+          : await context.services.http.request({ url: `${BASES['api-key']}/models`, method: 'GET', redirect: 'error',
+            headers: { Authorization: `Bearer ${credential.accessToken}`, Accept: 'application/json' } }, { signal });
+      } catch {
+        signal.throwIfAborted();
+        return { status: 'networkUnavailable', code: 'xai_test_transport_unavailable', reason: 'xAI could not be reached.' };
+      }
+      signal.throwIfAborted();
+      if (response.status >= 200 && response.status < 300) return { status: 'ok' };
+      const policyReason = response.status === 403 ? readXaiPolicyReason(response.body) : undefined;
+      return { status: response.status === 401 ? 'needsReauth' : response.status === 403 ? 'unsupported' : 'networkUnavailable',
+        code: policyReason ?? `xai_test_http_${response.status}`,
+        reason: policyReason === 'BLOCKED_REASON_NO_LOGS' ? 'xAI policy blocks this account connection check.' : `xAI returned HTTP ${response.status} for the connection check.` };
+    },
     authentication: { modes: {
       'api-key': { kind: 'manual', async complete(input, context) {
         const key = input.fields.apiKey?.trim();

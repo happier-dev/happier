@@ -154,8 +154,10 @@ function invokeEstablished(
     operation: ConnectedAccountRuntimeEstablishedOperation,
     isCurrent: () => boolean = () => true,
     signal?: AbortSignal,
+    lease?: Parameters<typeof invoker.invokeEstablished>[0]['lease'],
 ) {
     return invoker.invokeEstablished({
+        ...(lease ? { lease } : {}),
         target: Object.freeze({
             account: Object.freeze({ service, accountId: 'account-a' }),
             expectedCredentialRevision: 'credential-1',
@@ -185,6 +187,35 @@ function invokeEstablished(
 }
 
 describe('connected-account runtime invoker', () => {
+    it('uses the exact portable runtime selected by the Account owner for a connection test', async () => {
+        const invoker = createEstablishedInvoker({ ...runtime(() => {}), async testConnection() {
+            throw new Error('native_runtime_must_not_replace_selected_account_runtime');
+        } });
+        const portable: import('@happier-dev/plugin-sdk/connected-accounts').ConnectedAccountPortableRuntime = {
+            authentication: { modes: {} }, async testConnection(context) {
+                expect(context.account).toEqual({ service, accountId: 'account-a' });
+                expect(context).toHaveProperty('services.http');
+                return { status: 'ok' };
+            },
+        };
+        const registry = createConnectedAccountContributionRegistry({
+            descriptors: [{ provenance: 'external', source: { kind: 'path' }, pluginId: service.pluginId,
+                definition: { ...descriptor, authentication: { ...descriptor.authentication,
+                    account: { artifactId: 'account-runtime', exportName: 'activate' } } } }],
+            readPluginOccurrenceId: () => runtimeIdentity.occurrenceId,
+            readPluginSourceCustody: () => runtimeIdentity.sourceCustody,
+            isPluginOccurrenceCurrent: () => true, activateOnDemand: async () => {},
+            readRegistrations: () => [{ pluginId: service.pluginId, localId: service.localId,
+                occurrenceId: runtimeIdentity.occurrenceId, realm: 'account', runtime: portable }],
+        });
+        try {
+            const selected = await registry.resolveAccount(service);
+            if (!selected) throw new Error('Expected admitted portable runtime');
+            await expect(invokeEstablished(invoker, { kind: 'testConnection' }, () => true, undefined, selected))
+                .resolves.toEqual({ status: 'ok' });
+        } finally { registry.dispose(); }
+    });
+
     it('invokes contributed native materialization through activation without fabricating a saved account', async () => {
         const registeredRuntime: PluginConnectedAccountRuntime = {
             ...runtime(() => {}),

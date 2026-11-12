@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useConnectedAccountTestConnection } from './useConnectedAccountTestConnection';
 import { isConnectedAccountSignedOut, parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 import type { ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -39,11 +40,14 @@ function useAuthenticationMachineName(provenance: QualifiedAccountDetailViewProp
  * usage, subscription, resets, used-by and works-on sections read by their own leaves.
  */
 export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail(
-    props: Omit<QualifiedAccountDetailViewProps, 'planLabel' | 'agentDefaults' | 'usageSection' | 'renderUsedBy' | 'worksOnSection'> & Readonly<{
+    props: Omit<QualifiedAccountDetailViewProps, 'planLabel' | 'agentDefaults' | 'usageSection' | 'renderUsedBy' | 'worksOnSection' | 'testConnection'> & Readonly<{
         legacyServiceId: ConnectedServiceId | null;
+        serverId?: string;
+        testConnectionMachineId?: string;
         machineId?: string | null;
     }>,
 ) {
+    const connectionTest = useConnectedAccountTestConnection({ serverId: props.serverId, account: props.account, machineId: props.testConnectionMachineId });
     const { present, hidden } = useConnectedAccountIdentityPrivacy();
     const quota = useQualifiedConnectedAccountQuota(props.account, { refreshMachineId: props.machineId });
     const subscription = useConnectedAccountSubscription(quota.usageRecordId);
@@ -75,8 +79,10 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
     return (
         <>
         <ConnectedAccountActionApprovalNotice execution={agentDefaults.execution} testID="connected-account-default-approval-pending" />
+        <ConnectedAccountActionApprovalNotice execution={connectionTest.execution} testID="connected-account-test-approval-pending" />
         <QualifiedAccountDetailView
             {...props}
+            testConnection={connectionTest.control}
             presentation={presentation}
             providerEmail={shown.email}
             providerAccountId={shown.accountId}

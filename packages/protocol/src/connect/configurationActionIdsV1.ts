@@ -25,6 +25,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   CONNECTED_SERVICES_ACCOUNTS_LIST_ACTION_ID_V1,
   'connectedServices.accounts.credentials.save',
   'connectedServices.catalog.list',
+  'connectedServices.accounts.testConnection',
   'connectedServices.accounts.rename',
   'connectedServices.accounts.revoke',
   'connectedServices.accounts.default.set',

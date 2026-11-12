@@ -187,6 +187,17 @@ export async function executeConnectedServiceConfigurationActionV1(
   }
   try {
   switch (actionId) {
+    case 'connectedServices.accounts.testConnection': {
+      const args = inputs[actionId].parse(input);
+      if (!host.controlCommand) return outputs[actionId].parse({ status: 'unsupported',
+        code: 'connected_account_connection_test_unsupported', reason: 'This service does not provide a connection test.' });
+      const response = ConnectedAccountDaemonControlResponseSchema.parse(await host.controlCommand(args.machineId,
+        { operation: 'testConnection', account: args.account }));
+      host.assertCurrent();
+      if (response.status === 'connectionTested') return outputs[actionId].parse(response.result);
+      return { ok: false, errorCode: 'code' in response ? response.code : 'connected_account_control_unavailable',
+        error: 'code' in response ? response.code : 'connected_account_control_unavailable' };
+    }
     case 'connectedServices.accounts.credentials.save': {
       const args = inputs[actionId].parse(input);
       if (!host.configurationCatalog || !host.sealAccountCredential) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };

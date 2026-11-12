@@ -38,6 +38,28 @@ function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (del
 }
 
 describe('connected-service configuration Action owner', () => {
+    it.each([undefined, 'selected-machine'])('tests the exact selected account through the shared public Action (machine %s)', async machineId => {
+        const account = { service, accountId: 'non-default' };
+        const result = { status: 'networkUnavailable' as const, reason: 'Provider cannot be reached', code: 'provider_unreachable' };
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {},
+            async request() { throw new Error('no_unrelated_account_read'); },
+            async mutatePurposeBindings() { throw new Error('connection_test_must_not_write'); },
+            async resolveAgent() { return null; },
+            async resetQuota() { throw new Error('connection_test_must_not_spend_usage'); },
+            async controlCommand(selectedMachine, command) {
+                expect(selectedMachine).toBe(machineId);
+                expect(command).toEqual({ operation: 'testConnection', account });
+                return { status: 'connectionTested', result };
+            },
+        };
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) }));
+        const id = 'connectedServices.accounts.testConnection';
+        expect(ActionIdSchema.safeParse(id).success).toBe(true);
+        expect(getActionSpec(id).executionPlacementForInput?.({ account, ...(machineId ? { machineId } : {}) })).toBe(machineId ? 'machine' : 'account');
+        expect(await executor.execute(id, { account, ...(machineId ? { machineId } : {}) }, { surface: 'cli', authority: 'account_automation' })).toEqual({ ok: true, result });
+    });
+
     it('reads one selected pool through the public Account Action without inventory, secrets or approval', async () => {
         const id = 'connectedServices.pools.get';
         const ref = { service, groupId: 'selected' };

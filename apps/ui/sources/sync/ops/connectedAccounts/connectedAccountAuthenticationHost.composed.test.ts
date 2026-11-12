@@ -209,6 +209,10 @@ it.each([{ mode: 'plain', surface: 'ui' }, { mode: 'e2ee', surface: 'agent' }] a
     expect(machineReads).toBe(0);
     expect(JSON.stringify([begin, outcome, observations])).not.toContain(sentinel);
     expect(saved.current?.content.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
+    if (!saved.current) throw new Error('Credential was not saved');
+    const tested = await createDefaultActionExecutor().execute('connectedServices.accounts.testConnection',
+        { account: saved.current.ref }, { surface: 'ui', serverId });
+    expect(tested).toMatchObject({ ok: true, result: { status: 'unsupported' } });
     const fresh = await captureLazyActionAccountContext(serverId);
     try {
         const persistence = createUiConnectedAccountCredentialPersistence(fresh);

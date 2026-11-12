@@ -173,6 +173,14 @@ export function snapshotConnectedAccountEstablishedResult<
     // Runtime registration owns the SDK ABI. These values come from trusted
     // executable code; wire and persistence owners parse their own boundaries.
     if (options.quotaLeafUnavailable) return null as ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>;
+    if (operation.kind === 'testConnection') {
+        const result = raw as import('./establishedRuntimeTypes.js').ConnectedAccountConnectionTestResult;
+        const redact = options.redactDiagnosticText ?? ((text: string) => text);
+        return Object.freeze({ status: result.status,
+            ...(result.reason === undefined ? {} : { reason: redact(result.reason) }),
+            ...(result.code === undefined ? {} : { code: redact(result.code) }),
+        }) as ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>;
+    }
     if (operation.kind === 'materialize') {
         const result = raw as PluginConnectedAccountMaterialization;
         const scope = result.usageAccountScope === undefined ? {} : { usageAccountScope: result.usageAccountScope };

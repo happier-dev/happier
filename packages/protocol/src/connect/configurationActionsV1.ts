@@ -12,7 +12,7 @@ import {
 import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, ConnectedServiceBindingSelectionV2Schema } from './connectedServiceBindings.js';
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1Schema, ConnectedAccountRevokedResponseV1Schema,
-  ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema } from './connectedAccountDaemonRpcV1.js';
+  ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema, ConnectedAccountConnectionTestResultSchema } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedAccountAuthenticationCommandSchemas } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
@@ -79,6 +79,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   ])),
   'connectedServices.billing.open': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().check(z.trim(), z.minLength(1)) }),
   'connectedServices.subscription.price.set': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), price: lazyZodSchema(() => z.nullable(z.omit(ProviderAccountSubscriptionMonthlyPriceV1Schema, { enteredAtMs: true }))) }),
+  'connectedServices.accounts.testConnection': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
   'connectedServices.accounts.rename': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), label: z.nullable(z.string()) }),
   'connectedServices.accounts.revoke': lazyZodSchema(() => z.extend(z.omit(ConnectedAccountRevokeCommandV1Schema, { operation: true }), { machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) })),
   'connectedServices.accounts.default.set': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), agentId: z.string().check(z.trim(), z.minLength(1)), makeDefault: z.boolean(), machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
@@ -143,6 +144,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   'connectedServices.configuration.replace': z.extend(Success, { revision: z.string().check(z.minLength(1), z.maxLength(256)) }),
   'connectedServices.billing.open': z.strictObject({ opened: z.literal(true) }),
   'connectedServices.subscription.price.set': Success,
+  'connectedServices.accounts.testConnection': ConnectedAccountConnectionTestResultSchema,
   'connectedServices.accounts.rename': Success,
   'connectedServices.accounts.revoke': RevokeActionResponse,
   'connectedServices.accounts.default.set': Success,
@@ -168,6 +170,11 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   'connectedServices.labels.reset': Success,
   'connectedServices.acknowledgements.reset': Success,
 } as const;
+
+/** All surfaces construct the same exact-account connection-test Action operand. */
+export function buildConnectedAccountTestConnectionInputV1(input: ReturnType<typeof CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.accounts.testConnection']['parse']>) {
+  return CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1['connectedServices.accounts.testConnection'].parse(input);
+}
 
 /** Only an explicitly selected native Account configuration requires a Machine. */
 export function isConnectedServiceConfigurationMachineRequiredV1(
