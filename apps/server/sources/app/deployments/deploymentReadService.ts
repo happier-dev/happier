@@ -51,7 +51,7 @@ export async function readDeploymentApprovalEnvironmentInTx(tx: Tx, actorAccount
         select: { id: true, projectSourceId: true, purpose: true, previewTemplateEnvironmentId: true,
             previewCompanionOfEnvironmentId: true,
             previewCompanionOfEnvironment: { select: { previewTemplateEnvironmentId: true } } } });
-    if (!environment) return deploymentFailure('deployment_unavailable');
+    if (!environment) return deploymentFailure('deployment_unavailable', { phase: 'deployment.approval.environment.read', causeKind: 'not_found' });
     const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(environment);
     return DeploymentApprovalEnvironmentResultV1Schema.parse({ ok: true, environment: {
         id: environment.id, projectSourceId: environment.projectSourceId, purpose: environment.purpose,
@@ -71,7 +71,7 @@ export async function readDeploymentEnvironmentAccessInTx(tx: Tx, actorAccountId
 ): Promise<DeploymentEnvironmentAccessResultV1> {
     const environmentIds = [...new Set(input.environmentIds)];
     if (!environmentIds.length) return { ok: true, items: [] };
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.access.server', causeKind: 'server_mismatch' });
     const environments = new Map<string, Readonly<{ id: string; projectSourceId: string; deletedAt: Date | null; deployerMode: string;
         deployers: readonly Readonly<{ principalKind: string; principalId: string }>[] }>>();
     for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {
@@ -107,9 +107,9 @@ function deploymentMachineReferenceWhere(machineId: string) {
 export async function readDeploymentMachineReferencesInTx(tx: Tx, actorAccountId: string,
     input: MachineDeploymentReferencesInputV1, authentication: DeploymentAuthentication = {},
 ): Promise<MachineDeploymentReferencesPageV1 | ReturnType<typeof deploymentFailure>> {
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.homeId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.machine.references.server', causeKind: 'server_mismatch' });
     const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [actorAccountId], machineIds: [input.machineId] });
-    if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable');
+    if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.machine.references.access', causeKind: 'access_denied' });
     const limit = ARTIFACT_LIST_PAGE_MAX_ITEMS_V1;
     const capturedDomainEnvironmentIds = await readDeploymentDomainEnvironmentIdsForMachineInTx(tx, {
         machineId: input.machineId, afterEnvironmentId: input.cursor, limit: limit + 1,
@@ -174,7 +174,7 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     // One Environment read includes runtime, data and retained link custody.
     const targetRows = await loadDeploymentTargetRowsInTx(tx, loaded.row.id);
     const targetLinks = targetRows.map(projectDeploymentTargetHeader);
-    if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable');
+    if (loaded.row.runtimeTargetLinkId && !targetLinks.some(link => link.id === loaded.row.runtimeTargetLinkId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.read.runtime_target', causeKind: 'binding_missing' });
     // Registry admission already selected this Environment. Its Artifact GET
     // consumes the current reference through the existing mode/envelope reader.
     const failures = registryEnvironment || acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, input.environmentId)
@@ -239,7 +239,7 @@ export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
     acceptedRead?: AcceptedDeploymentRead,
 ) {
     const row = await tx.deployment.findUnique({ where: { id: input.deploymentId } });
-    if (!row || (input.environmentId !== undefined && input.environmentId !== row.environmentId)) return deploymentFailure('deployment_unavailable');
+    if (!row || (input.environmentId !== undefined && input.environmentId !== row.environmentId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.receipt.read', causeKind: row ? 'access_denied' : 'not_found' });
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, row.environmentId, authentication,
         acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id));
     if (!loaded.ok) return loaded;
@@ -258,13 +258,13 @@ export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
 export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentListInputV1,
     authentication: DeploymentAuthentication = {},
 ) {
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.list.server', causeKind: 'server_mismatch' });
     let cursor: string | undefined;
     try { cursor = openDeploymentReadCursor(actorAccountId, input); }
     catch { return deploymentFailure('deployment_invalid'); }
     if (input.machineId) {
         const access = await resolveEffectiveMachineAccessForMachinesInTx(tx, { accountIds: [actorAccountId], machineIds: [input.machineId] });
-        if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable');
+        if (!access.get(input.machineId)?.get(actorAccountId)) return deploymentFailure('deployment_unavailable', { phase: 'deployment.environment.list.machine_access', causeKind: 'access_denied' });
     }
     const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();
     if (input.projectSourceId) {
@@ -277,24 +277,26 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         const provider = getDbProviderFromEnv(process.env, 'postgres');
         const sourceFilter = input.projectSourceId === undefined ? ''
             : ` AND e."projectSourceId" = ${provider === 'postgres' ? '$1' : '?'}`;
-        // Same latest-attempt ordering as the list below. Return only distinct
-        // Source/state pairs, never Environment inventories or private content.
-        const sql = `SELECT DISTINCT e."projectSourceId" AS "projectSourceId", d."state" AS "state"
+        // Same latest-attempt ordering as the list below. Aggregate Environment counts
+        // by Source/state before admission; never load inventories or private content.
+        const sql = `SELECT e."projectSourceId" AS "projectSourceId", d."state" AS "state", COUNT(*) AS "environmentCount"
             FROM "DeploymentEnvironment" e JOIN "Deployment" d ON d."id" = (
                 SELECT newest."id" FROM "Deployment" newest WHERE newest."environmentId" = e."id"
                 ORDER BY newest."requestedAt" DESC, newest."id" DESC LIMIT 1
-            ) WHERE e."deletedAt" IS NULL${sourceFilter}`;
-        const rows = await tx.$queryRawUnsafe<Array<{ projectSourceId: string; state: string }>>(
+            ) WHERE e."deletedAt" IS NULL${sourceFilter}
+            GROUP BY e."projectSourceId", d."state"`;
+        const rows = await tx.$queryRawUnsafe<Array<{ projectSourceId: string; state: string; environmentCount: bigint | number | string }>>(
             provider === 'mysql' ? sql.replaceAll('"', '`') : sql,
             ...(input.projectSourceId === undefined ? [] : [input.projectSourceId]));
         const sourceIds = [...new Set(rows.map(row => row.projectSourceId))].filter(id => !sources.has(id));
         const admissions = sourceIds.length ? await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true }) : null;
-        const activity = { running: false, failed: false };
+        const activity = { running: false, failed: false, attentionCount: 0 };
         for (const row of rows) {
             if (sources.get(row.projectSourceId)?.ok !== true && admissions?.get(row.projectSourceId)?.ok !== true) continue;
             const fact = projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state));
             activity.running ||= fact.running;
             activity.failed ||= fact.failed;
+            if (fact.running || fact.failed) activity.attentionCount += Number(row.environmentCount);
         }
         return { ok: true as const, items: [], currentDeployments: [], runtimeTargetLinks: [],
             nextCursor: null, coverage: 'complete' as const, activity };

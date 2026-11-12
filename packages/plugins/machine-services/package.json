@@ -17,7 +17,12 @@
       "default": "./dist/manifest.js"
     },
     "./happier-plugin-ui/healthSetup": "./src/ui/healthSetup.ts",
-    "./happier-plugin-ui/health-setup": "./src/ui/healthSetup.ts"
+    "./happier-plugin-ui/health-setup": "./src/ui/healthSetup.ts",
+    "./health-results": {
+      "happier-source": "./src/healthResultProjection.ts",
+      "types": "./dist/healthResultProjection.d.ts",
+      "default": "./dist/healthResultProjection.js"
+    }
   },
   "files": [
     "assets",

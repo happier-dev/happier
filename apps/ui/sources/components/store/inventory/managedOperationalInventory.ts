@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useConfiguredHealthResults } from './useConfiguredHealthResults';
+import { configuredHealthResultsForTrigger, CONFIGURED_HEALTH_LOADING, type ConfiguredHealthResultsState } from './configuredHealthResults';
 import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
 import { useMachineListForServerSelection } from '@/sync/store/hooks';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -67,8 +69,9 @@ const NO_SERVER_IDS: readonly string[] = Object.freeze([]);
 /** A saved Check, known from its Automation summary alone, so one that has never run is still listed. */
 export type ManagedConfiguredCheckRow = Readonly<{
     kind: 'configuredCheck'; key: string; scope: ServerAccountScope; automationId: string; triggerId: string; native: AutomationDefinition;
+    lastResults: ConfiguredHealthResultsState;
 }>;
-type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | 'automation_page', never>;
+type ConfiguredCheckResult = InstalledFamilyResult<ManagedConfiguredCheckRow, NativeReason | 'automation_page' | 'health_result_page' | 'health_result_unavailable' | 'health_result_loading', () => void>;
 const EMPTY_CHECK_ROWS: readonly ManagedConfiguredCheckRow[] = Object.freeze([]);
 
 /** P30 records only adopted Machine watches here; Environment services stay with their App. */
@@ -173,6 +176,8 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
     const ready = useIsDataReady();
     const scope = admitted.scope;
     const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
+    const healthResults = useConfiguredHealthResults(scope, listed && automations.some(native => native.triggers.some(trigger =>
+        isPluginEventAutomationTrigger(trigger) && trigger.eventRef.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1)));
     const previous = React.useRef(EMPTY_CHECK_ROWS);
     const rows = React.useMemo(() => {
         if (!listed || !scope) return EMPTY_CHECK_ROWS;
@@ -181,15 +186,23 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
             if (!isPluginEventAutomationTrigger(trigger) || trigger.eventRef.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1) return [];
             const key = serverAccountScopedResourceKey(scope, 'configured-check', native.id, trigger.id);
             const retained = byKey.get(key);
-            return [retained?.native === native ? retained : { kind: 'configuredCheck', key, scope, automationId: native.id, triggerId: trigger.id, native }];
+            const lastResults = !healthResults ? CONFIGURED_HEALTH_LOADING : 'kind' in healthResults.value ? healthResults.value
+                : configuredHealthResultsForTrigger(healthResults.value, native.id, trigger);
+            return [retained?.native === native && retained.lastResults === lastResults ? retained : { kind: 'configuredCheck', key, scope, automationId: native.id, triggerId: trigger.id, native, lastResults }];
         }));
         if (next.length !== previous.current.length || next.some((row, index) => row !== previous.current[index])) previous.current = next.length === 0 ? EMPTY_CHECK_ROWS : next;
         return previous.current;
-    }, [automations, listed, scope]);
+    }, [automations, listed, scope, healthResults]);
     return React.useMemo<ConfiguredCheckResult>(() => {
         if (!scope) return { rows: EMPTY_CHECK_ROWS, coverage: admitted.coverage };
         if (input.projectKey || input.machine) return { rows: EMPTY_CHECK_ROWS, coverage: 'available' };
         if (!demand.presented || !ready) return { rows: EMPTY_CHECK_ROWS, coverage: 'loading' };
-        return { rows, coverage: nextCursor === null ? 'available' : { partial: 'automation_page' } };
-    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor]);
+        if (nextCursor !== null) return { rows, coverage: { partial: 'automation_page' } };
+        if (rows.length === 0) return { rows, coverage: 'available' };
+        if (!healthResults) return { rows, coverage: { partial: 'health_result_loading' } };
+        if ('kind' in healthResults.value) return { rows, coverage: { partial: 'health_result_unavailable' }, continuation: healthResults.loadNext };
+        const partial = healthResults.value.preceding || healthResults.value.nextCursor !== undefined;
+        return { rows, coverage: partial ? { partial: 'health_result_page' } : 'available',
+            ...(partial ? { continuation: healthResults.loadNext } : {}) };
+    }, [scope, admitted.coverage, input.projectKey, input.machine, demand.presented, ready, rows, nextCursor, healthResults]);
 }

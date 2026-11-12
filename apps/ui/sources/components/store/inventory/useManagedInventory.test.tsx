@@ -368,7 +368,8 @@ it('retains native partial and unavailable facts instead of classifying zero row
         `GET ${MCP_SERVER_CATALOG_ROWS_ROUTE_V1}`, { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { v: 1, servers, bindings: [] } } } });
     answer([]);
-    const hook = await renderHook(() => useManagedInventory({ scope, machine: null, projectKey: null, presented: true }), { wrapper: Boundary });
+    let kinds: readonly ('mcpServer')[] | undefined;
+    const hook = await renderHook(() => useManagedInventory({ scope, machine: null, projectKey: null, presented: true, kinds }), { wrapper: Boundary });
     await vi.waitFor(() => expect(hook.getCurrent().families.mcpServer.coverage).toBe('available'));
     expect(hook.getCurrent().families.mcpServer.rows).toEqual([]);
     answer([{ invalid: 'unreadable-neighbor' }]);
@@ -379,6 +380,12 @@ it('retains native partial and unavailable facts instead of classifying zero row
     await act(async () => { await refreshMcpServerCatalog(scope); });
     expect(hook.getCurrent().families.mcpServer.coverage).toMatchObject({ unavailable: { reason: 'forbidden' } });
     expect(hook.getCurrent().coverage).toBe('partial');
+    kinds = ['mcpServer'];
+    await hook.rerender();
+    expect(hook.getCurrent().coverage).toBe('unavailable');
+    kinds = [];
+    await hook.rerender();
+    expect(hook.getCurrent()).toMatchObject({ coverage: 'complete', rows: [] });
     await hook.unmount();
     await flushHookEffects();
     expect(rpc.state.requests).toHaveLength(0);
@@ -473,5 +480,45 @@ it('joins a native held Test failure to current Machine presence without startin
     const requests = rpc.state.requests.length;
     await hook.rerender();
     expect(rpc.state.requests).toHaveLength(requests);
+    await hook.unmount();
+});
+
+
+it('sizes open requests to requested inventory kinds and does no hidden or unrelated-family reads', async () => {
+    const home = await account.restore({ serverIdentityId: 'srv_inventory_kind_demand', machines: [] });
+    const scope = storage.getState().settingsScope!;
+    let query = { scope, machine: null, projectKey: null, presented: true,
+        kinds: ['configuredCheck'] as readonly ('configuredCheck' | 'app' | 'mcpServer' | 'configuredBackup')[] };
+    const reads = () => account.home.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments'
+        || request.path.split('?')[0] === MCP_SERVER_CATALOG_ROWS_ROUTE_V1);
+    account.home.answer(home.serverId, '/v1/deployments/environments', { body: {
+        ok: true, items: [], currentDeployments: [], runtimeTargetLinks: [], nextCursor: null, coverage: 'complete',
+    } });
+    account.home.answer(home.serverId, MCP_SERVER_CATALOG_ROWS_ROUTE_V1, { body: {
+        status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } },
+    } });
+    await act(async () => { storage.setState({ isDataReady: true, automationDefinitionNextCursor: null }); });
+    const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
+    await flushHookEffects();
+    expect(reads()).toHaveLength(0);
+    expect(rpc.state.requests).toHaveLength(0);
+    query = { ...query, kinds: ['app'] };
+    await hook.rerender();
+    await vi.waitFor(() => expect(hook.getCurrent().families.app.coverage).toBe('available'));
+    expect(reads().map(request => request.path.split('?')[0])).toEqual(['/v1/deployments/environments']);
+    query = { ...query, kinds: ['configuredBackup'] };
+    await hook.rerender();
+    await flushHookEffects();
+    expect(reads()).toHaveLength(1);
+    expect(hook.getCurrent().families.app.rows).toEqual([]);
+    query = { ...query, kinds: ['app', 'mcpServer'] };
+    await hook.rerender();
+    await vi.waitFor(() => expect(hook.getCurrent().families.mcpServer.coverage).toBe('available'));
+    expect(reads()).toHaveLength(2);
+    query = { ...query, presented: false, kinds: ['configuredCheck'] };
+    await hook.rerender();
+    await flushHookEffects();
+    expect(reads()).toHaveLength(2);
+    expect(hook.getCurrent().rows).toEqual([]);
     await hook.unmount();
 });

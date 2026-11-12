@@ -1229,3 +1229,104 @@ describe('Plugin UI Data client', () => {
         });
     });
 });
+
+
+it('pushes configured health result batches without per-row reads or equal-result publications', async () => {
+    const current = (id: string, status = 'up', observedAt = 1) => ({ v: 1,
+        members: [{ automationId: id, triggerId: id, triggerRevision: 1, sourceSelectorId: 'selector-' + id }],
+        checks: [{ checkId: 'http', result: { status, observedAt, evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: 'result' }] } } }] });
+    let values = { 'health:a': { version: 1, value: { current: current('a') } },
+        'health:b': { version: 1, value: { current: current('b') } } };
+    const harness = await loadClient({ accountKvRead: () => Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { v: 1, values } } }) });
+    const { observeConfiguredHealthResults, configuredHealthResultKey, configuredHealthResultsForTrigger } = await import('@/components/store/inventory/configuredHealthResults');
+    const { registerActivePluginCollectionChangeWatch, publishActivePluginCollectionChanges } = await import('./pluginCollectionChangeWatch');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime()!;
+    const controller = new AbortController();
+    const published: Parameters<Parameters<typeof observeConfiguredHealthResults>[0]['publish']>[0][] = [];
+    const dispose = observeConfiguredHealthResults({ kv: harness.client.accountKv, signal: controller.signal,
+        subscribe: listener => {
+            const watch = registerActivePluginCollectionChangeWatch({ pluginId, kvPrefix: 'health:', lifetime, onInvalidated: listener });
+            return () => watch.dispose();
+        }, publish: value => published.push(value) });
+    const reads = () => harness.transport.mock.calls.filter(([path]) => path === '/v1/account/plugin-storage/' + pluginId).length;
+    const { buildPluginDomainAccountChangeEntityId, PluginDomainChangeEntrySchema } = await import('@happier-dev/protocol/changes');
+    const hint = (cursor: number, id: string) => publishActivePluginCollectionChanges([PluginDomainChangeEntrySchema.parse({ kind: 'pluginDomain', changedAt: 1,
+        entityId: buildPluginDomainAccountChangeEntityId({ pluginDomain: 'dataKv', pluginId, keys: [id] }),
+        cursor, hint: { pluginDomain: 'dataKv', pluginId, keys: [id] } })]);
+    try {
+        await vi.waitFor(() => expect(published).toHaveLength(1));
+        expect(reads()).toBe(1);
+        const first = published[0]!;
+        if ('kind' in first) throw Error('Expected health result page');
+        expect(configuredHealthResultsForTrigger(first, 'a', { id: 'a', revision: 2, sourceSelectorId: 'selector-a' })).toEqual({ kind: 'neverObserved' });
+        expect(configuredHealthResultsForTrigger(first, 'a', { id: 'a', revision: 1, sourceSelectorId: 'other-selector' })).toEqual({ kind: 'neverObserved' });
+        hint(10, 'other-domain:row'); await Promise.resolve();
+        expect(reads()).toBe(1);
+        values = { ...values, 'health:a': { version: 2, value: { current: current('a', 'up', 2) } } };
+        hint(11, 'health:a');
+        await vi.waitFor(() => expect(reads()).toBe(2));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(published).toHaveLength(1);
+        values = { ...values, 'health:a': { version: 3, value: { current: current('a', 'down', 3) } } };
+        hint(12, 'health:a');
+        await vi.waitFor(() => expect(published).toHaveLength(2));
+        const second = published[1]!;
+        if ('kind' in second) throw Error('Expected health result page');
+        expect(second.results.get(configuredHealthResultKey('a', 'a'))?.state).toMatchObject({ kind: 'available', checks: [{ result: { status: 'down' } }] });
+        expect(second.results.get(configuredHealthResultKey('b', 'b'))).toBe(first.results.get(configuredHealthResultKey('b', 'b')));
+        harness.retire();
+        hint(13, 'health:a'); await Promise.resolve();
+        expect(reads()).toBe(3);
+    } finally { controller.abort(); dispose.dispose(); }
+});
+
+
+it('acquires one health result page until explicit continuation and marks missing partial results notLoaded', async () => {
+    const { PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1 } = await import('@happier-dev/protocol/plugins/data/accountKvValueV1');
+    const total = PLUGIN_ACCOUNT_STORAGE_BROWSER_NEUTRAL_LIMITS_V1.maximumLogicalKeys;
+    const values = Object.fromEntries(Array.from({ length: total }, (_, index) => {
+        const id = String(index).padStart(5, '0');
+        return ['health:' + id, { version: 1, value: { current: { v: 1,
+            members: [{ automationId: id, triggerId: id, triggerRevision: 1, sourceSelectorId: id }],
+            checks: [{ checkId: 'http', result: { status: 'up', observedAt: 1,
+                evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: 'up' }] } } }] } } }];
+    }));
+    const harness = await loadClient({ accountKvRead: () => Response.json({ status: 'present', revision: 1,
+        content: { t: 'plain', v: { v: 1, values } } }) });
+    const { observeConfiguredHealthResults, configuredHealthResultsForTrigger } = await import('@/components/store/inventory/configuredHealthResults');
+    const controller = new AbortController();
+    const published: Parameters<Parameters<typeof observeConfiguredHealthResults>[0]['publish']>[0][] = [];
+    const observer = observeConfiguredHealthResults({ kv: harness.client.accountKv, signal: controller.signal,
+        subscribe: () => () => {}, publish: page => published.push(page) });
+    const reads = () => harness.transport.mock.calls.filter(([path]) => path === '/v1/account/plugin-storage/' + pluginId).length;
+    try {
+        await vi.waitFor(() => expect(published).toHaveLength(1));
+        expect(reads()).toBe(1);
+        const first = published[0]!;
+        if ('kind' in first) throw Error('Expected health result page');
+        expect(first.results.size).toBeGreaterThan(0);
+        expect(first.results.size).toBeLessThan(total);
+        expect(first.nextCursor).toBeDefined();
+        const id = String(total - 1).padStart(5, '0');
+        expect(configuredHealthResultsForTrigger(first, id, { id, revision: 1, sourceSelectorId: id })).toEqual({ kind: 'notLoaded' });
+        let current = first;
+        let expectedReads = 1;
+        while (current.nextCursor) {
+            observer.loadNext();
+            expectedReads += 1;
+            await vi.waitFor(() => expect(published).toHaveLength(expectedReads));
+            expect(reads()).toBe(expectedReads);
+            const next = published.at(-1)!;
+            if ('kind' in next) throw Error('Expected health result page');
+            current = next;
+        }
+        const last = current;
+        if ('kind' in last) throw Error('Expected health result page');
+        expect(last.preceding).toBe(true);
+        expect(last.nextCursor).toBeUndefined();
+        expect(configuredHealthResultsForTrigger(last, id, { id, revision: 1, sourceSelectorId: id })).toMatchObject({ kind: 'available' });
+        expect(configuredHealthResultsForTrigger(last, '00000', { id: '00000', revision: 1, sourceSelectorId: '00000' })).toEqual({ kind: 'notLoaded' });
+    } finally { controller.abort(); observer.dispose(); }
+});

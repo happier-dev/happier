@@ -7,7 +7,10 @@ import { useInstalledScope } from '../catalog/storeAccountAdmission';
 
 export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow | ManagedSetupRow | ManagedConfiguredCheckRow | ManagedConfiguredBackupRow;
 
-export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand;
+export type ManagedInventoryKind = ManagedInventoryRow['kind'];
+export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand & Readonly<{ kinds?: readonly ManagedInventoryKind[] }>;
+const HIDDEN_DEMAND: StoreDemand = Object.freeze({ presented: false });
+const PRESENTED_DEMAND: StoreDemand = Object.freeze({ presented: true });
 export type ManagedInventoryFamilies = Readonly<{
     [Kind in keyof typeof storeKinds]: ReturnType<(typeof storeKinds)[Kind]['useInstalled']>;
 }>;
@@ -29,7 +32,7 @@ export type ManagedInventoryView = Readonly<{
 /** Summary only; callers retain each original family for reason, recovery and paging. */
 export function summarizeInstalledFamilies<Result extends Pick<ManagedInventoryFamilies[keyof ManagedInventoryFamilies], 'coverage'>>(results: readonly Result[]) {
     const loading = results.some(family => family.coverage === 'loading');
-    const coverage = results.every(family => typeof family.coverage === 'object' && 'unavailable' in family.coverage)
+    const coverage = results.length > 0 && results.every(family => typeof family.coverage === 'object' && 'unavailable' in family.coverage)
         ? 'unavailable' : results.every(family => family.coverage === 'available')
             ? 'complete' : 'partial';
     return { loading, coverage } as const;
@@ -39,31 +42,42 @@ export function summarizeInstalledFamilies<Result extends Pick<ManagedInventoryF
 export function useManagedInventory(query: ManagedInventoryQuery): ManagedInventoryView {
     const input = React.useMemo<StoreInstalledInput>(() => ({ scope: query.scope, machine: query.machine,
         projectKey: query.projectKey }), [query.scope, query.machine, query.projectKey]);
-    const demand = React.useMemo(() => ({ presented: query.presented }), [query.presented]);
+    const requested = (kind: ManagedInventoryKind) => query.kinds === undefined || query.kinds.includes(kind);
+    const demand = (kind: ManagedInventoryKind) => query.presented && requested(kind) ? PRESENTED_DEMAND : HIDDEN_DEMAND;
+    // Backups project the App page, so they share its acquisition without exposing unrequested App rows.
+    const appDemand = query.presented && (requested('app') || requested('configuredBackup')) ? PRESENTED_DEMAND : HIDDEN_DEMAND;
     const admitted = useInstalledScope(input);
-    const app = storeKinds.app.useInstalled(input, demand, admitted);
-    const configuredBackup = useManagedConfiguredBackups(app);
-    const browserExtension = storeKinds.browserExtension.useInstalled(input, demand, admitted);
-    const mcpServer = storeKinds.mcpServer.useInstalled(input, demand, admitted);
-    const skill = storeKinds.skill.useInstalled(input, demand, admitted);
-    const agent = storeKinds.agent.useInstalled(input, demand, admitted);
-    const provider = storeKinds.provider.useInstalled(input, demand, admitted);
-    const plugin = storeKinds.plugin.useInstalled(input, demand, admitted);
-    const software = storeKinds.software.useInstalled(input, demand, admitted);
-    const watchedService = useManagedWatchedServices(input, demand, admitted);
-    const setup = useManagedSetup(input, demand, admitted);
-    const configuredCheck = useManagedConfiguredChecks(input, demand, admitted);
+    const acquiredApps = storeKinds.app.useInstalled(input, appDemand, admitted);
+    const backupProjection = useManagedConfiguredBackups(acquiredApps);
+    const appPresented = demand('app').presented;
+    const backupPresented = demand('configuredBackup').presented;
+    const app = React.useMemo(() => appPresented ? acquiredApps : { ...acquiredApps, rows: [] }, [acquiredApps, appPresented]);
+    const configuredBackup = React.useMemo(() => backupPresented ? backupProjection : { ...backupProjection, rows: [] }, [backupProjection, backupPresented]);
+    const browserExtension = storeKinds.browserExtension.useInstalled(input, demand('browserExtension'), admitted);
+    const mcpServer = storeKinds.mcpServer.useInstalled(input, demand('mcpServer'), admitted);
+    const skill = storeKinds.skill.useInstalled(input, demand('skill'), admitted);
+    const agent = storeKinds.agent.useInstalled(input, demand('agent'), admitted);
+    const provider = storeKinds.provider.useInstalled(input, demand('provider'), admitted);
+    const plugin = storeKinds.plugin.useInstalled(input, demand('plugin'), admitted);
+    const software = storeKinds.software.useInstalled(input, demand('software'), admitted);
+    const watchedService = useManagedWatchedServices(input, demand('watchedService'), admitted);
+    const setup = useManagedSetup(input, demand('setup'), admitted);
+    const configuredCheck = useManagedConfiguredChecks(input, demand('configuredCheck'), admitted);
     const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck, configuredBackup }), [watchedService, setup, configuredCheck, configuredBackup]);
     const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software }),
         [app, browserExtension, mcpServer, skill, agent, provider, plugin, software]);
     const rows = React.useMemo<readonly ManagedInventoryRow[]>(() => [...app.rows, ...browserExtension.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows,
-        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows, ...configuredBackup.rows],
-        [app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows, configuredBackup.rows]);
-    const attentionQuery = React.useMemo(() => ({ ...input, presented: demand.presented }), [input, demand.presented]);
+        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows, ...configuredBackup.rows].filter(row => query.presented && (query.kinds === undefined || query.kinds.includes(row.kind))),
+        [query.presented, query.kinds, app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows, configuredBackup.rows]);
+    const attentionQuery = React.useMemo(() => ({ ...input, presented: query.presented }), [input, query.presented]);
     const attention = useManagedInventoryAttention(attentionQuery, families, rows, admitted.scope);
     return React.useMemo(() => {
         // Checks claim no Machine, so on a Machine door they neither add to nor soften that Machine's own coverage.
-        const results = [...Object.values(families), watchedService, setup, ...(input.machine ? [] : [configuredCheck])];
+        const results = [...Object.entries(families).filter(([kind]) => query.kinds === undefined
+            || query.kinds.includes(kind as keyof ManagedInventoryFamilies)).map(([, family]) => family),
+            ...(requested('configuredBackup') && !requested('app') ? [configuredBackup] : []),
+            ...(requested('watchedService') ? [watchedService] : []), ...(requested('setup') ? [setup] : []),
+            ...(!input.machine && requested('configuredCheck') ? [configuredCheck] : [])];
         return { families, operationalFamilies, rows, ...summarizeInstalledFamilies(results), ...attention };
-    }, [families, operationalFamilies, watchedService, setup, configuredCheck, input.machine, rows, attention.attention, attention.noticeSource]);
+    }, [query.kinds, families, operationalFamilies, watchedService, setup, configuredCheck, configuredBackup, input.machine, rows, attention.attention, attention.noticeSource]);
 }

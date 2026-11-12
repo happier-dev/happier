@@ -1,5 +1,33 @@
 # Compatibility and version skew
 
+## Machine-service advisory selection (unreleased 0.3)
+
+The closed `machines.services.list` input accepts optional `preflight` selectors
+for published ports and adapter-qualified native resource names. Selected
+snapshots carry optional `coverage: 'managed_services'`; omission is unknown,
+never proof of whole-Machine clearance. Protocol, daemon and app readers refresh
+together under the unpublished 0.3 direct cut. Earlier strict development readers
+reject the new fields; selectors are not safely ignorable. Existing requests and
+snapshots remain accepted, with no persistence, wire epoch or authority change.
+The inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no scoped `actions/specs/machine/services.ts` contract or working change.
+
+## Deployment destination activity count (0.3 development)
+
+The deployment Environment list's existing activity projection now includes optional
+`attentionCount`, a nonnegative integer counting readable Environments whose latest
+attempt is running or failed. The existing `running` and `failed` fields retain
+their meaning. A missing count stays unknown in destination consumers; they do not
+infer a number from booleans or drain inventory pages. This extends the current
+0.3 development response and introduces no persisted field or migration.
+
+The saved health observer adds optional `current` per-check results to its
+existing encrypted Account KV checkpoint. New readers accept checkpoints without
+that projection and report never observed; results are joined only to the same
+Automation trigger revision and source selector. This is an unreleased 0.3 direct
+cut: the observer and UI reader load together. Earlier strict development
+checkpoint readers are not a supported rollback target for newly written rows.
+
 ## SessionMessage content codec (unreleased 0.3)
 
 Direct transcript writers use the shared content-byte frame before their existing
@@ -1281,6 +1309,24 @@ from this Home” without a ticking last-seen label. Offline labels use the reta
 last-active time. Opening a Machine page or popover pulls that timestamp once;
 periodic heartbeats cause no current-client UI work. The existing keyed activity owner publishes
 presence transitions without replacing inventory rows or lists.
+
+Before the first census or pushed activity answer, retained UI rows are Unknown.
+`resolveMachinePresence` owns that decision and the Home/legacy presence rules;
+`isMachineOnline` is its nullable adapter, and request reachability layers scoped
+request failures over the same result. An answer lives in the UI Machine record's
+in-memory `activity` state, shared with display projections and retained by the
+record owner on same-authority content replacement. Warm display persistence
+omits it. A first census arrival answers even when all cached values match, and
+only that Machine's activity readers wake.
+
+The Agent settings presentation input also carries `online: null` while unknown.
+Its closed V1 envelope remains strict; this bounded presentation value grants no
+execution, routing or credential authority. Protocol, UI and first-party Agent
+settings surfaces refresh together under the unpublished 0.3 direct cut; older
+strict development readers reject null. No persisted format, epoch or adapter is
+added. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has neither
+`packages/protocol/src/plugins/ui/agentSettings.ts` nor the Claude settings surface.
 
 An Account socket loss retains each known Machine's last online/offline verdict.
 Reconnect and inventory revalidation do not introduce an intermediate Unknown
@@ -6379,6 +6425,13 @@ setup, catalog adoption, pause/resume, placement changes and Account-mode
 transitions. It follows the same undeployed 0.3 direct cut, with no new
 definition kind, store, old-client adapter or reverse-write obligation.
 
+Event admission returns `observed` with `checkpointSafe: true` for a valid
+observation-only occurrence. It does not create a Run or increment admitted or
+skipped counts. Invalid occurrences retain `skipped/occurrenceRejected` and do
+not publish committed-observation notices. This closed result is an undeployed
+0.3 direct cut: server, CLI/daemon and SDK readers reload together; it adds no
+persisted state or predecessor adapter.
+
 The development-only webhook correspondence result also accepts optional
 canonical readiness and nonsecret endpoint binding observations. Its existing
 `ready` discriminant still means the binding can be attached, including before
@@ -11274,3 +11327,16 @@ member. No protocol epoch, database migration or compatibility adapter is introd
 inspected `../0.2` frontier at `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` has no
 corresponding approval Artifact header or deployment-review schema. Its approval-request paths
 have no local diff, and its released request reader is unchanged by this work.
+
+## Domain DNS draft verification (unreleased 0.3)
+
+The existing `deployments.domains.verify` Action adds a strict `mode: 'preview'`
+input and a DNS-only preview result. Attached verification retains its existing
+input and Domain result. Its admitted `domainDns` child uses exact Machine and
+installation routing; private Domain content remains in the encrypted child
+body and is excluded from the public routing projection. Protocol, Home, CLI
+and UI adapters adopt these closed unions together in development. Older strict
+development readers reject the unfamiliar variant; no epoch, migration,
+retained preview record or compatibility adapter is introduced. The inspected
+`../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
+`packages/protocol/src/deployments` contract and no local change at that path.

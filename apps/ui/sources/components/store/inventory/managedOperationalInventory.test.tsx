@@ -225,8 +225,9 @@ it('lists saved Checks from Automation summaries, keeps never-run and off subjec
     let query: ManagedInventoryQuery = { scope, machine: null, projectKey: null, presented: true };
     const hook = await renderHook(() => useManagedInventory(query), { wrapper: Boundary });
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows).toHaveLength(2));
-    expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toBe('available');
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual({ partial: 'health_result_unavailable' }));
     const row = hook.getCurrent().operationalFamilies.configuredCheck.rows.find(candidate => candidate.automationId === 'b')!;
+    expect(row.lastResults).toMatchObject({ kind: 'unavailable' });
     const presented = presentInventoryRow(row, query);
     expect(presented.facts.title).toBe('Check b');
     expect(presented.facts.status).toBe('off');

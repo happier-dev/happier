@@ -176,6 +176,8 @@ type CompactAppDestinationCommon = Readonly<{
     routePath: string;
 }>;
 
+export type CompactAppDestinationSignal = 'inboxCount' | 'deploymentAttentionCount';
+
 export type CompactAppBuiltinDestination = CompactAppDestinationCommon & Readonly<{
     kind: 'builtin';
     id: string;
@@ -189,7 +191,7 @@ export type CompactAppBuiltinDestination = CompactAppDestinationCommon & Readonl
     /** The keyboard command that also opens it, shown beside its title. */
     shortcut?: KeyboardCommandId;
     /** A live count the rail marks on its icon, read only by that badge's own leaf. */
-    signal?: 'inboxCount';
+    signal?: CompactAppDestinationSignal;
     /** Offered by the command palette before anything is typed. */
     suggested?: true;
     /** Its rail band, for an app-region destination. */
@@ -265,7 +267,7 @@ type BuiltinDestinationRow = Readonly<{
     routePath: string;
     currentRoutePatterns?: readonly string[];
     shortcut?: KeyboardCommandId;
-    signal?: 'inboxCount';
+    signal?: CompactAppDestinationSignal;
     suggested?: true;
     railControl?: 'footer';
     band?: CompactAppBuiltinDestination['band'];
@@ -301,7 +303,7 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
     },
     {
         id: 'projects', titleKey: 'tabs.projects', icon: 'folder', placement: { kind: 'rail', region: 'app' }, band: 'work',
-        column: 'projects', activation: 'navigate', routePath: '/projects', currentRoutePatterns: ['/projects/[...rest]', '/deployments/[projectSourceId]'],
+        column: 'projects', activation: 'navigate', routePath: '/projects', signal: 'deploymentAttentionCount', currentRoutePatterns: ['/projects/[...rest]', '/deployments/[projectSourceId]'],
     },
     {
         id: 'workflows', titleKey: 'workflows.title', icon: 'tree-structure',
@@ -332,6 +334,12 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         placement: { kind: 'rail', region: 'app' }, band: 'together', activation: 'botsRoster', routePath: '/',
         available: availability => availability.bots === true,
         activationAvailable: availability => availability.botsRoster === true,
+    },
+    // Deployment operations use the existing overflow/pinning policy until their surface is selected.
+    {
+        id: 'deployments', titleKey: 'projects.deployments.title', icon: 'rocket-launch',
+        placement: { kind: 'rail', region: 'app' }, band: 'library', activation: 'navigate',
+        routePath: '/projects/deployments', signal: 'deploymentAttentionCount',
     },
     // Library: what the person keeps.
     {

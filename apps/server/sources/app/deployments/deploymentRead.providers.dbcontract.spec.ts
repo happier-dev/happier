@@ -315,7 +315,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
-        const environments = await Promise.all([0, 1].map(() => db.deploymentEnvironment.create({ data: {
+        const environments = await Promise.all([0, 1, 2].map(() => db.deploymentEnvironment.create({ data: {
             projectSourceId: source.source.id, controllerMachineId: machine.id, createdByAccountId: owner.id,
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', ...content,
         } })));
@@ -328,6 +328,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         await db.deployment.create({ data: { ...receipt(0), state: 'failed', requestedAt: new Date(1000) } });
         await db.deployment.create({ data: { ...receipt(0), state: 'succeeded', requestedAt: new Date(2000) } });
         const running = await db.deployment.create({ data: { ...receipt(1), state: 'running', requestedAt: new Date(2000) } });
+        await db.deployment.create({ data: { ...receipt(2), state: 'running', requestedAt: new Date(2000) } });
         const requests: { model?: string; action: string }[] = [];
         let summaryReads = 0;
         const client = await createDbMaintenanceClient(provider);
@@ -335,17 +336,17 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             requests.push({ model: request.model, action: request.action });
             const query = request.args && typeof request.args === 'object' && 'query' in request.args
                 ? request.args.query : undefined;
-            if (request.action === 'queryRaw' && typeof query === 'string' && query.startsWith('SELECT DISTINCT e.')) summaryReads++;
+            if (request.action === 'queryRaw' && typeof query === 'string' && query.startsWith('SELECT e.')) summaryReads++;
         } });
         const read = (accountId: string) => client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, accountId,
             { serverId, projection: 'activity' }), { isolationLevel: 'Serializable' });
         try {
-            expect(await read(owner.id)).toMatchObject({ activity: { running: true, failed: false }, items: [], nextCursor: null });
+            expect(await read(owner.id)).toMatchObject({ activity: { running: true, failed: false, attentionCount: 2 }, items: [], nextCursor: null });
             expect(summaryReads).toBe(1);
             expect(requests.filter(request => request.model === 'Artifact')).toEqual([]);
-            expect(await read(stranger.id)).toMatchObject({ activity: { running: false, failed: false }, items: [] });
+            expect(await read(stranger.id)).toMatchObject({ activity: { running: false, failed: false, attentionCount: 0 }, items: [] });
             await db.deployment.update({ where: { id: running.id }, data: { state: 'failed' } });
-            expect(await read(owner.id)).toMatchObject({ activity: { running: false, failed: true } });
+            expect(await read(owner.id)).toMatchObject({ activity: { running: true, failed: true, attentionCount: 2 } });
         } finally { stop(); await client.$disconnect(); }
     });
 

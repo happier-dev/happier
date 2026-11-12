@@ -118,6 +118,21 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it('adopts an alert-only Environment source without probes, occurrences or a next check deadline', async () => {
+        const f = fixture({ v: 1, subject: { kind: 'environment', environmentId: 'production' }, checks: [],
+            alerts: { channels: [{ channelId: 'slack' }], phases: ['open', 'recovered'] } });
+        const decoded = f.adapter.decode({ ...definition, sourceConfig: { v: 1,
+            subject: { kind: 'environment', environmentId: 'production' }, checks: [],
+            alerts: { channels: [{ channelId: 'slack' }], phases: ['open', 'recovered'] } } });
+        expect(decoded).not.toBeNull();
+        const observed = await f.adapter.observe({ context: f.context, definition, definitions: [definition],
+            source: decoded!, isCurrent: async () => true });
+        expect(observed.nextEligibleAt).toBeNull();
+        await f.cycle();
+        expect(f.read).not.toHaveBeenCalled();
+        expect(f.admissions).toEqual([]);
+        expect(f.writes).toEqual([]);
+    });
     it.each(['uptime-kuma', 'gatus'] as const)('carries registered %s deliveries through shared D5 into one Domain C1 condition and recovery', async kind => {
         const artifacts = createPlainAccountArtifactHttpBoundary();
         const environment = createDeploymentEnvironmentDetailV1();
@@ -301,7 +316,8 @@ describe('saved health source registration and finite cycles', () => {
         for (let index = 0; index < 10; index++) { f.tick('unknown'); await f.cycle(); }
         expect(f.read).toHaveBeenCalledTimes(1);
         expect(f.admissions).toHaveLength(0);
-        expect(f.writes).toHaveLength(0);
+        // The first unknown result is retained once; settled idle ticks publish nothing.
+        expect(f.writes).toHaveLength(1);
         const wake = vi.fn(async () => {});
         const subscription = f.adapter.subscribeWake!(wake);
         try {
@@ -424,4 +440,40 @@ describe('saved health source registration and finite cycles', () => {
                 definition: { ...definition, sourceConfig: healthSource } })).toBe(f.now() + 1000);
         } finally { abort.abort(); await running; }
     });
+});
+
+
+it('retains current results before alert admission and only publishes semantic changes', async () => {
+    const f = fixture();
+    await f.cycle();
+    expect(f.writes.at(-1)).toMatchObject({ current: { members: [{ automationId: definition.automationId,
+        triggerId: 'health-trigger-0', triggerRevision: 1, sourceSelectorId: definition.sourceSelectorId }],
+        checks: [{ checkId: 'http', result: { status: 'down', observedAt: 1000 } }] } });
+    const afterFirst = f.writes.length;
+    f.tick('down'); await f.cycle();
+    // A second failing observation crosses the alert threshold, so the incumbent
+    // transition may write; once it is settled, equal probes stay silent.
+    const afterAdmission = f.writes.length;
+    expect(afterAdmission).toBeGreaterThanOrEqual(afterFirst);
+    f.tick('down'); await f.cycle();
+    expect(f.writes).toHaveLength(afterAdmission);
+    f.tick('unknown'); await f.cycle();
+    expect(f.writes).toHaveLength(afterAdmission + 1);
+    expect(f.writes.at(-1)).toMatchObject({ current: { checks: [{ checkId: 'http', result: { status: 'unknown' } }] } });
+});
+
+
+it('publishes changed individual checks while the aggregate remains failing', async () => {
+    const multiple = { ...source, checks: [source.checks[0]!, { ...source.checks[0]!, checkId: 'tcp' }] };
+    const f = fixture(multiple);
+    f.read.mockImplementation(async () => [{ checkId: 'http', result: result('down', 1000) }, { checkId: 'tcp', result: result('up', 1000) }]);
+    await f.cycle();
+    f.tick('down');
+    f.read.mockImplementation(async () => [{ checkId: 'http', result: result('up', 2000) }, { checkId: 'tcp', result: result('down', 2000) }]);
+    await f.cycle();
+    expect(f.errors).toEqual([]);
+    expect(f.writes.at(-1)).toMatchObject({ current: { checks: [
+        { checkId: 'http', result: { status: 'up', observedAt: 2000 } },
+        { checkId: 'tcp', result: { status: 'down', observedAt: 2000 } },
+    ] } });
 });

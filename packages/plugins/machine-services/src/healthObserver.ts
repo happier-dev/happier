@@ -10,6 +10,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
 
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
+import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity } from './healthResultProjection.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
 const status = defineProtocolUnion([defineProtocolLiteral('up'), defineProtocolLiteral('down'), defineProtocolLiteral('degraded')]);
@@ -17,6 +18,7 @@ const ordinal = defineProtocolNumber({ integer: true, minimum: 0 });
 export const healthTransition = HealthCheckTransitionV1ProtocolSchema;
 const cursorSchema = defineProtocolObject({ basis: defineProtocolString(),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), status, ordinal }, { policy: 'closed' })),
+    current: healthResultProjectionSchema.optional(),
     pending: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), ordinal,
         result: HealthCheckResultV1ProtocolSchema, receivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
     }, { policy: 'closed' })).optional(),
@@ -41,7 +43,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
         },
         async observe({ context, definition, definitions, source }) {
             const storage = requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv;
-            const key = `health:${computeCanonicalDomainSeparatedDigest('happier.health.status.v1', [definition.sourceInstanceId])}`;
+            const key = `${HEALTH_RESULT_CHECKPOINT_PREFIX}${computeCanonicalDomainSeparatedDigest('happier.health.status.v1', [definition.sourceInstanceId])}`;
             const basis = createCanonicalJsonSigningInput({ sourceInstanceId: definition.sourceInstanceId,
                 sourceConfig: source, materialization: context.materialization ?? null });
             let state = live.get(definition.sourceInstanceId);
@@ -69,6 +71,21 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             const results = selected.length ? await context.services.healthChecks.read({
                 sourceInstanceId: definition.sourceInstanceId, checkIds: selected.map(check => check.checkId),
             }, { signal: context.signal }) : [];
+            // Current results settle independently of transition admission and alert thresholds.
+            const currentChecks = new Map((previous.current?.checks ?? []).map(value => [value.checkId, value]));
+            for (const observation of results) currentChecks.set(observation.checkId, { checkId: observation.checkId, result: observation.result });
+            const current = healthResultProjectionSchema.parse({ v: 1,
+                members: definitions.map(member => ({ automationId: member.automationId, triggerId: member.triggerId,
+                    triggerRevision: member.triggerRevision, sourceSelectorId: member.sourceSelectorId })),
+                checks: source.checks.flatMap(check => currentChecks.has(check.checkId) ? [currentChecks.get(check.checkId)!] : []),
+            });
+            const currentChanged = current.checks.length > 0 && (!previous.current
+                || healthResultProjectionIdentity(previous.current) !== healthResultProjectionIdentity(current));
+            const retainedCurrent = currentChanged ? current : previous.current;
+            if (currentChanged) {
+                const written = await storage.set(key, { ...previous, current }, { expectedVersion: version, signal: context.signal });
+                version = written.version;
+            }
             for (const check of selected) {
                 const identity = check.checkId;
                 const observation = results.find(value => value.checkId === check.checkId);
@@ -110,7 +127,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
             }
             if (!replaying && pending.length) {
-                const written = await storage.set(key, { basis, checks: [...next.values()], pending },
+                const written = await storage.set(key, { basis, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) },
                     { expectedVersion: version, signal: context.signal });
                 version = written.version;
             }
@@ -135,7 +152,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
             return { observations, complete: true,
                 nextEligibleAt: pendingChecks.size ? time : deadlines.length ? Math.min(...deadlines) : null,
                 ...(changed || pending.length ? { checkpoint: { key, expectedVersion: version,
-                    value: { basis, checks: [...next.values()] } } } : {}),
+                    value: { basis, checks: [...next.values()], ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
             };
         },
         async save({ context, checkpoint }) {

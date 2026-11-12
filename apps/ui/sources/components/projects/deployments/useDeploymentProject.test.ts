@@ -72,7 +72,7 @@ describe('deployment ProjectSource scope', () => {
         const serverId = await homes.addHome({ name: 'Badge Home', serverUrl: 'https://deployment-badge.test', accountId: 'alice' });
         const account = await captureLazyActionAccountContext(serverId);
         const demand = { mounted: true, visible: true, focused: true };
-        let activity = { running: true, failed: false };
+        let activity = { running: true, failed: false, attentionCount: 2 };
         homes.answer(serverId, '/v1/deployments/environments', { select: () => ({ body: {
             ok: true, items: [], nextCursor: null, activity,
         } }) });
@@ -93,7 +93,7 @@ describe('deployment ProjectSource scope', () => {
                 }).entityId), { changeKinds: ['account'] });
             });
             expect(listReads()).toHaveLength(1);
-            activity = { running: false, failed: true };
+            activity = { running: false, failed: true, attentionCount: 3 };
             await act(async () => {
                 publishHomeAccountChange(serverId, [buildDeploymentAccountChangeV1({ projectSourceId: 'source',
                     environmentId: 'changed-environment', revision: 3, activityChanged: true }).entityId], { changeKinds: ['account'] });

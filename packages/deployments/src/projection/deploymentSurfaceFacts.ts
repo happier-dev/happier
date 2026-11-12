@@ -12,7 +12,8 @@ export type DeploymentChipV1 = Readonly<{
     failed: boolean;
 }>;
 
-export type DeploymentActivityV1 = Readonly<{ running: boolean; failed: boolean }>;
+/** Missing count denotes a peer that exposes only the boolean activity projection. */
+export type DeploymentActivityV1 = Readonly<{ running: boolean; failed: boolean; attentionCount?: number }>;
 
 export { projectDeploymentReceiptActivityV1 };
 

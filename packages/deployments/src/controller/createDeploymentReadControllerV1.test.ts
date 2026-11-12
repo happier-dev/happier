@@ -27,6 +27,34 @@ function networkBoundary() {
 }
 
 describe('deployment demand read controller', () => {
+    it.each(['acquireDomainPage', 'acquireDataServicePage'] as const)('opens %s once per demanded page without detail fanout', async method => {
+        const base = networkBoundary();
+        const read = vi.fn(async (_scope: unknown, query: { cursor?: string }) => ({ ok: true as const,
+            value: { items: [], nextCursor: query.cursor ? null : 'page-two' } }));
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,
+            listDomainPage: read, listDataServicePage: read } });
+        const lease = controller[method]({}, hidden);
+        await lease.refresh();
+        expect(read).toHaveBeenCalledTimes(0);
+        lease.setDemand(active);
+        await lease.refresh();
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(lease.getSnapshot().value).toMatchObject({ hasNextPage: true, hasPreviousPage: false });
+        lease.nextPage();
+        await lease.refresh();
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(lease.getSnapshot().value).toMatchObject({ hasNextPage: false, hasPreviousPage: true });
+        lease.setDemand(hidden);
+        controller.invalidate({ environmentId: base.environment.id });
+        await controller.refreshDemanded();
+        expect(read).toHaveBeenCalledTimes(2);
+        lease.setDemand(active);
+        await lease.refresh();
+        expect(read).toHaveBeenCalledTimes(3);
+        expect(base.transport.readEnvironment).toHaveBeenCalledTimes(0);
+        expect(base.transport.observeReceipts).toHaveBeenCalledTimes(0);
+        lease.release(); controller.retire();
+    });
     it('keeps a complete preview collection independent from a navigated page', async () => {
         const base = networkBoundary();
         const later = createDeploymentEnvironmentHeaderV1({ id: 'later', projectSourceId: scope.projectSourceId });
@@ -628,12 +656,12 @@ describe('deployment demand read controller', () => {
     it('reads global badge facts without opening or draining a collection page', async () => {
         const { transport } = networkBoundary();
         transport.listEnvironments.mockResolvedValue({ ok: true, value: { items: [], coverage: 'partial', nextCursor: 'unopened-page' } });
-        const readActivity = vi.fn(async () => ({ ok: true as const, value: { running: false, failed: true } }));
+        const readActivity = vi.fn(async () => ({ ok: true as const, value: { running: false, failed: true, attentionCount: 2 } }));
         const controller = createDeploymentReadControllerV1({ scope, transport: { ...transport, readActivity } });
         const badge = controller.acquireActivity(active);
         try {
             await badge.refresh();
-            expect(badge.getSnapshot()).toMatchObject({ status: 'ready', value: { running: false, failed: true } });
+            expect(badge.getSnapshot()).toMatchObject({ status: 'ready', value: { running: false, failed: true, attentionCount: 2 } });
             expect(readActivity).toHaveBeenCalledTimes(1);
             expect(transport.listEnvironments).not.toHaveBeenCalled();
             expect(transport.readEnvironment).not.toHaveBeenCalled();
@@ -644,11 +672,19 @@ describe('deployment demand read controller', () => {
             await Promise.resolve();
             expect(readActivity).toHaveBeenCalledTimes(1);
             expect(publications).not.toHaveBeenCalled();
-            readActivity.mockResolvedValue({ ok: true, value: { running: true, failed: false } });
+            await badge.refresh();
+            expect(publications).not.toHaveBeenCalled();
+            const retained = badge.getSnapshot();
+            readActivity.mockResolvedValue({ ok: true, value: { running: true, failed: false, attentionCount: 3 } });
             controller.invalidate({ environmentId: 'changed-environment', activityChanged: true });
             await badge.refresh();
-            expect(badge.getSnapshot().value).toEqual({ running: true, failed: false });
-            expect(readActivity).toHaveBeenCalledTimes(2);
+            expect(badge.getSnapshot().value).toEqual({ running: true, failed: false, attentionCount: 3 });
+            expect(readActivity).toHaveBeenCalledTimes(3);
+            expect(badge.getSnapshot()).not.toBe(retained);
+            badge.setDemand(hidden);
+            controller.invalidate({ environmentId: 'hidden', activityChanged: true });
+            await badge.refresh();
+            expect(readActivity).toHaveBeenCalledTimes(3);
             expect(publications).toHaveBeenCalledTimes(1);
         } finally { badge.release(); controller.retire(); }
     });

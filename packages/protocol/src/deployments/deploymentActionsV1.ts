@@ -54,6 +54,7 @@ import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccess
 import { ProjectSourceOwnerV1Schema, ProjectSourceV1Schema, ProjectSourcesListInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
+import { ArtifactHttpReadV1Schema } from '../artifacts/artifactAccessV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
 import { isDeploymentChildEffectActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
@@ -78,7 +79,7 @@ export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInput
   DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
 export * from './deploymentDomainV1.js';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddInputV1Schema, DeploymentDomainRemoveInputV1Schema,
-  DeploymentDomainVerifyInputV1Schema, DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema } from './deploymentDomainV1.js';
+  DeploymentDomainVerifyInputV1Schema, DeploymentDomainDnsPreviewResultV1Schema, DeploymentDomainGetInputV1Schema, DeploymentDomainListInputV1Schema } from './deploymentDomainV1.js';
 import { DeploymentAcceptedExecutionV1Schema } from './deploymentAcceptedExecutionV1.js';
 import { DeploymentPendingAdmissionV1Schema } from './deploymentPendingAdmissionV1.js';
 export { DeploymentPendingAdmissionV1Schema, type DeploymentPendingAdmissionV1 } from './deploymentPendingAdmissionV1.js';
@@ -610,7 +611,10 @@ export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.uni
     projectSources: z.optional(z.array(z.pick(ProjectSourceV1Schema, { id: true, name: true }))),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
     currentDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
-    activity: z.optional(z.strictObject({ running: z.boolean(), failed: z.boolean() })),
+    activity: z.optional(z.strictObject({ running: z.boolean(), failed: z.boolean(),
+      /** Number of readable Environments whose latest attempt is running or failed. */
+      attentionCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+    })),
     coverage: z.optional(z.enum(['complete', 'partial'])) }),
   DeploymentActionFailureV1Schema,
 ]));
@@ -621,6 +625,35 @@ export const DeploymentReceiptListResultV1Schema = lazyZodSchema(() => z.union([
   ])), nextCursor: z.nullable(DeploymentIdentifierV1Schema) }),
   DeploymentActionFailureV1Schema,
 ]));
+/** One admitted Account page; private Artifact content remains opaque on the Home. */
+export const DeploymentDomainPageInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...home, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+  cursor: ProjectSourcesListInputV1Schema.shape.cursor, limit: ProjectSourcesListInputV1Schema.shape.limit,
+}));
+export const DeploymentDataPageInputV1Schema = DeploymentDomainPageInputV1Schema;
+export type DeploymentDomainPageInputV1 = z.infer<typeof DeploymentDomainPageInputV1Schema>;
+export type DeploymentDataPageInputV1 = z.infer<typeof DeploymentDataPageInputV1Schema>;
+export const DeploymentDomainPageSuccessV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true), items: z.array(z.strictObject({
+    domain: DeploymentDomainHeaderV1Schema, environment: DeploymentEnvironmentHeaderV1Schema,
+  })), artifacts: z.array(ArtifactHttpReadV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+  coverage: z.optional(z.enum(['complete', 'partial'])),
+}));
+export const DeploymentDataPageSuccessV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true), items: z.array(z.strictObject({ environment: DeploymentEnvironmentHeaderV1Schema })),
+  artifacts: z.array(ArtifactHttpReadV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+  coverage: z.optional(z.enum(['complete', 'partial'])),
+}));
+export type DeploymentDomainPageSuccessV1 = z.infer<typeof DeploymentDomainPageSuccessV1Schema>;
+export type DeploymentDataPageSuccessV1 = z.infer<typeof DeploymentDataPageSuccessV1Schema>;
+export const DeploymentDomainPageResultV1Schema = lazyZodSchema(() => z.union([
+  DeploymentDomainPageSuccessV1Schema, DeploymentActionFailureV1Schema,
+]));
+export const DeploymentDataPageResultV1Schema = lazyZodSchema(() => z.union([
+  DeploymentDataPageSuccessV1Schema, DeploymentActionFailureV1Schema,
+]));
+export type DeploymentDomainPageResultV1 = z.infer<typeof DeploymentDomainPageResultV1Schema>;
+export type DeploymentDataPageResultV1 = z.infer<typeof DeploymentDataPageResultV1Schema>;
 /** Header-only storage demand used by the existing target-link preparation. */
 export const DeploymentTargetScopeV1Schema = ProjectSourceOwnerV1Schema;
 export type DeploymentTargetScopeV1 = z.infer<typeof DeploymentTargetScopeV1Schema>;
@@ -661,6 +694,8 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
   'deployments.domains.get': DeploymentDomainGetInputV1Schema,
   'deployments.domains.list': DeploymentDomainListInputV1Schema,
+  'deployments.domains.page': DeploymentDomainPageInputV1Schema,
+  'deployments.data.page': DeploymentDataPageInputV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareInputV1Schema,
   'deployments.templates.instantiate': lazyZodSchema(() => deploymentTemplates.DeploymentTemplateInstantiateInputV1Schema),
   'deployments.environments.moveToRepository': DeploymentMoveToRepositoryInputV1Schema,
@@ -711,9 +746,11 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.backups.configure': DeploymentBackupConfigureResultV1Schema,
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
-  'deployments.domains.verify': DeploymentDomainMutationResultV1Schema,
+  'deployments.domains.verify': lazyZodSchema(() => z.union([DeploymentDomainMutationResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema])),
   'deployments.domains.get': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.list': DeploymentDomainListResultV1Schema,
+  'deployments.domains.page': DeploymentDomainPageResultV1Schema,
+  'deployments.data.page': DeploymentDataPageResultV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareResultV1Schema,
   'deployments.templates.instantiate': lazyZodSchema(() => deploymentTemplates.DeploymentTemplateInstantiateResultV1Schema),
   'deployments.environments.moveToRepository': DeploymentMoveToRepositoryResultV1Schema,

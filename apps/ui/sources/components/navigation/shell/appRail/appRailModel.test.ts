@@ -65,7 +65,7 @@ describe('app rail model', () => {
     it('puts rail destinations in their region, and a column destination in its column instead of on the rail', () => {
         const rail = buildAppRailEntries(catalog([page('triage', undefined, 1), page('notes', SESSIONS_COLUMN), page('board', { kind: 'rail' }, 0)]));
 
-        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'boards', 'artifacts']);
+        expect(ids(rail.app)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows', 'bots', 'deployments', 'boards', 'artifacts']);
         // Plugins anchors its region, then plugin pages by rank.
         expect(ids(rail.plugins)).toEqual(['plugins', 'plugin:acme.board:board', 'plugin:acme.triage:triage']);
         expect(ids(rail.account)).toEqual(['settings']);
@@ -91,11 +91,12 @@ describe('app rail model', () => {
         const fresh = resolveNavigationPlacements(items);
         expect(ids(fresh.pinned)).toEqual(['sessions', 'search', 'inbox', 'projects', 'workflows',
             'app-rail-updates', 'settings', 'app-rail-account']);
-        expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['bots', 'boards', 'artifacts', 'plugins',
+        expect(ids(fresh.overflow)).toEqual(expect.arrayContaining(['bots', 'deployments', 'boards', 'artifacts', 'plugins',
             'plugin:acme.board:board', 'app-rail-usage', 'app-rail-machines']));
         // Only defaults change: the person's own choice still wins.
-        const customized = resolveNavigationPlacements(items, { orderedIds: [], placements: { bots: 'pinned', inbox: 'overflow' } });
+        const customized = resolveNavigationPlacements(items, { orderedIds: [], placements: { bots: 'pinned', deployments: 'pinned', inbox: 'overflow' } });
         expect(ids(customized.pinned)).toContain('bots');
+        expect(ids(customized.pinned)).toContain('deployments');
         expect(ids(customized.pinned)).not.toContain('inbox');
     });
 
@@ -250,4 +251,16 @@ it('keys rail moves by the resulting shared pin position, including list-only pi
     const sharedPins = ['a', 'list-only', 'b', 'moving'];
     expect(resolveAppRailBotDropDestinationKey?.(move('a', 'reorder-after'), sharedPins))
         .not.toBe(resolveAppRailBotDropDestinationKey?.(move('b', 'reorder-before'), sharedPins));
+});
+
+
+it('offers the existing deployments destination in overflow and preserves a deliberate pin', () => {
+    const destinations = catalog([]);
+    const entries = buildAppRailEntries(destinations);
+    const item = buildAppRailPlacementItems(entries, false).find(item => item.id === 'deployments');
+    expect(item).toMatchObject({ defaultPlacement: 'overflow', entry: { routePath: '/projects/deployments', signal: 'deploymentAttentionCount' } });
+    const pinned = resolveNavigationPlacements(buildAppRailPlacementItems(entries, false),
+        { orderedIds: [], placements: { deployments: 'pinned' } });
+    expect(ids(pinned.pinned)).toContain('deployments');
+    expect(destinations.find(destination => destination.id === 'projects')).toMatchObject({ signal: 'deploymentAttentionCount' });
 });

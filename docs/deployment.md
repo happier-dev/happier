@@ -1,5 +1,70 @@
 # Deployment
 
+## Advisory deployment preflight (0.3 development)
+
+The Promote data hook compares the selected source and destination Environment's
+P42 variable-binding identities, including build/runtime phase. Its warning data
+contains names, phases and secret flags, never values or secret references.
+It shares two exact controller reads while demanded; read failures retain their
+cause rather than becoming an empty missing-input list. Native admission and
+secret acquisition remain authoritative. Surface composition is separate.
+
+P30 `machines.services.list` accepts an optional `preflight` selection of published
+port numbers and adapter-qualified native resource names. It returns only matching
+retained managed-service rows with `coverage: 'managed_services'`. The existing
+Resource follows matching entries and exits; no scanner, watch establishment,
+native accounting sample or UI inventory read is introduced by this selection.
+Port matches are advisory candidates: protocol, bind address, freshness and state
+remain in the rows for review. Display labels and Compose service labels are not
+native names; container target ports are not published ports. Empty matches do
+not establish Machine-wide clearance, since unmanaged listeners and unobserved
+native resources are outside this projection. Add preview projects declarations
+from P60's final allocated source through the canonical syntax parser. Short-form
+and interpolated ports remain declarations; only literal numeric long-form
+publications feed the exact selector. Native effective ports and runtime names
+remain unresolved until first start. The UI does not evaluate Compose syntax or
+treat unresolved coordinates as clearance.
+
+## Destination activity and scoped inventory (0.3 development)
+
+The Account deployment activity projection counts readable, non-deleted Environments
+whose latest attempt is running or failed. It uses the existing Source admission and
+receipt-state projection, one aggregate read and the existing Account invalidation
+push. It never counts a partial inventory page. Equal activity publishes no change;
+hidden badge demand performs no reads. The destination catalog names this signal
+`deploymentAttentionCount`; `useDeploymentDestinationSignal` exposes its count,
+read status and recovery from the shared Account controller. A missing count is
+unknown, including a peer that returns only the earlier boolean projection.
+
+Account-wide Domains and data-service pages use `deployments.domains.page` and
+`deployments.data.page`. Each demanded page includes its Environment headers and
+caller-authorized Artifact content in one response. The PostgreSQL reader captures
+Source, Team credential and Artifact facts in one statement, then applies the same
+access evaluators as per-Environment reads. Account-owned, shared and Team content
+remain visible according to those evaluators; a page introduces no new audience.
+Opaque continuations advance beyond denied candidates without exposing their ids.
+Unavailable private content gives partial coverage. Data services derive from the
+existing Environment content; they have no separate Database record. These page
+leases retain the controller's demand, invalidation and explicit continuation;
+they do not acquire per-Environment health observers. Surface composition remains
+separate from these nonvisual readers.
+
+`useManagedInventory` accepts optional `kinds`: omission retains the complete
+inventory, an empty list acquires no families, and requested families retain their
+native coverage and continuation. Configured backups borrow the App page without
+exposing unrequested App rows. Store Installed retains the complete inventory,
+including configured checks, backups and setups.
+
+Configured checks expose `lastResults` from the saved health observer's existing
+encrypted Account KV checkpoint. Each result retains its check id, status and
+actual probe time. Equal later observations do not republish solely for clock or
+latency changes. The demanded reader acquires one `health:` page, follows Account
+KV pushes, and exposes explicit continuation. Loading, never observed, not loaded
+on the current page and unavailable remain distinct from a failed check. Matching
+uses the Automation id, trigger id, trigger revision and source selector, so an
+edited check cannot inherit an earlier configuration's result. No new probe,
+schedule or health evaluator runs for this view.
+
 ## Home target admission (0.3 development)
 
 Deployment Actions normalize the selected local profile to its admitted portable
@@ -9,6 +74,30 @@ lookup. Backup/restore hosts and storage consume the canonical target; Machine
 and installation binding remain separate. Admitted repository workspace matching
 uses the same profile/Home relationship for both target and stored references,
 and refuses foreign or ambiguous workspace identities before effects.
+
+## Domain DNS readiness (0.3 development)
+
+The existing `deployments.domains.verify` Action supports finite draft inspection
+with `mode: 'preview'`, as well as signed verification of an attached Domain.
+Draft inspection selects the admitted own-server ingress without creating a
+Domain or Artifact or preparing infrastructure. Unsupported provider, tunnel or
+private-only ingress returns an unavailable result rather than a native proof.
+
+P41 resolves the hostname and uses the existing native Caddy writer to insert an
+exact temporary host/path route serving a random token on its public HTTP
+listener. A single request through the hostname must return that token without
+following redirects. The writer removes the exact challenge after success,
+failure or cancellation. No record, a resolved name that did not return the
+challenge, and a matching challenge are distinct outcomes; resolver, transport,
+admin and cleanup failures retain their unavailable causes. Tokens and response
+bodies are excluded from published evidence. A same-Machine observation proves
+this route from its vantage; it does not establish outside-network reachability,
+application health, certificate validity or a public-IP record value.
+
+Attached observations use the existing signed P40 semantic settlement. Both
+surfaces consume the same typed DNS projection. The nonvisual Action adapter
+performs work only on explicit demand; the surface owner wires open and manual
+Check again. There is no polling, background registry or public-address discovery.
 
 ## Platform variable roles (0.3 development)
 
@@ -2165,6 +2254,16 @@ optional and is retained unchanged when present. Its absence permits ordinary
 reviewed deployment and Domain creation, with health **Not checked**; native
 routing omits active HTTP checks and health authentication exemptions. Malformed
 supplied declarations still fail schema admission.
+In 0.3 development, the named Supabase Dokploy template can declare HS256 JWTs
+using an independent generated signing secret and a typed Supabase role payload.
+Hash helpers count hexadecimal characters, including odd lengths and literal
+prefixes. Normal installs and preview companions create these through Saved
+Secrets; descriptors, bindings and Action results retain references only. A
+selected signing dependency must also be generated in that installation and
+phase; using an existing Saved Secret as a signing input remains unavailable.
+Secret-bearing mount content still requires review and is never published as a
+public file. Other templates retain their existing helper admission.
+
 Connection outputs remain Compose interpolation expressions; preparation never
 creates a secret, resolves a credential URL, writes content or deploys a service.
 Replacing an existing variable binding, including with a generated credential,
@@ -2465,8 +2564,20 @@ turned into consent by publisher identity. Current public-build, sender/receiver
 and native cleanup checks are still required before claiming a complete
 Home-issued journey; no new approval store or publisher waiver is introduced.
 
-For an opted-in trigger, the controller reads the normalized GitHub push or
-merged-PR occurrence. Its declared `sha` input receives `payload.after` for a
+In current development source, GitLab push and merged merge-request Events join
+GitHub in the same Automation admission and deployment controller. GitLab setup
+uses the existing catalog Action `gitlab/setup-repository-event`; its exact
+Connected Account resolves the repository on the configured deployment. Configure
+the returned source through the ordinary durable webhook endpoint Actions and
+register that endpoint with GitLab for push and merge-request delivery. The host
+verifies `X-Gitlab-Token` before persisting delivery, using the shared signed
+webhook verifier boundary. The token remains in host credential custody.
+Self-managed deployment base paths are part of repository identity. Real GitLab
+tenant delivery remains an owed release check; this source description does not
+establish a loaded or released integration.
+
+For an opted-in trigger, the controller reads the normalized GitHub or GitLab push
+or merged pull/merge-request occurrence. Its declared `sha` input receives `payload.after` for a
 push or `payload.pullRequest.mergeCommitSha` for a merge. Its declared
 `requestKey` receives the Automation owner's admitted occurrence key. The
 Workflow's deployment Action must consume those values; private event content
@@ -3912,9 +4023,12 @@ Direct queries can still contend with one another; this reservation prevents
 interactive transactions alone from occupying the entire configured pool.
 
 In 0.3 development, `inTx` sets the PostgreSQL statement budget once at transaction
-start, using the existing transaction-attempt budget after setup. An already-enforced
-stricter `statement_timeout` is reused; otherwise one `SET LOCAL statement_timeout`
-applies that budget. Later statements keep the same SQL limit. Prisma still owns
+start, using the existing transaction-attempt budget after setup. Each transaction
+issues exactly one `SET LOCAL statement_timeout`: the stricter of that budget and the
+operator's `statement_timeout`. The server reads the operator value once, in its first
+PostgreSQL transaction, so restart the server after changing `statement_timeout` in
+`postgresql.conf`, `ALTER ROLE`/`ALTER DATABASE` or connection options. Later
+statements keep the same SQL limit. Prisma still owns
 the interactive transaction deadline, but an in-flight SQL statement or lock wait
 may continue past it until that statement's fixed SQL budget expires. It then
 settles as a timeout and releases the connection; no per-statement refresh or

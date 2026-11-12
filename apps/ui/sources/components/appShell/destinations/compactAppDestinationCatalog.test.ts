@@ -28,6 +28,8 @@ import { buildDeploymentEnvironmentHref } from '@/components/projects/deployment
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { act } from 'react-test-renderer';
+import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
+import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 
 import {
     resolveAppRailBand,
@@ -345,6 +347,33 @@ describe('a plugin page presenting another of its views', () => {
     });
 });
 
+describe('retained Zen links', () => {
+    // A link the workspace cannot resolve withdraws the whole workspace shell for one render (every retained tab
+    // layer unmounts, then remounts after the redirect: P03-UI-B measured 1,051 layers on one /zen open). The retired
+    // Zen paths therefore resolve to the Tasks page they redirect to, so the workspace keeps hosting through them.
+    const tasks = { ...page, id: 'plugin:happier.triage:tasks', pluginId: 'happier.triage', descriptorId: 'tasks',
+        localId: 'tasks', label: 'Tasks', routePath: '/plugins/happier.triage/tasks' } satisfies PluginPage;
+    const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [tasks] });
+
+    const taskPage = buildPluginAppPageRoutePath({ pluginId: 'happier.triage', localId: 'tasks',
+        subPath: buildTriageEntryRouteSegmentV1({ source: { pluginId: 'happier.triage', localId: 'internal' },
+            kindId: 'task', collisionScope: 'personal', entryId: 'task-1' }) });
+    it.each([
+        ['/zen', '/plugins/happier.triage/tasks'],
+        ['/zen/new', '/plugins/happier.triage/tasks'],
+        ['/zen/task-1', taskPage],
+        ['/zen/view?id=task-1', taskPage],
+    ])('resolves %s to the Tasks destination it redirects to', (legacy, canonical) => {
+        const expected = resolveDestinationRefFromHref(catalog, canonical);
+        expect(expected).not.toBeNull();
+        expect(resolveDestinationRefFromHref(catalog, legacy)).toEqual(expected);
+    });
+
+    it('stays unresolved when the Tasks page is not in the catalog', () => {
+        expect(resolveDestinationRefFromHref(resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [] }), '/zen')).toBeNull();
+    });
+});
+
 const appSidebarTab = Object.freeze({
     id: 'plugin:acme.review:review-panel',
     owner: 'plugin',
@@ -440,6 +469,7 @@ describe('resolveCompactAppDestinations', () => {
             ['workflows', { kind: 'rail', region: 'app' }],
             // Bots last of Together, with its rail pins under it (lab `b-rail A`).
             ['bots', { kind: 'rail', region: 'app' }],
+            ['deployments', { kind: 'rail', region: 'app' }],
             // Boards (INT §5.1): its own column listing the user's boards.
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
@@ -463,13 +493,13 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
         // Feature-disabled built-ins are omitted, including the Bots roster.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'boards', 'artifacts', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
+            .toEqual(['sessions', 'search', 'projects', 'deployments', 'boards', 'artifacts', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
         const everything = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, friends: true, discussions: true }, pages: [pageWith('notes', { requestedPlacement: { kind: 'rail' } })] });
         expect(everything.filter(destination => destination.placement.kind === 'rail')
             .map(destination => [destination.id, resolveAppRailBand(destination)])).toEqual([
             ['sessions', 'work'], ['search', 'work'], ['inbox', 'work'], ['projects', 'work'], ['workflows', 'work'],
             ['discussions', 'together'], ['friends', 'together'], ['bots', 'together'],
-            ['boards', 'library'], ['artifacts', 'library'],
+            ['deployments', 'library'], ['boards', 'library'], ['artifacts', 'library'],
             ['plugins', 'plugins'], ['plugin:acme.notes:notes', 'plugins'],
             ['machines', 'account'], ['settings', 'account'], ['personalize', 'account'], ['bot-template', 'account'],
         ]);
