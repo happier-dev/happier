@@ -5,7 +5,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 
 describe('Copy acknowledged step result', () => {
-    it.each(['linkRefused', 'pending', 'created', 'outcomeUnknown', 'failedWithoutEffectEvidence', 'failedBeforeEffect', 'noChild'] as const)('creates managed data with fresh Action custody and retains %s outcomes', async outcome => {
+    it.each(['linkRefused', 'pending', 'created', 'outcomeUnknown', 'failedWithoutEffectEvidence', 'failedBeforeEffect', 'allocationMissing', 'allocationFresh', 'allocationReplay', 'noChild'] as const)('creates managed data with fresh Action custody and retains %s outcomes', async outcome => {
         const base = createDeploymentEnvironmentDetailV1();
         const principal = { kind: 'account', accountId: 'owner',
             purpose: { consumer: { pluginId: 'com.example.data', localId: 'provision' }, purpose: 'manage' },
@@ -41,13 +41,14 @@ describe('Copy acknowledged step result', () => {
                 ? { status: 'outcome_unknown' } : { ...(outcome === 'created' ? { state: 'provisioned' } : { status: 'provisioned' }),
                     providerIdentity: identity, providerEnvironment: environment,
                     connectionSave: { connections: { DATABASE_URL: { ref: 'happier:shared-secret:v1:created', resourceRevision: 2 } } } } };
-            if (outcome === 'created') return { ok: true, result: { ok: true, environmentId: base.environment.id,
+            if (outcome === 'created' || outcome === 'allocationFresh') return { ok: true, result: { ok: true, environmentId: base.environment.id,
                 revision: 2, targetLinkId: 'created-data', targetLinkRevision: 1 } };
             return refusal;
         } } };
         let environmentsCreated = 0;
         const result = await createEnvironmentWithCopyForHost({ input, context: outcome === 'noChild' ? {} : context }, {
             async create() { environmentsCreated++; return { ok: true, environmentId: base.environment.id, revision: 1,
+                ...(outcome === 'allocationMissing' ? {} : { replayed: outcome === 'allocationReplay' }),
                 ...(outcome === 'created' ? { projectSourceId: 'destination', runtimeTargetLinkId: 'created-runtime' } : {}) }; },
             async readEnvironment() { return { environment: { ...base.environment, revision: 1 }, content: base.content,
                 targetLinks: base.targetLinks.map(link => link.targetLink) }; },
@@ -58,11 +59,22 @@ describe('Copy acknowledged step result', () => {
             expect(invoked).toHaveLength(0);
             return;
         }
+        if (outcome === 'allocationMissing' || outcome === 'allocationReplay') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict', details: {
+                kind: 'partial', phase: 'environment', environmentId: base.environment.id, revision: 1 } });
+            expect(invoked).toHaveLength(0);
+            return;
+        }
+        if (outcome === 'allocationFresh') {
+            expect(result).toMatchObject({ ok: true, environmentId: base.environment.id, revision: 2 });
+            expect(invoked).toHaveLength(2);
+            return;
+        }
         expect(invoked[0]).toMatchObject({ action: provision.action,
             input: { ...provision.input, environmentId: base.environment.id, expectedRevision: 1 } });
         if (outcome === 'created') {
             expect(result).toEqual({ ok: true, environmentId: base.environment.id, revision: 2,
-                projectSourceId: 'destination', runtimeTargetLinkId: 'created-runtime' });
+                projectSourceId: 'destination', runtimeTargetLinkId: 'created-runtime', replayed: false });
             expect(invoked).toHaveLength(2);
             return;
         }

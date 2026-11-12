@@ -386,6 +386,7 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
     // The link owner has already published the final Environment revision.
     if (!input.firstTargetLink && !dataRequests.length) await publishDeploymentChangesInTx(tx, source.admission, row.id, revision);
     return { ok: true as const, environmentId: row.id, projectSourceId: row.projectSourceId, revision,
+        ...(input.copyFrom ? { replayed: false as const } : {}),
         ...(runtimeTargetLinkId ? { runtimeTargetLinkId } : {}),
         ...(previewDataTargets.length ? { previewDataTargets } : {}) };
 }

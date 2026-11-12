@@ -74,6 +74,16 @@ describe('Environment installation grants and complete resource captures', () =>
         expect(created).toMatchObject({ ok: true });
         expect(created).not.toHaveProperty('replayed');
         if (!created.ok) throw new Error(created.error);
+        const copyArtifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: content.name })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!copyArtifact.ok) throw new Error(copyArtifact.error);
+        const copied = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, { ...input,
+            requestKey: crypto.randomUUID(), contentArtifactId: copyArtifact.artifact.id,
+            copyFrom: { environmentId: created.environmentId, expectedRevision: created.revision },
+            copyIntentCommitment: 'A'.repeat(43) }));
+        expect(copied).toMatchObject({ ok: true, replayed: false });
         const repeated = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, input));
         expect(repeated).toMatchObject({ ok: true, environmentId: created.environmentId, replayed: true });
     });

@@ -1454,10 +1454,13 @@ the recorded Environment, while changed source revision, choices or resolved
 configuration conflict. E2EE equality uses the requester's Account-keyed commitment;
 Plain Accounts use a keyless canonical digest. Neither branch creates another
 result store or changes the existing request-key retention. The creation owner marks
-an existing matching allocation with `replayed: true`. A copy with managed-data
-provisioning consumes that fact before any binding or provider child and returns
-the existing Environment with explicit inspection/configuration recovery. A new
-Action request cannot reprovision data by repeating the same creation request key.
+a newly allocated copy with `replayed: false` and an existing matching allocation
+with `replayed: true`. A copy with managed-data provisioning requires explicit
+`false` before any binding or provider child. An existing allocation or an absent
+fact returns the acknowledged Environment with inspection/configuration recovery
+and no provisioning. If the Home omits the fact, align Home and client versions
+for future copies and configure the acknowledged Environment through Overview.
+Duplicate is never replayed to finish that Environment's data configuration.
 Selected bindings use the ordinary reviewed `deployments.bindings.set` child on
 the newly allocated Environment; secret references receive fresh audience/grant admission rather
 than copied live grants. The generic reviewed-child HTTP carrier preserves the

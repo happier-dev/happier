@@ -34,11 +34,13 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
     if (!parsed.success) return failure('invalid_action_output');
     const created = parsed.data;
     if (!created.ok) return created;
-    if (created.replayed && plan.data?.length) return { ...failure('deployment_conflict'), details: {
+    if (created.replayed !== false && plan.data?.length) return { ...failure('deployment_conflict'), details: {
         kind: 'partial', phase: 'environment', environmentId: created.environmentId, revision: created.revision,
         errorCode: 'deployment_conflict', savedSecrets: [],
         requiredFact: plan.data.map(row => `data:${row.targetLinkId}:createEmpty`).join(', '),
-        remedy: 'This Create already allocated its Environment. Inspect its database attachments and provider outcomes. Open the Environment Overview and add/manage a managed database. Link exact resources already created or explicitly create/configure remaining resources. Do not replay Duplicate.',
+        remedy: `${created.replayed === undefined
+            ? 'Create acknowledged its Environment without confirming a fresh allocation. Upgrade or align Home and the client.'
+            : 'This Create already allocated its Environment.'} Inspect this Environment, its database attachments and provider outcomes. Open the Environment Overview and add/manage a managed database. Link exact resources already created or explicitly create/configure remaining resources. Do not replay Duplicate.`,
     } satisfies PartialResult };
     const finish = async (revision: number) => {
         const finished = await copyEnvironmentDataForHost({ input, context, environmentId: created.environmentId, revision });

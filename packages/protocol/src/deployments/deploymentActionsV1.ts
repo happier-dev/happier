@@ -442,7 +442,7 @@ export const DeploymentPreviewDataTargetsV1Schema = lazyZodSchema(() => z.array(
 })));
 export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
-    replayed: z.optional(z.literal(true)),
+    replayed: z.optional(z.boolean()),
     runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
     previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
     previewCompanionRequired: z.optional(z.literal(true)),
