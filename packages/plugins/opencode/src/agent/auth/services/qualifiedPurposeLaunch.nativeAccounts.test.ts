@@ -113,9 +113,21 @@ describe('OpenCode selected native accounts', () => {
     context: producerContext({ serviceAccountJson }, 'service-account'), serviceAccountJson }])(
     'passes the selected $purpose credential through the real Session entry to managed launch', async row => {
     const f = launchFixture(row);
+    const observations: Array<() => void> = [];
+    const watch = f.context.services.connectedAccounts.watch;
+    const connectedAccounts: typeof f.context.services.connectedAccounts = {
+      ...f.context.services.connectedAccounts,
+      watch(purpose, listener) {
+        observations.push(() => { void listener({ kind: 'resync', authorityChanged: true }); });
+        return watch(purpose, listener);
+      },
+    };
     const boundary = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49213',
       managedServerRequest: async input => {
         const path = input.pathAndQuery.split('?')[0]!;
+        if (path === '/session' && row.purpose === 'xai-api-key') {
+          for (const observe of observations) observe();
+        }
         if (path === '/event') return { ok: true, status: 200, headers: { 'content-type': 'text/event-stream' },
           body: new ReadableStream<Uint8Array>({ start(controller) {
             controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'));
@@ -138,7 +150,7 @@ describe('OpenCode selected native accounts', () => {
     const signal = new AbortController().signal;
     // The fake host supplies OS/service transports; every plugin owner stays real.
     const context = { signal, session: { id: 'native-account' }, services: {
-      ...f.context.services, exec: boundary.exec, logger: boundary.logger, managedServices: boundary.managedServices,
+      ...f.context.services, connectedAccounts, exec: boundary.exec, logger: boundary.logger, managedServices: boundary.managedServices,
       storage: boundary.storage, interactions: { askQuestions: boundary.ui.askQuestions,
         requestApproval: boundary.sessions.current.permissions.requestDecision },
     } } as unknown as AgentRuntimeContext;

@@ -168,7 +168,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
         await runtime.dispose(reason);
       },
     };
-    if (invalidated) void wrapped.dispose('runtime_recovery');
+    // Native startup already passed admission; later observations govern the next open.
     return wrapped;
   };
   const bindExecutionRun = <T extends Readonly<{ dispose(): void | Promise<void> }>>(runtime: T): T => {

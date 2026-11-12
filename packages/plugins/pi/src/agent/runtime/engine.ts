@@ -65,10 +65,14 @@ function initialConfigurationFailure(result: Readonly<{
   const message = redactBugReportSensitiveText(
     `Pi rejected its initial configuration (${code})${detail ? `: ${detail}` : ''}`,
   );
+  // Pi's set_model negative acknowledgement names a missing native catalog entry.
+  const modelUnavailable = code === 'pi_configuration_failed' && detail?.startsWith('Model not found: ') === true;
+  const startupCode = modelUnavailable ? 'agent_startup_model_reconciliation_failed' : 'agent_startup_failed';
   return new PluginError({
-    code: 'agent_startup_failed', retryable: false, message,
-    details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
-      failureReason: 'unclassified_provider_error', retryable: false, providerErrorCode: code, providerErrorMessage: message } },
+    code: startupCode, retryable: false, message,
+    details: { failureCause: { code: startupCode, phase: 'client_start',
+      failureReason: modelUnavailable ? 'model_selection_required' : 'unclassified_provider_error',
+      retryable: false, providerErrorCode: code, providerErrorMessage: message } },
   });
 }
 

@@ -204,10 +204,6 @@ async function openOpenCodeSession(
           bindActiveSkillsReader,
           prepared.catalogConfidence,
         );
-    if (prepared.isInvalidated()) {
-      await session.dispose('runtime_recovery');
-      throw new Error('OpenCode qualified Connected Account launch was invalidated while opening the runtime.');
-    }
     const boundSession = prepared.bindSession(session);
     return {
       ...boundSession,

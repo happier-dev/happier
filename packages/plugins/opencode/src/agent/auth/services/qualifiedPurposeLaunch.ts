@@ -439,7 +439,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
             }
           },
         };
-        if (invalidated) void preparedSession.dispose('runtime_recovery');
+        // Startup already passed admission; observations govern the next open.
         return preparedSession;
       },
       bindExecutionRun(runtime) {

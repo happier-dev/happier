@@ -60,6 +60,22 @@ function createHarness(write: (value: JsonValue) => Promise<void>) {
 }
 
 describe('createPiJsonStreamRpcClient', () => {
+  it('retains the native exit cause when cleanup disposes an in-flight write', async () => {
+    const writeResult = deferred<void>();
+    const harness = createHarness(async () => await writeResult.promise);
+    const request = harness.client.send({ type: 'set_model', provider: 'openai-codex', modelId: 'gpt-6.1-sol' })
+      .catch((error: unknown) => error);
+    const disposed = deferred<void>();
+    harness.client.onExit(() => { void harness.client.dispose().then(() => disposed.resolve()); });
+    harness.terminal.resolve(processResult({ kind: 'exit', exitCode: 1 },
+      'Model not found: openai-codex/gpt-6.1-sol; apiKey=private-fixture-token'));
+    await disposed.promise;
+    writeResult.resolve();
+    const error = await request;
+    expect(error).toMatchObject({ message: expect.stringContaining('Model not found: openai-codex/gpt-6.1-sol') });
+    expect(String(error)).not.toContain('private-fixture-token');
+  });
+
   it('starts the response deadline only after the transport write settles successfully', async () => {
     vi.useFakeTimers();
     try {

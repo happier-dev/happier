@@ -271,7 +271,7 @@ export function createPiJsonStreamRpcClient(params: PiJsonStreamRpcClientParams)
     },
     async dispose() {
       subscription.dispose();
-      const error = new Error('Pi RPC client disposed');
+      const error = terminal?.error ?? new Error('Pi RPC client disposed');
       rejectAllPending(error);
       await params.handle.dispose();
     },

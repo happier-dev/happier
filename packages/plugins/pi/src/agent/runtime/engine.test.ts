@@ -25,7 +25,7 @@ describe('Pi Agent runtime', () => {
     vi.useRealTimers();
   });
 
-  it('preserves a native configuration refusal through Session opening', async () => {
+  it('returns a model prerequisite with the native refusal through Session opening', async () => {
     const boundary = hostBoundaries();
     const write = boundary.write.getMockImplementation()!;
     boundary.write.mockImplementation(async record => {
@@ -43,8 +43,9 @@ describe('Pi Agent runtime', () => {
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
       },
     }, boundary.context).catch((error: unknown) => error);
-    expect(failure).toMatchObject({ code: 'agent_startup_failed', retryable: false,
-      details: { failureCause: { code: 'agent_startup_failed', phase: 'client_start',
+    expect(failure).toMatchObject({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+      details: { failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+        failureReason: 'model_selection_required',
         providerErrorCode: 'pi_configuration_failed',
         providerErrorMessage: expect.stringContaining('Model not found: github-copilot/fixture-model') } } });
     expect(JSON.stringify(failure)).not.toContain('private-fixture-token');
@@ -92,6 +93,33 @@ describe('Pi Agent runtime', () => {
       expect(boundary.write).toHaveBeenCalledWith(expect.objectContaining({
         type: 'set_model', provider: 'openai-codex', modelId: 'gpt-6-luna',
       }));
+    } finally { await session?.dispose(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it('finishes admitted startup when account observations change during native open', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pi-admitted-startup-'));
+    const boundary = hostBoundaries();
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    boundary.getBinding.mockImplementation(async purpose => purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
+      ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } } : null);
+    const write = boundary.write.getMockImplementation()!;
+    boundary.write.mockImplementation(async record => {
+      if (record && typeof record === 'object' && !Array.isArray(record) && record.type === 'get_state') {
+        for (const subscription of boundary.subscriptions) await subscription.listener();
+      }
+      await write(record);
+    });
+    let session: AgentSessionRuntime | undefined;
+    try {
+      session = await createPiAgentRuntime().sessions.open({
+        kind: 'create', sessionId: 'pi-admitted-startup', cwd: '/workspace',
+        launchEnvironment: { values: { PI_CODING_AGENT_DIR: directory,
+          [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(directory, 'capability.json') }, unset: [] },
+        configuration: { mode: { value: null, updatedAtMs: 0 },
+          model: { value: 'openai-codex/gpt-5.5', updatedAtMs: 1, selectionSource: 'explicit' },
+          permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
+      }, boundary.context);
+      expect(boundary.disposeProcess).not.toHaveBeenCalled();
     } finally { await session?.dispose(); rmSync(directory, { recursive: true, force: true }); }
   });
 
@@ -308,7 +336,7 @@ describe('Pi Agent runtime', () => {
     await vi.waitFor(() => expect(boundary.disposeProcess).toHaveBeenCalled());
   });
 
-  it('disposes a Session whose account invalidates while the native process opens', async () => {
+  it('keeps an admitted Session alive when its account invalidates during native spawn', async () => {
     const boundary = hostBoundaries();
     const spawn = boundary.spawn.getMockImplementation()!;
     boundary.spawn.mockImplementation(async (spec) => {
@@ -320,7 +348,9 @@ describe('Pi Agent runtime', () => {
       kind: 'create', sessionId: 'pi-invalidated-during-open', cwd: '/workspace',
     }, boundary.context);
     openedSessions.push(session);
-    await vi.waitFor(() => expect(boundary.disposeProcess).toHaveBeenCalled());
+    expect(boundary.disposeProcess).not.toHaveBeenCalled();
+    await session.dispose();
+    expect(boundary.disposeProcess).toHaveBeenCalledOnce();
     for (const subscription of boundary.subscriptions) expect(subscription.dispose).toHaveBeenCalledOnce();
   });
 
