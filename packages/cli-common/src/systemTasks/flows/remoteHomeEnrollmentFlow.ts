@@ -7,7 +7,7 @@ import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { formatGuestAuthCarrierFailure, formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure,
+import { formatGuestAuthCarrierFailure, formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure, readGuestCliFailureOutput,
   type GuestCliFailureFacts } from '@happier-dev/protocol/ssh/commandFailure';
 import { projectRemoteHomeEnrollmentFailure, projectGuestHomeReachabilityFailure } from './remoteHomeEnrollmentFailure.js';
 
@@ -266,10 +266,20 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
             stdoutPresent: Boolean(result.stdout.trim()), stderrPresent: Boolean(result.stderr.trim()),
           }));
         }
-        const diagnostic = isRecord(response) && response.v === 1 && response.ok === false
-          && response.kind === `auth_${args[1]}` && isRecord(response.error) ? response.error : null;
+        const readFailure = (value: unknown) => isRecord(value) && value.v === 1 && value.ok === false
+          && value.kind === `auth_${args[1]}` && isRecord(value.error) ? { envelope: value, error: value.error } : null;
+        let failure = readFailure(response);
+        let releasedFailure: GuestCliFailureFacts | null = null;
+        if (!failure) {
+          // Some CLI launchers send their JSON failure to stderr. Only the
+          // matching envelope and the shared closed facts may cross this seam.
+          try { failure = readFailure(JSON.parse(result.stderr)); } catch {
+            releasedFailure = readGuestCliFailureOutput('', result.stderr);
+          }
+        }
+        const diagnostic = failure?.error ?? null;
         const fields = [`exit ${result.status}`];
-        const guestFailure = diagnostic ? readGuestCliFailure(response) : null;
+        const guestFailure = failure ? readGuestCliFailure(failure.envelope) : releasedFailure;
         const unreachable = projectGuestHomeReachabilityFailure(homeTargetInput, guestFailure);
         if (unreachable) throw unreachable;
         const guestCode = guestFailure?.guestCliCode;
@@ -294,8 +304,8 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
         if (guestFailure?.guestAuthCategory && guestFailure.guestAuthCategory !== 'unknown') {
           fields.push(`category ${guestFailure.guestAuthCategory}`);
         }
-        if (typeof diagnostic?.status === 'number' && Number.isInteger(diagnostic.status) && diagnostic.status >= 100 && diagnostic.status <= 599) {
-          fields.push(`HTTP ${diagnostic.status}`);
+        if (guestFailure?.guestHttpStatus !== undefined) {
+          fields.push(`HTTP ${guestFailure.guestHttpStatus}`);
         }
         const serverCode = readUnexpectedActionErrorDiagnosticV1({ code: diagnostic?.serverCode }).errorCode;
         if (serverCode !== null) fields.push(`server code ${serverCode}`);

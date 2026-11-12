@@ -40,7 +40,7 @@ const authCodes = ['AUTH_ENROLL_REMOTE_FAILED', 'AUTH_ENROLL_REMOTE_CANCELLED', 
     'HOME_FEATURES_UNREADABLE', 'HOME_FEATURES_NETWORK', 'HOME_FEATURES_TIMEOUT', 'HOME_FEATURES_HTTP_ERROR',
     'HOME_FEATURES_ENDPOINT_MISSING', 'HOME_IDENTITY_MISSING', 'HOME_CREDENTIAL_DESTINATION_UNVERIFIED',
     'HOME_AUTHORITY_MISMATCH', 'HOME_LEGACY_ORIGIN_MISMATCH', 'HOME_RUNTIME_ORIGIN_INVALID',
-    'ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE', 'ERR_NETWORK', 'ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT',
+    'ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE', 'ERR_NETWORK', 'ECONNABORTED', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT',
     'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_REQUIRE_ESM', 'ERR_DLOPEN_FAILED', 'ENOENT', 'EACCES', 'EPERM'] as const;
 const serviceSteps = ['preflight', 'cleanup_bootout', 'bootstrap', 'kickstart', 'wait', 'command'] as const;
 const serviceStatuses = ['failed', 'deadline_elapsed', 'unavailable'] as const;
@@ -179,13 +179,27 @@ export function readGuestCliFailure(value: unknown): GuestCliFailureFacts | null
         ...(carrierFailure ? { carrierFailure } : {}) };
 }
 
-/** Each stream is one JSON document; prose, nested code bags and fragments cannot qualify. */
+/** JSON envelopes and complete known released auth failures; never arbitrary prose or fragments. */
 export function readGuestCliFailureOutput(stdout: string, stderr: string): GuestCliFailureFacts | null {
     for (const output of [stdout, stderr]) {
         try {
             const facts = readGuestCliFailure(JSON.parse(output));
             if (facts) return facts;
-        } catch { /* Older CLIs can emit prose; it remains presence-only. */ }
+        } catch { /* Only the closed released forms below can qualify without JSON. */ }
+    }
+    // cli-v0.2.20 auth.ts prints fail(error.message) instead of a JSON failure.
+    // Decode only content-free facts from that exact non-terminal presentation.
+    const released = stderr.trim();
+    const http = /^x Request failed with status code ([45]\d{2})$/u.exec(released);
+    if (http) {
+        const guestHttpStatus = Number(http[1]);
+        return { guestCliCode: guestHttpStatus < 500 ? 'ERR_BAD_REQUEST' : 'ERR_BAD_RESPONSE',
+            guestAuthCategory: 'http_error', guestHttpStatus };
+    }
+    if (/^x connect ECONNREFUSED (?:127\.0\.0\.1|::1):\d+$/u.test(released)) {
+        // This CLI ignores descriptor stdin, so it did not observe the current
+        // descriptor's carrier. Do not attribute its connection to that carrier.
+        return { guestCliCode: 'ECONNREFUSED', guestAuthCategory: 'unknown' };
     }
     return null;
 }

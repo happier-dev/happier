@@ -377,7 +377,11 @@ describe('runRemoteHomeEnrollmentFlow', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it.each(['request', 'wait'] as const)('retains the typed %s failure and exit phase without subprocess secrets', async phase => {
+  it.each([
+    { phase: 'request', stream: 'stdout', code: 'ERR_BAD_REQUEST' }, { phase: 'wait', stream: 'stdout', code: 'ERR_BAD_REQUEST' },
+    { phase: 'request', stream: 'stderr', code: 'ERR_BAD_REQUEST' }, { phase: 'wait', stream: 'stderr', code: 'ERR_BAD_REQUEST' },
+    { phase: 'request', stream: 'stdout', code: 'UNKNOWN_PRIVATE_CODE' }, { phase: 'request', stream: 'stderr', code: 'UNKNOWN_PRIVATE_CODE' },
+  ] as const)('retains safe $phase facts from $stream ($code) without subprocess secrets', async ({ phase, stream, code }) => {
     const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
       publicKey: PUBLIC_KEY, homeServerIdentityId: descriptor.homeServerIdentityId,
       pairing,
@@ -385,19 +389,20 @@ describe('runRemoteHomeEnrollmentFlow', () => {
     const failure = await runRemoteHomeEnrollmentFlow({ processIO: 'buffered',
       homeTargetInput: { kind: 'descriptor', descriptor, authority: 'trusted_enrollment' },
       executor: { runHappierJson: async () => { throw new Error('not used'); },
-        runHappierText: async args => args[1] !== phase
-          ? { status: 0, stdout: JSON.stringify(request), stderr: '' }
-          : { status: 1, stdout: JSON.stringify({ v: 1, ok: false, kind: `auth_${phase}`,
-            error: { code: 'ERR_BAD_REQUEST', category: 'http_error', status: 409, serverCode: 'database_transaction_conflict_exhausted', token: 'private-token', message: 'private-message' } }),
-            stderr: 'private-stderr' } },
+        runHappierText: async args => {
+          if (args[1] !== phase) return { status: 0, stdout: JSON.stringify(request), stderr: '' };
+          const envelope = JSON.stringify({ v: 1, ok: false, kind: `auth_${phase}`,
+            error: { code, category: 'http_error', status: 409, serverCode: 'database_transaction_conflict_exhausted', token: 'private-token', message: 'private-message' } });
+          return { status: 1, stdout: stream === 'stdout' ? envelope : '', stderr: stream === 'stderr' ? envelope : 'private-stderr' };
+        } },
       approvePairingRequest: async () => {},
     }).catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'remote_command_failed',
-      message: `Remote Home enrollment failed during auth ${phase} (exit 1; code ERR_BAD_REQUEST; category http_error; HTTP 409; server code database_transaction_conflict_exhausted).` });
+      message: `Remote Home enrollment failed during auth ${phase} (exit 1${code === 'ERR_BAD_REQUEST' ? '; code ERR_BAD_REQUEST' : ''}; category http_error; HTTP 409; server code database_transaction_conflict_exhausted).` });
     if (!(failure instanceof Error) || !('code' in failure)) throw failure;
     expect(readRemoteEnrollmentCommandFailure(failure.code, failure.message))
       .toEqual({ code: 'remote_command_failed', message: failure.message });
-    expect(JSON.stringify(failure)).not.toMatch(/private-token|private-message|private-stderr/);
+    expect(JSON.stringify(failure)).not.toMatch(/private-token|private-message|private-stderr|UNKNOWN_PRIVATE_CODE/);
   });
 
   it.each(['older-text', 'wrong-kind'] as const)('retains only phase and exit for an untrusted failure envelope (%s)', async variant => {

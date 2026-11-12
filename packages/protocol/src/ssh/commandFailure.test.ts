@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeActionExecutorThrownError } from '../actions/executor/resultProjection.js';
 import { ActionOperationFailureV1Schema } from '../actions/operations/v1.js';
+import { readGuestCliFailureOutput } from './commandFailure.js';
+
+describe('released guest auth stderr', () => {
+  // cli-v0.2.20: auth.ts handleAuthCliCommand prints fail(error.message);
+  // output/presentation.ts emits "x <message>" without terminal color.
+  it.each([
+    { stderr: 'x Request failed with status code 403\n', facts: { guestCliCode: 'ERR_BAD_REQUEST', guestAuthCategory: 'http_error', guestHttpStatus: 403 } },
+    { stderr: 'x Request failed with status code 503\n', facts: { guestCliCode: 'ERR_BAD_RESPONSE', guestAuthCategory: 'http_error', guestHttpStatus: 503 } },
+    { stderr: 'x connect ECONNREFUSED 127.0.0.1:3033\n', facts: { guestCliCode: 'ECONNREFUSED', guestAuthCategory: 'unknown' } },
+    { stderr: 'x connect ECONNREFUSED ::1:3033\n', facts: { guestCliCode: 'ECONNREFUSED', guestAuthCategory: 'unknown' } },
+    { stderr: 'private-token x Request failed with status code 403\n', facts: null },
+    { stderr: 'x Request failed with status code 403\nprivate-token', facts: null },
+    { stderr: 'x private-token\n', facts: null },
+  ])('projects only a complete known released failure: $stderr', ({ stderr, facts }) => {
+    expect(readGuestCliFailureOutput('', stderr)).toEqual(facts);
+  });
+});
 
 describe('guest enrollment diagnostics at Action settlement', () => {
   it.each([

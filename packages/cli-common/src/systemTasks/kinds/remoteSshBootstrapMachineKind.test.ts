@@ -42,6 +42,41 @@ it('refuses a controller-only descriptor before contacting an SSH machine', asyn
 });
 
 describe('native transport through the remote bootstrap task', () => {
+  it.each(['auth_request', 'auth_wait', 'prose', 'released-http', 'released-network'] as const)('retains only safe stderr causes without retrying managed bootstrap (%s)', async kind => {
+    const secret = 'private-guest-token-must-not-cross-bootstrap';
+    const correlation = { homeId: HOME_TARGET.homeServerIdentityId, managedId: 'managed-stderr', requestId: 'request-stderr', expectedIntentRevision: 1,
+      controller: { machineId: 'controller', installationId: 'installation' },
+      resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest-stderr' } } };
+    let guestInput: unknown;
+    let guestArgs: readonly string[] = [];
+    let authCommands = 0;
+    const task = createRemoteNativeBootstrapMachineTaskKind({
+      configuration: { relay: { relayUrl: HOME_TARGET.canonicalAuthUrl }, homeTarget: HOME_TARGET, managedEnrollment: correlation, serviceMode: 'none' },
+      assertCurrent: async () => {}, installRemoteCli: async () => {}, approveLocalAuthRequest: async () => {},
+      executor: {
+        runHappierJson: async () => ({ ok: true, data: { authenticated: false, services: [] }, auth: { needsAuth: true } }),
+        runHappierText: async (args, options) => {
+          authCommands += 1;
+          guestArgs = args;
+          guestInput = JSON.parse(options?.input ?? 'null');
+          return { status: 1, stdout: '', stderr: kind === 'prose' ? secret : kind === 'released-http' ? 'x Request failed with status code 403\n'
+            : kind === 'released-network' ? 'x connect ECONNREFUSED 127.0.0.1:3033\n' : JSON.stringify({ v: 1, ok: false, kind,
+            error: { code: 'ERR_MODULE_NOT_FOUND', category: 'unknown', message: secret, token: secret } }) };
+        },
+      },
+    });
+    const failure = await task.run({ params: {}, emit() {}, prompt: async () => ({ approved: true }) }).catch(error => error);
+    expect(failure).toMatchObject({ code: 'remote_command_failed' });
+    expect(failure.message).not.toContain(secret);
+    if (kind === 'auth_request') expect(failure.message).toContain('code ERR_MODULE_NOT_FOUND');
+    else expect(failure.message).not.toContain('ERR_MODULE_NOT_FOUND');
+    if (kind === 'released-http') expect(failure.message).toContain('code ERR_BAD_REQUEST; category http_error; HTTP 403');
+    if (kind === 'released-network') expect(failure.message).toContain('code ECONNREFUSED');
+    expect(authCommands).toBe(1);
+    expect(guestArgs).toEqual(expect.arrayContaining(['auth', 'request', '--home-target-stdin', '--managed-enrollment-stdin', '--server-url', HOME_TARGET.descriptor!.canonicalServerUrl]));
+    expect(guestInput).toMatchObject({ homeTarget: { kind: 'descriptor', descriptor: { homeServerIdentityId: correlation.homeId } }, managedEnrollment: correlation });
+  });
+
   it.each([
     ['native', 'absent'], ['ssh', 'absent'], ['configured-native', 'absent'],
     ['native', 'admitted'], ['ssh', 'admitted'],
@@ -359,7 +394,8 @@ describe('native transport through the remote bootstrap task', () => {
         runHappierText: async (args, options) => {
           expect(options?.onStdoutChunk).toBeUndefined();
           if (args[1] === 'request') {
-            expect(args).toEqual(['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', '--managed-enrollment-stdin']);
+            expect(args).toEqual(['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin',
+              '--server-url', HOME_TARGET.descriptor.canonicalServerUrl, '--no-persist', '--managed-enrollment-stdin']);
             guestInput = JSON.parse(options!.input!);
             const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1, publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: correlation.homeId, pairing: { secretB64Url: Buffer.alloc(32, 2).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 15 * 60_000 }, supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'guest-home' };
             return { status: 0, stdout: `${JSON.stringify(request)}\n`, stderr: '' };
