@@ -51,6 +51,7 @@ import {
     createExternalSessionObservationReconciler,
 } from '../../../../api/session/external/leases/createExternalSessionObservationReconciler';
 import { createUnavailablePluginServices } from '../../invocation/services/unavailable';
+import { createContributionOwnedManagedServiceEndpointReadHostCache } from '@/session/external/contributionOwnedManagedServiceEndpointRead';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
 import { logger } from '../../../../ui/logger';
 
@@ -573,6 +574,92 @@ describe('contribution-owned External Sessions managed endpoint', () => {
                 .map((call) => call[0].correlationId),
         );
         expect(correlationIds.size).toBe(3);
+    });
+
+    it('keeps one daemon-owned server per occurrence across Agent runtime registry rebuilds', async () => {
+        // Lazy activation of another plugin rebuilds every Agent lease of the registry. Each rebuild
+        // must not mint a new acquisition identity (= a new managed server) for an unchanged
+        // occurrence: one usage-source discovery spawned 13 OpenCode browse servers that way.
+        const supervisedCorrelations: string[] = [];
+        const unavailable = createUnavailablePluginServices();
+        const handle = createManagedServicesDouble().supervise;
+        const createAgentInvocationServices = vi.fn(async (
+            invocation: Parameters<CreateAgentInvocationServices>[0],
+        ): Promise<PluginServices> => ({
+            ...unavailable,
+            managedServices: {
+                ...unavailable.managedServices,
+                supervise: async (spec: ManagedServiceSpec, options?: Readonly<{ signal?: AbortSignal }>) => {
+                    supervisedCorrelations.push(invocation.correlationId);
+                    return await handle(spec, options);
+                },
+            },
+        }));
+        const listCandidates = vi.fn(async (
+            request: Parameters<AgentExternalSessionsContribution['listCandidates']>[0],
+        ) => {
+            await request.managedEndpointRead({ pathAndQuery: '/session' });
+            return { ok: true as const, value: { candidates: [], nextCursor: null } };
+        });
+        const targetRegistrations = [{
+            pluginId: 'acme.agent.fixture',
+            occurrenceId: 'generation-7',
+            registration: {
+                family: 'agents',
+                localId: 'assistant',
+                value: {
+                    externalSessions: Object.freeze({
+                        ...externalSessionsContribution,
+                        listCandidates,
+                        resolveManagedEndpointService: () => HOST_MINTED_SPAWN_SPEC,
+                    }),
+                },
+            } as ContributionRuntimeRegistration,
+        }];
+        const contributionOwnedManagedEndpointReads = createContributionOwnedManagedServiceEndpointReadHostCache();
+        const build = async () => await createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+            activationTargets: [target()],
+            targetRegistrations,
+            isOccurrenceCurrent: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            createAgentInvocationServices,
+            contributionOwnedManagedEndpointReads,
+            onDuplicate: vi.fn(),
+        });
+        const browse = async (registry: ReturnType<typeof createTargetAgentRuntimeRegistryProduction>) => {
+            const externalSessions = registry.get('assistant')?.externalSessions;
+            if (!externalSessions) throw new Error('Expected External Sessions lease');
+            return await externalSessions.listCandidates({
+                source: { kind: 'opencodeServer', managedEndpoint: true },
+                maxItems: 50,
+                maxSerializedBytes: 1_048_576,
+                deadlineAtMs: Date.now() + 15_000,
+                signal: new AbortController().signal,
+            });
+        };
+
+        const first = await build();
+        expect(await browse(first)).toMatchObject({ ok: true });
+        // A refresh rebuilds leases from the same activated registrations of the same occurrence.
+        const rebuilt = createTargetAgentRuntimeRegistryProduction({
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture', identity: { pluginId: 'acme.agent.fixture', localId: 'assistant' } }],
+            activationTargets: [target()],
+            targetRegistrations: first.sdkRegistrations,
+            readPluginOccurrenceId: first.readPluginOccurrenceId,
+            readPluginSourceCustody: first.readPluginSourceCustody,
+            isOccurrenceCurrent: () => true,
+            retirementSignal: TEST_RETIREMENT_SIGNAL,
+            createAgentInvocationServices,
+            contributionOwnedManagedEndpointReads,
+            onDuplicate: vi.fn(),
+        });
+        expect(rebuilt.get('assistant')).not.toBe(first.get('assistant'));
+        expect(await browse(rebuilt)).toMatchObject({ ok: true });
+        expect(await browse(first)).toMatchObject({ ok: true });
+
+        expect(supervisedCorrelations).toHaveLength(3);
+        expect(new Set(supervisedCorrelations).size).toBe(1);
     });
 
     it('keeps the Session-runner endpoint host when a contribution declares no service', async () => {

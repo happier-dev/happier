@@ -6214,7 +6214,7 @@ describe('daemon contribution registry projection rpc handler', () => {
         if (!handler) throw new Error('Expected targeted source declaration handler');
         const response = await handler({ machineId: 'm1', pluginId, readMode: 'sourceDeclarations' });
         expect(DaemonPluginUiTargetedContributionsReadResponseSchema.parse(response)).toEqual({
-            status: 'sourceDeclarations', pluginId, sourceDeclarations: [{ occurrenceId, sourceCustody,
+            status: 'sourceDeclarations', pluginId, sourceRevision: expect.any(String), sourceDeclarations: [{ occurrenceId, sourceCustody,
                 manifest: { id: pluginId, contributes: { actions: [], pluginContributionPoints: [],
                     targetedPluginContributions: [], ui: { renderers: [] } } },
             }],

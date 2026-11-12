@@ -37,13 +37,13 @@ describe('current Machine source declarations for an Account target', () => {
                             ...declaration.manifest.contributes,
                             actions: declaration.manifest.contributes.actions.map((action) => ({
                                 ...action,
-                                ...(action.inputSchema === undefined ? {} : { inputSchema: observeSchemaReads(action.inputSchema) }),
-                                ...(action.resultSchema === undefined ? {} : { resultSchema: observeSchemaReads(action.resultSchema) }),
+                                ...(action.inputSchema === undefined ? {} : { inputSchema: observeSchemaReads(structuredClone(action.inputSchema)) }),
+                                ...(action.resultSchema === undefined ? {} : { resultSchema: observeSchemaReads(structuredClone(action.resultSchema)) }),
                             })),
                         } } }),
                 },
             } satisfies ResolvedExecutablePluginRuntimeRegistry;
-            const readRaw = async (runtime: ResolvedExecutablePluginRuntimeRegistry) => {
+            const readRaw = async (runtime: ResolvedExecutablePluginRuntimeRegistry, query: Record<string, unknown> = {}) => {
                 const handlers = new Map<string, RpcHandler>();
                 registerDaemonContributionRegistryProjectionHandler({
                     registerHandler(method, handler) { handlers.set(method, handler); },
@@ -52,7 +52,7 @@ describe('current Machine source declarations for an Account target', () => {
                 if (!handler) throw new Error('Target read RPC was not registered');
                 let response: unknown;
                 try {
-                    response = await handler({ machineId: 'machine-source', pluginId: 'happier.triage', readMode: 'sourceDeclarations' });
+                    response = await handler({ machineId: 'machine-source', pluginId: 'happier.triage', readMode: 'sourceDeclarations', ...query });
                 } catch (error) { throw new Error('Machine source-declaration producer failed before response parsing', { cause: error }); }
                 return response;
             };
@@ -69,6 +69,14 @@ describe('current Machine source declarations for an Account target', () => {
             expect(response.status).toBe('sourceDeclarations');
             if (response.status !== 'sourceDeclarations') throw new Error(`Source read refused: ${response.status}`);
             expect(response.pluginId).toBe('happier.triage');
+            expect(response).toHaveProperty('sourceRevision', expect.any(String));
+            const sourceRevision = Reflect.get(response, 'sourceRevision');
+            expect(decode(await readRaw(observedRuntime, { knownSourceRevision: sourceRevision })))
+                .toEqual({ status: 'sourceDeclarationsUnchanged', pluginId: 'happier.triage', sourceRevision });
+            const selected = decode(await readRaw(observedRuntime, { sourcePluginId: 'acme.absent' }));
+            expect(selected).toMatchObject({ status: 'sourceDeclarations', sourceDeclarations: [] });
+            const retired = decode(await readRaw({ ...observedRuntime, readPluginOccurrenceId: () => null }, { knownSourceRevision: sourceRevision }));
+            expect(retired).toMatchObject({ status: 'sourceDeclarations', sourceDeclarations: [] });
             expect(response.sourceDeclarations).toMatchObject([{
                 manifest: { id: sourceId },
                 occurrenceId: fixture.registry.readPluginOccurrenceId?.(sourceId),

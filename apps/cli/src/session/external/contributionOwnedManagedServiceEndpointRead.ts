@@ -56,6 +56,43 @@ export type ContributionOwnedManagedServiceEndpointReadHosts = Readonly<{
 }>;
 
 /**
+ * Registry-lifetime memo of the endpoint hosts above, keyed by the exact
+ * contribution object and its Agent/occurrence identity.
+ *
+ * An Agent runtime registry rebuilds every Agent lease whenever lazy activation
+ * changes its facts. The host's acquisition identity decides the managed
+ * server's lifetime, so a host per lease build spawned a fresh server for an
+ * unchanged occurrence on every rebuild and left the earlier one running. The
+ * contribution object is produced once per occurrence activation, so it is
+ * stable across rebuilds and collectable once its occurrence is gone.
+ */
+export type ContributionOwnedManagedServiceEndpointReadHostCache = WeakMap<
+    AgentExternalSessionsContribution,
+    Map<string, ContributionOwnedManagedServiceEndpointReadHosts | null>
+>;
+
+export function createContributionOwnedManagedServiceEndpointReadHostCache(): ContributionOwnedManagedServiceEndpointReadHostCache {
+    return new WeakMap();
+}
+
+export function resolveContributionOwnedManagedServiceEndpointReadHost(
+    cache: ContributionOwnedManagedServiceEndpointReadHostCache | undefined,
+    params: Parameters<typeof createContributionOwnedManagedServiceEndpointReadHost>[0],
+): ContributionOwnedManagedServiceEndpointReadHosts | null {
+    if (!cache) return createContributionOwnedManagedServiceEndpointReadHost(params);
+    const key = [params.identity.pluginId, params.identity.agentId, params.identity.occurrenceId].join('\u0000');
+    let byIdentity = cache.get(params.contribution);
+    if (!byIdentity) {
+        byIdentity = new Map();
+        cache.set(params.contribution, byIdentity);
+    }
+    if (byIdentity.has(key)) return byIdentity.get(key)!;
+    const hosts = createContributionOwnedManagedServiceEndpointReadHost(params);
+    byIdentity.set(key, hosts);
+    return hosts;
+}
+
+/**
  * Returns `null` when the contribution declares no managed endpoint service, so
  * the caller keeps whatever host it already had rather than gaining an inert
  * second owner.

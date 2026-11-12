@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Connected Account connection tests (unreleased 0.3)
+
+The Connected Account runtime adds optional `testConnection`; its shared Action
+and established-operation dispatch return a closed result with `ok`,
+`needsReauth`, `networkUnavailable` or `unsupported`. A missing callback remains
+unsupported and is never emulated with a local health check. Protocol, SDK,
+CLI host and app readers load together under the unpublished 0.3 direct cut;
+older development dispatchers do not recognize the new operation. No persisted
+format, wire epoch, credential mutation or predecessor adapter is added.
+The inspected `../0.2` frontier at
+`57cd3db058af7767335d6d5a4ed44904460c50bb`, including scoped working changes,
+has none of the SDK runtime, established-owner or shared Action source paths.
+
 ## Machine service exec presentation (unreleased 0.3)
 
 Machine service rows add optional `capabilities.exec`, and their native state
@@ -20,8 +33,14 @@ includes their exact Home, resource and intent revision. Home admits the creator
 or manager once; signed HTTP mutation purposes must match that projected input.
 A foreign controller receives the scoped invocation codec, without requester
 Account credentials. Bare terminal credentials retain their existing refusal.
+Creator Cancel/Delete roots additionally carry Home's positive
+`authority: 'creator_recovery'` decision inside the existing exact Cancel/Delete
+`managedAdmission` operand, bound to that signed Action, Home,
+controller, body and revision. The custodian consumes it without creating a
+requester-private Ask or borrowing requester credentials; nondelegated managers
+retain approval policy, and other native controls retain Manage authority.
 
-Protocol, CLI and Home readers reload together for these added authority-bearing
+Protocol, Home, CLI and UI transport readers reload together for these added authority-bearing
 union members. This corrects an unpublished development contract in place; it
 adds no persisted format, wire epoch, gate or predecessor adapter. The inspected
 `../0.2` frontier at `b825a99dfedcb68e223155a1ba0be84babe9e2d0`, including scoped
@@ -8005,6 +8024,19 @@ step or new proof carrier is introduced. The inspected `../0.2` frontier
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped staged and unstaged
 paths, has neither this native launcher schema nor the Move contract; no
 predecessor adapter is introduced.
+
+## Conditional Machine source declarations (unreleased 0.3)
+
+The existing targeted-contribution RPC accepts optional `sourcePluginId` and
+`knownSourceRevision` selectors for source-declaration reads. Full replies carry
+`sourceRevision`; matching revisions return the closed
+`sourceDeclarationsUnchanged` variant. Readers accept an unversioned full body
+but cannot retain it for conditional reuse. Protocol and CLI daemon/Account
+runtimes reload together; older strict development request readers reject the
+selectors. Endpoint authorization and native Action admission are unchanged.
+The inspected `../0.2` frontier `57cd3db058af7767335d6d5a4ed44904460c50bb`
+has no tracked source-declaration protocol at this path and no scoped working
+changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
 

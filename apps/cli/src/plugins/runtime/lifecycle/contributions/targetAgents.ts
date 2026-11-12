@@ -96,7 +96,8 @@ import {
 import type { AgentExternalSessionsManagedEndpointReadHost } from '../../../../session/external/agentExternalSessionsInvocation';
 import type { BoundedAgentExternalSessionsContribution } from '../../../../session/external/agentExternalSessionsInvocation';
 import {
-    createContributionOwnedManagedServiceEndpointReadHost,
+    resolveContributionOwnedManagedServiceEndpointReadHost,
+    type ContributionOwnedManagedServiceEndpointReadHostCache,
 } from '../../../../session/external/contributionOwnedManagedServiceEndpointRead';
 import { createPluginInvocationPresentation } from '../../invocation/services/interactions';
 import { createUnavailablePluginServices } from '../../invocation/services/unavailable';
@@ -1235,6 +1236,7 @@ function createLease(params: Readonly<{
     boundedDaemonSpawnHooks?: AgentDaemonSpawnHooks;
     createAgentInvocationServices?: CreateAgentInvocationServices;
     managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+    contributionOwnedManagedEndpointReads?: ContributionOwnedManagedServiceEndpointReadHostCache;
 }>): AgentRuntimeRegistrationLease {
     const assertCurrent = (): void => {
         if (!params.isOccurrenceCurrent()) {
@@ -1314,7 +1316,7 @@ function createLease(params: Readonly<{
      */
     const contributionOwnedManagedEndpointRead =
         params.registration.externalSessions && params.createAgentInvocationServices
-            ? createContributionOwnedManagedServiceEndpointReadHost({
+            ? resolveContributionOwnedManagedServiceEndpointReadHost(params.contributionOwnedManagedEndpointReads, {
                 contribution: params.registration.externalSessions,
                 identity: {
                     pluginId: params.pluginId,
@@ -1657,6 +1659,8 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
     isOccurrenceCurrent(): boolean;
     createAgentInvocationServices?: CreateAgentInvocationServices;
     managedEndpointRead?: AgentExternalSessionsManagedEndpointReadHost;
+    /** Registry-lifetime memo so a lease rebuild reuses an unchanged occurrence's managed server. */
+    contributionOwnedManagedEndpointReads?: ContributionOwnedManagedServiceEndpointReadHostCache;
     onDuplicate(duplicate: AgentRuntimeOwnerDuplicate): void;
 }> & AgentRuntimeRetirementOwner): ReadonlyMap<string, AgentRuntimeRegistrationLease> {
     const targetsByPluginId = new Map(
@@ -1778,6 +1782,9 @@ export function createTargetAgentRuntimeRegistry(params: Readonly<{
                 : {}),
             ...(params.managedEndpointRead
                 ? { managedEndpointRead: params.managedEndpointRead }
+                : {}),
+            ...(params.contributionOwnedManagedEndpointReads
+                ? { contributionOwnedManagedEndpointReads: params.contributionOwnedManagedEndpointReads }
                 : {}),
         }));
     }

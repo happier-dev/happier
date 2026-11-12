@@ -3751,6 +3751,13 @@ fragments once without roundtrip re-encoding or a vendor base64 grammar; Fly
 passes the encoded fragment to its guest decoder. Fly's public direct native
 client reuses the same role schema at that ingress, while retaining its native
 path, mode and timeout checks.
+Native byte strings use the existing JSON Schema `format` vocabulary's `byte`
+arm. Executable, portable and rehydrated schemas share the base64 owner's padded
+grammar scan; unused padding bits remain accepted here, while canonical crypto
+encodings retain their stricter rule. This avoids Bun's repeated-group regexp
+failure on valid installer fragments without shrinking the Action budget.
+Matching 0.3 Protocol, SDK, controller and app declaration readers must load
+together; earlier closed format vocabularies reject this development extension.
 
 For an asynchronous native deletion, a reconciling provisioner's destroy Action may return the canonical `accepted` result with its declared native-operation reference. The managed-machine row remains the custody owner: it persists that reference with the submitted Delete intent, re-supplies it to the same destroy role, and clears the resource only after a `confirmed` result. Legacy provisioners may keep returning the synchronous power-result shape; an `unknown` result never discards retained deletion custody or proves absence.
 
@@ -7545,6 +7552,19 @@ not republish the transition or push again. The helper rechecks the caller's
 captured connection/binding admission after resolving the exact Session/Home;
 retargeted, Off and ordinary chat bindings do not receive this attention.
 Delivery failure is logged and never rolls back truthful credential health.
+
+The development Account runtime reads Machine source declarations through
+`DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ` with `readMode: sourceDeclarations`.
+The daemon selects `sourcePluginId` before projecting bodies; targeted discovery
+omits it. `sourceRevision` derives from selected admitted occurrence/custody
+identities, including membership. `knownSourceRevision` returns
+`sourceDeclarationsUnchanged` when equal, without traversing Action schemas.
+One reader per Account registry retains admitted bodies by exact Machine, target
+and source selection and shares in-flight reads. Every later read still checks
+the Machine; failures never serve retained data. Independent callers cancel
+their own wait, and the last cancelled caller aborts the transport. No timer or
+Account-runtime push subscription is added. Native Action admission stays at
+the incumbent Machine executor.
 
 The development targeted-contribution reply carries optional
 `resourceDeclarationsByPluginId` alongside its handles. A present plugin key is

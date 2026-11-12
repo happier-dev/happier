@@ -1,7 +1,5 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
-import { DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginUiTargetedContributionsReadResponseSchema,
-    DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -57,24 +55,6 @@ export async function resolveAccountMachineSourceActionMachine(input: Omit<Accou
     if (!machineId) return { status: 'unavailable', code: 'plugin_action_execution_origin_unavailable',
         message: 'The Session source Machine is unavailable', actionHandlerInvocation: 'notStarted' };
     return { status: 'available', machineId };
-}
-
-/** Reads the existing Machine projection without inventing an Account mount there. */
-export async function readAccountMachineSourceDeclarations(input: AccountMachineTransport & Readonly<{
-    targetPluginId: string; signal?: AbortSignal;
-}>): Promise<readonly TargetedContributionManifestDeclaration[]> {
-    const request = DaemonPluginUiTargetedContributionsReadRequestSchema.parse({ machineId: input.machineId,
-        pluginId: input.targetPluginId, readMode: 'sourceDeclarations' });
-    const result = DaemonPluginUiTargetedContributionsReadResponseSchema.parse(await callExactMachineRpc({
-        credentials: input.credentials, serverUrl: input.serverUrl, machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ, request,
-        requireCurrentMachine: true, timeoutMs: null, ...(input.signal ? { signal: input.signal } : {}),
-    }));
-    if (result.status !== 'sourceDeclarations' || result.pluginId !== input.targetPluginId) {
-        throw new PluginError({ code: result.status === 'unavailable' ? result.code : 'plugin_targeted_contributions_unavailable',
-            message: 'Current Machine source declarations are unavailable' });
-    }
-    return result.sourceDeclarations;
 }
 
 /** Transports to the incumbent final Action owner; it never evaluates Machine code locally. */
