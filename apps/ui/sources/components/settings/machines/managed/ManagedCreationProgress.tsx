@@ -28,6 +28,7 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedNativeFailureDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineV1; handlers?: ManagedLifecycleHandlers;
@@ -99,7 +100,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const error = !prompt && !heldAsk && !newerObservation ? operation?.snapshot.error : undefined;
     const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause) ? newerObservation : null;
     const failure = observationDiagnostic ? {
-        title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated') : t('managedMachines.inspect.checkFailed'),
+        title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated')
+            : resolveSystemTaskFailureMessage({ code: observationDiagnostic.reason }) ?? t('managedMachines.inspect.checkFailed'),
         detail: describeManagedNativeFailureDiagnostic(observationDiagnostic.reason ?? 'provider_unavailable', observationDiagnostic.nativeCause),
     } : error ? {
         title: nothingCreated ? lifecycle.line

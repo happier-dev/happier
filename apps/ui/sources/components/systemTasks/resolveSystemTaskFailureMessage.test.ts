@@ -62,6 +62,15 @@ describe('resolveSystemTaskFailureMessage', () => {
             .toBe(t('machine.thisComputer.cliChoice.ownMissing'));
     });
 
+    it.each(['home_not_guest_reachable', 'bootstrap.home_not_guest_reachable'])(
+        'maps the task and retained bootstrap cause to the same Home recovery (%s)', async (code) => {
+        const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
+        const homeOrigin = 'https://home.example.test:9443';
+        expect(resolveSystemTaskFailureMessage({ code, message: null,
+            details: { kind: 'managedGuestHome', homeOrigin } }))
+            .toBe(`${t('managedMachines.creation.homeNotGuestReachable')} (${homeOrigin})`);
+    });
+
     it('keeps the task message for other failures and returns undefined when there is nothing to show', async () => {
         const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
 

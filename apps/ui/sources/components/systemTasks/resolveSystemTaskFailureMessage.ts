@@ -25,12 +25,13 @@ const SYSTEM_TASK_FAILURE_TRANSLATION_KEYS: Readonly<Record<string, TranslationK
 export function resolveSystemTaskFailureMessage(
     error: Readonly<{ code?: string | null; message?: string | null; details?: ActionOperationFailureV1['details'] }>,
 ): string | undefined {
-    const acquisitionFailure = error.code ? resolveCliAcquisitionFailureMessage(error.code) : undefined;
+    const code = error.code === 'bootstrap.home_not_guest_reachable' ? 'home_not_guest_reachable' : error.code;
+    const acquisitionFailure = code ? resolveCliAcquisitionFailureMessage(code) : undefined;
     if (acquisitionFailure) return acquisitionFailure;
-    const key = error.code ? SYSTEM_TASK_FAILURE_TRANSLATION_KEYS[error.code] : undefined;
+    const key = code ? SYSTEM_TASK_FAILURE_TRANSLATION_KEYS[code] : undefined;
     if (key) {
         const details = error.details;
-        return error.code === 'home_not_guest_reachable' && details && 'kind' in details && details.kind === 'managedGuestHome'
+        return code === 'home_not_guest_reachable' && details && 'kind' in details && details.kind === 'managedGuestHome'
             ? `${t(key)} (${details.homeOrigin})` : t(key);
     }
     const message = typeof error.message === 'string' ? error.message.trim() : '';
