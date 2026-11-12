@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { invokeSourcePanelFixtureAction } from '../sourcePanelActions.test-support.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../../actions/mountedUiProtocol.js';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -275,9 +277,11 @@ async function mountShell(options: Readonly<{
             identity: { instanceId: 'fixture-instance-182', mountNonce: 'fixture-mount-182' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: accountDataClient !== null
-                ? defineUiSurface((context) => React.cloneElement(
+                // The host binds Account data on the public entry's existing provider. A second
+                // defineUiSurface would create a nested mount without this host's shared scope.
+                ? (context) => React.cloneElement(
                     renderShellSurface(context) as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>,
-                    { dataClient: accountDataClient }))
+                    { dataClient: accountDataClient })
                 : options.tasks === undefined ? renderShellSurface
                 : defineUiSurface(() => <TriageListShell tasksPage subPath="tasks,mine" />),
             surfaceContext: createSurfaceContextFixture({
@@ -294,7 +298,9 @@ async function mountShell(options: Readonly<{
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action }) => await executeAction(
+                executeAction: async ({ action, input }) => action === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1
+                    ? await invokeSourcePanelFixtureAction(ephemeralSharedScope, action, input, fixture.context, new AbortController().signal)
+                    : await executeAction(
                     action,
                     options.exposeDurableState === true,
                     options.configured === true,

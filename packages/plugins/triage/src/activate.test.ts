@@ -8,6 +8,7 @@ import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testin
 import {
   TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
   TriageEntryRefV1Schema,
+  TriageSourceDescriptorV1Schema,
   TriageSetFixPullRequestResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, expectTypeOf, it } from 'vitest';
@@ -27,7 +28,7 @@ import {
   TriageReadSavedViewsResultV1Schema,
   TriageSavedViewsCatalogValueV1Schema,
 } from './actions/savedViewsProtocol.js';
-import { PLUGIN_MANIFEST, TRIAGE_PLUGIN } from './manifest.js';
+import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from './manifest.js';
 import { activate } from './activate.js';
 import { activate as activateAccount } from './accountRuntime.js';
 import { CORPUS_USER_MARKS_COLLECTION } from './corpus/collections/definitions.js';
@@ -54,6 +55,8 @@ import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksActionResultV1Schema } from './actions/sessionLinksProtocol.js';
 import { linkEntryToSession } from './sessions/entrySessionLinks.js';
 import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js';
+import { readTriageComposerForgeEvidenceV1 } from './composer/attachmentValue.js';
 
 async function withRegisteredPlugin(run: (fixture: Readonly<{
   plugin: PluginTestkit;
@@ -74,10 +77,19 @@ async function withRegisteredPlugin(run: (fixture: Readonly<{
     },
   } } as unknown as StorageService;
   let plugin!: PluginTestkit;
-  // The SDK produces this empty admitted snapshot from the real declarations;
-  // the subscription adapter models only the plugin-to-host service boundary.
+  // The SDK issues structural admission and opaque handles. As in the Tasks
+  // composed harness, the host boundary adds the authored descriptor semantics.
   const targetedContributions = { observeForSelf: (point: Parameters<PluginTestkit['readTargetedContributionFixture']>[0]) => ({
-    readCurrent: async () => plugin.readTargetedContributionFixture(point),
+    readCurrent: async () => {
+      const snapshot = plugin.readTargetedContributionFixture(point);
+      if (point.id !== TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1.id) return snapshot;
+      return { ...snapshot, contributions: snapshot.contributions.map(entry => {
+        const declaration = PLUGIN_MANIFEST.contributes.targetedPluginContributions.find(candidate =>
+          candidate.id === entry.contributor.contributionId && candidate.target.pointId === point.id);
+        return { ...entry, descriptor: TriageSourceDescriptorV1Schema.parse(declaration?.descriptor),
+          surfaces: declaration?.surfaces ?? {} };
+      }) };
+    },
     dispose: () => {},
   }) } as unknown as PluginServices['targetedContributions'];
   plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module, services: { storage, targetedContributions } });
@@ -108,7 +120,7 @@ describe('Triage activation', () => {
     }, { activate, activateAccount });
   });
 
-  it.each(['new', 'existing', 'mismatchedAgent', 'statusApprovalDeferred'] as const)('runs the registered headless investigation through the same creation and input owners on the affected Machine ($0)', async destination => {
+  it.each(['new', 'existing', 'mismatchedAgent', 'statusApprovalDeferred'] as const)('keeps registered headless investigation placement and selected-Session delivery with their owners ($0)', async destination => {
     await withRegisteredPlugin(async ({ plugin }) => {
       const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } } as const;
       const targetKey = buildAgentTargetKeyV2(agentTarget);
@@ -148,6 +160,15 @@ describe('Triage activation', () => {
       } }, { surface: 'plugin', accountScope: { serverId: 'server-a', accountId: 'account-a' },
         sessionTargetsV1: { actionId: 'action.invoke', field: 'input.handoff.sessionChoice.session', selector: false,
           targets: [{ serverId: 'server-a', sessionId: 'session-a' }] }, services: { actions } });
+      if (destination === 'new') {
+        // b2afd9d4fe2: a notice's affected Machine is evidence, not a fixed
+        // Session placement. A headless caller must settle the missing choice.
+        expect(result).toEqual({ v: 1, handoff: { kind: 'selectionRequired', fields: ['sessionChoice'] } });
+        expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
+        expect(invoker.callsFor('session.message.send')).toHaveLength(0);
+        expect(calls.filter(id => id === 'artifact.get')).toHaveLength(1);
+        return;
+      }
       if (destination === 'mismatchedAgent' || destination === 'statusApprovalDeferred') {
         expect(result).toMatchObject({ v: 1, handoff: { kind: 'unavailable',
           reason: destination === 'mismatchedAgent' ? 'agentMismatch' : 'sessionUnavailable' } });
@@ -157,11 +178,17 @@ describe('Triage activation', () => {
       }
       expect(result, JSON.stringify({ result, calls })).toMatchObject({ v: 1, handoff: { kind: 'sendResult', session: { serverId: 'server-a', sessionId: 'session-a' },
         result: { status: 'accepted', localId: 'health-input' } } });
-      expect(invoker.callsFor('session.spawn_new')).toHaveLength(destination === 'new' ? 1 : 0);
-      if (destination === 'new') expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
-        executionTarget: { serverId: 'server-a', machineId: 'machine-a' }, directory: { kind: 'managed' } });
+      expect(invoker.callsFor('session.spawn_new')).toHaveLength(0);
       expect(invoker.callsFor('session.message.send')).toHaveLength(1);
-      expect(JSON.stringify(invoker.callsFor('session.message.send'))).toContain('cpu_busy');
+      const sent = PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send'].parse(invoker.callsFor('session.message.send')[0]?.input);
+      const authored = sent.attachments?.[0]?.value;
+      const value = authored !== null && typeof authored === 'object' && 'value' in authored ? authored.value : undefined;
+      const evidence = readTriageComposerForgeEvidenceV1(value);
+      expect(evidence?.items).toHaveLength(1);
+      expect(JSON.parse(evidence!.items[0]!.text)).toEqual({ notice, recordedAt: 1,
+        artifactRevision: { headerVersion: 1, bodyVersion: 1 },
+        read: { actionId: 'artifact.get', input: { artifactId: 'resource-notice' } } });
+      expect(JSON.stringify(sent)).not.toContain('cpu_busy');
       expect(calls.filter(id => id === 'artifact.get')).toHaveLength(1);
     });
   });
@@ -186,7 +213,9 @@ describe('Triage activation', () => {
       expect(choices.kind).toBe('choices');
       if (choices.kind !== 'choices') throw new Error('Expected the absent catalog seed');
       expect(choices.defaultActionId).toBe(TRIAGE_DEFAULT_FIX_ACTION_ID_V1);
-      expect(choices.actions).toEqual(TRIAGE_DEFAULT_ACTIONS_V1.map(action => ({ label: action.label,
+      // Native handoffs offer the canonical `other` subject, not PR-only or
+      // separately owned native-subject records (186be77187f).
+      expect(choices.actions).toEqual(planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'other').map(action => expect.objectContaining({ label: action.label,
         selection: { configuredActionId: action.actionId, sessionChoice: { kind: 'configured' },
           agentChoice: { kind: 'configured' }, delivery: 'configured' } })));
       const legacy = TriageReadActionsResultV1Schema.parse(await plugin.invokeAction(
@@ -214,9 +243,9 @@ describe('Triage activation', () => {
       if (choices.kind !== 'choices') throw new Error('Expected current configured choices');
       expect.soft(choices.defaultActionId).toBe(TRIAGE_DEFAULT_FIX_ACTION_ID_V1);
       expect(choices.actions.map(action => action.selection.configuredActionId)).toEqual([
-        'custom-first', ...TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.actionId),
+        'custom-first', ...planTriageOfferedActionsV1(TRIAGE_DEFAULT_ACTIONS_V1, 'other').map(action => action.actionId),
       ]);
-      expect(choices.actions.find(action => action.selection.configuredActionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1)).toEqual({
+      expect(choices.actions.find(action => action.selection.configuredActionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1)).toMatchObject({
         label: 'Repair in current profile', selection: { configuredActionId: TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
           sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' },
       });
@@ -428,12 +457,17 @@ describe('Triage activation', () => {
       const result = TriageListEntriesResultV1Schema.parse(await plugin.invokeAction(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
         { v: 1, sources: { kind: 'allConfigured' }, limit: 10, order: 'newest' },
         { surface: 'agent', sessionId: 'triage-audit-session' }));
-      expect(result.configuredSources).toEqual([{
+      expect(result.configuredSources).toHaveLength(2);
+      expect(result.configuredSources).toContainEqual(expect.objectContaining({
+        source: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source,
+        sourceInstanceId: INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId,
+      }));
+      expect(result.configuredSources).toContainEqual({
         source: configured.instance.source, sourceInstanceId: configured.instance.sourceInstanceId,
         configurationRowId: (await findConfiguredSourceInstanceRow(corpus.collections.sourceInstances,
           configured.instance.sourceInstanceId))?.rowId,
         configurationRevision: 1, available: false, displayLabel: configured.locator?.displayLabel,
-      }]);
+      });
       expect(result.window.rows).toEqual([]);
       expect(result.window.coverage).toBe('partial');
       expect((await corpus.collections.sourceInstances.query({ index: 'by-lifecycle', order: 'asc' })).rows)
