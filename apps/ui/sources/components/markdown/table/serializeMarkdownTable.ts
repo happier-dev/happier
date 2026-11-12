@@ -1,4 +1,4 @@
-import type { MarkdownTableAlignment } from './parseMarkdown';
+import type { MarkdownTableAlignment } from '../parseMarkdown';
 
 const SEPARATOR_BY_ALIGNMENT: Record<MarkdownTableAlignment, string> = {
     default: '---',
@@ -34,5 +34,24 @@ export function serializeMarkdownTable(table: Readonly<{
         serializeRow(table.headers.map(escapeCell)),
         serializeRow(separator),
         ...rows.map(serializeRow),
+    ].join('\n');
+}
+
+function escapeCsvField(cell: string): string {
+    return /[",\r\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+}
+
+/**
+ * Serializes a parsed table block as CSV (RFC 4180 quoting, `\n` line breaks) for pasting into
+ * spreadsheets. Cells keep their markdown text; rows are fitted to the header column count.
+ */
+export function serializeMarkdownTableCsv(table: Readonly<{
+    headers: readonly string[];
+    rows: readonly (readonly string[])[];
+}>): string {
+    const serialize = (cells: readonly string[]) => cells.map(escapeCsvField).join(',');
+    return [
+        serialize(table.headers),
+        ...table.rows.map((row) => serialize(table.headers.map((_, columnIndex) => row[columnIndex] ?? ''))),
     ].join('\n');
 }

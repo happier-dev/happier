@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { findNearestHostParent, flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
@@ -12,8 +13,27 @@ declare global {
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const modalShowSpy = vi.hoisted(() => vi.fn((_config: unknown) => 'table-viewer'));
+const layoutEstimates = vi.hoisted(() => ({ count: 0 }));
+
 installMarkdownCommonModuleMocks({
     storage: () => vi.importActual('@/sync/domains/state/storage'),
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({ spies: { show: modalShowSpy as never } }).module;
+    },
+});
+
+// Counts width computations; the real estimator still runs underneath.
+vi.mock('./table/estimateMarkdownTableLayout', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./table/estimateMarkdownTableLayout')>();
+    return {
+        ...actual,
+        estimateMarkdownTableLayout: (input: Parameters<typeof actual.estimateMarkdownTableLayout>[0]) => {
+            layoutEstimates.count += 1;
+            return actual.estimateMarkdownTableLayout(input);
+        },
+    };
 });
 
 const setStringAsyncSpy = vi.fn<(text: string) => Promise<boolean>>(async (_text) => true);
@@ -75,7 +95,8 @@ describe('MarkdownView (tables)', () => {
         expect(scrollViews[0]!.props.horizontal).toBe(true);
         expect(scrollViews[0]!.props.showsHorizontalScrollIndicator).toBe(true);
 
-        const scrollShell = findNearestHostParent(scrollViews[0]);
+        // The frame sits above the fade viewport that wraps the scroller.
+        const scrollShell = findNearestHostParent(findNearestHostParent(scrollViews[0]));
         expect(scrollShell).toBeTruthy();
         const shellStyle = flattenTestStyle(scrollShell?.props?.style);
         expect(shellStyle.alignSelf).toBe('flex-start');
@@ -178,5 +199,132 @@ describe('MarkdownView (tables)', () => {
 
         const rightCell = findNearestHostParent(findTextNode('Charlie'), 'View');
         expect(flattenTestStyle(rightCell?.props?.style).alignItems).toBe('flex-end');
+    }, 60_000);
+    it('lays tables out row by row: cells of a column share one width rule, prose columns may wrap to a floor, and the table scrolls only below the summed floors', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const prose = 'A long explanation that cannot fit on one line of a phone screen and has to wrap inside its cell';
+        const markdown = [
+            '| Id | Notes |',
+            '|---|---|',
+            `| 1 | ${prose} |`,
+            '| 22 | short |',
+        ].join('\n');
+
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+        const cellStyle = (text: string) => {
+            const textNode = screen.findAllByType('Text' as any).find((n) => n.props?.children === text)!;
+            return flattenTestStyle(findNearestHostParent(textNode, 'View')?.props?.style);
+        };
+
+        const idHeader = cellStyle('Id');
+        const idCell = cellStyle('22');
+        const notesHeader = cellStyle('Notes');
+        const notesCell = cellStyle(prose);
+        expect(idCell.flexBasis).toBe(idHeader.flexBasis);
+        expect(idCell.minWidth).toBe(idHeader.minWidth);
+        expect(notesCell.flexBasis).toBe(notesHeader.flexBasis);
+        expect(notesCell.minWidth).toBe(notesHeader.minWidth);
+        // Short column never shrinks; prose column shrinks down to its floor.
+        expect(idCell.flexShrink).toBe(0);
+        expect(idCell.minWidth).toBe(idCell.flexBasis);
+        expect(notesCell.flexShrink as number).toBeGreaterThan(0);
+        expect(notesCell.minWidth as number).toBeLessThan(notesCell.flexBasis as number);
+
+        const scrollView = screen.findAllByType('ScrollView' as any)[0]!;
+        const contentStyle = flattenTestStyle(scrollView.props.contentContainerStyle);
+        expect(contentStyle.width).toBe('100%');
+        expect(contentStyle.minWidth).toBe((idCell.minWidth as number) + (notesCell.minWidth as number));
+
+        const frameStyle = flattenTestStyle(findNearestHostParent(findNearestHostParent(scrollView))?.props?.style);
+        expect(frameStyle.maxWidth).toBe('100%');
+        expect(frameStyle.width as number).toBeGreaterThanOrEqual((idCell.flexBasis as number) + (notesCell.flexBasis as number));
+    }, 60_000);
+
+    it('copies the table as CSV, quoting cells that contain commas, quotes or line breaks', async () => {
+        mockPlatform('android');
+        setStringAsyncSpy.mockClear();
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const markdown = [
+            '| Name | Note | Plain |',
+            '| :--- | :---: | --- |',
+            '| a, b | say "hi" | x \\| y |',
+            '| short |',
+        ].join('\n');
+
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+        expect(setStringAsyncSpy).not.toHaveBeenCalled();
+
+        await pressTestInstanceAsync(screen.findByTestId('markdown-table-copy-csv'), 'table copy csv');
+
+        expect(setStringAsyncSpy).toHaveBeenCalledTimes(1);
+        expect(setStringAsyncSpy).toHaveBeenCalledWith([
+            'Name,Note,Plain',
+            '"a, b","say ""hi""",x | y',
+            'short,,',
+        ].join('\n'));
+    }, 60_000);
+
+    it('mounts no viewer while closed and opens the full table in the app modal on demand', async () => {
+        mockPlatform('ios');
+        modalShowSpy.mockClear();
+        const { MarkdownView } = await import('./MarkdownView');
+        const { MarkdownTableViewerModal } = await import('./table/MarkdownTableViewerModal');
+
+        const markdown = ['| A | B |', '| :--- | ---: |', '| 1 | 2 |'].join('\n');
+        const screen = await renderScreen(<MarkdownView markdown={markdown} selectable />);
+
+        expect(screen.findAllByType(MarkdownTableViewerModal as any)).toHaveLength(0);
+        expect(modalShowSpy).not.toHaveBeenCalled();
+
+        await pressTestInstanceAsync(screen.findByTestId('markdown-table-open'), 'open table');
+
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        const config = modalShowSpy.mock.calls[0]![0] as { component: unknown; props: Record<string, unknown> };
+        expect(config.component).toBe(MarkdownTableViewerModal);
+        expect(config.props).toMatchObject({
+            headers: ['A', 'B'],
+            rows: [['1', '2']],
+            alignments: ['left', 'right'],
+            selectable: true,
+        });
+    }, 60_000);
+
+    it('computes column widths once per table content: equal re-renders, later streamed text and earlier tables cost nothing', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const firstTable = ['| A | B |', '|---|---|', '| 1 | 2 |'].join('\n');
+        const render = (markdown: string) => <MarkdownView markdown={markdown} streamingMode="streaming" />;
+
+        layoutEstimates.count = 0;
+        const screen = await renderScreen(render(`${firstTable}\n\nAfter`));
+        expect(layoutEstimates.count).toBe(1);
+        const tableScrollProps = screen.findByTestId('markdown-table-scroll')!.props;
+
+        await act(async () => {
+            await screen.update(render(`${firstTable}\n\nAfter`));
+        });
+        expect(layoutEstimates.count).toBe(1);
+
+        await act(async () => {
+            await screen.update(render(`${firstTable}\n\nAfter the table, more streamed prose`));
+        });
+        expect(layoutEstimates.count).toBe(1);
+        // The finished table did not re-render.
+        expect(screen.findByTestId('markdown-table-scroll')!.props).toBe(tableScrollProps);
+
+        const streamingTable = ['| X | Y |', '|---|---|', '| 3 |'].join('\n');
+        await act(async () => {
+            await screen.update(render(`${firstTable}\n\nAfter the table, more streamed prose\n\n${streamingTable}`));
+        });
+        expect(layoutEstimates.count).toBe(2);
+
+        await act(async () => {
+            await screen.update(render(`${firstTable}\n\nAfter the table, more streamed prose\n\n${streamingTable} 4 |`));
+        });
+        expect(layoutEstimates.count).toBe(3);
     }, 60_000);
 });

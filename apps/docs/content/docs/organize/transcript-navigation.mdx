@@ -85,10 +85,25 @@ and tables.
 
 ## Copying code blocks and tables
 
-Code blocks and tables that are wider than the screen scroll sideways. A code
-block has a copy button that copies its whole contents. In development builds,
-tables have one too: it copies the table as Markdown, column alignment
-included, so it pastes as a table wherever Markdown renders.
+Code blocks that are wider than the screen scroll sideways. A code block has a
+copy button that copies its whole contents.
+
+In development builds, tables fit the screen before they scroll. Short columns
+stay on one line, longer text wraps inside its cell, and long links or paths
+break instead of stretching a column. A table scrolls sideways only when its
+columns can't wrap narrow enough to fit, which happens mostly on phones with
+many columns.
+
+Below each table, in development builds:
+
+- **Open table** (the expand icon) shows the table on its own, in a view that
+  fills most of the window. The header row stays in place while you scroll
+  through the rows, and rotating a phone to landscape gives the columns more
+  room.
+- **CSV** copies the table as comma-separated values for pasting into a
+  spreadsheet. Cells keep their text as written, Markdown formatting included.
+- **Copy** copies the table as Markdown, column alignment included, so it
+  pastes as a table wherever Markdown renders.
 
 In development builds on Android, text inside horizontally scrolling code blocks
 with a copy button, tables, and diffs shown with line wrapping off can't be
