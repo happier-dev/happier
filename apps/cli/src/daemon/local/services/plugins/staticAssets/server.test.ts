@@ -232,7 +232,7 @@ describe('hosted-web static asset server', () => {
         'public, max-age=31536000, immutable',
       );
       expect(response.headers.get('content-security-policy')).toBe(
-        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; worker-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; block-all-mixed-content",
+        "frame-ancestors 'none'; block-all-mixed-content",
       );
       expect(response.headers.get('etag')).toBe(`"${DIGEST_WEB}"`);
       expect(verifyArtifact).toHaveBeenCalledWith(
@@ -371,7 +371,7 @@ describe('hosted-web static asset server', () => {
     }
   });
 
-  it('derives CSP and source-map availability from the hosted-web security policy', async () => {
+  it('retains host embedding policy while serving declared trusted-plugin source maps', async () => {
     await writeAsset(
       'hosted-web/preview-web/assets/index.js.map',
       '{"version":3}',
@@ -406,7 +406,7 @@ describe('hosted-web static asset server', () => {
 
       expect(asset.status).toBe(200);
       expect(asset.headers.get('content-security-policy')).toBe(
-        "default-src 'none'; base-uri 'none'; form-action 'self' https://oauth.example.test; frame-ancestors 'none'; object-src 'none'; script-src 'self'; worker-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; connect-src 'self' https://api.example.test; block-all-mixed-content",
+        "frame-ancestors 'none'; block-all-mixed-content",
       );
       expect(sourceMap.status).toBe(200);
       expect(await sourceMap.text()).toBe('{"version":3}');

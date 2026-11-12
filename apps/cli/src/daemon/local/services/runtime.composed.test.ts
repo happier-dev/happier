@@ -963,7 +963,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             serverId: 'home-a', machineId: 'machine-a', rootPath: join(root, `checkout-${index}`), createdAtMs: 1 }));
         let runtime: ReturnType<typeof createLocalServicesDaemonRuntime> | undefined;
         const cancellation = new AbortController();
-        let observing: Promise<void> | undefined;
+        let observing: Promise<unknown> | undefined;
         const reads = vi.spyOn(filesystem, 'readdir');
         try {
             await Promise.all(workspaces.map(async workspace => {
@@ -1012,19 +1012,14 @@ describe('createLocalServicesDaemonRuntime', () => {
                 expect(retained.targets.filter(target => target.source === 'package_script')).toHaveLength(8);
                 await runtime.refreshInventoryNow();
                 const watchedRuntime = runtime;
-                const attached = watchedRuntime.inventoryRoutes.watchSnapshot({
-                    sinceGeneratedAt: watchedRuntime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                observing = watchedRuntime.inventoryRoutes.watchSnapshot({
+                    observationOnly: true, signal: cancellation.signal,
+                    launcherScopes: [{ workspaceRoot: workspace.rootPath }],
                 });
-                observing = (async () => {
-                    await attached;
-                    while (!cancellation.signal.aborted) await watchedRuntime.inventoryRoutes.watchSnapshot({
-                        sinceGeneratedAt: watchedRuntime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
-                    });
-                })();
-                // Attachment reconciles all known roots before measuring the edit.
-                expect((await attached).changed).toBe(true);
-                expect((await watchedRuntime.launcherRoutes.getSnapshot({ discovery: 'cached' }))
-                    .targets.filter(target => target.source === 'package_script')).toHaveLength(128);
+                // The watch parks only after the mounted Workspace's demand attaches.
+                await vi.waitFor(() => expect(watchedRuntime.inventoryRoutes.watcherCount()).toBe(1));
+                expect((await watchedRuntime.launcherRoutes.getSnapshot({ scope: 'workspace', workspaceRoot: workspace.rootPath,
+                    discovery: 'cached' })).targets.filter(target => target.source === 'package_script')).toHaveLength(8);
                 let publications = 0;
                 const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
                 try {

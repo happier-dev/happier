@@ -14,6 +14,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createLocalServicesDaemonFeatureGate } from '../featureGate';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { classifyProcessRole } from '@/processes/classification/classifyProcessRole';
 
 const MACHINE_ID = 'machine-a';
 
@@ -107,6 +108,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
                 endpoint: { scheme: 'http', host: '127.0.0.1', port: 5173, probeState: 'ready', probedAt: 1_000 },
                 port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 1_000,
                 state: 'listening', source: 'detected', labels: [], diagnostics: [],
+                classification: classifyProcessRole({ command: 'node ./node_modules/vite/bin/vite.js' }),
                 confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
             }],
         });
@@ -218,6 +220,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
                 address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
                 port: 5173, protocol: 'tcp', detectedAt: 1_000, lastSeenAt: 1_000,
                 state: 'listening', source: 'detected', labels: [], diagnostics: [],
+                classification: classifyProcessRole({ command: 'node ./node_modules/vite/bin/vite.js' }),
                 confidence: 'high', processOwnershipConfidence: 'high', workspaceAssociationConfidence: 'high',
             }],
         });
@@ -265,6 +268,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
                 address: { kind: 'loopback' as const, host: '127.0.0.1', family: 'ipv4' as const },
                 port: 5173 + index, protocol: 'tcp' as const, detectedAt: 1_000, lastSeenAt: 1_000,
                 state: 'listening' as const, source: 'detected' as const, labels: [], diagnostics: [],
+                classification: classifyProcessRole({ command: 'node ./node_modules/vite/bin/vite.js' }),
                 confidence: 'high' as const, processOwnershipConfidence: 'high' as const, workspaceAssociationConfidence: 'high' as const,
                 provenance: { workspace: { path: root, association: 'cwd_containment' as const } },
             })),

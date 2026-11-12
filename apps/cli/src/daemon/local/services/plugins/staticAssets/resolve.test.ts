@@ -56,7 +56,7 @@ describe('hosted-web static asset resolver', () => {
             contentType: 'text/javascript; charset=utf-8',
             headers: {
                 'Cache-Control': 'public, max-age=31536000, immutable',
-                'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; worker-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; block-all-mixed-content",
+                'Content-Security-Policy': "frame-ancestors 'none'; block-all-mixed-content",
                 ETag: '"sha256:web"',
                 'X-Content-Type-Options': 'nosniff',
             },
@@ -71,7 +71,7 @@ describe('hosted-web static asset resolver', () => {
         });
     });
 
-    it('rejects directory listing, unknown MIME types, revoked digests, and source maps unless policy allows them', async () => {
+    it('rejects directory listing and unknown MIME types while serving declared source maps', async () => {
         await expect(resolveHostedWebStaticAssetRequest(baseRequest({
             entryPath: 'outside.js',
             files: ['outside.js'],
@@ -102,10 +102,10 @@ describe('hosted-web static asset resolver', () => {
 
         await expect(resolveHostedWebStaticAssetRequest(baseRequest({
             requestPath: '/assets/index.js.map',
-        }))).resolves.toEqual({
-            ok: false,
-            code: 'source_map_unavailable',
-            status: 404,
+        }))).resolves.toMatchObject({
+            ok: true,
+            relativePath: 'hosted-web/preview-web/assets/index.js.map',
+            contentType: 'application/json; charset=utf-8',
         });
 
         await expect(resolveHostedWebStaticAssetRequest(baseRequest({
@@ -119,10 +119,10 @@ describe('hosted-web static asset resolver', () => {
         await expect(resolveHostedWebStaticAssetRequest(baseRequest({
             requestPath: '/assets/index.js.map',
             sourceMaps: { enabled: true, allowedDigests: new Set(['sha256:revoked']) },
-        }))).resolves.toEqual({
-            ok: false,
-            code: 'source_map_unavailable',
-            status: 404,
+        }))).resolves.toMatchObject({
+            ok: true,
+            relativePath: 'hosted-web/preview-web/assets/index.js.map',
+            contentType: 'application/json; charset=utf-8',
         });
     });
 

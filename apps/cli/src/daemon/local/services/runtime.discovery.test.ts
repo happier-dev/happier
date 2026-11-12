@@ -76,7 +76,8 @@ describe('Services declaration discovery demand', () => {
         try {
             observations.heldRead = { path: packageFile, entered, resume: resumed };
             workspaceRead = rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
-                { machineId: 'machine', scope: 'workspace', workspaceRoot: root }, { signal: cancellation.signal });
+                { machineId: 'machine', scope: 'workspace', workspaceRoot: root }, { signal: cancellation.signal })
+                .catch((error: unknown) => error);
             await held;
             cancellation.abort();
             let machineSettled = false;
@@ -86,7 +87,7 @@ describe('Services declaration discovery demand', () => {
             await vi.waitFor(() => expect(machineSettled).toBe(true));
             expect(await machineRead).toMatchObject({ protocolVersion: 1, snapshot: { targets: [] } });
             release();
-            await workspaceRead;
+            expect(await workspaceRead).toMatchObject({ name: 'AbortError' });
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual([]);
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root }))).toEqual(['cancelled:dev']);
         } finally {
