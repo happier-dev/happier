@@ -70,10 +70,14 @@ describe('Account managed creation through the app Action executor', () => {
         const credentials = { token: createAccountTokenForTests('creator', { currentAccount: true }) };
         const browser = await installBrowserRuntimeForTests({ url: serverUrl });
         onTestFinished(() => browser.restore());
+        // Vercel itself supports browsers; this case needs an explicitly ineligible declaration.
+        const browserIneligibleManifest = PluginPortableReleaseManifestV1Schema.parse({ ...manifest,
+            contributes: { ...manifest.contributes, machineProvisioners: manifest.contributes.machineProvisioners.map(
+                provisioner => ({ ...provisioner, browserReachable: false })) } });
         onTestFinished(installBundledPluginUiDeclarationsForTests([{
             pluginId: manifest.id, pluginVersion: manifest.version, packageName: '@happier-dev/plugins-machine-vercel',
-            displayName: 'Vercel', normalizedManifest: manifest, hasMachineProvisioners: true,
-            entriesById: projectPluginPortableUiDeclarationsV1(manifest, []),
+            displayName: 'Vercel', normalizedManifest: browserIneligibleManifest, hasMachineProvisioners: true,
+            entriesById: projectPluginPortableUiDeclarationsV1(browserIneligibleManifest, []),
         }]));
         const profile = await upsertAndActivateServer({ serverUrl });
         await setServerProfileIdentityForUrl(serverUrl, homeId);
@@ -94,7 +98,7 @@ describe('Account managed creation through the app Action executor', () => {
         expect(await readRuntimeFetchHost(account.endpointUrl)).toBe('browser');
         replacePluginAccountAvailabilityProjection({ scope: account.accountLifetime.scope,
             snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-        const provisioner = manifest.contributes.machineProvisioners?.[0];
+        const provisioner = browserIneligibleManifest.contributes.machineProvisioners?.[0];
         if (!provisioner) throw new Error('Vercel must publish its managed declaration');
         const launch = { provider: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: 1, name: 'Guest',
             choices: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 2, timeoutMs: 300000, snapshotExpirationMs: 0 } };

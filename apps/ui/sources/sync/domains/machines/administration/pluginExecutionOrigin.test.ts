@@ -18,6 +18,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createMachineFixture } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { parseToken } from '@/utils/auth/parseToken';
+import { publishMachineActivities } from '@/sync/domains/machines/machineActivity';
 
 const accountId = parseToken(createAccountTokenForTests('plugin-owner'));
 afterEach(clearMachineRequestReachabilityForTest);
@@ -646,6 +647,7 @@ describe('resolvePluginMachineExecutionOriginState', () => {
         const base = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-a', materializationId: 'mat-a' }).materialization;
         const stored = composePluginMachineExecutionOriginV1(base);
         const row = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
+        publishMachineActivities([{ machine: row, activity: row, projections: [] }]);
         const profile = { id: 'local-one', name: 'Server One', serverUrl: 'https://one.example.test', serverIdentityId: 'srv_one',
             createdAt: 1, updatedAt: 1, lastUsedAt: 1 };
         const stateWhen = (status: 'idle' | 'loading' | 'error') => resolvePluginMachineExecutionOriginState({
