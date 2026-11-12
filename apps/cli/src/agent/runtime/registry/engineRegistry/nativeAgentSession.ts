@@ -1174,7 +1174,7 @@ function buildNativeAgentSessionOpenInputs(
             .map(({ configId, valueId, updatedAt }) => [configId, { value: valueId, updatedAtMs: updatedAt }]),
     );
     const workspaceWrites = getWorkspaceWrites ? getWorkspaceWrites() : readSessionWorkspaceWritesV1(metadata);
-    const configuration = projectNativeAgentProviderBindingConfiguration(AgentSessionConfigurationSnapshotV1Schema.parse({
+    const configuration = AgentSessionConfigurationSnapshotV1Schema.parse({
         ...(metadata.allowedTools === undefined ? {} : { allowedTools: metadata.allowedTools }),
         ...(metadata.unlistedTools === undefined ? {} : { unlistedTools: metadata.unlistedTools }),
         ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
@@ -1194,7 +1194,7 @@ function buildNativeAgentSessionOpenInputs(
             updatedAtMs: permission?.updatedAt ?? metadataPermission?.updatedAt ?? 0,
         },
         options,
-    }), buildOptions.providerBinding);
+    });
     // Open the same driver that admitted the launch/starting mode. Retained
     // metadata can predate that selection or omit it entirely.
     const runtimeDescriptorV1 = input.bootstrap.runtimeDescriptorV1
@@ -5317,6 +5317,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ]),
                 ]);
             }
+            // All binding sources are resolved now, including late Team custody.
+            // Runtime model IDs come from the admitted binding; durable intent stays unchanged.
+            openInputs = Object.freeze({
+                ...openInputs,
+                configuration: projectNativeAgentProviderBindingConfiguration(openInputs.configuration, openInputs.providerBinding),
+            });
             const agentEnvironment = hostRuntimeParams.agentEnvironment;
             if (agentEnvironment) {
                 const values = Object.freeze({ ...openInputs.launchEnvironment.values, ...agentEnvironment });

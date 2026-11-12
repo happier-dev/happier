@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentSessionConfigurationSnapshot, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { applyModelIntentSessionMetadata, createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
@@ -14,8 +15,12 @@ import {
 const agentId = 'acme-model-choice';
 const selection = { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'custom/unlisted' } as const;
 
-async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' = 'factory') {
+async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown>>, launchSelection = false, providerBinding?: AgentSessionProviderBinding, delivery: 'factory' | 'late' | 'team' | 'attached-team' = 'factory') {
     const contributions = createExternalContributionFixtures(agentId);
+    const teamBinding: SessionTeamCredentialBindingIntentV1 = {
+        v: 1, slot: { kind: 'provider_model' }, resourceId: 'shared-resource',
+        expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: 'shared-team',
+    };
     const opens: AgentSessionOpenRequest[] = [];
     let observedModelId = providerBinding?.model.id ?? selection.modelId;
     const modelListeners = new Set<() => void>();
@@ -52,10 +57,23 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
             },
         } },
         createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+        // Runner credential materialization crosses a process boundary; the native host path stays real.
+        ...(providerBinding && (delivery === 'team' || delivery === 'attached-team') ? {
+            prepareTeamCredentialProviderBinding: async () => ({
+                providerBinding, environmentOverlay: [], additionalRedactionValues: [], cleanup: () => undefined,
+            }),
+        } : {}),
         sessionInput: buildPluginSessionBindingInput({
             credentials: { token: 'test-token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
             directory: '/tmp/model-choice', backendTarget: { kind: 'backend', backendId: agentId },
             ...(launchSelection ? { modelSelection: { v: 1, updatedAt: 7, ref: selection } } : {}),
+            ...(delivery === 'team' ? { teamCredentialBindings: [teamBinding] } : {}),
+            ...(delivery === 'attached-team' ? {
+                existingSessionId: 'model-choice', sessionAttachSecret: { encryptionMode: 'plain', snapshot: {
+                    metadata: {}, metadataVersion: 1, agentState: null, agentStateVersion: 0,
+                    acceptedTeamCredentialBinding: teamBinding,
+                } },
+            } : {}),
             ...(delivery === 'late' && providerBinding ? {
                 resolveLateEnvironment: async () => ({
                     environmentVariables: { [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
@@ -105,6 +123,16 @@ describe('native model selection provenance', () => {
             model: { id: 'unlisted', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
         };
         expect((await readOpenedConfiguration({}, true, binding, delivery)).model.value).toBe(binding.model.id);
+    });
+    it.each(['team', 'attached-team'] as const)('projects the admitted Team model after %s custody before native open', async delivery => {
+        const binding: AgentSessionProviderBinding = {
+            source: { kind: 'team_resource', resourceId: 'shared-resource', resourceRevision: 3 },
+            upstream: { protocol: 'openai-responses', normalizedUrl: 'http://127.0.0.1:8741/v1', credential: 'apiKey' },
+            model: { id: 'unlisted', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
+        };
+        expect((await readOpenedConfiguration({}, true, binding, delivery)).model).toEqual({
+            value: binding.model.id, updatedAtMs: 7, selectionSource: 'explicit',
+        });
     });
     it('preserves an exact target-qualified launch choice as explicit', async () => {
         expect((await readOpenedConfiguration({}, true)).model).toEqual({
