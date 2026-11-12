@@ -8,7 +8,7 @@ import { selectDeploymentReceiptRetainedHistoryV1 } from '@happier-dev/deploymen
 import type {
     DeploymentReadControllerV1, DeploymentReadDemandV1, DeploymentReadLeaseV1, DeploymentReadSnapshotV1,
     DeploymentReadPageFactsV1, DeploymentReadPageLeaseV1,
-    DeploymentCollectionQueryV1, DeploymentHistoryQueryV1,
+    DeploymentCollectionQueryV1, DeploymentHistoryQueryV1, DeploymentAccountPageQueryV1,
     DeploymentEnvironmentHealthMemberV1,
 } from '@happier-dev/deployments';
 
@@ -93,6 +93,20 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [controller, query.cursor, query.machineId, environmentIdsKey, query.previewRepositoryId, previewPullRequestIdsKey,
             query.previewTemplateEnvironmentId]);
+    return useDeploymentPage(acquire, demand);
+}
+
+export function useDeploymentDomainPage(controller: DeploymentReadControllerV1 | null, demand: DeploymentReadDemandV1,
+    query: DeploymentAccountPageQueryV1 = {}) {
+    const acquire = React.useMemo(() => controller ? () => controller.acquireDomainPage(query, INACTIVE) : null,
+        [controller, query.cursor, query.limit]);
+    return useDeploymentPage(acquire, demand);
+}
+
+export function useDeploymentDataServicePage(controller: DeploymentReadControllerV1 | null, demand: DeploymentReadDemandV1,
+    query: DeploymentAccountPageQueryV1 = {}) {
+    const acquire = React.useMemo(() => controller ? () => controller.acquireDataServicePage(query, INACTIVE) : null,
+        [controller, query.cursor, query.limit]);
     return useDeploymentPage(acquire, demand);
 }
 

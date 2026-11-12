@@ -76,6 +76,7 @@ import {
     resolveManagedGitHubIdentityProviderPresentationInTx,
 } from "@/app/integrations/github/githubManagedIdentityProvider";
 import type { GitHubAppRegistrationSecretHealthFact } from "@/app/integrations/github/githubManagedApp";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 /**
  * The one asynchronous identity-provider catalog.
@@ -157,10 +158,12 @@ async function captureIdentityProviderRuntimeFactsInTx<TeamId extends string | n
         teamId: TeamId;
         providerIds?: readonly string[];
         home?: Awaited<ReturnType<typeof readHomeGovernancePolicyInTx>>;
+        readCapture?: TeamAuthenticationReadCapture;
     }>,
 ): Promise<IdentityProviderCatalogRuntimeCapture<TeamId>> {
     const ids = input.providerIds && [...new Set(input.providerIds.map(normalizeProviderId))];
-    const connectionRows = ids === undefined ? await tx.teamIdentityConnection.findMany({
+    const connectionRows = input.readCapture ? input.readCapture.connections.filter(row => row.teamId === input.teamId
+        && (ids === undefined || ids.includes(row.providerInstanceId))) : ids === undefined ? await tx.teamIdentityConnection.findMany({
         where: { teamId: input.teamId },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: { id: true, providerInstanceId: true },
@@ -170,8 +173,8 @@ async function captureIdentityProviderRuntimeFactsInTx<TeamId extends string | n
         select: { id: true, providerInstanceId: true },
     })))).flat();
     const [providers, home] = await Promise.all([
-        readIdentityProviderRuntimeFactsByIdsInTx(tx, { ids: ids ?? connectionRows.map(row => row.providerInstanceId) }),
-        input.home ?? readHomeGovernancePolicyInTx(tx),
+        readIdentityProviderRuntimeFactsByIdsInTx(tx, { ids: ids ?? connectionRows.map(row => row.providerInstanceId) }, input.readCapture),
+        input.home ?? readHomeGovernancePolicyInTx(tx, input.readCapture),
     ]);
     const presentations = new Map<string, IdentityProviderInstanceReadResult>([...providers].map(([id, facts]) => [id,
         facts.instance ? { status: "ready", instance: facts.instance } : { status: "unreadable" },
@@ -179,7 +182,7 @@ async function captureIdentityProviderRuntimeFactsInTx<TeamId extends string | n
     const connectionReads = await readTeamIdentityConnectionsByIdInTx(tx, {
         references: connectionRows.map(row => ({ id: row.id, teamId: input.teamId })),
         providers: presentations,
-    });
+    }, input.readCapture);
     const connections = connectionRows.flatMap(row => {
         const read = connectionReads.get(teamIdentityConnectionReferenceKey({ id: row.id, teamId: input.teamId }));
         return read?.status === "ready" ? [read.connection] : [];
@@ -211,7 +214,7 @@ async function captureIdentityProviderRuntimeFactsInTx<TeamId extends string | n
             return [{ key: id, env: input.env, context, provider: resolved.instance,
                 connectionId: connection?.id ?? null, connectionRevision: connection?.revision ?? null, publicServerUrl }];
         }),
-    }) : { modules: base.githubModules, registrationSecretHealthByKey: base.githubRegistrationSecretHealth };
+    }, input.readCapture) : { modules: base.githubModules, registrationSecretHealthByKey: base.githubRegistrationSecretHealth };
     return { ...base, githubModules: github.modules, githubRegistrationSecretHealth: github.registrationSecretHealthByKey };
 }
 
@@ -460,6 +463,7 @@ export async function listProviderDescriptorsInTx(
     env: NodeJS.ProcessEnv,
     context: ProviderCatalogContext = HOME_PROVIDER_CONTEXT,
     admittedHome?: Awaited<ReturnType<typeof readHomeGovernancePolicyInTx>>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<readonly ProviderDescriptorResolution[]> {
     const snapshot = resolveDeploymentProviderSnapshot(env);
     const policy = resolveAuthPolicyFromEnv(env);
@@ -467,7 +471,7 @@ export async function listProviderDescriptorsInTx(
         const id = normalizeProviderId(module.id);
         return snapshot.references.get(id)?.source === "deployment" ? [id] : [];
     });
-    const managedDeploymentCollisions = new Set((deploymentIds.length === 0
+    const managedDeploymentCollisions = new Set((readCapture ? readCapture.providers.filter(row => deploymentIds.includes(row.id)) : deploymentIds.length === 0
         ? []
         : await tx.identityProviderInstance.findMany({
             where: { id: { in: deploymentIds } },
@@ -491,9 +495,9 @@ export async function listProviderDescriptorsInTx(
     });
 
     if (!resolveConfiguredPublicServerUrl(env)) return Object.freeze(deployment);
-    const home = admittedHome ?? await readHomeGovernancePolicyInTx(tx);
+    const home = admittedHome ?? await readHomeGovernancePolicyInTx(tx, readCapture);
     const homeInstances = context.kind === "home"
-        ? await listIdentityProviderInstancesInTx(tx, { owner: context, enabled: true }) : [];
+        ? await listIdentityProviderInstancesInTx(tx, { owner: context, enabled: true }, readCapture) : [];
     const githubMetadata = await resolveManagedGitHubIdentityProviderRuntimeMetadataBatchInTx(tx, {
         home,
         inputs: homeInstances.flatMap((resolved) => resolved.status === "ready"
@@ -501,16 +505,17 @@ export async function listProviderDescriptorsInTx(
             && !snapshot.references.has(normalizeProviderId(resolved.instance.id))
             ? [{ key: resolved.instance.id, env, context, provider: resolved.instance,
                 connectionId: null, connectionRevision: null }] : []),
-    });
+    }, readCapture);
     const homeWorkosIds = homeInstances.flatMap(resolved => resolved.status === "ready" && resolved.instance.kind === "workos_sso"
         ? [resolved.instance.id] : []);
-    const workosRows = (await Promise.all(portableQueryChunks({ values: homeWorkosIds, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.teamIdentityConnection.findMany({
+    const workosRows = readCapture ? readCapture.connections.filter(row => row.teamId === null && homeWorkosIds.includes(row.providerInstanceId))
+        : (await Promise.all(portableQueryChunks({ values: homeWorkosIds, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.teamIdentityConnection.findMany({
         where: { teamId: null, providerInstanceId: { in: [...ids] } }, select: { id: true, providerInstanceId: true },
     })))).flat();
     const homeWorkosReads = await readTeamIdentityConnectionsByIdInTx(tx, {
         references: workosRows.map(row => ({ id: row.id, teamId: null })),
         providers: new Map(homeInstances.flatMap(resolved => resolved.status === "ready" ? [[resolved.instance.id, resolved] as const] : [])),
-    });
+    }, readCapture);
     const workosRowsByProvider = new Map<string, typeof workosRows>();
     for (const row of workosRows) {
         const rows = workosRowsByProvider.get(row.providerInstanceId) ?? [];
@@ -755,20 +760,21 @@ export async function readTeamAuthenticationConnectionDescriptorsInTx(
         env: NodeJS.ProcessEnv;
         references: readonly Readonly<{ teamId: string; id: string }>[];
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, TeamAuthenticationConnectionDescriptorRead>> {
     const references = [...new Map(input.references.map((reference) => [
         teamIdentityConnectionReferenceKey(reference),
         reference,
     ])).values()];
     if (references.length === 0) return new Map();
-    const connectionReads = await readTeamIdentityConnectionsByIdInTx(tx, { references });
+    const connectionReads = await readTeamIdentityConnectionsByIdInTx(tx, { references }, readCapture);
     const connections = [...connectionReads.values()].flatMap((read) =>
         read.status === "ready" ? [read.connection] : []);
     const [home, providerReads] = await Promise.all([
-        readHomeGovernancePolicyInTx(tx),
+        readHomeGovernancePolicyInTx(tx, readCapture),
         readIdentityProviderInstancePresentationsByIdsInTx(tx, {
             ids: connections.map((connection) => connection.providerInstanceId),
-        }),
+        }, readCapture),
     ]);
     const snapshot = resolveDeploymentProviderSnapshot(input.env);
     const policy = resolveAuthPolicyFromEnv(input.env);
@@ -786,7 +792,7 @@ export async function readTeamAuthenticationConnectionDescriptorsInTx(
                 connectionRevision: connection.revision,
             }];
         }),
-    });
+    }, readCapture);
     const results = new Map<string, TeamAuthenticationConnectionDescriptorRead>();
     for (const connection of connections) {
         const key = teamIdentityConnectionReferenceKey(connection);
@@ -826,7 +832,8 @@ export type ProviderPresentation = Readonly<{
 }>;
 
 const MANAGED_WORKOS_PRESENTATION: Omit<ProviderPresentation, "id"> = Object.freeze({
-    extractLinkedProvider: extractWorkosLinkedProvider,
+    // Call-time read: the WorkOS module imports this catalog back through account identity lifecycle.
+    extractLinkedProvider: (profile) => extractWorkosLinkedProvider(profile),
     extractProfileBadge: undefined,
     extractSocialProfile: undefined,
 });
@@ -1201,13 +1208,18 @@ export async function resolveRuntimeInTx(tx: Tx, input: {
     env: NodeJS.ProcessEnv;
     reference: ProviderReference;
     purpose: ProviderRuntimePurpose;
-}): Promise<ProviderRuntimeResult> {
+}, readCapture?: TeamAuthenticationReadCapture): Promise<ProviderRuntimeResult> {
+    const capture = readCapture ? await captureIdentityProviderRuntimeFactsInTx(tx, {
+        env: input.env, teamId: input.reference.context.kind === 'team' ? input.reference.context.teamId : null,
+        providerIds: [input.reference.id], readCapture,
+    }) : undefined;
     const resolved = await resolveModuleWithReferenceInTx(
         tx,
         input.env,
         input.reference.id,
         input.reference.context,
         input.purpose,
+        capture,
     );
     if (!resolved) return { ok: false, code: "auth_provider_unavailable" };
     if (!isSameProviderReference(resolved.reference, input.reference)) {

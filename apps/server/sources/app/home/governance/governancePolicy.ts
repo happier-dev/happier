@@ -24,6 +24,7 @@ import {
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import type { EffectiveAuthMethodDecision } from "@/app/auth/methods/effectiveAuthMethods";
 import type { ProviderCatalogContext } from "@/app/auth/providers/providerReference";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 /**
  * The Home database holds exactly one governance policy. There is no separate
@@ -46,7 +47,7 @@ export type HomeGovernancePolicyRecord = Readonly<{
     sessionDefaults?: ManagedSessionDefaultsV1 | null;
 }>;
 
-type HomeGovernancePolicyRow = Readonly<{
+export type HomeGovernancePolicyRow = Readonly<{
     revision: number;
     teamCreationPolicy: string;
     teamsVisibleToMembers: boolean;
@@ -65,6 +66,7 @@ const DEPLOYMENT_DEFAULT_POLICY: HomeGovernancePolicyRecord = Object.freeze({
     identityNetwork: Object.freeze({ status: "inherited" as const }),
 });
 
+export { projectPolicyRow as projectHomeGovernancePolicyRow };
 function projectPolicyRow(row: HomeGovernancePolicyRow | null): HomeGovernancePolicyRecord {
     if (!row) return DEPLOYMENT_DEFAULT_POLICY;
     const sessionDefaults = ManagedSessionDefaultsV1Schema.safeParse(row.sessionDefaults);
@@ -98,7 +100,8 @@ async function findPolicyRowInTx(tx: Tx): Promise<HomeGovernancePolicyRow | null
  * Reads the Home policy. An absent row is the deployment default, so ordinary
  * reads never write; only a mutation or bootstrap creates the row.
  */
-export async function readHomeGovernancePolicyInTx(tx: Tx): Promise<HomeGovernancePolicyRecord> {
+export async function readHomeGovernancePolicyInTx(tx: Tx, capture?: TeamAuthenticationReadCapture): Promise<HomeGovernancePolicyRecord> {
+    if (capture) return capture.home;
     return projectPolicyRow(await findPolicyRowInTx(tx));
 }
 

@@ -2,7 +2,7 @@ import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
     type ArtifactJsonUpdateHttpInputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentPendingDeployV1 } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
 import { readArtifactForCallerInTx, readArtifactHeadersForCallerInTx, resolveArtifactAudienceInTx,
-    resolveArtifactPublicationAdmissionIntent } from '@/app/artifacts/artifactAccessService';
+    resolveArtifactPublicationAdmissionIntent, type ArtifactForCaller } from '@/app/artifacts/artifactAccessService';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { updateArtifactTx } from '@/app/artifacts/artifactWriteService';
@@ -35,6 +35,15 @@ async function contentAuthorityFailure(tx: Tx, artifact: AdmittedArtifact, owner
                 accountId: owner.accountId, accessLevel: 'admin' }, select: { artifactId: true } }) !== null)
         : ownerControlsContent ?? await tx.artifactTeamGrant.findFirst({ where: { artifactId: artifact.id, teamId: owner.teamId,
             accessLevel: 'admin', team: { archivedAt: null } }, select: { artifactId: true } }) !== null;
+    return projectDeploymentStoredContentAuthority(artifact, owner, expectedStoredKind, access, ownsContent);
+}
+
+/** Captured readers use the same custody, visibility, access and kind decision as ordinary reads. */
+export function projectDeploymentStoredContentAuthority(artifact: AdmittedArtifact, owner: ProjectSourceOwnerV1,
+    expectedStoredKind: string, access: 'read' | 'write', ownerControlsContent: boolean,
+): DeploymentFailure | null {
+    const ownsContent = owner.kind === 'account' ? artifact.ownerAccountId === owner.accountId
+        || expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 && ownerControlsContent : ownerControlsContent;
     if (!ownsContent || artifact.publicAudience !== 'none'
         || (access === 'write' && artifact.access === 'view')) return deploymentFailure('deployment_content_unavailable');
     const expected = decodeArtifactKindV1(expectedStoredKind);
@@ -97,14 +106,21 @@ export async function admitDeploymentStoredContentsInTx(tx: Tx, actorAccountId: 
         if (pendingDeploy && (read.artifact.encryptionMode === 'plain') !== (pendingDeploy.t === 'plain')) {
             failures.push(deploymentFailure('deployment_content_unavailable')); continue;
         }
-        failures.push(read.artifact.headerVersion !== reference.contentHeaderVersion || read.artifact.bodyVersion !== reference.contentBodyVersion
-            ? deploymentFailure('deployment_conflict') : null);
+        failures.push(projectDeploymentStoredContentRevision(read.artifact, reference));
     }
     return failures;
 }
 
 export function deploymentContentReference(input: DeploymentContentReference): DeploymentContentReference {
     return { contentArtifactId: input.contentArtifactId, contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion };
+}
+
+/** Current-head references share one exact revision decision across admission and projection. */
+export function projectDeploymentStoredContentRevision(artifact: Readonly<{ headerVersion: number; bodyVersion: number }>,
+    reference: DeploymentContentReference,
+): DeploymentFailure | null {
+    return artifact.headerVersion !== reference.contentHeaderVersion || artifact.bodyVersion !== reference.contentBodyVersion
+        ? deploymentFailure('deployment_conflict') : null;
 }
 
 /** Plain content is inspectable through the incumbent Artifact envelopes; E2EE stays opaque. */
@@ -116,15 +132,21 @@ async function readPlainDeploymentContentInTx<T>(tx: Tx, actorAccountId: string,
     if (!read.ok) return deploymentFailure('deployment_content_unavailable');
     const authorityFailure = await contentAuthorityFailure(tx, read.artifact, owner, expectedStoredKind, 'write');
     if (authorityFailure) return authorityFailure;
-    if (read.artifact.headerVersion !== reference.contentHeaderVersion || read.artifact.bodyVersion !== reference.contentBodyVersion) {
-        return deploymentFailure('deployment_conflict');
-    }
-    if (read.artifact.encryptionMode === 'e2ee') return { ok: true, content: null };
-    const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(read.artifact.header)));
-    const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(read.artifact.body)));
+    return projectPlainDeploymentStoredContent(read.artifact, reference, open);
+}
+
+/** Exact current-head projection shared by transaction reads and composed SQL captures after custody admission. */
+export function projectPlainDeploymentStoredContent<T>(artifact: ArtifactForCaller & Readonly<{ publicAudience: 'retained' | 'none' }>, reference: DeploymentContentReference,
+    open: (reference: DeploymentContentReference, artifact: DeploymentArtifactDocumentV1) => DeploymentArtifactReadResultV1<T>,
+): Readonly<{ ok: true; content: T | null }> | DeploymentFailure {
+    const revisionFailure = projectDeploymentStoredContentRevision(artifact, reference);
+    if (revisionFailure) return revisionFailure;
+    if (artifact.encryptionMode === 'e2ee') return { ok: true, content: null };
+    const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.header)));
+    const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.body)));
     if (!header.success || !body.success) return deploymentFailure('deployment_content_unavailable');
-    const opened = open(reference, { artifactId: read.artifact.id,
-        revision: { headerVersion: read.artifact.headerVersion, bodyVersion: read.artifact.bodyVersion },
+    const opened = open(reference, { artifactId: artifact.id,
+        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
         header: header.data, body: body.data.body });
     return opened.ok ? { ok: true, content: opened.content } : deploymentFailure(opened.error);
 }

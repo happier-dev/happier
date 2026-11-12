@@ -4,7 +4,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1, type ProjectSourceGrantV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, listProjectSourcesInTx } from './projectSourceService';
+import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, listProjectSourcesInTx,
+    resolveProjectSourcesAccessInTx, resolveProjectSourceAccessInTx } from './projectSourceService';
+import { encryptIdentityProviderSecrets } from '@/app/auth/providers/managed/identityProviderSecretCipher';
+import { readTeamAuthenticationConnectionDescriptorsInTx } from '@/app/auth/providers/identityProviderCatalog';
+import { teamIdentityConnectionReferenceKey } from '@/app/teams/identity/teamIdentityConnectionLifecycle';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -32,6 +36,90 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it('admits a Source page with current Team and Group lifetimes in one data statement', async () => {
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Captured Source page' } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers', nameKey: randomUUID() } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await db.projectSource.create({ data: { name: 'Group Source', createdByAccountId: owner.id,
+            owner: { kind: 'account', accountId: owner.id },
+            audience: [{ principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view' }], attachments: [] } });
+        const statements: Prisma.QueryEvent[] = [];
+        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        client.$on('query', event => statements.push(event));
+        await client.$connect();
+        try {
+            for (const suspended of [false, true]) {
+                if (suspended) await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'suspended' } });
+                statements.length = 0;
+                const result = await client.$transaction(tx => resolveProjectSourcesAccessInTx(tx, actor.id, [source.id]));
+                expect(result.get(source.id)?.ok).toBe(!suspended);
+                expect(statements.filter(event => /^(?:SELECT|WITH)\b/.test(event.query.trimStart()))).toHaveLength(1);
+            }
+        } finally { await client.$disconnect(); }
+    });
+
+    it('uses the exact current managed Team credential in one captured statement', async () => {
+        process.env.HANDY_MASTER_SECRET ??= 'source-capture-disposable-contract';
+        await initEncrypt();
+        const env = { HAPPIER_PUBLIC_SERVER_URL: 'https://source-capture.example.test' };
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Captured SSO' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
+        const providerId = randomUUID();
+        const encryptedSecrets = encryptIdentityProviderSecrets({ id: providerId, kind: 'oidc',
+            secrets: { v: 1, kind: 'oidc', clientSecret: 'fixture-secret'.repeat(8) } });
+        // PostgreSQL wraps base64 after 57 input bytes; exercise the real encoded secret boundary.
+        expect(encryptedSecrets.byteLength).toBeGreaterThan(57);
+        await db.identityProviderInstance.create({ data: { id: providerId, ownerTeamId: team.id, kind: 'oidc',
+            displayName: 'SSO', enabled: true, firstEnabledAt: new Date('2026-09-06T00:00:00Z'),
+            config: { v: 1, kind: 'oidc', issuer: 'https://identity.example.test', clientId: 'happier',
+                clientAuthenticationMethod: 'client_secret_post', scopes: 'openid profile email', httpTimeoutSeconds: 30,
+                claims: { login: 'preferred_username', email: 'email', groups: 'groups' },
+                allow: { usersAllowlist: [], emailDomains: [], groupsAny: [], groupsAll: [] },
+                fetchUserInfo: true, storeRefreshToken: false, ui: { buttonColor: null, iconHint: 'oidc' } },
+            encryptedSecrets } });
+        const connection = await db.teamIdentityConnection.create({ data: { teamId: team.id, providerInstanceId: providerId,
+            externalReference: { v: 1, kind: 'oidc' }, settings: { v: 1, kind: 'oidc', allowedUsers: [],
+                allowedEmailDomains: [], groupsAny: [], groupsAll: [] }, enabled: true, firstEnabledAt: new Date() } });
+        await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 1, mode: 'restricted',
+            accepted: [{ kind: 'team_connection', connectionId: connection.id }] } } });
+        const identity = await db.accountIdentity.create({ data: { accountId: actor.id, provider: providerId,
+            providerUserId: randomUUID(), eligibilityStatus: 'eligible' } });
+        const source = await db.projectSource.create({ data: { name: 'SSO Source', createdByAccountId: owner.id,
+            owner: { kind: 'team', teamId: team.id }, audience: [], attachments: [] } });
+        const descriptors = await inTx(tx => readTeamAuthenticationConnectionDescriptorsInTx(tx, {
+            env, references: [{ teamId: team.id, id: connection.id }],
+        }));
+        const descriptor = descriptors.get(teamIdentityConnectionReferenceKey(connection));
+        if (descriptor?.status !== 'ready' || !descriptor.descriptor) throw new Error('Expected offered SSO fixture');
+        const authentication = { env, authenticationAuthority: 'present_user' as const, authenticationEvidence: [{
+            kind: 'provider' as const, providerId, identityId: identity.id, teamConnectionId: connection.id,
+            runtimeFingerprint: descriptor.descriptor.reference.runtimeFingerprint,
+        }] };
+        const statements: Prisma.QueryEvent[] = [];
+        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        client.$on('query', event => statements.push(event));
+        await client.$connect();
+        try {
+            for (const state of ['current', 'absent_evidence', 'ineligible_identity', 'restored_identity', 'disabled_connection'] as const) {
+                if (state === 'ineligible_identity') await db.accountIdentity.update({ where: { id: identity.id }, data: { eligibilityStatus: 'ineligible' } });
+                if (state === 'restored_identity') await db.accountIdentity.update({ where: { id: identity.id }, data: { eligibilityStatus: 'eligible' } });
+                if (state === 'disabled_connection') await db.teamIdentityConnection.update({ where: { id: connection.id }, data: { enabled: false } });
+                const credential = state === 'absent_evidence' ? { ...authentication, authenticationEvidence: [] } : authentication;
+                const scalar = await inTx(tx => resolveProjectSourceAccessInTx(tx, actor.id, source.id, credential));
+                statements.length = 0;
+                const captured = await client.$transaction(tx => resolveProjectSourcesAccessInTx(tx, actor.id, [source.id], credential));
+                expect(captured.get(source.id)).toEqual(scalar);
+                expect(captured.get(source.id)?.ok).toBe(state === 'current' || state === 'restored_identity');
+                expect(statements.filter(event => /^(?:SELECT|WITH)\b/.test(event.query.trimStart()))).toHaveLength(1);
+            }
+        } finally { await client.$disconnect(); }
+    });
 
     it('tombstones a Source, hides it from selection and retains live and deleted Environment history', async () => {
         const serverId = `srv_${'e'.repeat(32)}`;

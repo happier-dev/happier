@@ -31,14 +31,19 @@ describe('deployment demand read controller', () => {
         const base = networkBoundary();
         const read = vi.fn(async (_scope: unknown, query: { cursor?: string }) => ({ ok: true as const,
             value: { items: [], nextCursor: query.cursor ? null : 'page-two' } }));
+        const observeDomainHealth = vi.fn(() => () => {});
+        const observeEnvironmentHealth = vi.fn(() => () => {});
         const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,
-            listDomainPage: read, listDataServicePage: read } });
+            listDomainPage: read, listDataServicePage: read, observeDomainHealth, observeEnvironmentHealth } });
         const lease = controller[method]({}, hidden);
         await lease.refresh();
         expect(read).toHaveBeenCalledTimes(0);
         lease.setDemand(active);
         await lease.refresh();
+        const peer = controller[method]({}, active);
+        expect(peer.getSnapshot().status).toBe('ready');
         expect(read).toHaveBeenCalledTimes(1);
+        peer.release();
         expect(lease.getSnapshot().value).toMatchObject({ hasNextPage: true, hasPreviousPage: false });
         lease.nextPage();
         await lease.refresh();
@@ -53,6 +58,8 @@ describe('deployment demand read controller', () => {
         expect(read).toHaveBeenCalledTimes(3);
         expect(base.transport.readEnvironment).toHaveBeenCalledTimes(0);
         expect(base.transport.observeReceipts).toHaveBeenCalledTimes(0);
+        expect(observeDomainHealth).toHaveBeenCalledTimes(0);
+        expect(observeEnvironmentHealth).toHaveBeenCalledTimes(0);
         lease.release(); controller.retire();
     });
     it('keeps a complete preview collection independent from a navigated page', async () => {

@@ -3,6 +3,7 @@ import {
     resolveAuthMethodIdForAccountIdentityProvider,
 } from "@/app/auth/methods/registry";
 import type { Tx } from "@/storage/inTx";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 import type { EffectiveAuthMethodDecision } from "@/app/auth/methods/effectiveAuthMethods";
 
@@ -108,7 +109,12 @@ export async function readAccountLoginViabilityFactsAfterProviderRemovalInTx(
         excludedProviderId: string | null;
         identityEligibility: AccountLoginViabilityIdentityEligibility;
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<AccountLoginViabilityFacts | null> {
+    if (readCapture) return readCapture.account?.id === input.accountId
+        ? buildAccountLoginViabilityFactsAfterProviderRemoval({ ...readCapture.account,
+            hasPasswordCredential: readCapture.hasPasswordCredential, identities: readCapture.identities }, input)
+        : null;
     const facts = await readAccountLoginViabilityFactsByAccountIdAfterProviderRemovalInTx(tx, {
         accountIds: [input.accountId],
         env: input.env,

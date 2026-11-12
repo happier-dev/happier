@@ -51,8 +51,17 @@ async function readPersistedServerIdentityId(reader: Pick<Tx, "simpleCache"> = d
         where: { key: SERVER_IDENTITY_CACHE_KEY },
         select: { value: true },
     });
-    const value = row?.value.trim();
+    return projectPersistedServerIdentityId(row?.value ?? null);
+}
+
+function projectPersistedServerIdentityId(storedValue: string | null): string | null {
+    const value = storedValue?.trim();
     return value ? assertValidServerIdentityId(value, SERVER_IDENTITY_CACHE_KEY) : null;
+}
+
+/** Composed reads capture the persisted value in their own statement; identity precedence stays here. */
+export function projectCurrentServerIdentityId(storedValue: string | null, env: NodeJS.ProcessEnv = process.env): string | null {
+    return readCachedServerIdentityIdForHotPath(env) ?? projectPersistedServerIdentityId(storedValue);
 }
 
 /** Reads the process identity without opening an out-of-transaction writer during cold composition. */

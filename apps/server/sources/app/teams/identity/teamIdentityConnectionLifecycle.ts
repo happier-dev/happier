@@ -19,6 +19,7 @@ import {
     type TeamIdentityConnectionSettings,
 } from "@/app/auth/providers/managed/identityProviderDocuments";
 import type { Tx } from "@/storage/inTx";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 import { applyTeamSessionAuthenticationContextEffectsInTx } from "../memberships/sessionAccessEffects";
 import { isExactGitHubIdentityInstallationBinding } from "./githubIdentityInstallationBinding";
 import { acquireTeamIdentityConnectionMutationAdmissionInTx } from "./teamIdentityAdministrationAuthority";
@@ -51,7 +52,7 @@ export type TeamIdentityConnectionView<TeamId extends string | null = string> = 
     updatedAt: Date;
 }>;
 
-type ConnectionRow<TeamId extends string | null> = Readonly<{
+export type ConnectionRow<TeamId extends string | null> = Readonly<{
     id: string;
     teamId: TeamId;
     providerInstanceId: string;
@@ -163,9 +164,11 @@ async function findConflictingWorkosProviderIdsInTx(
             externalReference: Extract<TeamIdentityConnectionExternalReference, { kind: "workos_sso" }>;
         }>;
     }>,
+    capture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlySet<string>> {
     if (input.providerInstanceIds.length === 0) return new Set();
-    const rows = (await Promise.all(portableQueryChunks({ values: [...new Set(input.providerInstanceIds)], bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.teamIdentityConnection.findMany({
+    const rows = capture ? capture.connections.filter(row => input.providerInstanceIds.includes(row.providerInstanceId))
+        : (await Promise.all(portableQueryChunks({ values: [...new Set(input.providerInstanceIds)], bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.teamIdentityConnection.findMany({
         where: { providerInstanceId: { in: [...ids] } },
         select: { id: true, providerInstanceId: true, externalReference: true },
     })))).flat();
@@ -264,6 +267,7 @@ export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string 
         references: readonly Readonly<{ id: string; teamId: TeamId }>[];
         providers?: ReadonlyMap<string, IdentityProviderInstanceReadResult>;
     }>,
+    capture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, TeamIdentityConnectionReadResult<TeamId>>> {
     const references = [...new Map(input.references.map((reference) => [
         teamIdentityConnectionReferenceKey(reference),
@@ -271,7 +275,8 @@ export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string 
     ])).values()];
     if (references.length === 0) return new Map();
     const wantedKeys = new Set(references.map(teamIdentityConnectionReferenceKey));
-    const rows = (await Promise.all(portableQueryChunks({ values: references, bindingsPerValue: 3, fixedBindings: 1 }).map(references => tx.teamIdentityConnection.findMany({
+    const rows = capture ? capture.connections.filter(row => wantedKeys.has(teamIdentityConnectionReferenceKey(row)))
+        : (await Promise.all(portableQueryChunks({ values: references, bindingsPerValue: 3, fixedBindings: 1 }).map(references => tx.teamIdentityConnection.findMany({
         where: {
             id: { in: [...new Set(references.map((reference) => reference.id))] },
             OR: references.map((reference) => ({ id: reference.id, teamId: reference.teamId })),
@@ -280,11 +285,11 @@ export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string 
     })))).flat();
     const providerReads = input.providers ?? await readIdentityProviderInstancePresentationsByIdsInTx(tx, {
         ids: rows.map((row) => row.providerInstanceId),
-    });
+    }, capture);
     const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
         providerInstanceIds: [...providerReads.values()].flatMap((result) =>
             result.status === "ready" && result.instance.kind === "workos_sso" ? [result.instance.id] : []),
-    });
+    }, capture);
     const rowsByKey = new Map(rows
         .filter((row) => wantedKeys.has(teamIdentityConnectionReferenceKey(row)))
         .map((row) => [teamIdentityConnectionReferenceKey(row), row] as const));

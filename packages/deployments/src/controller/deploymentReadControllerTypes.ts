@@ -1,5 +1,6 @@
 import type {
     DeploymentEnvironmentDetailV1,
+    DeploymentEnvironmentHeaderV1, DeploymentEnvironmentContentV1,
     DeploymentEnvironmentCollectionV1,
     DeploymentReceiptHistoryV1,
     DeploymentReceiptDetailV1,
@@ -90,6 +91,15 @@ export type DeploymentDomainReadItemV1 = Readonly<{
     health?: DeploymentDomainHealthFactsV1;
     healthUnavailableReason?: string;
 }>;
+export type DeploymentAccountPageQueryV1 = Readonly<{ cursor?: string; limit?: number }>;
+export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{ environment: DeploymentEnvironmentHeaderV1 }>;
+export type DeploymentDataServiceReadItemV1 = Readonly<{
+    environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
+}>;
+export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
+    & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
+export type DeploymentAccountDomainReadPageV1 = Omit<DeploymentAccountReadPageV1<DeploymentAccountDomainReadItemV1>, 'nextCursor'> & DeploymentReadPageFactsV1;
+export type DeploymentDataServiceReadPageV1 = Omit<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>, 'nextCursor'> & DeploymentReadPageFactsV1;
 export type DeploymentDomainPageV1 = Readonly<{ items: readonly DeploymentDomainReadItemV1[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
 export type DeploymentDomainReadPageV1 = Omit<DeploymentDomainPageV1, 'nextCursor'> & DeploymentReadPageFactsV1;
@@ -108,6 +118,8 @@ export type DeploymentReadOptionsV1 = Readonly<{ signal: AbortSignal }>;
 
 /** The host binds this network boundary to its current authenticated Home. */
 export type DeploymentReadTransportV1 = Readonly<{
+    listDomainPage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentAccountDomainReadItemV1>>>;
+    listDataServicePage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>>>;
     /** One selected Domain page, opened by the host's mode-aware Artifact owner. */
     listDomains?(scope: DeploymentReadScopeV1, environmentId: string, query: DeploymentHistoryQueryV1,
         options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentDomainPageV1>>;
@@ -136,6 +148,8 @@ export type DeploymentReadInvalidationV1 = Readonly<{
 
 export type DeploymentReadControllerV1 = Readonly<{
     scope: DeploymentReadScopeV1;
+    acquireDomainPage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentAccountDomainReadPageV1>;
+    acquireDataServicePage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDataServiceReadPageV1>;
     acquireDomains(environmentId: string, query: DeploymentHistoryQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDomainReadPageV1>;
     acquireCollection(query: DeploymentCollectionQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1>;
     acquireActivity(demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentActivityV1>;

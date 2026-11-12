@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -16,6 +17,11 @@ import { readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from 
 import { createSavedSecretResourceInTx, listSavedSecretResourceMaterialsForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { inTx } from '@/storage/inTx';
 import { readArtifactCandidateWhereInTx } from './artifactAccessService';
+import { artifactPageReadCaptureSql, materializeArtifactPageRead, type ArtifactPageReadCapture } from './artifactPageReadCapture';
+import { projectArtifactSourceReadersFromFacts } from './artifactSourceReaders';
+import { createProjectSourceInTx, resolveProjectSourceAccessInTx } from '@/app/projects/sources/projectSourceService';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
+import { listDeploymentDataPageInTx } from '@/app/deployments/deploymentAccountPageReadService';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
@@ -48,6 +54,105 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         }
     });
 
+    it('opens captured page content only through current Artifact grants and Account mode', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const artifact = await db.artifact.create({ data: {
+            id: randomUUID(), accountId: owner.id,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ title: 'Captured' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'Page content' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1,
+        } });
+        const read = async (actorAccountId: string) => {
+            const [row] = await db.$queryRaw<Array<{ capture: ArtifactPageReadCapture }>>(artifactPageReadCaptureSql({
+                actorAccountId, artifactId: prismaRuntime.sql`${artifact.id}`,
+            }));
+            return materializeArtifactPageRead(row?.capture ?? null, { actorAccountId, sourceReaderAccounts: [] });
+        };
+        expect(await read(reader.id)).toEqual({ ok: false, error: 'artifact_not_found' });
+        expect(await read(owner.id)).toMatchObject({ ok: true, artifact: { id: artifact.id, access: 'owner', publicAudience: 'none' } });
+        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: reader.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        expect(await read(reader.id)).toMatchObject({ ok: true, artifact: { body: artifact.body, access: 'view' } });
+        await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
+        expect(await read(owner.id)).toMatchObject({ ok: false, error: 'artifact_content_unavailable' });
+    });
+
+    it('derives captured readers from an actual Team Source content reference only while admin custody holds', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Captured Source custody' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: member.id, role: 'member' },
+        ] });
+        const created = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
+            serverId: `srv_${'c'.repeat(32)}`, requestKey: randomUUID(), name: 'Captured Source',
+            owner: { kind: 'team', teamId: team.id }, audience: [],
+        }));
+        if (!created.ok) throw new Error(created.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
+        const artifact = await db.artifact.create({ data: {
+            id: randomUUID(), accountId: owner.id, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ title: 'Captured Source' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1,
+        } });
+        const environment = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: created.source.id, createdByAccountId: owner.id,
+            controllerMachineId: machine.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+        } });
+        const admission = await inTx(tx => resolveProjectSourceAccessInTx(tx, member.id, created.source.id));
+        if (!admission.ok) throw new Error(JSON.stringify(admission.failure));
+        const readers = [{ accountId: member.id, account: { status: member.status } }];
+        const capturedReaders = async () => {
+            const [row] = await db.$queryRaw<Array<{ capture: ArtifactPageReadCapture }>>(artifactPageReadCaptureSql({
+                actorAccountId: member.id, artifactId: prismaRuntime.sql`${artifact.id}`,
+            }));
+            return projectArtifactSourceReadersFromFacts({ artifact: row!.capture,
+                reference: { projectSourceId: environment.projectSourceId, contentArtifactId: environment.contentArtifactId,
+                    expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 },
+                admittedSource: admission, readers });
+        };
+        expect(await capturedReaders()).toEqual([]);
+        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+            accessLevel: 'admin', createdByAccountId: owner.id } });
+        expect(await capturedReaders()).toEqual(readers);
+        const pageEnv = snapshotEnv();
+        const statements: string[] = [];
+        const client = new PrismaClient({ datasources: { db: { url: session!.databaseUrl } },
+            log: [{ emit: 'event', level: 'query' }] });
+        client.$on('query', event => statements.push(event.query));
+        // The framed PGlite harness holds runExclusive for a connection's lifetime.
+        await db.$disconnect();
+        try {
+            await client.$connect();
+            // Exercise the default embedded-Home provider decision over the same PostgreSQL wire engine.
+            applyEnvValues({ HAPPIER_DB_PROVIDER: 'pglite', HAPPY_DB_PROVIDER: 'pglite',
+                HAPPIER_SERVER_IDENTITY_ID: `srv_${'c'.repeat(32)}` });
+            const page = () => client.$transaction(tx => listDeploymentDataPageInTx(tx, member.id, {
+                serverId: `srv_${'c'.repeat(32)}`, projectSourceId: created.source.id, limit: 2,
+            }));
+            const dataStatements = () => statements.filter(sql => !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)/i.test(sql.trim()));
+            statements.length = 0;
+            expect(await page()).toMatchObject({ ok: true, coverage: 'complete',
+                items: [{ environment: { id: environment.id } }], artifacts: [{ id: artifact.id }] });
+            expect.soft(dataStatements(), 'embedded Home page includes all Source and Artifact admission').toHaveLength(1);
+            await client.artifactTeamGrant.update({ where: { artifactId_teamId: { artifactId: artifact.id, teamId: team.id } },
+                data: { accessLevel: 'edit' } });
+            statements.length = 0;
+            expect(await page()).toMatchObject({ ok: true, coverage: 'partial', items: [], artifacts: [] });
+            expect.soft(dataStatements(), 'revoked custody is captured in the same page statement').toHaveLength(1);
+        } finally {
+            await client.$disconnect();
+            restoreEnv(pageEnv);
+            await db.$connect();
+        }
+        expect(await capturedReaders()).toEqual([]);
+    });
+
     it('excludes Team guests from resource SQL and grant queries while admitting explicit Group and Account guests', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -77,6 +182,16 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
                 AND ${resourceGrantAccessSqlPredicate({ actorAccountId: accountId,
                     resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' })}`);
             expect.soft(new Set(sqlRows.map(row => row.id)), `SQL audience for ${accountId}`).toEqual(new Set(expectedIds));
+            const captures = await db.$queryRaw<Array<{ capture: ArtifactPageReadCapture }>>(prismaRuntime.sql`
+                SELECT captured.capture FROM "Artifact" selected
+                CROSS JOIN LATERAL (${artifactPageReadCaptureSql({ actorAccountId: accountId,
+                    artifactId: prismaRuntime.sql`selected."id"` })}) captured
+                WHERE selected."id" IN (${prismaRuntime.join(artifactIds)})`);
+            const capturedIds = captures.flatMap(({ capture }) => {
+                const read = materializeArtifactPageRead(capture, { actorAccountId: accountId, sourceReaderAccounts: [] });
+                return read.ok ? [read.artifact.id] : [];
+            });
+            expect.soft(new Set(capturedIds), `captured audience for ${accountId}`).toEqual(new Set(expectedIds));
             const arms = resourceGrantArmWheres(accountId);
             const [accountRows, teamRows, groupRows] = await Promise.all([
                 db.artifactAccountGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.account }, select: { artifactId: true } }),

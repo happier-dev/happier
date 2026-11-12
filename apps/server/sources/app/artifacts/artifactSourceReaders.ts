@@ -7,6 +7,8 @@ import { isProjectSourceContentStoredKind, projectSourceContentTeamCustodyLevels
     readProjectSourceContentReferencesInTx } from '@/app/projects/sources/projectSourceContentReferences';
 import { resolveResourceGrantAccessFromFacts } from '@/app/teams/resourceGrantAccess';
 import { artifactGrantFacts, type StoredArtifactAccessFacts } from './artifactGrantStorageAdapter';
+import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectSourceContentReference } from '@/app/projects/sources/projectSourceContentReferences';
 
 type ArtifactIdentity = StoredArtifactAccessFacts & Readonly<{
     teamGrants: readonly Readonly<{ teamId: string; accessLevel: ResourceAccessLevelV1;
@@ -16,6 +18,28 @@ type ArtifactIdentity = StoredArtifactAccessFacts & Readonly<{
 export interface ArtifactSourceReader {
     readonly accountId: string;
     readonly account: Readonly<{ status: AccountStatus }>;
+}
+
+/** Actual Source content references confer read access only while their owning custody holds. */
+export function projectArtifactSourceReadersFromFacts<T extends Readonly<{ accountId: string }>>(input: Readonly<{
+    artifact: Pick<StoredArtifactAccessFacts, 'id' | 'kind' | 'accountId'> & Readonly<{
+        accountGrants: readonly Readonly<{ accountId: string; accessLevel: ResourceAccessLevelV1 }>[];
+        teamGrants: readonly Readonly<{ teamId: string; accessLevel: ResourceAccessLevelV1;
+            team: Readonly<{ archivedAt: unknown }> }>[];
+    }>;
+    reference: Pick<ProjectSourceContentReference, 'projectSourceId' | 'contentArtifactId' | 'expectedStoredKind'>;
+    admittedSource: Readonly<{ source: Readonly<{ id: string }>; owner: ProjectSourceOwnerV1 }>;
+    readers: readonly T[];
+}>): readonly T[] {
+    const { artifact, reference, admittedSource: { source, owner } } = input;
+    if (source.id !== reference.projectSourceId || artifact.id !== reference.contentArtifactId
+        || artifact.kind !== reference.expectedStoredKind || !isProjectSourceContentStoredKind(artifact.kind)) return [];
+    const controls = owner.kind === 'team' ? artifact.teamGrants.some(grant => grant.teamId === owner.teamId
+        && projectSourceContentTeamCustodyLevels(reference.expectedStoredKind).includes(grant.accessLevel)
+        && grant.team.archivedAt === null)
+        : owner.accountId === artifact.accountId || reference.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
+            && artifact.accountGrants.some(grant => grant.accountId === owner.accountId && grant.accessLevel === 'admin');
+    return controls ? input.readers : [];
 }
 
 /** Source supplies read access only to its actual, privately held deployment content. */
@@ -60,15 +84,15 @@ export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(
             const source = sources.get(reference.projectSourceId);
             if (!source) continue;
             const artifact = byId.get(reference.contentArtifactId)!;
-            const owner = source.owner;
-            const controls = owner.kind === 'team' ? artifact.teamGrants.some(grant => grant.teamId === owner.teamId
-                && projectSourceContentTeamCustodyLevels(reference.expectedStoredKind).includes(grant.accessLevel)
-                && grant.team.archivedAt === null)
-                : owner.accountId === artifact.accountId || reference.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
-                    && accountControlled.get(artifact.id)?.has(owner.accountId);
-            if (!controls) continue;
+            const readers = projectArtifactSourceReadersFromFacts({
+                artifact: { ...artifact, accountGrants: [...artifact.accountGrants,
+                    ...[...(accountControlled.get(artifact.id) ?? [])].map(accountId => ({ accountId,
+                        accessLevel: 'admin' as const }))] },
+                reference, admittedSource: source,
+                readers: (audienceBySource.get(source.source.id) ?? []).map(accountId => ({ accountId })),
+            });
             const accounts = accountIdsByArtifact.get(artifact.id) ?? new Set<string>();
-            for (const accountId of audienceBySource.get(source.source.id) ?? []) accounts.add(accountId);
+            for (const { accountId } of readers) accounts.add(accountId);
             accountIdsByArtifact.set(artifact.id, accounts);
         }
         const accountsById = new Map<string, { id: string; status: AccountStatus }>();

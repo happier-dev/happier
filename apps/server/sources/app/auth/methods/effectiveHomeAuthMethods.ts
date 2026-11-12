@@ -22,6 +22,7 @@ import { applyHomeAuthenticationPolicyToEnv } from "@/app/home/governance/homeAu
 import { readTeamIdentityConnectionInTx } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
 import { inTx, type Tx } from "@/storage/inTx";
 import type { TeamOAuthAdmissionSource } from "@/app/teams/memberships/teamOAuthAdmissionSource";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 export type EffectiveHomeAuthMethodsResult =
     | Readonly<{
@@ -59,6 +60,7 @@ async function resolveEffectiveHomeAuthMethodsForPolicyInTx(
         emailDeliveryReady?: boolean;
         admission?: Readonly<{ kind: "team_invitation" | "team_provisioned_identity" | "team_jit_identity" }>;
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<HomeAuthenticationAvailabilityCapture> {
     if (input.homeAuthenticationPolicy.status === "unreadable") {
         return { effectiveHome: { status: "unavailable" }, providerDescriptors: [] };
@@ -78,7 +80,7 @@ async function resolveEffectiveHomeAuthMethodsForPolicyInTx(
     const allowedProvisionModes = resolveAllowedAccountProvisionModes(env);
     const recommendedProvisionMode = resolveRecommendedAccountProvisionMode(env);
     const providerActions = createProviderAuthMethodActionTable(env);
-    const providerDescriptors = await listProviderDescriptorsInTx(tx, env, HOME_PROVIDER_CONTEXT, input.homeGovernancePolicy);
+    const providerDescriptors = await listProviderDescriptorsInTx(tx, env, HOME_PROVIDER_CONTEXT, input.homeGovernancePolicy, readCapture);
     const managedDecisions = providerDescriptors
         .flatMap(({ descriptor: details, reference, providerKind }) => {
             if (reference.source !== "managed" || existingIds.has(reference.id)) return [];
@@ -129,9 +131,10 @@ async function resolveEffectiveHomeAuthMethodsForPolicyInTx(
 export async function captureHomeAuthenticationAvailabilityInTx(
     tx: Tx,
     input: Parameters<typeof resolveEffectiveHomeAuthMethodsInTx>[1],
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<HomeAuthenticationAvailabilityCapture> {
     const home = input.homeGovernancePolicy
-        ?? (input.homeAuthenticationPolicyOverride === undefined ? await readHomeGovernancePolicyInTx(tx) : undefined);
+        ?? (input.homeAuthenticationPolicyOverride === undefined ? await readHomeGovernancePolicyInTx(tx, readCapture) : undefined);
     const authentication = input.homeAuthenticationPolicyOverride ?? home!.authentication;
     return await resolveEffectiveHomeAuthMethodsForPolicyInTx(tx, {
         env: input.env,
@@ -139,7 +142,7 @@ export async function captureHomeAuthenticationAvailabilityInTx(
         ...(input.admission === undefined ? {} : { admission: input.admission }),
         homeAuthenticationPolicy: authentication,
         ...(home === undefined ? {} : { homeGovernancePolicy: home }),
-    });
+    }, readCapture);
 }
 
 /** Resolves the persisted Home policy through the same effective owner. */

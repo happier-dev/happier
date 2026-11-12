@@ -6,6 +6,7 @@ import type { Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { AccountStatus, TeamMembershipStatus, TeamRole } from "@/storage/enums.generated";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 import {
     readHomeGovernanceAccountInTx,
     resolveHomeGovernanceAuthority,
@@ -281,6 +282,7 @@ export async function qualifyTeamOperationAuthenticationsInTx(
     input: Partial<TeamOperationAuthenticationContext> & Readonly<{
         contexts: readonly TeamActorContext[];
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, Readonly<{ ok: true }> | Readonly<{
     ok: false;
     error: Extract<TeamErrorCodeV1,
@@ -311,7 +313,7 @@ export async function qualifyTeamOperationAuthenticationsInTx(
         // an evidence-bearing caller without a verified authority already failed
         // closed above.
         operationContext: { kind: input.authenticationAuthority ?? "present_user" },
-    });
+    }, readCapture);
     return new Map(contexts.map((context) => {
         const qualification = qualifications.get(context.team.id) ?? { status: "unavailable" as const };
         return [context.team.id, qualification.status === "satisfied"

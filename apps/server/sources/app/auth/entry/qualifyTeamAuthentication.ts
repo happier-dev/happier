@@ -9,6 +9,7 @@ import { readTeamAuthenticationConnectionDescriptorsInTx } from "@/app/auth/prov
 import { readIdentityProviderInstancePresentationsByIdsInTx } from "@/app/auth/providers/managed/identityProviderInstanceLifecycle";
 import { teamIdentityConnectionReferenceKey } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
 import type { Tx } from "@/storage/inTx";
+import type { TeamAuthenticationReadCapture } from './teamAuthenticationReadCapture';
 
 import {
     reduceTeamAcceptedChoiceAvailabilities,
@@ -100,6 +101,7 @@ export async function qualifyTeamAuthenticationsInTx(
         verifiedCredentialEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined;
         operationContext: TeamAuthenticationOperationContext;
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, TeamAuthenticationQualificationV1>> {
     // Both admitted principal kinds use this exact credential's evidence;
     // automation never falls back to Account links.
@@ -140,12 +142,12 @@ export async function qualifyTeamAuthenticationsInTx(
 
     try {
         const [homeAvailability, homeInstances, connections] = await Promise.all([
-            captureHomeAuthenticationAvailabilityInTx(tx, { env: input.env }),
-            readIdentityProviderInstancePresentationsByIdsInTx(tx, { ids: acceptedHomeMethodIds }),
+            captureHomeAuthenticationAvailabilityInTx(tx, { env: input.env }, readCapture),
+            readIdentityProviderInstancePresentationsByIdsInTx(tx, { ids: acceptedHomeMethodIds }, readCapture),
             readTeamAuthenticationConnectionDescriptorsInTx(tx, {
                 env: input.env,
                 references: connectionReferences,
-            }),
+            }, readCapture),
         ]);
         const { effectiveHome, providerDescriptors: homeDescriptors } = homeAvailability;
         const currentEvidence = await resolveCurrentAuthenticationEvidenceForTeamQualificationInTx(tx, {
@@ -155,7 +157,7 @@ export async function qualifyTeamAuthenticationsInTx(
             teamConnectionDescriptors: connections,
             effectiveHomeMethods: effectiveHome,
             homeProviderDescriptors: homeDescriptors,
-        });
+        }, readCapture);
         if (effectiveHome.status !== "ready") {
             for (const team of restrictedTeams) results.set(team.id, { status: "unavailable" });
             return results;

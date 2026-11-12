@@ -1,7 +1,7 @@
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
-    DeploymentDomainListResultV1Schema,
+    DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
@@ -85,6 +85,47 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         return { ok: true as const, value: detail };
     };
     const transport = {
+        listDomainPage: (scope, query, options) => scoped(scope, options, async account => {
+            const parsed = DeploymentDomainPageResultV1Schema.safeParse(await execute('deployments.domains.page',
+                { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
+            if (!parsed.success) return failure('invalid_response');
+            const page = parsed.data;
+            if (!page.ok) return failure(page.error);
+            if (!page.items.every(({ domain, environment }) => domain.environmentId === environment.id
+                && (scope.projectSourceId === undefined || environment.projectSourceId === scope.projectSourceId)
+                && areServerProfileIdentifiersEquivalent(environment.serverId, scope.serverId))) return failure('invalid_response');
+            const opened = await account.openArtifactContents(page.artifacts, { signal: options.signal });
+            const byId = new Map(page.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
+            const items = [];
+            let coverage = page.coverage;
+            for (const { domain, environment } of page.items) {
+                const artifact = byId.get(domain.contentArtifactId);
+                const row = readDeploymentDomainArtifactV1(domain, artifact?.status === 'fulfilled' ? artifact.value : null);
+                if (!row.ok) { coverage = 'partial'; continue; }
+                items.push({ domain, environment, title: row.title, content: row.content });
+            }
+            return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
+        }),
+        listDataServicePage: (scope, query, options) => scoped(scope, options, async account => {
+            const parsed = DeploymentDataPageResultV1Schema.safeParse(await execute('deployments.data.page',
+                { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
+            if (!parsed.success) return failure('invalid_response');
+            const page = parsed.data;
+            if (!page.ok) return failure(page.error);
+            if (!page.items.every(({ environment }) => (scope.projectSourceId === undefined || environment.projectSourceId === scope.projectSourceId)
+                && areServerProfileIdentifiersEquivalent(environment.serverId, scope.serverId))) return failure('invalid_response');
+            const opened = await account.openArtifactContents(page.artifacts, { signal: options.signal });
+            const byId = new Map(page.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
+            const items = [];
+            let coverage = page.coverage;
+            for (const { environment } of page.items) {
+                const artifact = byId.get(environment.contentArtifactId);
+                const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
+                if (!row.ok) { coverage = 'partial'; continue; }
+                items.push({ environment, title: row.title, content: row.content });
+            }
+            return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
+        }),
         listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
             const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute('deployments.domains.list',
                 { ...home, environmentId, ...query }, { signal: options.signal }));

@@ -18,7 +18,7 @@ import { applyPromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/
 import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { Prisma } from '@prisma/client';
 import type { Tx } from '@/storage/inTx';
-import { prismaRuntime } from '@/storage/prisma';
+import { prismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, lockPostgresRepeatKeyInTx, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -27,7 +27,7 @@ import { readArtifactHeaderForCallerInTx } from '@/app/artifacts/artifactAccessS
 import { retireDeploymentPreviewsForSourceReplacementInTx } from '@/app/deployments/deploymentPreviewRetirement';
 import {
     resolveTeamActorContextsInTx, qualifyTeamOperationAuthenticationsInTx,
-    type TeamOperationAuthenticationContext,
+    type TeamOperationAuthenticationContext, type TeamActorContext,
 } from '@/app/teams/actorContext';
 import { projectSourcePrincipalCanRead, projectSourceAdmitsGroup } from './projectSourcePrincipalAccess';
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
@@ -35,10 +35,12 @@ import { resolveShareAccountSubjectsInTx } from '@/app/teams/shareEligibility';
 import {
     resolveEffectiveTeamGroupIdsForAccountInTx, EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
 } from '@/app/teams/groups/effectiveGroupMembership';
+import { projectSourceAccessCaptureSql, resolveProjectSourceAccessFromCapture, type ProjectSourceAccessCapture } from './projectSourceReadCapture';
 
 const storedAudience = createStoredReadSchema(z.array(ProjectSourceGrantV1Schema));
 type Authentication = Partial<TeamOperationAuthenticationContext>;
-type SourceRow = NonNullable<Awaited<ReturnType<Tx['projectSource']['findUnique']>>>;
+export type ProjectSourceRow = NonNullable<Awaited<ReturnType<Tx['projectSource']['findUnique']>>>;
+type SourceRow = ProjectSourceRow;
 // Canonically admitted DTOs contain JSON only; remove optional undefined fields at the DB boundary.
 const json = (value: unknown): Prisma.InputJsonValue => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const unavailable = (): ProjectSourcesFailureV1 & { error: 'source_unavailable' } => ({ ok: false, error: 'source_unavailable' });
@@ -75,6 +77,18 @@ async function admissionInTx(tx: Tx, actorAccountId: string, grants: readonly Pr
     const qualified = await qualifyTeamOperationAuthenticationsInTx(tx, { contexts: [...contexts.values()], ...authentication });
     const groups = new Map(await Promise.all(teamIds.map(async teamId => [teamId,
         new Set(await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId, accountId: actorAccountId }))] as const)));
+    return composeProjectSourceAdmission({ actorAccountId, active, contexts, qualified, groups });
+}
+
+/** The Source policy consumes canonical Team, credential and Group decisions, regardless of the read shape. */
+export function composeProjectSourceAdmission(input: Readonly<{
+    actorAccountId: string;
+    active: boolean;
+    contexts: ReadonlyMap<string, TeamActorContext>;
+    qualified: ReadonlyMap<string, Readonly<{ ok: true }> | Readonly<{ ok: false; error: string }>>;
+    groups: ReadonlyMap<string, ReadonlySet<string>>;
+}>) {
+    const { actorAccountId, active, contexts, qualified, groups } = input;
     const admittedTeam = (teamId: string) => {
         const context = qualified.get(teamId)?.ok === true ? contexts.get(teamId) : undefined;
         return context?.membership && isEffectiveTeamMembership({ accountStatus: context.accountStatus,
@@ -237,7 +251,7 @@ export interface ProjectSourceAccess {
     readonly effectivePrincipals: readonly (Readonly<{ kind: 'account'; accountId: string }>
         | Readonly<{ kind: 'group'; teamId: string; groupId: string }>)[];
 }
-type ProjectSourceAccessResult = ProjectSourceAccess | Readonly<{ ok: false; failure: ReturnType<typeof unavailable> | ReturnType<typeof invalid> }>;
+export type ProjectSourceAccessResult = ProjectSourceAccess | Readonly<{ ok: false; failure: ReturnType<typeof unavailable> | ReturnType<typeof invalid> }>;
 
 /** Singleton and set readers share one current Account, Team and credential census. */
 async function admitSourceRowsInTx(tx: Tx, actorAccountId: string, rows: readonly SourceRow[], authentication: Authentication) {
@@ -250,6 +264,22 @@ async function admitSourceRowsInTx(tx: Tx, actorAccountId: string, rows: readonl
     });
     const admission = await admissionInTx(tx, actorAccountId, entries.flatMap(entry => entry.grants), authentication,
         entries.flatMap(entry => entry.owner ? [entry.owner] : []));
+    return admitProjectSourceEntries(entries, admission);
+}
+
+/** Scalar, portable set and captured PostgreSQL reads evaluate the identical stored Source policy. */
+export function admitProjectSourceRows(rows: readonly ProjectSourceRow[], admission: ReturnType<typeof composeProjectSourceAdmission>) {
+    const entries = rows.map(row => {
+        const audience = storedAudience.safeParse(row.audience);
+        const parsedOwner = ownerFromRow(row);
+        return { row, grants: audience.success ? audience.data : [], owner: parsedOwner.success ? parsedOwner.data : undefined };
+    });
+    return admitProjectSourceEntries(entries, admission);
+}
+
+function admitProjectSourceEntries(entries: readonly Readonly<{ row: ProjectSourceRow; grants: readonly ProjectSourceGrantV1[];
+    owner: ProjectSourceOwnerV1 | undefined }>[], admission: ReturnType<typeof composeProjectSourceAdmission>) {
+    const result = new Map<string, ProjectSourceAccessResult>();
     for (const { row, grants, owner } of entries) {
         if (!admission.canRead(owner, grants)) { result.set(row.id, { ok: false, failure: unavailable() }); continue; }
         const parsed = sourceFromRow(row);
@@ -275,6 +305,17 @@ export async function resolveProjectSourcesAccessInTx(tx: Tx, actorAccountId: st
     authentication: Authentication = {},
     options: Readonly<{ includeDeleted?: boolean }> = {},
 ): Promise<ReadonlyMap<string, ProjectSourceAccessResult>> {
+    if (sourceIds.length === 0) return new Map();
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider === 'postgres' || provider === 'pglite') {
+        const ids = prismaRuntime.sql`SELECT s."id" FROM "ProjectSource" s
+            WHERE s."id" IN (SELECT jsonb_array_elements_text(${JSON.stringify([...new Set(sourceIds)])}::jsonb))
+            ${options.includeDeleted ? prismaRuntime.empty : prismaRuntime.sql`AND s."deletedAt" IS NULL`}`;
+        const rows = await tx.$queryRaw<Array<{ capture: ProjectSourceAccessCapture }>>(prismaRuntime.sql`
+            SELECT ${projectSourceAccessCaptureSql({ actorAccountId: prismaRuntime.sql`${actorAccountId}`, sourceIds: ids,
+                env: authentication.env })} AS capture`);
+        return resolveProjectSourceAccessFromCapture(tx, { actorAccountId, authentication, capture: rows[0]!.capture });
+    }
     const rows: SourceRow[] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(sourceIds)], bindingsPerValue: 1, fixedBindings: 1 })) {
         rows.push(...await tx.projectSource.findMany({ where: { id: { in: [...ids] }, ...(options.includeDeleted ? {} : { deletedAt: null }) } }));

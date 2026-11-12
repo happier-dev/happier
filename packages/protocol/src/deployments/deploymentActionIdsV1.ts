@@ -57,6 +57,12 @@ export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add';
+export const DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1 = 'deployments.domains.page';
+export const DEPLOYMENT_DATA_PAGE_ACTION_ID_V1 = 'deployments.data.page';
+export function isDeploymentAccountPageActionIdV1(value: string): value is
+  typeof DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1 | typeof DEPLOYMENT_DATA_PAGE_ACTION_ID_V1 {
+  return value === DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1 || value === DEPLOYMENT_DATA_PAGE_ACTION_ID_V1;
+}
 export const DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 = 'deployments.data.query';
 export function isDeploymentDataQueryActionIdV1(value: string): value is typeof DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 {
   return value === DEPLOYMENT_DATA_QUERY_ACTION_ID_V1;
@@ -82,6 +88,7 @@ export function isDeploymentTemplateStorageActionIdV1(value: string): boolean {
 }
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
+  DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1, DEPLOYMENT_DATA_PAGE_ACTION_ID_V1,
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
   'deployments.environments.controller.set',
@@ -226,15 +233,46 @@ export function isDeploymentReadAdmissionActionIdV1(value: string): value is
   return isDeploymentReadActionIdV1(value) || isProjectReadinessActionIdV1(value);
 }
 
+/** Account-placed roots whose admission and effect belong to the installed controller. */
+export function isDeploymentAccountMachineTransportActionIdV1(value: string): value is
+  typeof DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 | typeof DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+  | typeof DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 | 'deployments.targets.link' | 'deployments.health.current' {
+  return value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentTargetLinkActionIdV1(value)
+    || value === 'deployments.health.current';
+}
+
 /** Account-placed deployment roots dispatched through their installed controller, in addition to spec-native Machine Actions. */
 export function isDeploymentMachineTransportActionIdV1(value: string): boolean {
   return isDeploymentChildRootActionIdV1(value) || isDeploymentReadActionIdV1(value)
-    || value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
-    || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || value === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
-    || isDeploymentTargetLinkActionIdV1(value);
+    || isDeploymentAccountMachineTransportActionIdV1(value) || value === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
 }
 
 export function isDeploymentNativeReadActionIdV1(value: string): value is
   'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
   return value === 'deployments.health.read' || value === 'deployments.drift.read' || value === 'deployments.logs.read';
 }
+
+export const DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 = 'deployments.domains.get';
+export const DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 = 'deployments.domains.list';
+export const DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1 = 'deployments.domains.verify';
+export const DEPLOYMENT_DRIFT_READ_ACTION_ID_V1 = 'deployments.drift.read';
+export const DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1 = 'deployments.health.current';
+export const DEPLOYMENT_LOGS_READ_ACTION_ID_V1 = 'deployments.logs.read';
+export const DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 = 'deployments.receipts.get';
+export const DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 = 'deployments.receipts.list';
+export const DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 = 'deployments.targets.link';
+
+export const DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1 = 'deployments.domains.remove';
+
+export const DEPLOYMENT_ENVIRONMENTS_CONTROLLER_SET_ACTION_ID_V1 = 'deployments.environments.controller.set';
+
+export const DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 = 'deployments.health.read';
+
+export const DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 = 'deployments.observation.get';
+
+export const DEPLOYMENT_PREPARE_PUBLISH_CATALOG_ACTION_ID_V1 = 'deployments.preparePublishCatalog';
+
+export const DEPLOYMENT_PROMOTE_ACTION_ID_V1 = 'deployments.promote';
+
+export const DEPLOYMENT_RESTART_ACTION_ID_V1 = 'deployments.restart';

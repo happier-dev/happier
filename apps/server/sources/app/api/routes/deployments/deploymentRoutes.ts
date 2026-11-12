@@ -1,3 +1,4 @@
+import { listDeploymentDomainPageInTx, listDeploymentDataPageInTx } from '@/app/deployments/deploymentAccountPageReadService';
 import { z } from 'zod/mini';
 import { DeploymentApprovalEnvironmentInputV1Schema, DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -55,6 +56,29 @@ function status(result: { ok: boolean; error?: string }) {
 /** Authenticated storage only: the daemon owns review, effects and observation. */
 export function registerDeploymentRoutes(app: Fastify): void {
     registerDeploymentDomainRoutes(app);
+    app.get('/v1/deployments/domains', {
+        preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
+        schema: { querystring: z.extend(inputs['deployments.domains.page'], {
+            limit: z.optional(z.coerce.number().check(z.int(), z.positive())),
+        }), response: responses(outputs['deployments.domains.page']) },
+    }, async (request, reply) => {
+        if (request.validationError) return reply.code(400).send(invalid);
+        const result = await inReadSnapshot(tx => listDeploymentDomainPageInTx(tx, request.userId, request.query,
+            readTeamOperationAuthenticationFromRequest(request)));
+        return reply.code(status(result)).send(result);
+    });
+    app.get('/v1/deployments/data-services', {
+        preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
+        schema: { querystring: z.extend(inputs['deployments.data.page'], {
+            limit: z.optional(z.coerce.number().check(z.int(), z.positive())),
+        }), response: responses(outputs['deployments.data.page']) },
+    }, async (request, reply) => {
+        if (request.validationError) return reply.code(400).send(invalid);
+        const result = await inReadSnapshot(tx => listDeploymentDataPageInTx(tx, request.userId, request.query,
+            readTeamOperationAuthenticationFromRequest(request)));
+        return reply.code(status(result)).send(result);
+    });
+
     registerEnvironmentSecretLaunchAdmissionRoute(app);
     app.post('/v1/deployments/environments/:environmentId/delete', {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

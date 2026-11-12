@@ -48,6 +48,8 @@ describe('deployment Domain read transport', () => {
             await domainWriter.createArtifactDocument({ artifactId: domain.contentArtifactId,
                 header: { kind: 'deployment-domain.v1', title: 'Application' }, body: JSON.stringify({ hostname: 'app.test',
                     target: { service: 'app', containerPort: 80 }, healthCheck: { path: '/', expectStatus: 200 } }) });
+            await domainWriter.createArtifactDocument({ artifactId: environmentHeader.contentArtifactId,
+                header: { kind: 'deployment-environment.v1', title: 'Production' }, body: JSON.stringify(detail.content) });
         } finally { domainWriter.dispose(); }
         const staleWriter = await captureLazyActionAccountContext(serverId);
         try {
@@ -57,6 +59,29 @@ describe('deployment Domain read transport', () => {
         homes.answer(serverId, `${root}/${environmentHeader.id}/domains`, { body: { ok: true, environmentId: environmentHeader.id,
             revision: 1, domains: [{ ...domain, id: 'missing-domain', contentArtifactId: 'missing-domain-artifact' }, domain,
                 { ...domain, id: 'stale-domain', contentArtifactId: 'missing-stale-domain-artifact' }], nextCursor: 'next-domain-page' } });
+        const bundled = await homes.request('https://deployments-ui.test/v1/artifacts/read', {
+            method: 'POST', headers: { Authorization: `Bearer ${domainWriter.credentials.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ artifactIds: [domain.contentArtifactId, environmentHeader.contentArtifactId] }) });
+        const batch = await bundled.json();
+        homes.answer(serverId, '/v1/deployments/domains', { body: { ok: true,
+            items: [{ domain, environment: environmentHeader }], artifacts: batch.items.filter((item: { artifactId: string }) => item.artifactId === domain.contentArtifactId)
+                .flatMap((item: { ok: boolean; artifact?: unknown }) => item.ok ? [item.artifact] : []), nextCursor: 'page-two' } });
+        homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true,
+            items: [{ environment: environmentHeader }],
+            artifacts: batch.items.filter((item: { artifactId: string }) => item.artifactId === environmentHeader.contentArtifactId)
+                .flatMap((item: { ok: boolean; artifact?: unknown }) => item.ok ? [item.artifact] : []), nextCursor: 'page-two' } });
+        const readCount = () => homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
+        const before = readCount();
+        expect(await transport.listDomainPage!(scope, {}, options)).toMatchObject({ ok: true,
+            value: { items: [{ domain: { id: domain.id }, environment: { id: environmentHeader.id } }], nextCursor: 'page-two' } });
+        expect(await transport.listDataServicePage!(scope, {}, options)).toMatchObject({ ok: true,
+            value: { items: [{ environment: { id: environmentHeader.id }, title: 'Production', content: detail.content }], nextCursor: 'page-two' } });
+        expect(readCount()).toBe(before);
+        homes.answer(serverId, '/v1/deployments/domains', { body: { ok: true,
+            items: [{ domain, environment: environmentHeader }], artifacts: [], nextCursor: 'page-three' } });
+        expect(await transport.listDomainPage!(scope, {}, options)).toMatchObject({ ok: true,
+            value: { items: [], coverage: 'partial', nextCursor: 'page-three' } });
+        expect(readCount()).toBe(before);
         const partialDomains = await transport.listDomains!(scope, environmentHeader.id, {}, options);
         expect(partialDomains.ok ? null : partialDomains.failure).toBeNull();
         expect(partialDomains).toMatchObject({ ok: true, value: { items: [{ domain: { id: domain.id } }], coverage: 'partial', nextCursor: 'next-domain-page' } });

@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import {
     DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema,
     DeploymentReceiptDetailV1Schema, DeploymentReceiptHistoryV1Schema,
@@ -22,12 +23,13 @@ import type {
     DeploymentReadLeaseV1, DeploymentReadResultV1, DeploymentReadScopeV1,
     DeploymentReadSnapshotV1, DeploymentReadTransportV1, DeploymentHistoryPageV1,
     DeploymentEnvironmentReadDetailV1, DeploymentEnvironmentReadCollectionV1, DeploymentReceiptReadDetailV1,
-    DeploymentDomainReadPageV1,
+    DeploymentDomainReadPageV1, DeploymentAccountDomainReadPageV1, DeploymentDataServiceReadPageV1,
+    DeploymentAccountPageQueryV1,
 } from './deploymentReadControllerTypes.js';
 
 type Resource = Readonly<{
     key: string;
-    kind: 'activity' | 'collection' | 'environment' | 'history' | 'receipt' | 'domains';
+    kind: 'activity' | 'collection' | 'environment' | 'history' | 'receipt' | 'domains' | 'domainPage' | 'dataServicePage';
     environmentId?: string;
     environmentIds?: ReadonlySet<string>;
     deploymentId?: string;
@@ -157,7 +159,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             value = { ...page, items: page.items.map(row => ({ ...row,
                 chip: row.currentDeployment ? projectDeploymentChipV1(row.currentDeployment) : null })) };
         }
-        if (entry.resource.kind === 'collection' || entry.resource.kind === 'history' || entry.resource.kind === 'domains') {
+        if (entry.resource.kind === 'collection' || entry.resource.kind === 'history' || entry.resource.kind === 'domains' || entry.resource.kind === 'domainPage' || entry.resource.kind === 'dataServicePage') {
             const { nextCursor, ...facts } = value as { nextCursor: string | null };
             // Even an equal page refresh replaces request state without publishing it.
             entry.nextCursor = nextCursor;
@@ -356,8 +358,27 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             },
         };
     }
+    function acquireAccountPage<T extends DeploymentAccountDomainReadPageV1 | DeploymentDataServiceReadPageV1>(
+        kind: 'domainPage' | 'dataServicePage', query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1,
+    ) {
+        const key = (cursor: string | undefined) => JSON.stringify([kind, cursor ?? null, query.limit ?? null]);
+        return createDeploymentReadPageLease<T>({ initialCursor: query.cursor, demand,
+            nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
+            acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,
+                read: signal => {
+                    const read = kind === 'domainPage' ? transport.listDomainPage : transport.listDataServicePage;
+                    return read?.(scope, { ...query, cursor }, { signal }) ?? Promise.resolve({ ok: false,
+                        failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
+                            { phase: `deployment.read.${kind}`, causeKind: 'client_required' }) });
+                },
+                // Typed host transport owns wire and opened Artifact admission.
+                admit: value => value,
+            }, pageDemand) });
+    }
     const controller: DeploymentReadControllerV1 = {
         scope,
+        acquireDomainPage: (query, demand) => acquireAccountPage<DeploymentAccountDomainReadPageV1>('domainPage', query, demand),
+        acquireDataServicePage: (query, demand) => acquireAccountPage<DeploymentDataServiceReadPageV1>('dataServicePage', query, demand),
         acquireDomains(environmentId, query, demand) {
             const key = (cursor: string | undefined) => JSON.stringify(['domains', environmentId, cursor ?? null]);
             return createDeploymentReadPageLease<DeploymentDomainReadPageV1>({ initialCursor: query.cursor, demand,
@@ -365,7 +386,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 acquire: (cursor, pageDemand) => acquire<DeploymentDomainReadPageV1>({
                     key: key(cursor), kind: 'domains', environmentId, previousPage: cursor !== undefined,
                     read: signal => transport.listDomains?.(scope, environmentId, cursor === undefined ? {} : { cursor }, { signal })
-                        ?? Promise.resolve({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+                        ?? Promise.resolve({ ok: false, failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
+                            { phase: 'deployment.read.domains', causeKind: 'client_required' }) }),
                     // Domain wire/content admission belongs to the typed host transport.
                     admit: value => value,
                 }, pageDemand) });
@@ -420,7 +442,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         acquireActivity(demand) {
             return acquire({ key: 'activity', kind: 'activity',
                 read: signal => transport.readActivity?.(scope, { signal }) ?? Promise.resolve({ ok: false,
-                    failure: { code: 'deployment_unavailable', retryable: false } }),
+                    failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
+                        { phase: 'deployment.read.activity', causeKind: 'client_required' }) }),
                 admit: value => value,
             }, demand);
         },
@@ -468,7 +491,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 // Receipt stages also feed the collection's latest-attempt row.
                 // Only pages containing that Environment need the header refresh.
                 const affected = hints.some(hint => resource.kind === 'activity' ? hint.activityChanged === true
-                    : hint.activityChanged === true ? false : resource.kind === 'collection'
+                    : hint.activityChanged === true ? false : resource.kind === 'domainPage' || resource.kind === 'dataServicePage' ? true : resource.kind === 'collection'
                     ? resource.environmentIds !== undefined
                         ? hint.deploymentId === undefined && resource.environmentIds.has(hint.environmentId)
                         : hint.deploymentId === undefined || collection === null || collection.items.some(row => row.environment.id === hint.environmentId)

@@ -6,6 +6,7 @@ import { resolveDeploymentProviderSnapshot } from "@/app/auth/providers/provider
 import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 import { acquireAccountSessionOwnerMetadataFencesInTx, type AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { readHomeGovernanceChangeAccountIdsInTx } from "@/app/home/governance/governanceChanges";
 import { readIdentityProviderTeamIdsInTx, readTeamChangePublicationAudienceInTx } from "@/app/teams/teamChanges";
@@ -43,7 +44,7 @@ export type IdentityProviderInstanceView = Readonly<{
     updatedAt: Date;
 }>;
 
-type IdentityProviderInstanceRow = Readonly<{
+export type IdentityProviderInstanceRow = Readonly<{
     id: string;
     ownerTeamId: string | null;
     kind: string;
@@ -275,10 +276,11 @@ export async function readIdentityProviderInstancePresentationByIdInTx(
 export async function readIdentityProviderInstancePresentationsByIdsInTx(
     tx: Tx,
     input: Readonly<{ ids: readonly string[] }>,
+    capture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, IdentityProviderInstanceReadResult>> {
     const ids = [...new Set(input.ids.map((id) => id.trim().toLowerCase()).filter(Boolean))];
     if (ids.length === 0) return new Map();
-    const rows = (await Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.identityProviderInstance.findMany({
+    const rows = capture ? capture.providers.filter(row => ids.includes(row.id)) : (await Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.identityProviderInstance.findMany({
         where: { id: { in: [...ids] } },
         select: instanceSafeSelect,
     })))).flat();
@@ -297,8 +299,10 @@ export async function readIdentityProviderInstancePresentationsByIdsInTx(
 export async function listIdentityProviderInstancesInTx(
     tx: Tx,
     input: Readonly<{ owner: ProviderCatalogContext; enabled?: boolean }>,
+    capture?: TeamAuthenticationReadCapture,
 ): Promise<readonly IdentityProviderInstanceReadResult[]> {
-    const rows = await tx.identityProviderInstance.findMany({
+    const rows = capture ? capture.providers.filter(row => sameOwner(row, input.owner)
+        && (input.enabled === undefined || row.enabled === input.enabled)) : await tx.identityProviderInstance.findMany({
         where: {
             ownerTeamId: ownerTeamId(input.owner),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -326,7 +330,7 @@ export type IdentityProviderRuntimeFacts = Readonly<{
     secretHealth: IdentityProviderSecretHealth;
 }>;
 
-function projectIdentityProviderRuntimeFacts(row: IdentityProviderInstanceRow): IdentityProviderRuntimeFacts {
+export function projectIdentityProviderRuntimeFacts(row: IdentityProviderInstanceRow): IdentityProviderRuntimeFacts {
     const instance = projectInstance(row);
     const secrets = instance ? readSecrets(row, instance.config) : undefined;
     return {
@@ -346,9 +350,10 @@ function projectIdentityProviderRuntimeFacts(row: IdentityProviderInstanceRow): 
 export async function readIdentityProviderRuntimeFactsByIdsInTx(
     tx: Tx,
     input: Readonly<{ ids: readonly string[] }>,
+    capture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, IdentityProviderRuntimeFacts>> {
     const ids = [...new Set(input.ids)];
-    const rows = (await Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.identityProviderInstance.findMany({
+    const rows = capture ? capture.providers.filter(row => ids.includes(row.id)) : (await Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(ids => tx.identityProviderInstance.findMany({
         where: { id: { in: [...ids] } }, select: instanceRuntimeSelect,
     })))).flat();
     return new Map(rows.map(row => [row.id, projectIdentityProviderRuntimeFacts(row)]));

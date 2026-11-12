@@ -11,6 +11,7 @@ import type { IdentityProviderInstanceView } from "@/app/auth/providers/managed/
 import type { OutboundIdentityNetworkPolicy } from "@/app/net/outboundIdentityNetworkPolicy";
 import type { IdentityProvider } from "@/app/auth/providers/identityProviders/types";
 import type { AuthProviderFeatures } from "@/app/auth/providers/types";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 import { prepareIdentityLink, refreshIdentity, unlinkIdentity } from "@/app/auth/providers/accountIdentityLifecycle";
 import { db, getDbProviderFromEnv } from "@/storage/db";
@@ -271,12 +272,13 @@ export async function resolveManagedGitHubIdentityProviderRuntimeMetadataBatchIn
         connectionId: string | null;
         connectionRevision: number | null;
     }>[]; home?: HomeGovernancePolicyRecord }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<ReadonlyMap<string, ManagedGitHubIdentityProviderRuntimeMetadata>> {
     const captured = await captureManagedGitHubIdentityProviderFactsInTx(tx, {
         ...input,
         inputs: input.inputs.filter(hasManagedGitHubRuntimeBinding),
         includeSecrets: false,
-    });
+    }, readCapture);
     return new Map([...captured].map(([key, value]) => [key, value.metadata]));
 }
 
@@ -304,6 +306,7 @@ async function captureManagedGitHubIdentityProviderFactsInTx(
         /** Already admitted by the caller in this same transaction. */
         home?: HomeGovernancePolicyRecord;
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ) {
     const candidates = input.inputs.filter(candidate =>
         candidate.provider.kind === "github_app_identity"
@@ -315,9 +318,10 @@ async function captureManagedGitHubIdentityProviderFactsInTx(
     const ids = [...new Set(candidates.flatMap(candidate =>
         candidate.provider.githubAppInstallationId ? [candidate.provider.githubAppInstallationId] : []))];
     const [home, installationBatches] = await Promise.all([
-        candidates.length === 0 ? null : input.home ?? readHomeGovernancePolicyInTx(tx),
+        candidates.length === 0 ? null : input.home ?? readHomeGovernancePolicyInTx(tx, readCapture),
         // Only the portable SQL bind boundary adds chunks, never a product list cap.
-        Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(installationIds =>
+        readCapture ? [readCapture.installations.filter(installation => ids.includes(installation.id))]
+            : Promise.all(portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 }).map(installationIds =>
             tx.gitHubAppInstallation.findMany({
                 // Keep installation and registration facts in one joined snapshot.
                 // SQLite's enclosing write admission already excludes other writers.
@@ -480,13 +484,14 @@ export async function resolveManagedGitHubIdentityProviderRuntimeFactsInTx(
         connectionRevision: number | null;
         publicServerUrl: string;
     }>[]; home?: HomeGovernancePolicyRecord }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<ManagedGitHubIdentityProviderRuntimeFacts> {
     const candidates = input.inputs.filter(hasManagedGitHubRuntimeBinding);
     const captured = await captureManagedGitHubIdentityProviderFactsInTx(tx, {
         inputs: candidates,
         home: input.home,
         includeSecrets: true,
-    });
+    }, readCapture);
     const results = new Map<string, ResolveManagedGitHubIdentityProviderModuleResult>();
     const registrationSecretHealthByKey = new Map<string, GitHubAppRegistrationSecretHealthFact>();
     const registrations = new Map<string, Readonly<{

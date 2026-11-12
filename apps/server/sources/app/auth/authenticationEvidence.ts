@@ -18,6 +18,7 @@ import {
 } from "@/app/auth/providers/identityProviderCatalog";
 import { teamIdentityConnectionReferenceKey } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
 import type { Tx } from "@/storage/inTx";
+import type { TeamAuthenticationReadCapture } from '@/app/auth/entry/teamAuthenticationReadCapture';
 
 function normalized(value: string): string {
     return value.trim().toLowerCase();
@@ -153,6 +154,7 @@ export async function resolveCurrentAuthenticationEvidenceForTeamQualificationIn
         effectiveHomeMethods?: Awaited<ReturnType<typeof resolveEffectiveHomeAuthMethodsInTx>>;
         homeProviderDescriptors?: readonly ProviderDescriptorResolution[];
     }>,
+    readCapture?: TeamAuthenticationReadCapture,
 ): Promise<readonly AuthTokenAuthenticationEvidenceV1[]> {
     const seen = new Set<string>();
     const evidence = (input.evidence ?? []).filter((item) => {
@@ -179,25 +181,25 @@ export async function resolveCurrentAuthenticationEvidenceForTeamQualificationIn
                 env: input.env,
                 excludedProviderId: null,
                 identityEligibility: "current",
-            })
+            }, readCapture)
             : null,
         providers.length > 0
-            ? tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } })
+            ? readCapture ? readCapture.account : tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } })
             : null,
         providers.length > 0
-            ? tx.accountIdentity.findMany({
+            ? readCapture ? readCapture.identities.filter(identity => providers.some(provider => provider.identityId === identity.id)) : tx.accountIdentity.findMany({
                 where: { id: { in: [...new Set(providers.map((item) => item.identityId))] } },
                 select: { id: true, accountId: true, provider: true, eligibilityStatus: true },
             })
             : [],
         teamProviderConnectionIds.length > 0 && input.teamConnectionDescriptors === undefined
-            ? tx.teamIdentityConnection.findMany({
+            ? readCapture ? readCapture.connections.filter(connection => teamProviderConnectionIds.includes(connection.id)) : tx.teamIdentityConnection.findMany({
                 where: { id: { in: teamProviderConnectionIds } },
                 select: { id: true, teamId: true },
             })
             : [],
         providers.some((item) => !item.teamConnectionId) && input.homeProviderDescriptors === undefined
-            ? listProviderDescriptorsInTx(tx, input.env)
+            ? listProviderDescriptorsInTx(tx, input.env, undefined, undefined, readCapture)
             : [],
     ]);
     const resolvedEffectiveHome = input.effectiveHomeMethods ?? effectiveHome;
@@ -208,7 +210,7 @@ export async function resolveCurrentAuthenticationEvidenceForTeamQualificationIn
             references: teamConnectionRows.flatMap((connection) => connection.teamId === null
                 ? []
                 : [{ id: connection.id, teamId: connection.teamId }]),
-        });
+        }, readCapture);
     const availableHomeMethods = resolvedEffectiveHome?.status === "ready" && accountFacts !== null
         ? new Set(resolveAvailableAccountAuthenticationMethodIdsForDecisions(
             resolvedEffectiveHome.decisions,
@@ -265,7 +267,7 @@ export async function resolveCurrentAuthenticationEvidenceForTeamQualificationIn
             env: input.env,
             reference: descriptor.reference,
             purpose: "oauth_finalize",
-        })).ok) continue;
+        }, readCapture)).ok) continue;
         if (item.teamConnectionId) {
             current.push(item);
             continue;

@@ -1216,8 +1216,24 @@ export async function fetchArtifactsWithBodiesFromApi(params: Readonly<{
     throwIfAborted(params.signal);
     const shouldContinue = params.shouldContinue ?? (() => !params.signal?.aborted);
     if (params.artifactIds.length === 0 || !shouldContinue()) return [];
-    const { credentials, encryption, artifactDataKeys } = params;
-    const detailReads = await fetchArtifactReadBatch(credentials, params.artifactIds, params);
+    const detailReads = await fetchArtifactReadBatch(params.credentials, params.artifactIds, params);
+    return openArtifactReadBatchFromApi({ ...params, detailReads });
+}
+
+/** Read-only opening of HTTP rows already admitted by a composing endpoint; no key-audience repair. */
+export function openArtifactsWithBodiesFromApi(params: Omit<Parameters<typeof fetchArtifactsWithBodiesFromApi>[0],
+    'artifactIds' | 'prepareRecipientKeys'> & Readonly<{ artifacts: readonly Artifact[] }>) {
+    return openArtifactReadBatchFromApi({ ...params, prepareRecipientKeys: false,
+        detailReads: params.artifacts.map(artifact => ({ artifactId: artifact.id, ok: true as const,
+            artifact, recipientCensus: null })) });
+}
+
+/** Opens an admitted HTTP batch with the same key and content owner as selected reads. */
+async function openArtifactReadBatchFromApi(params: Omit<Parameters<typeof fetchArtifactsWithBodiesFromApi>[0], 'artifactIds'> & Readonly<{
+    detailReads: Awaited<ReturnType<typeof fetchArtifactReadBatch>>;
+}>): Promise<PromiseSettledResult<DecryptedArtifact | null>[]> {
+    const shouldContinue = params.shouldContinue ?? (() => !params.signal?.aborted);
+    const { encryption, artifactDataKeys, detailReads } = params;
     if (!shouldContinue()) return [];
     const artifacts = detailReads.flatMap(item => item.ok && (!params.ownerOnly || item.artifact.access === 'owner') ? [item.artifact] : []);
     await resolveArtifactDataKeys({ artifacts, encryption, artifactDataKeys, workClass: params.workClass });

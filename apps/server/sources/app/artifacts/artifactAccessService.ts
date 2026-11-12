@@ -421,6 +421,20 @@ function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: 
         sharedTeamIds: resolveResourceGrantTeamIdsFromFacts(artifactGrantFacts(row), actorAccountId) } } : read;
 }
 
+export type ArtifactPageReadRow = Prisma.ArtifactGetPayload<{ select: ReturnType<typeof artifactReadAdmissionSelect> }>
+    & Pick<ArtifactAccessFacts, 'sourceReaderAccounts'>
+    & Readonly<{ body: Uint8Array; bodyVersion: number; provenance: Uint8Array | null }>;
+
+/** Composed page captures consume the ordinary Artifact admission and content projection. */
+export function projectArtifactPageReadRow(row: ArtifactPageReadRow, actorAccountId: string,
+    publication: Parameters<typeof projectArtifactPublicAudience>[0]): ArtifactFullReadResult {
+    const header = projectArtifactAdmittedHeader(row, actorAccountId);
+    if (!header.ok) return header;
+    const read = projectArtifactBody(header.artifact, row);
+    return read.ok ? { ok: true, artifact: { ...read.artifact,
+        publicAudience: projectArtifactPublicAudience(publication, row.signedInLink !== null) } } : read;
+}
+
 const browserNonListedStoredKinds = ARTIFACT_BROWSER_NON_LISTED_KINDS_V1.flatMap(kind =>
     ArtifactCoarseKindV1Schema.options.map(coarse => `v1:${coarse}:${kind}`));
 
@@ -1035,7 +1049,9 @@ export async function applyArtifactRecipientKeyEnvelopesInTx(tx: Tx, input: Read
 
 /** Only Artifact persistence/provenance semantics remain in this adapter. */
 const artifactRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorageAdapter<ArtifactRecipientKeyEnvelopeInputV1> = {
-    ...artifactGrantStorageAdapter,
+    // Delegate at call time: the grant adapter sits in a runtime import cycle (teams ↔ discussions ↔ artifacts).
+    readAccessFactsBatchInTx: (tx, resourceIds, actorAccountId) => artifactGrantStorageAdapter.readAccessFactsBatchInTx(tx, resourceIds, actorAccountId),
+    readAccessFactsInTx: (tx, resourceId, actorAccountId) => artifactGrantStorageAdapter.readAccessFactsInTx(tx, resourceId, actorAccountId),
     async writeRecipientEnvelopeInTx(tx, artifactId, envelope) {
         const bytes = privacyKit.decodeBase64(envelope.encryptedDataKey);
         const previous = await tx.artifactKeyEnvelope.findUnique({ where: { artifactId_recipientAccountId: {

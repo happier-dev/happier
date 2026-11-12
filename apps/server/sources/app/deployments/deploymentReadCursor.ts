@@ -5,8 +5,12 @@ import type { DeploymentEnvironmentListInputV1, DeploymentTargetLinksListInputV1
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
 const sealed = z.strictObject({ t: z.literal('sealed_v1'), c: z.string().check(z.minLength(1)) });
-type DeploymentListCursorInput = DeploymentEnvironmentListInputV1 | DeploymentTargetLinksListInputV1;
-const path = (actorAccountId: string, input: DeploymentListCursorInput) => 'scope' in input ? [
+type DeploymentListCursorInput = DeploymentEnvironmentListInputV1 | DeploymentTargetLinksListInputV1 | Readonly<{
+    serverId: string; projectSourceId?: string; cursor?: string; pageKind: 'domains' | 'data';
+}>;
+const path = (actorAccountId: string, input: DeploymentListCursorInput) => 'pageKind' in input ? [
+    'deployments', input.pageKind, 'page', 'v1', JSON.stringify([actorAccountId, input.serverId, input.projectSourceId ?? null]),
+] : 'scope' in input ? [
     'deployments', 'targets', 'list', 'v1',
     JSON.stringify([actorAccountId, input.serverId, input.scope.kind,
         input.scope.kind === 'account' ? input.scope.accountId : input.scope.teamId,
@@ -33,6 +37,9 @@ export function sealDeploymentReadCursor(actorAccountId: string, input: Deployme
 
 /** Existing admitted-row cursors stay valid; opaque positions are bound to the exact reader/filter. */
 export function openDeploymentReadCursor(actorAccountId: string, input: DeploymentListCursorInput): string | undefined {
-    if (!input.cursor?.startsWith('{')) return input.cursor;
+    if (!input.cursor?.startsWith('{')) {
+        if ('pageKind' in input && input.cursor) throw new Error('An account page requires an opaque continuation');
+        return input.cursor;
+    }
     return decryptString(path(actorAccountId, input), decodeBase64(sealed.parse(JSON.parse(input.cursor)).c));
 }
