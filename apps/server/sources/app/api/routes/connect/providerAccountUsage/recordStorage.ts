@@ -96,18 +96,21 @@ export async function readProviderAccountUsageHistoryWitnessRow(params: Readonly
 }
 
 /** Only the accepted-write policy invokes this inside the same transaction as its CAS. */
-export async function retainProviderAccountUsageHistory(raw: UpsertProviderAccountUsageRecordParams, client: ProviderAccountUsageRecordClient) {
+export async function retainProviderAccountUsageHistory(
+    raw: UpsertProviderAccountUsageRecordParams,
+    client: Pick<TransactionClient, "providerAccountUsageHistory">,
+) {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
     if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return;
     // The read materialization belongs only to the current record. Embedding it
     // into every accepted observation would recursively duplicate its history.
     const { pageProjection: _derived, ...metadata } = parsed.metadata ?? {};
     const retained = { ...parsed, ...(parsed.metadata ? { metadata } : {}) };
-    await client.providerAccountUsageRecord.update({
-        where: { accountId_recordId: { accountId: parsed.accountId, recordId: parsed.recordId } },
-        data: { history: { create: { observedAt: new Date(parsed.fetchedAt), payload: retained as Prisma.InputJsonValue } } },
-        // History insertion does not consume the parent row. Returning it
-        // would transfer the packed page projection under the write locks.
+    // The policy already owns the accepted parent CAS in this transaction.
+    // Insert through the existing composite FK without updating that parent again.
+    await client.providerAccountUsageHistory.create({
+        data: { accountId: parsed.accountId, recordId: parsed.recordId,
+            observedAt: new Date(parsed.fetchedAt), payload: retained as Prisma.InputJsonValue },
         select: { id: true },
     });
 }
