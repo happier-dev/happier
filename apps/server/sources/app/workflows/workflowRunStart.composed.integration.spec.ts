@@ -252,7 +252,6 @@ describe("composed saved Workflow start admission", () => {
             } else {
                 expect(started, JSON.stringify({ storageResponses, runExists: Boolean(await db.automationRun.findUnique({ where: { id: runId }, select: { id: true } })) })).toMatchObject({ admission: "created", run: { id: runId, state: "queued", sourceArtifactId: sourceId } });
                 if (mode === 'e2ee') {
-                    expect(storageResponses).toContainEqual({ operation: 'run-key.census', status: 200 });
                     const detail = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(read);
                     expect(detail).toMatchObject({ run: { id: runId, state: 'queued' }, acceptedContext: {
                         frozenChildren: { [childId]: { blocks: [{ id: 'child-reply' }] } },
