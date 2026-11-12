@@ -72,7 +72,7 @@ export function qwenProviderModelControls(binding: AgentSessionProviderBinding):
   const decode = (id: string) => id === qualified ? canonical : id;
   return {
     catalogConfidence: 'account_unverified',
-    projectModel: (_raw, model) => ({ ...model, id: decode(model.id) }),
+    projectModel: (_raw, model) => model,
     projectModelId: ({ modelId }) => decode(modelId),
     projectModelState: ({ normalizedModelState }) => ({
       currentModelId: decode(normalizedModelState.currentModelId),

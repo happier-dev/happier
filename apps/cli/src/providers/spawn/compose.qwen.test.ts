@@ -39,6 +39,11 @@ describe('registered Qwen Provider settings', () => {
       cleanup = composed.cleanup;
       if (composed.launchMaterialization.kind !== 'configFile') throw new Error('Expected Qwen settings file');
       fixture = createAcpMcpPolicyFixture({ agent: declaration, pluginId: PLUGIN_MANIFEST.id,
+        // Qwen 0.25.3 ACP qualifies its native model IDs with the auth type.
+        models: { currentModelId: 'native-default', availableModels: [
+          { modelId: 'selected-model(openai)', name: 'Native selected', description: 'Selected native model' },
+          { modelId: 'native-default', name: 'Native default' },
+        ] },
         async factory(context) {
           const runtime = await agent.factory!(context);
           return { ...runtime, sessions: { ...runtime.sessions, open(request, host) {
@@ -59,6 +64,10 @@ describe('registered Qwen Provider settings', () => {
           mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {} },
       });
       try {
+        const requests = (await readFile(join(base, 'capture.json.acp.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        expect(requests).toContainEqual(expect.objectContaining({ direction: 'in', value: expect.objectContaining({
+          method: 'session/set_config_option', params: expect.objectContaining({ configId: 'model', value: 'selected-model(openai)' }),
+        }) }));
         const launch = fixture.observeLaunch();
         expect(launch.env.QWEN_HOME).toBe(native);
         expect(launch.env.QWEN_RUNTIME_DIR).toBe(runtimeRoot);

@@ -13,11 +13,13 @@ import * as plugin from '../manifest.js';
 import { anthropicConnectedAccountRuntime } from '../../../claude/src/connectedAccounts/anthropicRuntime.js';
 import { openAiConnectedAccountRuntime } from '../../../openai/src/auth/connectedAccountRuntime.js';
 import { geminiConnectedAccountRuntime } from '../../../gemini/src/connectedAccounts/runtime.js';
-import { QWEN_ACCOUNT_SOURCES } from './connectedAccount.js';
+import { QWEN_ACCOUNT_SOURCES, prepareQwenConnectedAccount } from './connectedAccount.js';
+import { QWEN_ACP_COMMAND } from './acp/preflight.js';
+import { QWEN_ACP_RUNTIME_DEFINITION } from './acp/definition.js';
 import { projectAgentConnectedAccountLaunchCatalogEntry } from '../../../../../apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.js';
 
 describe('Qwen native account launch', () => {
-  it('delivers selected OpenAI settings to the native child through the public ACP composer', async () => {
+  it.each(['session', 'preflight'] as const)('delivers selected OpenAI settings to the native child through the public ACP composer (%s)', async entry => {
     const source = QWEN_ACCOUNT_SOURCES.find(row => row.purpose === 'openai-api-key')!;
     const account = { service: source.service, accountId: 'selected' };
     const materializationContext = { signal: new AbortController().signal, configuration: { values: {} },
@@ -32,6 +34,7 @@ describe('Qwen native account launch', () => {
     const cwd = await mkdtemp(join(tmpdir(), 'qwen-account-launch-'));
     let session: AgentSessionRuntime | undefined;
     let fixture: ReturnType<typeof createAcpMcpPolicyFixture> | undefined;
+    let disposePreflight: (() => void | Promise<void>) | undefined;
     try {
       const agent = activation.registration('agents', 'qwen')!;
       const parsed = parsePluginManifest(plugin.PLUGIN_MANIFEST);
@@ -39,9 +42,24 @@ describe('Qwen native account launch', () => {
       const declaration = parsed.manifest.contributes.agents.find(row => row.id === 'qwen');
       if (!declaration) throw new Error('Missing Qwen Agent');
       fixture = createAcpMcpPolicyFixture({ agent: declaration, pluginId: plugin.PLUGIN_MANIFEST.id, toolWireFormat: 'underscore',
+        ...(entry === 'session' ? { models: { currentModelId: 'native-default', availableModels: [
+          { modelId: 'selected-model(openai)', name: 'Selected' }, { modelId: 'native-default', name: 'Native default' },
+        ] } } : {}),
         async factory(context) {
           const native = await agent.factory!(context);
           return { ...native, sessions: { ...native.sessions, open(request, host) {
+            if (entry === 'preflight') return (async () => {
+              const input = { modelId: 'selected-model', environment: { OPENAI_API_KEY: 'ambient' },
+                connectedAccounts: { ...accounts, watch() { return { dispose() {} }; } }, signal: materializationContext.signal };
+              const prepared = await agent.preflightSessionControls!.prepareLaunchEnvironment!(input);
+              if (!prepared) throw new Error('Expected prepared native launch');
+              disposePreflight = prepared.dispose;
+              expect(prepared.catalogConfidence).toBe('account_unverified');
+              return host.protocols.acp.open(request, { transport: { kind: 'stdio',
+                executable: { kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId },
+                args: [...QWEN_ACP_COMMAND.args, ...(prepared.commandArgsSuffix ?? [])], env: prepared.environment },
+                definition: QWEN_ACP_RUNTIME_DEFINITION });
+            })();
             return native.sessions!.open(request, { ...host, services: { ...host.services,
               connectedAccounts: { ...host.services.connectedAccounts, ...accounts } } });
           } } };
@@ -60,9 +78,10 @@ describe('Qwen native account launch', () => {
         baseUrl: 'https://api.openai.com/v1' }]);
       expect(JSON.stringify(settings)).not.toContain('fake-native-openai');
       expect(launch.argv.join(' ')).not.toContain('fake-native-openai');
+      expect(launch.argv).toContain('selected-model');
     } finally {
       try { await session?.dispose(); } finally {
-        try { await fixture?.fixtureServer.dispose(); } finally { await activation.dispose(); await rm(cwd, { recursive: true, force: true }); }
+        try { await disposePreflight?.(); await fixture?.fixtureServer.dispose(); } finally { await activation.dispose(); await rm(cwd, { recursive: true, force: true }); }
       }
     }
   });
@@ -124,10 +143,10 @@ describe('Qwen native account launch', () => {
       const nativeModelId = `selected-model(${row.protocol})`;
       const controls = options!.definition!.models!;
       const projected = controls.projectModel({ modelId: nativeModelId, name: 'Selected' }, { id: nativeModelId, name: 'Selected' });
-      expect(projected.id).toBe('selected-model');
+      expect(projected.id).toBe(nativeModelId);
       expect(controls.projectModelState!({ normalizedModelState: {
         currentModelId: nativeModelId, availableModels: [projected, { id: 'unrelated-native-model', name: 'Native' }],
-      } })).toEqual({ currentModelId: 'selected-model', availableModels: [projected] });
+      } })).toEqual({ currentModelId: 'selected-model', availableModels: [{ ...projected, id: 'selected-model' }] });
       expect(controls.resolveModelUpdate!({ modelId: 'selected-model', modelState: null })).toMatchObject({ modelId: nativeModelId });
       expect(JSON.stringify(settings)).not.toContain('fake-selected');
       if (row.envKey) expect(env[row.envKey]).toBe('fake-selected');

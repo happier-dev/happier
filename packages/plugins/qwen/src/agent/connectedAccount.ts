@@ -67,11 +67,12 @@ export async function prepareQwenConnectedAccount(
     const publicModelId = (id: string) => id === nativeModelId ? modelId : id;
     const models: AgentAcpModelControls = {
       catalogConfidence: 'account_unverified',
-      projectModel: (_raw, normalized) => ({ ...normalized, id: publicModelId(normalized.id) }),
+      projectModel: (_raw, normalized) => normalized,
       projectModelId: ({ modelId: id }) => publicModelId(id),
       projectModelState: ({ normalizedModelState }) => ({ ...normalizedModelState,
         currentModelId: publicModelId(normalizedModelState.currentModelId),
-        availableModels: normalizedModelState.availableModels.filter(model => model.id === modelId) }),
+        availableModels: normalizedModelState.availableModels.filter(model => model.id === nativeModelId)
+          .map(model => ({ ...model, id: modelId })) }),
       resolveModelUpdate: ({ modelId: next }) => {
         if (next !== modelId) throw new PluginError({ code: 'qwen_account_model_restart_required',
           message: 'Restart Qwen Code with the selected model to change models.', details: { status: 'requires_restart' } });
