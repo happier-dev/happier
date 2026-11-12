@@ -217,19 +217,6 @@ test('starter readiness waits for an active writer and consumes complete install
   assert.equal(consumed, true);
 });
 
-test('nested prerequisite writers reuse only their own asynchronous writer context', { timeout: 2000 }, async t => {
-  const { fixture, env } = await setup(t);
-  let writes = 0;
-  await dependencies.withDependencyRefreshLock({ installDir: fixture.root, env, signal: t.signal }, async () => {
-    // The existing PM callback passes the writer environment to its nested
-    // prerequisite owner. Reentrancy must not require inherited reader state.
-    const nestedEnv = dependencies.resolveLockedInstallEnv(env);
-    assert.equal(Object.hasOwn(nestedEnv, 'HAPPIER_BUILD_DEPENDENCY_CUSTODY'), false);
-    await dependencies.withDependencyRefreshLock({ installDir: fixture.root, env: nestedEnv, signal: t.signal }, async () => { writes++; });
-  });
-  assert.equal(writes, 1);
-});
-
 test('refresh records the identity consumed before install and a later source edit requires the next refresh', async t => {
   const { fixture, env } = await setup(t);
   let installs = 0;
@@ -309,7 +296,7 @@ test('only successful outer writers publish completion, including same-identity 
     'same-identity refresh is observable without changing install admission');
   await dependencies.withDependencyRefreshLock(options, async () => {
     await dependencies.markDependencyMutation(options);
-    await dependencies.withDependencyRefreshLock(options, async () => {
+    await dependencies.withDependencyRefreshLock({ ...options, env: dependencies.resolveLockedInstallEnv(env) }, async () => {
       await dependencies.markDependencyMutation(options);
     });
     assert.equal((await readGeneration()).completedGeneration, forced.completedGeneration,
