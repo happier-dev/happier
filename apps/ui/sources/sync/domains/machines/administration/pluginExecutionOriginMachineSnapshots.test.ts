@@ -726,12 +726,12 @@ describe('execution-origin Machine publication', () => {
         const classify = () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } });
         // Every plugin holds an installation on every Machine and declares one
         // contribution to the next plugin: the busy Account's real shape.
-        function account(pluginCount: number, machineCount: number, includeSources = false) {
+        function account(pluginCount: number, machineCount: number, includeSources = false, declarationCount?: number) {
             const ctx = fixture();
             const machines = [ctx.machine, ...Array.from({ length: machineCount - 1 }, (_, index) =>
                 createMachineFixture({ id: `origin-work-${index}`, activeAt: ctx.now }))];
             storage.setState({ machineListByServerId: { [ctx.home.id]: machines } });
-            if (includeSources) publishMachineActivities(machines.map(machine => ({ machine, activity: machine, projections: [] })));
+            if (includeSources || declarationCount) publishMachineActivities(machines.map(machine => ({ machine, activity: machine, projections: [] })));
             const pluginIds = Array.from({ length: pluginCount }, (_, index) => `acme.work-${index}`);
             const counts = { declarationReads: 0, rowPluginIdReads: 0 };
             const manifests = pluginIds.map((id, index) => {
@@ -760,7 +760,7 @@ describe('execution-origin Machine publication', () => {
                         materializations: rows.filter(row => row.machineId === host.id) })) } });
                 return store.bind(scope).readInstalledPlugins();
             };
-            const rows = rowsFor();
+            const rows = rowsFor().filter((_, index) => declarationCount === undefined || index % machineCount < Math.ceil(declarationCount / pluginCount)).slice(0, declarationCount);
             const materializations = rows.map(row => {
                 const counted = { ...row };
                 Object.defineProperty(counted, 'pluginId', { enumerable: true, get() { counts.rowPluginIdReads += 1; return row.pluginId; } });
@@ -773,7 +773,7 @@ describe('execution-origin Machine publication', () => {
             })) : []]));
             const inputsFor = (pluginId: string, selection: Partial<NonNullable<ExecutionOriginMachineSnapshotInputs['selection']>> = {}): ExecutionOriginMachineSnapshotInputs => ({
                 ...ctx.inputs, pluginId, sources: sourcesByPlugin.get(pluginId)!, materializations,
-                selection: { availabilityRevision: null, classifyRelease: classify, storedOrigin: null,
+                selection: { availabilityRevision: store.bind(scope).getObservationSnapshot(pluginId), classifyRelease: classify, storedOrigin: null,
                     homeServerIdentityId: ctx.home.serverIdentityId, installedPlugins, ...selection } });
             const connections = pluginIds.map(pluginId => ctx.connect(inputsFor(pluginId)));
             const measure = (transition: () => void) => {
@@ -787,13 +787,12 @@ describe('execution-origin Machine publication', () => {
                 mapGet.mockRestore();
                 return result;
             };
-            return { ...ctx, machines, pluginIds, connections, inputsFor, measure, scope, rowsFor, publish };
+            return { ...ctx, machines, pluginIds, connections, inputsFor, measure, scope, rowsFor, publish, revisionFor: (pluginId: string) => store.bind(scope).getObservationSnapshot(pluginId) };
         }
         const revokeMachine = ({ home, machines }: ReturnType<typeof account>, machineId: string) =>
             storage.setState({ machineListByServerId: { [home.id]: machines.map(row => row.id === machineId ? { ...row, revokedAt: Date.now() } : row) } });
 
-        it('bounds candidate allocation and releases superseded publications at 30 plugins × 20 Machines', async () => {
-            // Observe allocations without retaining the objects in spy call history.
+        it('publishes only changed candidates and collects superseded generations at reload151 scale', async () => {
             const allocated: WeakRef<object>[] = [];
             const originalSet = Map.prototype.set;
             const observe = vi.spyOn(Map.prototype, 'set').mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
@@ -801,45 +800,51 @@ describe('execution-origin Machine publication', () => {
                     && 'materializations' in value && 'sources' in value) allocated.push(new WeakRef(value));
                 return originalSet.call(this, key, value);
             });
-            const work = account(30, 20, true);
-            expect(work.connections.every(connection => work.machines.every(machine => connection.getSnapshot().readMachineFact({
-                serverIdentityId: work.home.serverIdentityId, machineId: machine.id,
-            }).eligible))).toBe(true);
-            expect(allocated).toHaveLength(600);
-            expect(work.connections.reduce((sum, connection) => sum + connection.getSnapshot().selection!.candidates.length, 0)).toBe(1200);
-            // One contextual consumer per supplying Machine, alongside AppShell's Auto consumer.
-            const contextual = work.pluginIds.flatMap(pluginId => work.machines.map(machine => {
-                const inputs = work.inputsFor(pluginId, { contextualTarget: {
-                    serverIdentityId: work.home.serverIdentityId, machineId: machine.id,
-                } });
-                return { connection: work.connect(inputs), inputs };
-            }));
-            expect(allocated).toHaveLength(600);
-            observe.mockClear();
-            const original = work.connections.map(connection => connection.getSnapshot().selection!.candidates);
-            work.connections.forEach((connection, index) => connection.updateInputs(work.inputsFor(work.pluginIds[index]!)));
-            expect(allocated).toHaveLength(600);
-            work.connections.forEach((connection, index) => expect(connection.getSnapshot().selection!.candidates).toBe(original[index]));
-            revokeMachine(work, work.machines[1]!.id);
-            expect(allocated).toHaveLength(600);
-            const afterRevoke = work.connections.map(connection => connection.getSnapshot().selection!.candidates);
-            expect(afterRevoke.flatMap((rows, plugin) => rows.filter((row, index) => row !== original[plugin]![index]))).toHaveLength(60);
-            // A genuinely new availability basis supersedes all candidate publications.
-            const availabilityRevision = {};
-            work.connections.forEach((connection, index) => connection.updateInputs(work.inputsFor(work.pluginIds[index]!, { availabilityRevision })));
-            contextual.forEach(({ connection, inputs }) => connection.updateInputs({ ...inputs,
-                selection: { ...inputs.selection!, availabilityRevision } }));
-            expect(allocated).toHaveLength(1200);
+            const work = account(107, 344, false, 9925);
+            let rows = work.inputsFor(work.pluginIds[0]!).materializations;
+            expect(rows).toHaveLength(9925);
+            expect(work.connections).toHaveLength(107);
+            expect(work.machines).toHaveLength(344);
+            const initialAllocations = allocated.length;
+            expect(initialAllocations).toBe(9925);
+            expect(work.connections.every(connection => connection.getSnapshot().selection!.candidates.length > 0)).toBe(true);
+            const generations: WeakRef<object>[] = [];
+            const changedPublications: number[] = [];
+            for (let round = 0; round < 6; round++) {
+                // Availability retains unchanged rows, advances its cursor, and changes one declaration.
+                rows = rows.map((row, index) => index === 0 ? { ...row, version: `1.0.${round + 1}` } : row);
+                const installedPlugins = work.publish(round + 2, rows);
+                let changed = 0;
+                work.connections.forEach((connection, index) => {
+                    const before = connection.getSnapshot().selection!.candidates;
+                    connection.updateInputs({ ...work.inputsFor(work.pluginIds[index]!, { availabilityRevision: work.revisionFor(work.pluginIds[index]!), installedPlugins }), materializations: rows });
+                    if (connection.getSnapshot().selection!.candidates !== before) {
+                        changed++;
+                        generations.push(new WeakRef(before));
+                    }
+                });
+                changedPublications.push(changed);
+                observe.mockClear(); // instrumentation must not retain arguments
+            }
+            const inventories: WeakRef<object>[] = [];
+            for (let round = 0; round < 6; round++) {
+                inventories.push(new WeakRef(work.connections[0]!.getSnapshot().snapshots));
+                revokeMachine(work, work.machines[round + 1]!.id);
+                observe.mockClear();
+            }
             observe.mockRestore();
-            // GC is an actual runtime boundary. End the WeakRef keep-alive job first.
             setFlagsFromString('--expose-gc');
             const collect: () => void = runInNewContext('gc');
             setFlagsFromString('--no-expose-gc');
             await setImmediate();
             collect();
-            expect(allocated.slice(0, 600).filter(ref => ref.deref())).toHaveLength(0);
-            expect(allocated.slice(600).filter(ref => ref.deref())).toHaveLength(600);
-            work.connections.forEach(connection => connection.dispose());
+            expect(changedPublications).toEqual([1, 1, 1, 1, 1, 1]);
+            expect(generations.filter(ref => ref.deref())).toHaveLength(0);
+            expect(inventories.filter(ref => ref.deref())).toHaveLength(0);
+            expect(allocated).toHaveLength(initialAllocations); // existing target indexes survive declaration churn
+            expect(allocated.filter(ref => ref.deref())).toHaveLength(initialAllocations);
+            expect(work.connections[0]!.getSnapshot().selection!.candidates.some(candidate =>
+                'materialization' in candidate && candidate.materialization.version === '1.0.6')).toBe(true);
         });
 
         it('derives per-installation facts once, not per demand, when one Machine flips', () => {

@@ -175,11 +175,18 @@ function sameTarget(left: MachineAdministrationTargetV1 | null | undefined, righ
     return left?.serverIdentityId === right?.serverIdentityId && left?.machineId === right?.machineId;
 }
 
+function sameMaterializationRows(left: readonly PluginMachineMaterializationV1[], right: readonly PluginMachineMaterializationV1[]) {
+    return left === right || left.length === right.length && left.every((row, index) => row === right[index]);
+}
+
 function sameCandidateInputs(left: ExecutionOriginMachineSnapshotInputs, right: ExecutionOriginMachineSnapshotInputs) {
     const a = left.selection;
     const b = right.selection;
+    const leftRows = readPluginMachineMaterializations(left.materializations, left.pluginId);
+    const rightRows = readPluginMachineMaterializations(right.materializations, right.pluginId);
     return left.pluginId === right.pluginId && a?.classifyRelease === b?.classifyRelease && a?.availabilityRevision === b?.availabilityRevision
-        && left.materializations === right.materializations && (left.sources === right.sources
+        && sameMaterializationRows(leftRows, rightRows)
+        && (left.sources === right.sources
             || left.sources.length === right.sources.length && left.sources.every((candidate, index) => {
                 const other = right.sources[index]!;
                 return candidate.source.serverId === other.source.serverId
@@ -242,12 +249,11 @@ function retainDescriptiveCandidates(previous: readonly PluginExecutionOriginCan
 /** One candidate producer per plugin/input basis, independent of selection intent. */
 function createCandidatePublication(inputs: ExecutionOriginMachineSnapshotInputs, inventory: InventoryPublication,
     previous?: readonly PluginExecutionOriginCandidateV1[]) {
-    const spec = inputs.selection!;
     const build = (materializations: readonly PluginMachineMaterializationV1[],
         sources: readonly PluginMachineSourceExecutionOriginCandidateV1[], current: InventoryPublication) =>
         combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
-            pluginId: inputs.pluginId, materializations, classifyRelease: spec.classifyRelease,
-            machineSnapshots: current.snapshots, readMachineFact: current.readMachineFact, machineRejections: spec.machineRejections,
+            pluginId: inputs.pluginId, materializations, classifyRelease: inputs.selection!.classifyRelease,
+            machineSnapshots: current.snapshots, readMachineFact: current.readMachineFact, machineRejections: inputs.selection!.machineRejections,
         }), buildPluginMachineSourceExecutionOriginCandidates({ pluginId: inputs.pluginId, sources,
             machineSnapshots: current.snapshots, readMachineFact: current.readMachineFact }));
     let candidates = retainDescriptiveCandidates(previous, build(inputs.materializations, inputs.sources, inventory));
@@ -261,21 +267,64 @@ function createCandidatePublication(inputs: ExecutionOriginMachineSnapshotInputs
         if (!home) { home = new Map(); homes.set(target.serverIdentityId, home); }
         let rows = home.get(target.machineId);
         if (!rows) {
-            rows = { target, rejection: inventory.readMachineFact(target).rejection, materializations: [], sources: [] };
+            rows = { target: { serverIdentityId: target.serverIdentityId, machineId: target.machineId }, rejection: basis.readMachineFact(target).rejection, materializations: [], sources: [] };
             home.set(target.machineId, rows);
         }
         return rows;
     };
-    // Index declaration inputs once. A Machine delta never scans the fleet's declarations.
-    for (const materialization of readPluginMachineMaterializations(inputs.materializations, inputs.pluginId)) {
-        targetRows(materialization).materializations.push(materialization);
+    function indexInputs() {
+        const materializations = readPluginMachineMaterializations(inputs.materializations, inputs.pluginId);
+        const sources = inputs.sources.filter(source => getPluginMachineExecutionOriginRef(source.source.origin).pluginId === inputs.pluginId);
+        const liveMaterializations = new Set(materializations);
+        const liveSources = new Set(sources);
+        for (const home of homes.values()) {
+            for (const rows of home.values()) {
+                if (rows.materializations.some(row => !liveMaterializations.has(row))) {
+                    rows.materializations = rows.materializations.filter(row => liveMaterializations.has(row));
+                }
+                if (rows.sources.some(row => !liveSources.has(row))) rows.sources = rows.sources.filter(row => liveSources.has(row));
+                // Target membership is reconciled after replacements are indexed.
+            }
+        }
+        for (const materialization of materializations) {
+            const rows = targetRows(materialization);
+            if (!rows.materializations.includes(materialization)) rows.materializations.push(materialization);
+        }
+        for (const source of sources) {
+            const rows = targetRows({ serverIdentityId: source.source.origin.serverIdentityId,
+                machineId: getPluginMachineExecutionOriginRef(source.source.origin).machineId });
+            if (!rows.sources.includes(source)) rows.sources.push(source);
+        }
+        for (const [homeId, home] of homes) {
+            for (const [machineId, rows] of home) {
+                if (!rows.materializations.length && !rows.sources.length) home.delete(machineId);
+                else rows.rejection = basis.readMachineFact(rows.target).rejection;
+            }
+            if (!home.size) homes.delete(homeId);
+        }
     }
-    for (const source of inputs.sources) if (getPluginMachineExecutionOriginRef(source.source.origin).pluginId === inputs.pluginId) {
-        targetRows({ serverIdentityId: source.source.origin.serverIdentityId,
-            machineId: getPluginMachineExecutionOriginRef(source.source.origin).machineId }).sources.push(source);
-    }
+    indexInputs();
     return {
-        inputs,
+        get inputs() { return inputs; },
+        updateInputs(next: ExecutionOriginMachineSnapshotInputs, current: InventoryPublication) {
+            if (sameCandidateInputs(inputs, next)) return;
+            const declarationsChanged = !sameMaterializationRows(
+                readPluginMachineMaterializations(inputs.materializations, inputs.pluginId),
+                readPluginMachineMaterializations(next.materializations, next.pluginId)) || inputs.sources !== next.sources;
+            inputs = next;
+            basis = current;
+            const proposed = retainDescriptiveCandidates(candidates, build(inputs.materializations, inputs.sources, current));
+            if (proposed !== candidates) {
+                candidates = proposed;
+                positions.clear();
+                candidates.forEach((candidate, index) => positions.set(candidateFact(candidate), index));
+            }
+            if (declarationsChanged) indexInputs();
+            else for (const home of homes.values()) for (const rows of home.values()) {
+                rows.rejection = current.readMachineFact(rows.target).rejection;
+            }
+            basis = current;
+        },
         read(current: InventoryPublication) {
             if (basis === current) return candidates;
             const changed = current.fullRefresh ? [...homes.values()].flatMap(home => [...home.values()])
@@ -440,6 +489,7 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             }
             demand.candidatePublication ??= createCandidatePublication(demand.inputs, inventory, demand.description?.value.candidates);
         }
+        demand.candidatePublication.updateInputs(demand.inputs, inventory);
         const candidates = demand.candidatePublication.read(inventory);
         const inventoryPending = isInventoryPendingFor(demand, inventory,
             rememberedTarget?.serverIdentityId ?? spec.homeServerIdentityId, rememberedTarget);
@@ -751,11 +801,17 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                         break;
                     }
                 }
+                let candidatePublication = reuse && previous.inputs.pluginId === next.pluginId ? previous.candidatePublication : null;
+                for (const other of context.demands) {
+                    if (other.candidatePublication === candidatePublication && !sameCandidateInputs(other.inputs, next)) {
+                        candidatePublication = null;
+                        break;
+                    }
+                }
                 demand = equivalent ?? { inputs: next, targets: reuse ? previous.targets : targets, context,
                     facts: reuse ? previous.facts : null, factsInventory: reuse ? previous.factsInventory : null,
                     factProjection: reuse ? previous.factProjection : null,
-                    candidatePublication: previous?.context === context && sameCandidateInputs(previous.inputs, next)
-                        ? previous.candidatePublication : null,
+                    candidatePublication,
                     current: previous?.current ?? EMPTY_EXECUTION_ORIGIN_MACHINE_SELECTION,
                     snapshot: previousSnapshot, listeners: new Set(),
                     description: previous?.description ?? null };

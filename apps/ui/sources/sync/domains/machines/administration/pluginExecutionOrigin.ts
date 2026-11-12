@@ -178,22 +178,25 @@ export function createPluginMachineExecutionOriginMachineFacts(params: MachineFa
     const serializeRow = (target: PluginExecutionOriginContextualTarget, fact: Row['fact']) =>
         JSON.stringify([target.serverIdentityId, target.machineId, fact.rejection, fact.eligible]);
     const byHome = new Map<string, Map<string, Row[]>>();
-    const rows = params.targets.map(target => {
+    const targets = params.targets;
+    const rows: Row[] = [];
+    for (const target of targets) {
         const fact = readMachineFact(params, target);
         const row: Row = { target, fact, serialized: serializeRow(target, fact), rank: 0 };
         let home = byHome.get(target.serverIdentityId);
         if (!home) { home = new Map(); byHome.set(target.serverIdentityId, home); }
         const duplicates = home.get(target.machineId);
         if (duplicates) duplicates.push(row); else home.set(target.machineId, [row]);
-        return row;
-    }).sort(compareTarget);
+        rows.push(row);
+    }
+    rows.sort(compareTarget);
     const ranked = [...rows].sort(compareActivity);
     ranked.forEach((row, index) => { row.rank = index; });
     const serializeRows = (items: readonly Row[]) => `[${items.map(row => row.serialized).join(',')}]`;
     let current = { eligibilityKey: serializeRows(rows), activityKey: serializeRows(ranked) };
     return {
         getSnapshot: () => current,
-        update(inputs: MachineFactInputs, changedTargets: readonly PluginExecutionOriginContextualTarget[] = params.targets) {
+        update(inputs: MachineFactInputs, changedTargets: readonly PluginExecutionOriginContextualTarget[] = targets) {
             let eligibilityChanged = false;
             let activityChanged = false;
             for (const target of changedTargets) {
