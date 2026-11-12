@@ -5,6 +5,8 @@ import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/pl
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { bindManagedPresetAcquireOriginV1 } from './presetOrigination';
+import { deriveEd25519KeyPair } from '@happier-dev/protocol/crypto/ed25519';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 describe('fixed-controller preset origination', () => {
     const selection = { kind: 'preset', homeId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', id: 'qa-m-catalog-docker-1111', revision: 0 } as const;
@@ -32,6 +34,27 @@ describe('fixed-controller preset origination', () => {
     it('binds the saved controller and delegated facts without requiring a controller grant or caller-supplied facts', async () => {
         await expect(bindManagedPresetAcquireOriginV1({ input, preset, requestKey: 'request', resolvePool }))
             .resolves.toMatchObject({ kind: 'bound', input: { ...input, controller, reviewedFacts } });
+    });
+
+    it('projects the requested Machine name into generated facts without mutating the reusable preset', async () => {
+        const named = ManagedAcquireInputV1Schema.parse({ ...input, selection: { ...selection, name: 'Member guest' } });
+        await expect(bindManagedPresetAcquireOriginV1({ input: named, preset, requestKey: 'named', resolvePool }))
+            .resolves.toMatchObject({ kind: 'bound', input: { selection: { name: 'Member guest' },
+                reviewedFacts: { launch: { name: 'Member guest' } } } });
+        expect(preset.delegatedAcquire).toMatchObject({ reviewedFacts: { launch: { name: 'Docker' } } });
+    });
+
+    it('projects the requested name after pool placement without changing the selected facts', async () => {
+        const poolId = '24dc99d8-4809-4ce8-aedb-c9eca0def049';
+        const pooled = ManagedMachinePresetV1Schema.parse({ ...preset, controller: undefined, controllerPoolId: poolId });
+        const named = ManagedAcquireInputV1Schema.parse({ ...input, selection: { ...selection, name: 'Pool guest' } });
+        const placement = { kind: 'resolved', poolId, machineId: controller.machineId, priorityTier: 0,
+            managedPreset: { controller, controllerAccess: { installationPublicKey: encodeBase64(deriveEd25519KeyPair(new Uint8Array(32).fill(17)).publicKey, 'base64url'),
+                custodian: { accountId: 'owner' } }, provisioner, reviewedFacts } };
+        await expect(bindManagedPresetAcquireOriginV1({ input: named, preset: pooled, requestKey: 'named-pool',
+            resolvePool: async () => placement })).resolves.toMatchObject({ kind: 'bound', input: {
+                controller, reviewedFacts: { launch: { name: 'Pool guest' } } } });
+        expect(placement.managedPreset.reviewedFacts.launch.name).toBe('Docker');
     });
 
     it('refuses an explicitly different controller instead of redirecting admitted work', async () => {

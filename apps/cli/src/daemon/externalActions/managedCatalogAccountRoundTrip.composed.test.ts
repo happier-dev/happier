@@ -3245,6 +3245,89 @@ describe('managed catalog original Account transport', () => {
     }
   });
 
+  it('retains a named delegated preset acquire before a disconnected controller transport', async () => {
+    const machineKey = new Uint8Array(32).fill(49);
+    const signing = tweetnacl.sign.keyPair();
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const member = await db.account.create({ data: { encryptionMode: 'e2ee', publicKey: Buffer.from(signing.publicKey).toString('hex'),
+      contentPublicKey: publicKey, contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: publicKey }) } });
+    const team = await db.team.create({ data: { name: 'Named delegated acquire' } });
+    await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner.id, role: 'admin' },
+      { teamId: team.id, accountId: member.id, role: 'member' }] });
+    const homeId = await getOrCreateServerIdentityId();
+    const installation = tweetnacl.sign.keyPair();
+    const controller = { machineId: 'named-preset-controller', installationId: 'named-preset-installation' };
+    const provisioner = nativeFixture({ credentialPurposes: [] });
+    const manifest = PluginManifestV2Schema.parse(provisioner.runtimeRegistry.contributes.activationTargets[0]!.manifest);
+    const declaration = createReleaseLessDeclarationV1(manifest);
+    await db.machine.create({ data: { id: controller.machineId, accountId: owner.id, installationId: controller.installationId,
+      installationPublicKey: installation.publicKey, metadata: encodePlainMachineStoredContent({}),
+      dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), active: true, lastActiveAt: new Date(),
+      operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+      operationProtocolCapabilitiesRevision: 1, pluginMaterializationRevision: BigInt(1) } });
+    await db.pluginMachineMaterialization.create({ data: { accountId: owner.id, serverIdentityId: homeId,
+      machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id,
+      version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
+      archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+    const serverUrl = 'https://named-delegated-preset.example';
+    const app = Fastify().withTypeProvider<ZodTypeProvider>();
+    app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+    enableErrorHandlers(app); enableAuthentication(app);
+    registerAccountEncryptionRoutes(app); registerAccountSettingsRoutes(app); registerAccountProfileRoute(app);
+    registerPluginAvailabilityRoutes(app); machinesRoutes(app);
+    app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
+    // Only the network delivery after real Home admission is disconnected.
+    // No provider/native effect runs; the retained allocation is the observable result.
+    registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: channel.server,
+      forwardRpc: async () => ({ ok: false, error: 'fixture_controller_disconnected' }) }) });
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+    const ownerToken = await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' });
+    const memberToken = await createAccountTokenForTests(member.id, { kind: 'account', authority: 'present_user' });
+    const policy = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.presets.create': ['cli'], 'machines.managed.acquire': ['cli'] } });
+    const makeExecutor = (credentials: StoredCredentials) => createCliActionExecutorFromCredentials({
+      credentials, readCredentials: async () => credentials, serverId: configuration.activeServerId,
+      serverApiUrl: serverUrl, serverIdentityId: homeId,
+      resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl, token: credentials.token,
+        fetchImpl: async (url, init) => {
+          const target = new URL(typeof url === 'string' ? url : url instanceof URL ? url.href : url.url);
+          const response = await app.inject({ method: 'GET', url: `${target.pathname}${target.search}`,
+            headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+          return new Response(response.payload, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+        } }),
+      actionsSettingsProvider: { getActionsSettings: () => policy,
+        getAccountSettings: () => AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
+    const context = { surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId } as const;
+    const presetId = 'named-delegated-preset';
+    try {
+      const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
+        headers: { authorization: `Bearer ${ownerToken}` }, payload: { manifest } });
+      expect(claim.statusCode, claim.payload).toBe(200);
+      expect(await makeExecutor({ token: ownerToken, encryption: null }).execute('machines.presets.create', {
+        id: presetId, homeId, name: 'Reusable preset', owner: { kind: 'team', teamId: team.id }, controller,
+        launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Saved launch', choices: {} },
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, teamAcquireDelegated: true,
+      }, context)).toMatchObject({ ok: true, result: { kind: 'saved' } });
+      const memberExecutor = makeExecutor({ token: memberToken, encryption: { type: 'dataKey', machineKey, publicKey } });
+      for (const name of [undefined, 'fix-g1-provider-1112']) {
+        const requestId = name ? 'named-delegated-acquire' : 'default-delegated-acquire';
+        const result = await memberExecutor.execute('machines.managed.acquire', {
+          selection: { kind: 'preset', homeId, id: presetId, revision: 0, ...(name ? { name } : {}) },
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+          enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+        }, { ...context, actionRequestId: requestId });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        const retained = await db.managedMachine.findFirst({ where: { homeId, admittedActionRequestId: requestId },
+          select: { custodianAccountId: true, admittedInput: true, launch: true, reviewedFacts: true } });
+        expect(retained, JSON.stringify({ requestId, result })).toMatchObject({
+          custodianAccountId: owner.id, admittedInput: { enrollmentAccountId: member.id },
+          ...(name ? { launch: { name }, reviewedFacts: { launch: { name } } } : {}),
+        });
+      }
+    } finally { restoreHttp(); await app.close(); }
+  });
+
   it('claims a release-less provisioner, saves a preset through the real Home Action adapter, and preserves it through disable/re-enable', async () => {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });
     const homeId = await getOrCreateServerIdentityId();
