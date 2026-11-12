@@ -148,6 +148,42 @@ describe('Item', () => {
         expect(collectUnexpectedRawTextNodes(screen.tree.toJSON())).toEqual([]);
     });
 
+    it('wraps Settings descriptions and keeps transient menu and grouped rows compact', async () => {
+        const { Item, ItemSubtitleWrappingContext } = await import('./Item');
+
+        const screen = await renderScreen(
+            <ItemSubtitleWrappingContext.Provider value={true}>
+                <>
+                    <Item title="Title" subtitle="A longer description that should wrap" showChevron={false} />
+                    <Item title="Limited title" subtitle="A Settings description with an old cap" subtitleLines={2} showChevron={false} />
+                    <Item title="Menu title" subtitle="A transient menu description" rowRole="menu" showChevron={false} />
+                </>
+            </ItemSubtitleWrappingContext.Provider>,
+        );
+        const regularListScreen = await renderScreen(
+            <>
+                <Item title="Compact title" subtitle="A compact description" showChevron={false} />
+                <Item title="Capped title" subtitle="An explicitly capped description" subtitleLines={2} showChevron={false} />
+            </>,
+        );
+
+        const defaultSubtitle = findTestInstanceByTypeContainingText(
+            screen,
+            'Text',
+            'A longer description that should wrap',
+        );
+        const formerlyLimitedSubtitle = findTestInstanceByTypeContainingText(screen, 'Text', 'A Settings description with an old cap');
+        const menuSubtitle = findTestInstanceByTypeContainingText(screen, 'Text', 'A transient menu description');
+        const compactSubtitle = findTestInstanceByTypeContainingText(regularListScreen, 'Text', 'A compact description');
+        const explicitSubtitle = findTestInstanceByTypeContainingText(regularListScreen, 'Text', 'An explicitly capped description');
+
+        expect(defaultSubtitle?.props?.numberOfLines).toBeUndefined();
+        expect(formerlyLimitedSubtitle?.props?.numberOfLines).toBeUndefined();
+        expect(menuSubtitle?.props?.numberOfLines).toBe(1);
+        expect(compactSubtitle?.props?.numberOfLines).toBe(1);
+        expect(explicitSubtitle?.props?.numberOfLines).toBe(2);
+    });
+
     it('renders detail even when rightElement is provided', async () => {
         const { Item } = await import('./Item');
 
