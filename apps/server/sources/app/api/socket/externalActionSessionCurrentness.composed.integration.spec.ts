@@ -351,8 +351,10 @@ describe('original external Session Action currentness composition', () => {
                 const stream = Reflect.get(logger, symbols.streamSym) as DestinationStream;
                 const sink = vi.spyOn(stream, 'write').mockImplementation(chunk => { records.push(JSON.parse(String(chunk))); });
                 try {
-                    expect(await verifyExternalActionExecutionAuthorizationCurrent({ authorization, effectActionId: actionId,
-                        target, installationId, privateKey: installation.secretKey, serverHttpBaseUrl })).toBe(false);
+                    // 0a84ccdfc6b preserves the Home's definitive proof refusal.
+                    await expect(verifyExternalActionExecutionAuthorizationCurrent({ authorization, effectActionId: actionId,
+                        target, installationId, privateKey: installation.secretKey, serverHttpBaseUrl }))
+                        .rejects.toMatchObject({ ok: false, errorCode: 'invalid_token' });
                     const refusals = records.filter(record => record && typeof record === 'object'
                         && 'module' in record && record.module === 'external-action-authorization-refusal');
                     expect(refusals).toEqual([expect.objectContaining({ phase: 'source_before_principal' })]);

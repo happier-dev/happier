@@ -91,7 +91,7 @@ import { readProcessIdentityByPid } from '../../../../../../cli/src/daemon/proce
 import { projectMachineRpcTransportAcknowledgement } from '../../../../../../cli/src/api/machine/projectMachineRpcTransportAcknowledgement';
 import { buildCurrentCliClientCompatibilitySocketAuth, buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '../../../../../../cli/src/api/clientCompatibility/cliClientCompatibility';
 import { createConnectedServiceCredentialApi } from '../../../../../../cli/src/api/client/connectedServiceCredentialApi';
-import { hasStoredSessionCredentialProvenance, readStoredCredentialsForServerId, writeCredentialsTokenOnlyForServerId, type StoredCredentials } from '../../../../../../cli/src/persistence';
+import type { StoredCredentials } from '../../../../../../cli/src/persistence';
 import type { TrackedSession } from '../../../../../../cli/src/daemon/types';
 import { configuration } from '../../../../../../cli/src/configuration';
 import { ConnectedServiceRuntimeRegistry } from '../../../../../../cli/src/daemon/connectedServices/runtimeRegistry/registry';
@@ -371,23 +371,11 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                 if (!currentness) throw new Error('Canonical credential-backed approval currentness unavailable');
                 const publisher = createApprovedDiscussionAgentPublisher({ credentials, machineId: machine.id, serverId, serverUrl: serverHttpBaseUrl,
                     isApprovalExecutionOriginCurrent: currentness, publish: (publication, options) => apiMachine!.postAgentDiscussionMessage(publication, options) });
-                let decideOnDaemon: ReturnType<typeof createCliActionExecutor>['execute'] | undefined;
-                const createExecutor = (executionCredentials: StoredCredentials, forwardApprovedReplay = false): ReturnType<typeof createCliActionExecutor> => createCliActionExecutor({ credentials: executionCredentials,
+                const createExecutor = (executionCredentials: StoredCredentials): ReturnType<typeof createCliActionExecutor> => createCliActionExecutor({ credentials: executionCredentials,
                     token: executionCredentials.token, serverId, serverIdentityId: homeId,
                     serverHttpBaseUrl, sessionId: session.id, ...sessionCrypto, isApprovalExecutionOriginCurrent: currentness,
                     externalActionMachineRequestPrivateKey: installation.privateKey,
                     externalActionMachineInstallationId: installation.installationId,
-                    // Substitute only the exact-daemon RPC network hop. The
-                    // actual deciding executor admits the stored interactive
-                    // credential before a fresh credential-bound replay owner
-                    // consumes its authenticated authority.
-                    ...(forwardApprovedReplay ? { approvalRequestApprovedReplay: async ({ artifactId, decision, context, signal }) => {
-                        if (!decideOnDaemon) throw new Error('Fixture actual daemon decision is unavailable');
-                        return await decideOnDaemon('approval.request.decide', { artifactId, decision: decision ?? 'approve' }, {
-                            ...context, serverId, serverIdentityId: homeId, runtimeAccountId: account.id,
-                            ...(signal ? { signal } : {}),
-                        });
-                    } } : {}),
                     postAgentDiscussionMessage: async () => { throw new Error('Only the actual startup replay owner may publish this private body'); } });
                 const executor = createExecutor(credentials);
                 const capture = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token: credentials.token, credentials, machineId: machine.id,
@@ -504,10 +492,6 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                     reportStale: reason => initialStaleReasons.push(reason) }),
                     `Fixture signed origin current before Stop: ${JSON.stringify(initialStaleReasons)}`).toBe(true);
                 expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
-                const terminalToken = await auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-                await writeCredentialsTokenOnlyForServerId(serverId, { token: terminalToken });
-                const personCredentials = await readStoredCredentialsForServerId(serverId);
-                if (!personCredentials || !hasStoredSessionCredentialProvenance(personCredentials)) throw new Error('Fixture interactive stored CLI credential unavailable');
                 let currentMachineId: string | null = machine.id;
                 startup = await createRequesterSessionControlRuntimeFixture({
                     happyHomeDir: configuration.happyHomeDir, activeServerDir: join(configuration.happyHomeDir, 'servers', serverId),
@@ -531,8 +515,6 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                 await bootstrapAccountSettingsContext({ credentials, mode: 'blocking' });
                 expect(await currentness({ origin: approval.executionOriginV1, request: approval }),
                     'Fixture signed origin and Account policy current in the startup-selected Home before Stop').toBe(true);
-                decideOnDaemon = (...args) => ingress.executor.execute(...args);
-                const personExecutor = createExecutor(e2eeMcp ? credentials : personCredentials, true);
                 const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
                     getApiMachineForSessions: () => apiMachine!, removeSessionMarkerFn: async () => undefined });
                 const stop = createStopSession({ pidToTrackedSession: sessions, readHostAttachmentState: async () => ({ status: 'absent' }),
@@ -585,9 +567,17 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                         privateKey: installation.privateKey, installationId: installation.installationId, serverHttpBaseUrl };
                     // Retiring this source does not waive ordinary root currentness
                     // or accept an unrelated retained input under the same signer.
-                    expect(await verifyExternalActionExecutionAuthorizationCurrent(verification)).toBe(stopDuringReplay || attachmentPost);
-                    expect(await verifyExternalActionExecutionAuthorizationCurrent({ ...verification,
-                        retainedDiscussionSource: { ...originalSource, sourceInputId: 'not-the-original' } })).toBe(false);
+                    // 0a84ccdfc6b preserves definitive Home refusal codes as
+                    // typed rejections instead of collapsing them to false.
+                    if (stopDuringReplay || attachmentPost) {
+                        expect(await verifyExternalActionExecutionAuthorizationCurrent(verification)).toBe(true);
+                    } else {
+                        await expect(verifyExternalActionExecutionAuthorizationCurrent(verification))
+                            .rejects.toMatchObject({ ok: false, errorCode: 'invalid_token' });
+                    }
+                    await expect(verifyExternalActionExecutionAuthorizationCurrent({ ...verification,
+                        retainedDiscussionSource: { ...originalSource, sourceInputId: 'not-the-original' } }))
+                        .rejects.toMatchObject({ ok: false, errorCode: 'invalid_token' });
                     }
                     const capturedInput = DiscussionPostInputV1Schema.parse(approval.actionArgs);
                     phase = 'open draft publication refusal';
@@ -639,67 +629,75 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                     else beforePublication = stopExecutingParticipant;
                 }
                 phase = 'person approval decision';
-                let signedAttachmentResult: Awaited<ReturnType<typeof personExecutor.execute>> | undefined;
-                let repeatedSignedAttachmentResult: Awaited<ReturnType<typeof personExecutor.execute>> | undefined;
-                if (revocation === 'policy-withdrawn' || revocation === 'attachment-signed' || attachmentPost) {
-                    // The browser's real Post reaches an installed daemon with a
-                    // fresh reviewer root, not an ambient Account bearer.
+                // docs/actions.md: CLI credentials retain automation authority.
+                // Review uses the person's Account app root at the real Home and
+                // installed daemon; the daemon keeps its own captured credential.
+                const postAsPerson = async () => {
+                    const reviewerToken = revocation === 'account-credential'
+                        ? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' })
+                        : personToken;
                     const actionId = 'approval.request.decide';
                     const input = { artifactId, decision: 'approve', serverIdentityId: homeId };
                     const requestId = randomUUID();
                     const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId, input, requestId,
                         target: { kind: 'machine', machineId: machine.id }, machineId: machine.id, accountId: account.id,
-                        accountEncryptionMode: accountMode, tokenEpochHint: account.tokenEpoch, token: personToken,
+                        accountEncryptionMode: accountMode,
+                        tokenEpochHint: account.tokenEpoch + (revocation === 'account-credential' ? 1 : 0), token: reviewerToken,
                         ...(credentials.encryption?.type === 'dataKey' ? { material: { type: 'dataKey', machineKey: credentials.encryption.machineKey } } : {}),
                         serverId, serverIdentityId: homeId, serverHttpBaseUrl, installationId: installation.installationId,
                         privateKey: installation.privateKey, isCurrent: async () => true });
                     if (!authorization) throw new Error('Reviewer root unavailable');
                     const reviewer = await ingress.prepareRequesterAccountContext?.({ authorization });
+                    if (revocation === 'account-credential' || revocation === 'home-unavailable' || revocation === 'wrong-machine') {
+                        // The real startup owner refuses custody before replay
+                        // when its Account or current installation is unavailable.
+                        expect(reviewer).toBeNull();
+                        return null;
+                    }
                     if (!reviewer) throw new Error('Startup-composed reviewer custody unavailable');
                     try {
-                        const post = () => reviewer.executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
+                        return await reviewer.executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
                             serverId, serverIdentityId: homeId, runtimeAccountId: account.id, actionRequestId: requestId,
                             defaultSessionMachineId: machine.id,
                             actionCaller: { kind: 'host' }, externalActionTarget: authorization.binding.target,
                             externalActionExecutionAuthorization: reviewer.authorization });
-                        const changeWhere = { accountId: account.id, kind: 'discussion', entityId: discussionId };
-                        const before = await db.accountChange.findFirstOrThrow({ where: changeWhere });
-                        const result = await post();
-                        if (attached) {
-                            signedAttachmentResult = result;
-                            if (e2eeMcp && result.ok && result.result && typeof result.result === 'object'
-                                && 'status' in result.result && result.result.status === 'executed') {
-                                repeatedSignedAttachmentResult = await post();
-                                expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(3);
-                            }
-                        } else {
-                            expect(result, JSON.stringify({ result, httpOutcomes })).toMatchObject({ ok: true,
-                                result: { status: 'failed', execution: { ok: false, errorCode: 'discussion_answer_policy_denied' } } });
-                            expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: inputId } } }))
-                                .toMatchObject({ replyProgress: { disposition: 'released', returnPublication: { kind: 'failed', failure: {
-                                    code: 'discussion_answer_policy_denied', phase: 'action_admission', retryable: false } } } });
-                            expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
-                            const originalRead = await app.inject({ method: 'GET',
-                                url: `/v1/discussions/${discussionId}/messages?messageId=${addressing.messageId}`,
-                                headers: { authorization: `Bearer ${credentials.token}` } });
-                            expect(originalRead.statusCode).toBe(200);
-                            expect(DiscussionMessagesResponseV1Schema.parse(originalRead.json()).messages[0]?.participantDeliveryV1)
-                                .toEqual([{ participantSessionId: session.id, disposition: 'failed', failure: {
-                                    code: 'discussion_answer_policy_denied', phase: 'action_admission', retryable: false } }]);
-                            const changed = await db.accountChange.findFirstOrThrow({ where: changeWhere });
-                            expect(changed).not.toEqual(before);
-                            expect(await post()).toMatchObject({ ok: true, result: { status: 'failed' } });
-                            expect(await db.accountChange.findFirstOrThrow({ where: changeWhere })).toEqual(changed);
-                        }
                     } finally { await reviewer.dispose(); }
-                    if (!attached) return;
+                };
+                const changeWhere = { accountId: account.id, kind: 'discussion', entityId: discussionId };
+                const before = await db.accountChange.findFirstOrThrow({ where: changeWhere });
+                const result = await postAsPerson();
+                let repeatedSignedAttachmentResult: Awaited<ReturnType<typeof postAsPerson>> | undefined;
+                if (e2eeMcp && result?.ok && result.result && typeof result.result === 'object'
+                    && 'status' in result.result && result.result.status === 'executed') {
+                    repeatedSignedAttachmentResult = await postAsPerson();
+                    expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(3);
                 }
-                const result = signedAttachmentResult ?? await personExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-                    { serverId, serverIdentityId: homeId, surface: 'cli' });
+                if (revocation === 'policy-withdrawn') {
+                    expect(result, JSON.stringify({ result, httpOutcomes })).toMatchObject({ ok: true,
+                        result: { status: 'failed', execution: { ok: false, errorCode: 'discussion_answer_policy_denied' } } });
+                    expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: inputId } } }))
+                        .toMatchObject({ replyProgress: { disposition: 'released', returnPublication: { kind: 'failed', failure: {
+                            code: 'discussion_answer_policy_denied', phase: 'action_admission', retryable: false } } } });
+                    expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
+                    const originalRead = await app.inject({ method: 'GET',
+                        url: `/v1/discussions/${discussionId}/messages?messageId=${addressing.messageId}`,
+                        headers: { authorization: `Bearer ${credentials.token}` } });
+                    expect(originalRead.statusCode).toBe(200);
+                    expect(DiscussionMessagesResponseV1Schema.parse(originalRead.json()).messages[0]?.participantDeliveryV1)
+                        .toEqual([{ participantSessionId: session.id, disposition: 'failed', failure: {
+                            code: 'discussion_answer_policy_denied', phase: 'action_admission', retryable: false } }]);
+                    const changed = await db.accountChange.findFirstOrThrow({ where: changeWhere });
+                    expect(changed).not.toEqual(before);
+                    expect(await postAsPerson()).toMatchObject({ ok: true, result: { status: 'failed' } });
+                    expect(await db.accountChange.findFirstOrThrow({ where: changeWhere })).toEqual(changed);
+                    return;
+                }
                 const rows = await db.discussionMessage.findMany({ where: { discussionId, seq: { gt: addressing.throughSeq } } });
                 if (sourceMismatch) {
                     expect(result, JSON.stringify({ result, httpOutcomes })).toMatchObject({ ok: true,
-                        result: { status: 'outcome_unknown', execution: { ok: false, effectAttempted: true } } });
+                        result: { status: 'outcome_unknown', execution: { ok: false, errorCode: 'outcome_unknown' } } });
+                    // 538e192a802 preserves unknown producer effect evidence.
+                    expect(result).not.toHaveProperty('result.execution.effectAttempted');
                     expect(rows).toHaveLength(0);
                     expect(httpOutcomes).not.toContain('POST /v1/discussions/upload 200');
                     expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
@@ -733,8 +731,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                     expect(custodyRead.statusCode).toBe(200);
                     expect(SessionMessageReplyReadResultV1Schema.parse(custodyRead.json()))
                         .toMatchObject({ status: 'available', progress: retainedOriginal.replyProgress });
-                    expect(await personExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' },
-                        { serverId, serverIdentityId: homeId, surface: 'cli' }))
+                    expect(await postAsPerson())
                         .toMatchObject({ ok: true, result: { status: 'failed',
                             execution: { errorCode: 'discussions_unavailable' } } });
                     expect(await db.sessionMessage.findUniqueOrThrow({ where: {
@@ -745,8 +742,11 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                     const lostAcknowledgement = revocation === 'stop-after-commit-lost-ack';
                     expect(result, JSON.stringify({ result, httpOutcomes, publishedRows: rows.length })).toMatchObject({ ok: true,
                         result: lostAcknowledgement
-                            ? { status: 'outcome_unknown', execution: { ok: false, errorCode: 'outcome_unknown', effectAttempted: true } }
+                            ? { status: 'outcome_unknown', execution: { ok: false, errorCode: 'outcome_unknown' } }
                             : { status: 'executed' } });
+                    // The missing acknowledgement supplies no effect evidence
+                    // (538e192a802); the committed row below proves publication.
+                    if (lostAcknowledgement) expect(result).not.toHaveProperty('result.execution.effectAttempted');
                     expect(rows).toHaveLength(1);
                     expect(openSessionStoredContent({ ...discussionCrypto, content: rows[0]!.content })).toEqual(content);
                     expect(rows[0]).toMatchObject({ producerV1: { kind: 'agent', sessionId: session.id,
@@ -855,7 +855,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                     }
                     const settled = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId }));
                     expect(sameStrictJsonValue(settled.executionOriginV1, approval.executionOriginV1), 'Original signed provenance remains immutable').toBe(true);
-                    expect(repeatedSignedAttachmentResult ?? await personExecutor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' }))
+                    expect(repeatedSignedAttachmentResult ?? await postAsPerson())
                         .toMatchObject({ ok: true, result: { status: lostAcknowledgement ? 'outcome_unknown' : 'executed' } });
                     expect(await db.discussionMessage.count({ where: { discussionId, seq: { gt: addressing.throughSeq } } })).toBe(1);
                     if (revocation === 'none') {
