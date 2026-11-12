@@ -109,7 +109,9 @@ export function acceptsManagedResourceDispositions(resources: readonly ManagedRe
 async function requireHome(tx: Tx, homeId: string) {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
 }
-export async function requireManagedMachineAccessInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, manage: boolean) {
+export async function requireManagedMachineAccessInTx(tx: Tx,
+    row: Pick<StoredManagedMachine, 'admittedInput' | 'custodianAccountId' | 'controllerMachineId' | 'enrolledMachineId'>,
+    actorAccountId: string, manage: boolean) {
     if (!manage && isManagedMachineCreator(row, actorAccountId)) return;
     const role = await resolveManagedMachineRoleInTx(tx, row, actorAccountId);
     if (!role || (manage && role !== "manage")) throw new ManagedMachineError("permission_denied");
@@ -119,9 +121,11 @@ export function isManagedMachineCreator(row: Pick<StoredManagedMachine, 'admitte
     return readManagedAdmissionState(row.admittedInput).enrollmentAccountId === actorAccountId;
 }
 /** Creation recovery/cancellation does not grant native power or controller management. */
-export async function requireManagedCreationAccessInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string): Promise<void> {
-    if (isManagedMachineCreator(row, actorAccountId)) return;
+export async function requireManagedCreationAccessInTx(tx: Tx,
+    row: Parameters<typeof requireManagedMachineAccessInTx>[1], actorAccountId: string): Promise<'creator' | 'manage'> {
+    if (isManagedMachineCreator(row, actorAccountId)) return 'creator';
     await requireManagedMachineAccessInTx(tx, row, actorAccountId, true);
+    return 'manage';
 }
 export async function getManagedMachine(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.get"> }>) {
     const input = ManagedGetInputV1Schema.parse(params.input);
@@ -191,12 +195,12 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
 }
 /** Cancellation retires creation; only the existing intent owner can perform native cleanup. */
 export async function cancelManagedCreation(params: Readonly<{ actorAccountId: string; input: ManagedMachineActionInputV1<"machines.managed.cancel"> }>,
-    options: Readonly<{ onlyIfUnsubmitted?: boolean }> = {}) {
+    options: Readonly<{ onlyIfUnsubmitted?: boolean; admittedCreationRecovery?: true }> = {}) {
     const input = ManagedCancelInputV1Schema.parse(params.input);
     return await inManagedMachinePublicationTx(input, async tx => {
         const row = await readManagedMachineInTx(tx, input);
         await requireHome(tx, input.homeId);
-        await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
+        if (!options.admittedCreationRecovery) await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
         // A refused dispatch can retire only work which never crossed submit.
         // The allocation predicate below shares that boundary with native admission.
         if (options.onlyIfUnsubmitted && (row.allocation !== 'unsubmitted'

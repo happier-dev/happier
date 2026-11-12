@@ -9,10 +9,13 @@ import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/ma
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { resolveMachinePresetForAcquireInTx } from '@/app/machines/managed/machinePresetService';
-import { isManagedMachineCreator } from '@/app/machines/managed/managedRead';
-import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, sameManagedInput, resolveManagedMachineRole, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
+import { isManagedMachineCreator, requireManagedCreationAccessInTx } from '@/app/machines/managed/managedRead';
+import { ManagedMachineError, readManagedMachineInTx, readManagedAdmissionState, sameManagedInput, resolveManagedMachineRole, resolveManagedMachineRoleInTx, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import type { Tx } from '@/storage/inTx';
 import { resolveSignedManagedAccountExecutorInTx } from '@/app/machines/managed/managedRequestAuthority';
+
+/** Internal placement result consumed by the signer, never a caller-supplied grant. */
+export type ManagedCreationRecoveryAdmission = Readonly<{ managedCreationRecovery?: true }>;
 
 /** Home reads the same closed control projection for plain and encrypted roots. */
 export function readExternalActionManagedControlAdmission(actionId: string, envelope: ExternalActionRequestEnvelope) {
@@ -39,9 +42,6 @@ export async function qualifyExternalActionManagedAccountExecutorInTx(reader: Tx
         managedId: row.id, enrolledMachineId: row.enrolledMachineId })) throw new ManagedMachineError('permission_denied');
     return { enrolledMachineId: row.enrolledMachineId };
 }
-
-
-
 
 
 /** A creation root addresses its retained allocation, never its controller's other guests. */
@@ -78,11 +78,38 @@ export function readExternalActionManagedAcquireAdmission(envelope: ExternalActi
 export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
     input: ExternalActionManagedAdmissionContext & Readonly<{
         actorAccountId: string; machineId: string; actionId: string; requireOnline?: boolean;
-    }>): Promise<MachineAdmission> {
+    }>): Promise<MachineAdmission & ManagedCreationRecoveryAdmission> {
     const denied = { kind: 'denied', code: 'access_denied' } as const;
     try {
         if (input.actionId === 'machines.managed.credentials.install') {
             return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
+        }
+        if (isManagedControlAdmissionActionIdV1(input.actionId)) {
+            const binding = input.executionBinding;
+            const boundControl = ExternalActionManagedControlAdmissionV1Schema.safeParse(binding?.managedAdmission);
+            const control = input.envelope ? readExternalActionManagedControlAdmission(input.actionId, input.envelope)
+                : boundControl.success ? boundControl.data : undefined;
+            if (!control || control.actionId !== input.actionId
+                || binding && (binding.actionId !== input.actionId || binding.accountId !== input.actorAccountId
+                    || binding.machineId !== input.machineId || binding.target.kind !== 'machine'
+                    || binding.target.machineId !== input.machineId || binding.serverIdentityId !== control.input.homeId
+                    || !sameManagedInput(binding.managedAdmission?.input, control.input))) return denied;
+            const row = await readManagedMachineInTx(reader, control.input);
+            if (row.controllerMachineId !== input.machineId) return denied;
+            const creationAccess = input.actionId === 'machines.managed.delete'
+                ? await requireManagedCreationAccessInTx(reader, row, input.actorAccountId) : undefined;
+            if (!creationAccess && await resolveManagedMachineRoleInTx(reader, row, input.actorAccountId) !== 'manage') return denied;
+            // This exact resource's native Action uses custody as its carrier.
+            // It grants no ordinary controller access, contents or key material.
+            const controller = await resolveMachineAdmissionInTx(reader, { actorAccountId: row.custodianAccountId,
+                machineId: input.machineId, actionId: input.actionId,
+                ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }) });
+            return controller.kind === 'admitted' && controller.installationId === row.controllerInstallationId
+                && (!binding || controller.custodianAccountId === binding.custodianAccountId
+                    && controller.installationId === binding.installationId)
+                ? { ...controller, actorAccountId: input.actorAccountId,
+                    ...(creationAccess === 'creator' && input.actorAccountId !== row.custodianAccountId
+                        ? { managedCreationRecovery: true as const } : {}) } : denied;
         }
         const acquiring = input.actionId === 'machines.managed.acquire';
         const projected = acquiring && input.envelope ? readExternalActionManagedAcquireAdmission(input.envelope) : null;
@@ -91,7 +118,7 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         const recovery = acquiring ? undefined : input.envelope ? readExternalActionManagedRecoveryAdmission(input.actionId, input.envelope)
             : binding?.managedAdmission;
         if (!acquiring && (!recovery || recovery.actionId !== input.actionId
-            || binding && !sameManagedInput(binding.managedAdmission, recovery))) return denied;
+            || binding && !sameManagedInput(binding.managedAdmission?.input, recovery.input))) return denied;
         if (binding && (binding.actionId !== input.actionId || binding.accountId !== input.actorAccountId
             || binding.machineId !== input.machineId || binding.target.kind !== 'machine'
             || binding.target.machineId !== input.machineId)) return denied;
@@ -99,18 +126,23 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         const requestId = input.envelope?.requestId ?? binding?.requestId;
         if (!homeId || acquiring && !requestId || binding && (binding.serverIdentityId !== homeId || binding.requestId !== requestId)) return denied;
         const select = { admittedInput: true, custodianAccountId: true,
-            controllerMachineId: true, controllerInstallationId: true } as const;
+            controllerMachineId: true, controllerInstallationId: true, enrolledMachineId: true } as const;
         const retained = recovery
             ? await reader.managedMachine.findFirst({ where: { homeId, id: recovery.input.managedId }, select })
             : await reader.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
                 homeId, admittedActionRequestId: requestId! } }, select });
         let custodianAccountId: string;
         let installationId: string | undefined;
+        let creatorRecovery = false;
         if (retained) {
             // An accepted creation survives later preset edits/withdrawal. Its
             // exact requester and compute identity remain owned by admission.
             const state = readManagedAdmissionState(retained.admittedInput);
-            if (!isManagedMachineCreator(retained, input.actorAccountId)
+            const creationAccess = input.actionId === 'machines.managed.cancel'
+                ? await requireManagedCreationAccessInTx(reader, retained, input.actorAccountId) : undefined;
+            creatorRecovery = creationAccess === 'creator' && input.actorAccountId !== retained.custodianAccountId;
+            if ((!creationAccess && !isManagedMachineCreator(retained, input.actorAccountId)
+                    && (acquiring || await resolveManagedMachineRoleInTx(reader, retained, input.actorAccountId) !== 'manage'))
                 || (retained.controllerMachineId === null ? resolveManagedMachineRole(retained, input.actorAccountId) !== 'manage'
                     : retained.controllerMachineId !== input.machineId)
                 || binding && (retained.custodianAccountId !== binding.custodianAccountId
@@ -140,7 +172,8 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
             ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }) });
         if (controller.kind !== 'admitted') return controller;
         return installationId === undefined || controller.installationId === installationId
-            ? { ...controller, actorAccountId: input.actorAccountId } : denied;
+            ? { ...controller, actorAccountId: input.actorAccountId,
+                ...(creatorRecovery ? { managedCreationRecovery: true as const } : {}) } : denied;
     } catch (error) {
         if (error instanceof ManagedMachineError) return denied;
         throw error;

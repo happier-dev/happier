@@ -324,6 +324,8 @@ type CreateApiTokenParams = Readonly<{
 export type ApiTokenRevocation = Readonly<{ revoked: boolean; revokedTokenIds: readonly string[] }>;
 export type ApiTokenRevokeAllResult = Readonly<{ revokedCount: number; revokedTokenIds: readonly string[] }>;
 export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
+    /** Internal placement decision; no public request/binding field is trusted. */
+    managedCreationRecovery?: true;
     browserSessionId?: string;
     workflowAdmission?: WorkflowExternalActionAdmission;
     deploymentLinkEnvironmentId?: string;
@@ -656,6 +658,9 @@ class AuthModule {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
         let managedAdmission = input.managedAdmission;
+        if (managedAdmission && 'authority' in managedAdmission && managedAdmission.authority !== undefined) {
+            throw new ApiTokenOperationError('credential_scope_denied');
+        }
         // This is a Home decision, never an invocation author's approval bypass.
         if (input.managedAcquireDelegation !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
         let managedAcquireDelegation: true | undefined;
@@ -697,6 +702,11 @@ class AuthModule {
                 if (error instanceof ManagedMachineError) throw new ApiTokenOperationError('credential_scope_denied');
                 throw error;
             }
+        }
+        if (context.managedCreationRecovery) {
+            if (!managedAdmission || managedAdmission.actionId !== 'machines.managed.cancel'
+                && managedAdmission.actionId !== 'machines.managed.delete') throw new ApiTokenOperationError('credential_scope_denied');
+            managedAdmission = { ...managedAdmission, authority: 'creator_recovery' };
         }
         // A caller cannot grant itself child dispatch, even on an otherwise valid root.
         if (input.deploymentChildRoot !== undefined) throw new ApiTokenOperationError('credential_scope_denied');

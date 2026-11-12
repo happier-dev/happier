@@ -733,8 +733,13 @@ const ExternalActionManagedInspectAdmissionV1Schema = lazyZodSchema(() => z.stri
 const ExternalActionManagedRetryAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.bootstrap.retry'), input: ManagedMutationInputV1Schema,
 }));
+const ExternalActionManagedCancelAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
+  actionId: z.literal('machines.managed.cancel'), input: ManagedMutationInputV1Schema,
+  authority: z.optional(z.literal('creator_recovery')),
+}));
 const ExternalActionManagedCreationMutationAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
-  actionId: z.enum(MANAGED_CREATION_MUTATION_ACTION_IDS_V1), input: ManagedMutationInputV1Schema,
+  actionId: z.enum(MANAGED_CREATION_MUTATION_ACTION_IDS_V1.filter(actionId => actionId !== 'machines.managed.cancel')),
+  input: ManagedMutationInputV1Schema,
 }));
 const ExternalActionManagedCredentialInstallAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   actionId: z.literal('machines.managed.credentials.install'), input: ManagedCredentialInstallInputV1Schema,
@@ -748,20 +753,21 @@ const ExternalActionManagedOperationGetAdmissionV1Schema = lazyZodSchema(() => z
 }));
 export const ExternalActionManagedControlAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   z.strictObject({ actionId: z.literal('machines.managed.power.set'), input: ManagedPowerInputV1Schema }),
-  z.strictObject({ actionId: z.literal('machines.managed.delete'), input: ManagedDeleteInputV1Schema }),
+  z.strictObject({ actionId: z.literal('machines.managed.delete'), input: ManagedDeleteInputV1Schema,
+    authority: z.optional(z.literal('creator_recovery')) }),
   z.strictObject({ actionId: z.literal('machines.managed.resize'), input: ManagedResizeInputV1Schema }),
 ]));
 export type ExternalActionManagedControlAdmissionV1 = z.infer<typeof ExternalActionManagedControlAdmissionV1Schema>;
 export const ExternalActionManagedRecoveryAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   ExternalActionManagedCredentialInstallAdmissionV1Schema,
   ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
-  ExternalActionManagedCreationMutationAdmissionV1Schema,
+  ExternalActionManagedCancelAdmissionV1Schema, ExternalActionManagedCreationMutationAdmissionV1Schema,
   ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
 ]));
 export const ExternalActionManagedAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
   ExternalActionManagedCredentialInstallAdmissionV1Schema,
   ExternalActionManagedAcquireAdmissionV1Schema, ExternalActionManagedInspectAdmissionV1Schema, ExternalActionManagedRetryAdmissionV1Schema,
-  ExternalActionManagedCreationMutationAdmissionV1Schema,
+  ExternalActionManagedCancelAdmissionV1Schema, ExternalActionManagedCreationMutationAdmissionV1Schema,
   ExternalActionManagedOperationListAdmissionV1Schema, ExternalActionManagedOperationGetAdmissionV1Schema,
   ...ExternalActionManagedControlAdmissionV1Schema.def.options,
 ]));
@@ -1308,6 +1314,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   if (value.managedAccountExecutor && (!value.managedAdmission
     || value.managedAdmission.actionId !== 'machines.managed.power.set' && value.managedAdmission.actionId !== 'machines.managed.delete')) {
     context.addIssue({ code: 'custom', path: ['managedAccountExecutor'], message: 'Account executor binds an exact managed control admission.' });
+  }
+  if (value.managedAdmission && 'authority' in value.managedAdmission
+    && value.managedAdmission.authority === 'creator_recovery' && value.accountId === value.custodianAccountId) {
+    context.addIssue({ code: 'custom', path: ['managedAdmission', 'authority'], message: 'Creator recovery binds only its exact foreign Cancel/Delete admission.' });
   }
   if (value.registryAppUpdateAdmission && (value.actionId !== 'registries.updates.check'
     || value.target.kind !== 'machine' || value.target.machineId !== value.machineId)) {

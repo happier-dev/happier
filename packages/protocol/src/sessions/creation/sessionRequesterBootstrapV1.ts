@@ -365,7 +365,7 @@ export function isReviewedMachineSetupCodecV1(binding: Readonly<{
 
 export function isManagedControllerCodecActionV1(binding: Readonly<{
   actionId: string;
-  managedAdmission?: Pick<ExternalActionManagedAdmissionV1, 'actionId'>;
+  managedAdmission?: ExternalActionManagedAdmissionV1;
   workflowActionOrigin?: ExternalActionExecutionAuthorizationV1['binding']['workflowActionOrigin'];
 }>): boolean {
   const actionId = ActionIdSchema.safeParse(binding.actionId);
@@ -374,6 +374,8 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
     || binding.actionId === 'machines.managed.acquire' || binding.actionId === 'machines.managed.inspect'
     || binding.actionId === 'machines.managed.bootstrap.retry'
     || isManagedCreationMutationActionIdV1(binding.actionId)
+    || binding.actionId === 'machines.managed.delete' && binding.managedAdmission?.actionId === binding.actionId
+      && binding.managedAdmission.authority === 'creator_recovery'
     || binding.actionId === 'machines.managed.credentials.install'
       && binding.managedAdmission?.actionId === binding.actionId
     || (binding.actionId === 'action.operations.list' || binding.actionId === 'action.operations.get')

@@ -33,6 +33,7 @@ describe('delegated managed preset origination', () => {
         { mode: 'pool-unavailable', accountMode: 'plain' },
         { mode: 'stale', accountMode: 'plain' }, { mode: 'substituted', accountMode: 'plain' },
         { mode: 'withdrawn', accountMode: 'plain' },
+        { mode: 'delete', accountMode: 'plain' }, { mode: 'delete', accountMode: 'e2ee' },
         { mode: 'recovery', accountMode: 'plain' }, { mode: 'inspect', accountMode: 'plain' },
         { mode: 'recovery', accountMode: 'e2ee' }, { mode: 'inspect', accountMode: 'e2ee' },
         { mode: 'operations-list', accountMode: 'plain' }, { mode: 'operations-list', accountMode: 'e2ee' },
@@ -41,7 +42,7 @@ describe('delegated managed preset origination', () => {
         { mode: 'session-caller', accountMode: 'e2ee' },
     ] as const)('uses only the exact public preset carrier ($mode, $accountMode)', async ({ mode, accountMode }) => {
         const actionId = mode === 'operations-list' ? 'action.operations.list' : mode === 'operations-get' ? 'action.operations.get'
-            : mode === 'recovery' ? 'machines.managed.bootstrap.retry'
+            : mode === 'delete' ? 'machines.managed.delete' : mode === 'recovery' ? 'machines.managed.bootstrap.retry'
             : mode === 'inspect' || mode === 'missing-carrier' ? 'machines.managed.inspect' : 'machines.managed.acquire';
         const homeId = `srv_delegated_${mode}_${accountMode}`;
         const serverUrl = `https://delegated-${mode}-${accountMode}.example.test`;
@@ -77,6 +78,7 @@ describe('delegated managed preset origination', () => {
         const input = mode === 'operations-list' || mode === 'operations-get' ? { serverId: homeId,
             machineId: selectedController.machineId, managed: { homeId, managedId: 'created-resource' },
             ...(mode === 'operations-get' ? { operationId: 'installation-operation', waitForTerminal: true, includeManagedPrompt: true } : {}) }
+            : mode === 'delete' ? { homeId, managedId: 'created-resource', when: 'now', expectedRevision: 4, intent: 'delete', reviewedDependencies: true }
             : mode === 'recovery' ? { homeId, managedId: 'created-resource', expectedIntentRevision: 4 }
             : mode === 'inspect' || mode === 'missing-carrier' ? { homeId, managedId: 'created-resource' }
             : ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id: preset.id,
@@ -135,8 +137,9 @@ describe('delegated managed preset origination', () => {
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
                     ...binding, machineId: selectedController.machineId, installationId: selectedController.installationId,
                     custodianAccountId: 'company', accountEncryptionMode: accountMode,
-                    ...(mode === 'operations-list' || mode === 'operations-get'
-                        ? { managedAdmission: projectExternalActionManagedAdmissionV1(actionId, input) } : {}),
+                    ...(mode === 'delete' || mode === 'operations-list' || mode === 'operations-get'
+                        ? { managedAdmission: { ...projectExternalActionManagedAdmissionV1(actionId, input),
+                            ...(mode === 'delete' ? { authority: 'creator_recovery' } : {}) } } : {}),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                 } }));
             }
@@ -171,7 +174,7 @@ describe('delegated managed preset origination', () => {
                 ...(mode === 'session-caller' ? { actionCaller: { kind: 'session' as const, sessionId: 'actual-session', starterDepth: 1, turnDepth: 2 } } : {}) } });
         expect(privateMachineReads).toBe(0);
         expect(poolResolves).toBe(pool ? 1 : 0);
-        if (mode === 'pool' || mode === 'current' || mode === 'recovery' || mode === 'inspect' || mode === 'operations-list' || mode === 'operations-get') {
+        if (mode === 'delete' || mode === 'pool' || mode === 'current' || mode === 'recovery' || mode === 'inspect' || mode === 'operations-list' || mode === 'operations-get') {
             expect(result).toEqual({ ok: true, result: output });
             expect(authorizations).toBe(1); expect(executions).toBe(1);
             if (mode === 'current') {

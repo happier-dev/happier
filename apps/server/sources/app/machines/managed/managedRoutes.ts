@@ -304,6 +304,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ...(request.body.action === 'machines.managed.controller.update' ? { controllerDestination: request.body.input.controller } : {}) });
         if (proof.requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         return admitManagedControl({ actorAccountId: request.userId, custodianAccountId: proof.custodianAccountId,
+            ...(request.externalActionExecutionAuthorizationBinding?.managedAdmission?.actionId === 'machines.managed.delete'
+                && request.externalActionExecutionAuthorizationBinding.managedAdmission.authority === 'creator_recovery'
+                ? { admittedCreationRecovery: true } : {}),
             authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body });
     }));
     app.post('/v1/machines/managed/controller/report-resize', { preHandler: app.authenticate,
@@ -335,7 +338,10 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             ?? getManagedMachine({ actorAccountId: request.userId, input: request.body })));
     app.post(managedMachineActionEndpointPathV1("machines.managed.cancel"), { preHandler: app.authenticate, schema: { body: ManagedMachineActionInputSchemasV1["machines.managed.cancel"], response: { 200: ManagedMachineActionOutputSchemasV1["machines.managed.cancel"] } } }, async (request, reply) => respond(reply, async () => {
         await requireManagedOperationRequest(request, request.body, ['machines.managed.cancel'], { creationMutation: true });
-        return cancelManagedCreation({ actorAccountId: request.userId, input: request.body });
+        return cancelManagedCreation({ actorAccountId: request.userId, input: request.body },
+            request.externalActionExecutionAuthorizationBinding?.managedAdmission?.actionId === 'machines.managed.cancel'
+                && request.externalActionExecutionAuthorizationBinding.managedAdmission.authority === 'creator_recovery'
+                ? { admittedCreationRecovery: true } : {});
     }));
     app.post("/v1/machines/managed/controller/admit", { preHandler: app.authenticate, schema: { body: ManagedAdmissionInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const controller = resolveManagedAcquireReviewV1(request.body.input).controller;

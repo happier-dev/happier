@@ -800,7 +800,6 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   let managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
   let scopedController: (NonNullable<ManagedMachineV1['controllerAccess']> & ManagedMachineV1['controller']) | undefined;
   if (managedAdmission && managedAdmission.actionId !== 'machines.managed.power.set'
-    && managedAdmission.actionId !== 'machines.managed.delete'
     && accountId && input.serverIdentityId && input.target.kind === 'machine' && !workflow) {
     const managed = managedAdmission.input;
     const managedHomeId = 'homeId' in managed ? managed.homeId : managed.selection.homeId;
@@ -1028,6 +1027,11 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       ...(minted.details === undefined ? minted.diagnostic ? { details: minted.diagnostic } : {} : { details: minted.details }),
       ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) };
     const root = minted.authorization.binding;
+    // Home's authority is signed alongside the operand; compare the request
+    // against the canonical operand projection without re-deciding that fact.
+    const managedOperand = root.managedAdmission && 'authority' in root.managedAdmission
+      ? projectExternalActionManagedAdmissionV1(root.managedAdmission.actionId, root.managedAdmission.input)
+      : root.managedAdmission;
     if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
       || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
       || root.custodianAccountId !== custodianAccountId || root.serverIdentityId !== input.serverIdentityId
@@ -1036,7 +1040,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: destinationId, envelope })
       // Acquire's compute projection is bound by the envelope digest above;
       // signed managedAdmission carries only exact-resource recovery scope.
-      || actionId !== 'machines.managed.acquire' && !sameStrictJsonValue(root.managedAdmission, managedAdmission)
+      || actionId !== 'machines.managed.acquire' && !sameStrictJsonValue(managedOperand, managedAdmission)
       || !sameStrictJsonValue(root.nativeCredentialSpawnChild, spawnChild ? {
         requestId: spawnChild.context.externalActionExecutionAuthorization!.binding.requestId,
         requestEnvelopeDigest: spawnChild.context.externalActionExecutionAuthorization!.binding.requestEnvelopeDigest,

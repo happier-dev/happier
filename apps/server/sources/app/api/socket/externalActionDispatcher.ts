@@ -134,7 +134,8 @@ type ResolveMachine = (params: Readonly<{
     /** Delivery of a root this dispatch already admitted and minted: prove only its exact installation. */
     admittedDelivery?: true;
     /** Retain only the canonical admission produced by this successful resolution. */
-    onAdmission?: (admission: SocketRpcMachineAdmissionContextV1) => void;
+    onAdmission?: (admission: SocketRpcMachineAdmissionContextV1
+        & import('@/app/auth/externalActionManagedAdmission').ManagedCreationRecoveryAdmission) => void;
 } & Partial<MachineOperationRequesterContext>>) => Promise<MachineResolution>;
 
 type ResolveSessionMachine = (params: Readonly<{
@@ -773,7 +774,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         }
 
         let executionAuthorization = request.executionAuthorization;
-        let capturedMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        let capturedMachineAdmission: (SocketRpcMachineAdmissionContextV1
+            & import('@/app/auth/externalActionManagedAdmission').ManagedCreationRecoveryAdmission) | undefined;
         let admittedFiniteOperation: ReturnType<typeof readAdmittedFiniteOperationPrincipal> = null;
         if (executionAuthorization) {
             // Dispatch is also an internal ingress: prove its supplied root token.
@@ -818,6 +820,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(request.sessionActionSource ? { sessionActionSource: request.sessionActionSource } : {}),
             };
             const context = { ...(request.workflowAdmission ? { workflowAdmission: request.workflowAdmission } : {}),
+                ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
                 input: request.envelope.v === 1 ? request.envelope.input
                 : deploymentMetadataEnvironmentId === undefined
                     ? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input

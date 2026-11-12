@@ -68,6 +68,7 @@ import { inTx, type Tx } from '@/storage/inTx';
 import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { deriveAccountEncryptionCurrentnessFromRow } from '@/app/encryption/accountContentKeyAdmission';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { cancelManagedCreation, getManagedMachine } from '@/app/machines/managed/managedRead';
 import { createMachinePreset } from '@/app/machines/managed/machinePresetService';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
@@ -235,6 +236,61 @@ describe('ordinary Account managed Action origination', () => {
         await instance.ready();
         return instance;
     }
+
+    it('keeps creator recovery custody in the signed root and out of public Machine admission', async () => {
+        const selected = await fixture(true);
+        const requester = await fixture(false);
+        const team = await db.team.create({ data: { name: 'Creator recovery carrier Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const presetId = crypto.randomUUID();
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, name: 'Creator guest', owner: { kind: 'team', teamId: team.id },
+                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: true,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
+            requesterAccountId: requester.account.id, input: { input: acquireInput,
+                requestId: selected.requestId, continuationPresent: false } });
+        const actionId = 'machines.managed.cancel';
+        const input = { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 };
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const requestId = crypto.randomUUID();
+        let deliveries = 0;
+        let deliveryFailure: unknown;
+        const instance = await app(async params => {
+            try {
+            const receiver = createFakeSocket({ id: 'creator-controller', data: { clientType: 'machine-scoped', userId: selected.account.id,
+                machineId: selected.controller.machineId, verifiedMachineInstallationId: selected.controller.installationId },
+                timeout: () => ({ emitWithAck: async () => undefined }) });
+            qualifyCurrentAccountStoredContentSocket(receiver);
+            expect(await params.targetGuard?.filterTargets([receiver])).toHaveLength(1);
+            const machineAdmission = await params.createMachineAdmission?.();
+            expect(machineAdmission).not.toHaveProperty('managedCreationRecovery');
+            expect(SocketRpcMachineAdmissionContextV1Schema.safeParse(machineAdmission).success).toBe(true);
+            const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
+            expect(dispatched.executionAuthorization?.binding.managedAdmission).toMatchObject({ actionId, authority: 'creator_recovery' });
+            deliveries++;
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId, requestId, execution: { ok: true, result: { kind: 'accepted' } },
+            })) };
+            } catch (error) { deliveryFailure = error; throw error; }
+        });
+        try {
+            const executed = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${requester.token}` },
+                payload: { v: 1, requestId, target, input } });
+            expect(executed.statusCode, executed.body).toBe(200);
+            if (deliveryFailure) throw deliveryFailure;
+            expect(deliveries, executed.body).toBe(1);
+        } finally { await instance.close(); }
+    });
 
     it.each([false, true])('reads the requester profile for a contained connected-account Action (member: %s)', async member => {
         const selected = await fixture(true);

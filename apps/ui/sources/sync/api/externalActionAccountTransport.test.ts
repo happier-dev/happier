@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionHttpError, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
@@ -65,6 +69,73 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each([
+        { creator: true, prepareCodec: true, accountMode: 'plain' }, { creator: true, prepareCodec: true, accountMode: 'e2ee' },
+        { creator: false, prepareCodec: false, accountMode: 'plain' }, { creator: false, prepareCodec: false, accountMode: 'e2ee' },
+        { creator: true, prepareCodec: false, accountMode: 'plain' }, { creator: true, prepareCodec: false, accountMode: 'e2ee' },
+        { creator: false, prepareCodec: true, accountMode: 'plain' }, { creator: false, prepareCodec: true, accountMode: 'e2ee' },
+    ] as const)('uses signed creator Delete custody without borrowing member credentials ($accountMode, creator=$creator, prepared=$prepareCodec)', async ({ creator, prepareCodec, accountMode }) => {
+        if (!account) throw new Error('Expected captured Account');
+        if (accountMode === 'e2ee') {
+            const credentials = { ...account.credentials, secret: encodeBase64(new Uint8Array(32).fill(29), 'base64url') };
+            account.dispose();
+            serverId = await homes.addHome({ name: 'Encrypted plugin transport', serverUrl: 'https://encrypted-plugin-transport.test',
+                serverIdentityId: binding.serverIdentityId, accountId: 'owner', currentAccount: true,
+                accountEncryptionMode: 'e2ee', credentials });
+            homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+            account = await captureLazyActionAccountContext(serverId);
+        }
+        const { encryption } = await account.resolveAccountEncryption();
+        const material = encryption ? { type: 'dataKey' as const, machineKey: encryption.getContentPrivateKey() } : undefined;
+        const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
+        const actionId = 'machines.managed.delete';
+        const requestId = 'creator-delete';
+        const input = { homeId: binding.serverIdentityId, managedId: 'created-guest', when: 'now',
+            expectedRevision: 0, intent: 'delete', reviewedDependencies: true };
+        const actionPath = `/v1/actions/${actionId}`;
+        homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-delete-proof', binding: {
+                ...binding, actionId, requestId, machineId: 'machine-1', installationId: 'installation-1',
+                custodianAccountId: 'custodian', accountEncryptionMode: accountMode,
+                managedAdmission: { ...projectExternalActionManagedAdmissionV1(actionId, input),
+                    ...(creator ? { authority: 'creator_recovery' } : {}) },
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+            } }) };
+        } });
+        let boundaryFailure: unknown;
+        homes.answer(serverId, actionPath, { select: body => {
+            try {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            const authorization = request.executionAuthorization;
+            if (!authorization) throw new Error('Missing admitted Delete');
+            const recipient = { authorization, serverIdentityId: binding.serverIdentityId, machineId: 'machine-1',
+                installationId: 'installation-1', installationPrivateKey: keys.secretKey };
+            const codec = openManagedControllerActionCodecV1(recipient);
+            expect(codec !== null).toBe(creator);
+            if (codec && material) expect(codec.machineKey).not.toEqual(material.machineKey);
+            if (request.envelope.v === 2) expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                envelope: request.envelope, binding: { ...binding, actionId, requestId }, material: codec ?? material! })).toEqual({ input });
+            const requester = openExternalActionRequesterAccountContextV1({ ...recipient, purpose: { kind: 'external_action' } });
+            if (creator) expect(requester).toBeNull();
+            else expect(requester).toMatchObject({ token: account?.credentials.token });
+            const execution = { ok: true as const, result: { kind: 'accepted', managedId: input.managedId, intentRevision: 1 } };
+            return { body: request.envelope.v === 2 ? prepareExternalActionResponseV2({ binding: { ...binding, actionId, requestId },
+                request: request.envelope, material: codec ?? material!, randomBytes: getRandomBytes, executedMachineId: 'machine-1', execution }).response
+                : { v: 1, actionId, requestId, execution } };
+            } catch (error) { boundaryFailure = error; throw error; }
+        } });
+        const result = await executeOriginalAccountActionTransport({ account, binding: { ...binding, actionId, requestId }, input,
+            ...(material ? { material } : {}), ...(prepareCodec ? { prepareManagedControllerCodec: true } : {}),
+            authority: 'present_user', invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' },
+            machineCustody: { accountMode, installationId: 'installation-1', installationPublicKey: keys.publicKey,
+                custodian: { accountId: 'custodian' } },
+        });
+        expect(boundaryFailure).toBeUndefined();
+        if (creator === prepareCodec) expect(result).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: input.managedId } });
+        else expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        expect(homes.requestsFor(actionPath)).toHaveLength(creator === prepareCodec ? 1 : 0);
+    });
     it('sends unbound host repair Actions through the Home action.invoke owner', async () => {
         const row = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1' };
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({

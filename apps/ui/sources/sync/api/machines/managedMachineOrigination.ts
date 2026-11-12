@@ -177,7 +177,8 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         if (row.id !== managedId || row.homeId !== homeId) return failure('managed_response_invalid');
         retainedMachine = row;
         foreignManagedCustody = row.custodianAccountId !== account.accountId;
-        if ((actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.inspect' || operationActionId)
+        if ((actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.inspect'
+            || actionId === 'machines.managed.delete' || operationActionId)
             && row.enrollmentAccountId === account.accountId) {
             if (foreignManagedCustody && !row.controllerAccess) return failure('controller_unavailable');
             scopedControllerAccess = row.controllerAccess;
@@ -273,7 +274,8 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
                     || (!foreignController && row.access.resourceMode !== accountMode)))) return failure('content_unavailable');
         }
         usesControllerCodec = Boolean(machineCustody && machineCustody.custodian.accountId !== account.accountId
-            && (actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry' || operationActionId));
+            && (actionId === 'machines.managed.acquire' || actionId === 'machines.managed.inspect' || actionId === 'machines.managed.bootstrap.retry'
+                || actionId === 'machines.managed.delete' && scopedControllerAccess !== undefined || operationActionId));
         if (encryption && !usesControllerCodec) material = { type: 'dataKey', machineKey: encryption.getContentPrivateKey() };
     }
     // Narrow the authenticated Account carrier before the installed daemon's
@@ -292,6 +294,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         ...(invocation.pluginInvocation ? { pluginInvocation: invocation.pluginInvocation } : {}),
         ...(material ? { material } : {}),
         ...(machineCustody ? { machineCustody } : {}),
+        ...(usesControllerCodec ? { prepareManagedControllerCodec: true } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         invalidResponseCode: 'managed_response_invalid', requestFailureCode: 'managed_request_failed' });
     return validateExecution(execution);

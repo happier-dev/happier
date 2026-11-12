@@ -1,4 +1,5 @@
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
+import { requireManagedCreationAccessInTx } from './managedRead';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -172,6 +173,8 @@ async function readOrAdmitManagedPolicy(params: Readonly<{ custodianAccountId: s
 /** Same-row admission owns immediate CAS, fire-time idle intent, policy and future controller custody. */
 export async function admitManagedControl(params: Readonly<{
     actorAccountId: string; custodianAccountId: string; authentication?: TeamOperationAuthenticationContext;
+    /** Internal verified Home admission, never a controller request body field. */
+    admittedCreationRecovery?: true;
     input: ManagedControlAdmissionInputV1;
 }>) {
     const request = ManagedControlAdmissionInputV1Schema.parse(params.input);
@@ -181,12 +184,14 @@ export async function admitManagedControl(params: Readonly<{
         const input = request.input;
         const row = await readManagedMachineInTx(tx, { homeId: input.homeId,
             managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId });
-        const role = row.custodianAccountId === params.custodianAccountId
-            ? await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId) : null;
-        if (role === null) throw new ManagedMachineError('permission_denied');
+        if (row.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');
         const controller = readManagedController(row);
-        if (role !== "manage") {
-            throw new ManagedMachineError(request.action === 'machines.managed.power.set' && !controller
+        if (request.action === 'machines.managed.delete') {
+            if (!params.admittedCreationRecovery) await requireManagedCreationAccessInTx(tx, row, params.actorAccountId);
+        } else {
+            const role = await resolveManagedMachineRoleInTx(tx, row, params.actorAccountId);
+            if (role === null) throw new ManagedMachineError('permission_denied');
+            if (role !== 'manage') throw new ManagedMachineError(request.action === 'machines.managed.power.set' && !controller
                 ? 'managed_power_required' : 'permission_denied');
         }
         // U1 has no saved-policy power/Move/retirement reconciliation. Retain

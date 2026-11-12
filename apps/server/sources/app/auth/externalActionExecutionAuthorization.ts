@@ -302,7 +302,8 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
     input: ExternalActionManagedAdmissionContext & Partial<MachineOperationRequesterContext> & Readonly<{ actorAccountId: string; machineId: string; actionId: string; requireOnline?: boolean;
         workflowAdmission?: WorkflowExternalActionAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
-        nativePurpose?: 'machine_npm_profile_acquisition' }>): ReturnType<typeof resolveMachineAdmissionInTx> {
+        nativePurpose?: 'machine_npm_profile_acquisition' }>): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
+            & import('./externalActionManagedAdmission').ManagedCreationRecoveryAdmission> {
     if (input.nativePurpose) {
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         if (!action.success || getActionSpec(action.data).originalExecution?.nativePurpose !== input.nativePurpose) {
@@ -370,6 +371,10 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced ? {} : { actionId: input.actionId }) });
+    if (ordinary.kind === 'admitted' && ordinary.custodianAccountId !== input.actorAccountId
+        && (input.actionId === 'machines.managed.cancel' || input.actionId === 'machines.managed.delete')) {
+        return resolveManagedActionMachineAdmissionInTx(reader, input);
+    }
     return ordinary.kind === 'admitted' || input.actionId !== 'machines.managed.acquire'
         && !isExternalActionManagedResourceAction(input.actionId) && !isManagedControlAdmissionActionIdV1(input.actionId)
         ? ordinary : resolveManagedActionMachineAdmissionInTx(reader, input);

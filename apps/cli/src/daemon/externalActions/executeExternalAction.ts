@@ -586,7 +586,9 @@ async function executeExternalActionRequest(input: Readonly<{
       throw new TypeError('Missing managed admission projection');
     }
     const recoveryAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.managedAdmission : undefined;
-    if (recoveryAdmission && !sameStrictJsonValue(managedAdmission, recoveryAdmission)) {
+    const recoveryOperand = recoveryAdmission && 'authority' in recoveryAdmission
+      ? projectExternalActionManagedAdmissionV1(recoveryAdmission.actionId, recoveryAdmission.input) : recoveryAdmission;
+    if (recoveryOperand && !sameStrictJsonValue(managedAdmission, recoveryOperand)) {
       throw new TypeError('Managed recovery input mismatch');
     }
     if (envelope.data.sessionSpawnAdmission || envelope.data.v === 2 && actionId.data === 'session.spawn_new'
@@ -890,6 +892,10 @@ async function executeExternalActionRequest(input: Readonly<{
   const approvedDelegatedAcquire = actionId.data === 'machines.managed.acquire'
     && originalRootCurrentness !== undefined && managedControllerCodec
     && admittedAuthorization?.binding.managedAcquireDelegation === true;
+  const approvedCreationRecovery = (actionId.data === 'machines.managed.cancel' || actionId.data === 'machines.managed.delete')
+    && originalRootCurrentness !== undefined && managedControllerCodec
+    && nativeAdmission?.actionId === actionId.data && 'authority' in nativeAdmission
+    && nativeAdmission.authority === 'creator_recovery' && sameStrictJsonValue(nativeAdmission.input, decodedInput);
   const logsReference = logsOperands.resourceContinuation?.params.resource;
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
@@ -904,7 +910,7 @@ async function executeExternalActionRequest(input: Readonly<{
         requesterWorkAttributionV1: projectRpcRequesterWorkAttribution({
           authenticatedLocalRootCustody: input.authenticatedLocalRootCustody,
         }, input.currentServerId) } : {}),
-    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire ? { bypassApprovals: true } : {}),
+    ...(approvedNativeLifetimeEffect || approvedDelegatedAcquire || approvedCreationRecovery ? { bypassApprovals: true } : {}),
     ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
     ...(admittedAuthorization && originalRootCurrentness ? {
       verifiedExternalActionRequester: { authorization: admittedAuthorization, isCurrent: originalRootCurrentness },

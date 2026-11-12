@@ -666,6 +666,192 @@ describe('composed CLI managed Action origination', () => {
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
     });
 
+    it.each([
+        { actionId: 'machines.managed.cancel', creator: true, manage: false }, { actionId: 'machines.managed.delete', creator: true, manage: false },
+        { actionId: 'machines.managed.cancel', creator: true, manage: true }, { actionId: 'machines.managed.delete', creator: true, manage: true },
+        { actionId: 'machines.managed.cancel', creator: false, manage: true }, { actionId: 'machines.managed.delete', creator: false, manage: true },
+    ] as const)('allows delegated creator recovery with custodian custody through the real $actionId entry (creator=$creator, Manage=$manage)', async ({ actionId, creator, manage }) => {
+        const selected = await fixture(true);
+        const requester = await fixture(true);
+        const stranger = await fixture(true);
+        const team = await db.team.create({ data: { name: 'Creator recovery Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+            { teamId: team.id, accountId: stranger.account.id, role: 'member' },
+        ] });
+        const presetId = crypto.randomUUID();
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, name: 'Creator guest', owner: { kind: 'team', teamId: team.id },
+                launch: selected.input.selection.launch, controller: selected.controller, teamAcquireDelegated: true,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
+            requesterAccountId: creator ? requester.account.id : selected.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                v: 1, requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId }, input: acquireInput }),
+            input: { input: acquireInput, requestId: selected.requestId, continuationPresent: false } });
+        if (actionId === 'machines.managed.delete') await db.managedMachine.update({ where: { id: admitted.machine.id }, data: {
+            allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
+                schemaVersion: 1, value: { id: 'creator-native-resource' } },
+        } });
+        if (manage) await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+        const input = actionId === 'machines.managed.cancel'
+            ? { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 }
+            : { homeId, managedId: admitted.machine.id, expectedRevision: 0, intent: 'delete' as const,
+                when: 'now' as const, reviewedDependencies: true };
+        const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const storedSettings = { actionsSettingsV1: { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } };
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const serverHttpBaseUrl = 'http://managed-seam.test';
+        const connection = { token: credentials.token, serverUrl: serverHttpBaseUrl, homeId,
+            controller: selected.controller, externalActionMachineRequestPrivateKey: selected.keys.secretKey } as ManagedMachineAcquisitionDriverInput;
+        let controllerAdmissions = 0;
+        let artifactWrites = 0;
+        const accountActions = createAccountServerActionDeps({ token: credentials.token, credentials, serverId: homeId,
+            serverIdentityId: homeId, serverHttpBaseUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId });
+        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, runtimeActionMachineId: selected.controller.machineId,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId,
+            managedMachineAction: async request => {
+                if (request.actionId === 'machines.managed.cancel') return accountActions.managedMachineAction!(request);
+                // Stop at real Home admission, before the external native provider effect.
+                const client = createManagedMachineControllerClient(connection,
+                    { requestId: request.context.actionRequestId!, context: request.context }, request.actionId);
+                const result = await client.post('/v1/machines/managed/controller/admit-control',
+                    ManagedControlAdmissionInputV1Schema.parse({ action: request.actionId, input: request.input,
+                        requestId: request.context.actionRequestId }), ManagedAdmissionOutputV1Schema);
+                controllerAdmissions++;
+                return { kind: 'accepted', managedId: result.machine.id, intentRevision: result.machine.intentRevision };
+            },
+        });
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(dispatch.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
+                custodianAccountId: selected.account.id });
+            const result = await executeExternalAction({ ...dispatch, executor: receiver,
+                currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
+                currentInstallationId: selected.controller.installationId, currentServerId: homeId,
+                currentServerHttpBaseUrl: serverHttpBaseUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                prepareRequesterAccountContext: async () => { throw new Error('Recovery must not acquire requester credentials'); },
+            });
+            if (result.kind !== 'response') throw new Error(`Daemon rejected creator recovery: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
+        }, http => {
+            registerAccountProfileRoute(http); registerAccountEncryptionRoutes(http); artifactsRoutes(http);
+            http.addHook('onRequest', async request => { if (request.method === 'POST' && request.url === '/v1/artifacts') artifactWrites++; });
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 2 }));
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        try {
+            for (const actor of manage ? [stranger] : [requester, stranger]) expect(await resolveMachineAccess({ actorAccountId: actor.account.id,
+                machineId: selected.controller.machineId })).toBeNull();
+            const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+            const issue = (token: string) => instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.machineId,
+                    envelope: { v: 1, requestId: crypto.randomUUID(), target, input } } });
+            expect((await issue(stranger.token)).statusCode).toBe(409);
+            if (creator && actionId === 'machines.managed.cancel') {
+                const cancelPath = managedMachineActionEndpointPathV1(actionId);
+                const unsignedStranger = await instance.inject({ method: 'POST', url: cancelPath,
+                    headers: { authorization: `Bearer ${stranger.token}` }, payload: input });
+                expect(unsignedStranger.statusCode, unsignedStranger.body).toBe(403);
+                const unsignedCreator = await instance.inject({ method: 'POST', url: cancelPath,
+                    headers: { authorization: `Bearer ${requester.token}` }, payload: { ...input, expectedIntentRevision: 99 } });
+                expect(unsignedCreator.statusCode, unsignedCreator.body).toBe(409);
+                expect(unsignedCreator.json()).toMatchObject({ code: 'intent_changed' });
+            }
+            if (!manage) {
+                const forbidden = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.power.set/execution-authorization',
+                    headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId,
+                        envelope: { v: 1, requestId: crypto.randomUUID(), target, input: { homeId, managedId: admitted.machine.id,
+                            when: 'now', expectedRevision: 0, intent: 'stop' } } } });
+                expect(forbidden.statusCode, forbidden.body).toBe(409);
+            }
+            const requestId = crypto.randomUUID();
+            const envelope = { v: 1 as const, requestId, target, input };
+            const issued = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const rootAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(rootAuthorization.binding.managedAdmission && 'authority' in rootAuthorization.binding.managedAdmission
+                ? rootAuthorization.binding.managedAdmission.authority : undefined).toBe(creator ? 'creator_recovery' : undefined);
+            await expect(auth.mintExternalActionExecutionAuthorization({ ...rootAuthorization.binding,
+                managedAdmission: { ...rootAuthorization.binding.managedAdmission!, authority: 'creator_recovery' } }, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            if (creator) {
+                const alteredBinding = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId,
+                        envelope, executionAuthorization: { ...rootAuthorization,
+                            binding: { ...rootAuthorization.binding, managedAdmission: { ...rootAuthorization.binding.managedAdmission!, authority: undefined } } } } });
+                expect(alteredBinding.statusCode, alteredBinding.body).toBe(403);
+                expect(alteredBinding.json()).toMatchObject({ error: 'credential_scope_denied' });
+                await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+                    accountId: stranger.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+                const replayedByManager = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${stranger.token}` }, payload: { v: 1, machineId: target.machineId,
+                        envelope, executionAuthorization: rootAuthorization } });
+                expect(replayedByManager.statusCode, replayedByManager.body).toBe(403);
+                expect(replayedByManager.json()).toMatchObject({ error: 'credential_scope_denied' });
+                const path = actionId === 'machines.managed.cancel'
+                    ? managedMachineActionEndpointPathV1(actionId) : '/v1/machines/managed/controller/admit-control';
+                const body = actionId === 'machines.managed.cancel' ? { ...input, expectedIntentRevision: 99 }
+                    : { action: actionId, requestId, input: { ...input, expectedRevision: 99 } };
+                const tampered = await instance.inject({ method: 'POST', url: path, payload: body,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization: rootAuthorization,
+                        effectActionId: actionId, target, installationId: selected.controller.installationId,
+                        privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                expect(tampered.statusCode, tampered.body).toBe(401);
+            }
+            if (!creator && actionId === 'machines.managed.delete') {
+                // Nondelegated managers retain the original requester-credential/Ask path.
+                expect(() => sealManagedControllerActionCodecV1({ authorization: rootAuthorization,
+                    material: { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) },
+                    installationPublicKey: selected.keys.publicKey, randomBytes: tweetnacl.randomBytes }))
+                    .toThrow('managed_controller_codec_root_mismatch');
+                return;
+            }
+            const authorization = sealManagedControllerActionCodecV1({
+                authorization: rootAuthorization,
+                material: { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) },
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+                installationPublicKey: selected.keys.publicKey, randomBytes: tweetnacl.randomBytes });
+            const execution = creator ? await dispatchOriginalAccountAction({ actionId, input, requestId, target,
+                credentials: { token: requester.token, credentialProvenance: 'stored_session', encryption: null },
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, authority: 'present_user',
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+                onRequesterSessionCredentialDisclosure: async () => { throw new Error('Creator recovery must not disclose requester credentials'); },
+            }) : await (async () => {
+                const executed = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId,
+                        envelope, executionAuthorization: authorization } });
+                expect(executed.statusCode, executed.body).toBe(200);
+                return executed.json().execution;
+            })();
+            expect(execution, JSON.stringify(execution)).toMatchObject(creator ? { ok: true }
+                : { ok: false, errorCode: 'approval_origin_unavailable' });
+            const row = await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } });
+            expect(row).toMatchObject(!creator ? { creationState: 'active', intentRevision: 0 } : actionId === 'machines.managed.cancel'
+                ? { creationState: 'canceled', allocation: 'confirmed-absent', intentRevision: 1 }
+                : { desired: 'delete', allocation: 'bound', intentRevision: 1 });
+            expect(controllerAdmissions).toBe(creator && actionId === 'machines.managed.delete' ? 1 : 0);
+            expect(artifactWrites).toBe(0);
+            const access = await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: target.machineId });
+            if (!manage) expect(access).toBeNull();
+            else expect(access).toMatchObject({ role: 'manage' });
+        } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
+    });
+
     it.each(['machines.managed.cancel', 'machines.managed.setup.skip'] as const)(
         'preserves terminal CLI approval through Home and the real %s boundary', async actionId => {
         const selected = await fixture(true);
