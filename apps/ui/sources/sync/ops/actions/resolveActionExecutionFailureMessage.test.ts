@@ -4,9 +4,28 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { t } from '@/text';
 
-import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('presents an invalid Action envelope without diagnosing cryptography or losing its technical code', () => {
+        const failure = { ok: false as const, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope',
+            requestId: 'setup-plan-request', effectAttempted: false };
+        const expected = t('common.requestFailed');
+        for (const result of [failure, { ok: true, result: failure }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'fallback')).toBe(expected);
+        }
+        expect(resolveActionExecutionErrorMessage(Object.assign(new Error(failure.error), { code: failure.errorCode }), 'fallback'))
+            .toBe(expected);
+        expect(presentActionExecutionFailure(failure)).toMatchObject({ reason: expected,
+            technicalDetails: expect.arrayContaining([
+                expect.objectContaining({ key: 'code', value: failure.errorCode }),
+                expect.objectContaining({ key: 'requestId', value: failure.requestId }),
+                expect.objectContaining({ key: 'effectAttempted', value: 'false' }),
+            ]) });
+        const authored = { ...failure, message: 'Reconnect the requesting device.', remediation: { kind: 'retry' } };
+        expect(resolveActionExecutionFailureMessage(authored, 'fallback'))
+            .toBe(`${authored.message} ${t('errors.tryAgain')}`);
+    });
     it.each([
         { errorCode: 'required_fact_unavailable', details: { requiredFact: 'caddyContainer',
             failure: { kind: 'native_observation_unavailable', reason: 'required_fact_unavailable', requiredFact: 'caddyContainer', errorCode: 'ENOENT' },

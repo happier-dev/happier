@@ -17,6 +17,14 @@ afterEach(() => standardCleanup());
 
 const { MachineSetupPlanReview } = await import('./MachineSetupPlanReview');
 
+it('presents a refused setup read with the shared Action sentence instead of a raw envelope diagnostic', async () => {
+  const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
+  const { t } = await import('@/text');
+  const failure = { ok: false as const, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope',
+    details: { target: { homeId: 'home', machineId: 'shop' } } };
+  expect(describeMachineSetupPlanFailure(failure, () => 'shop-prod')).toBe(`shop-prod · ${t('common.requestFailed')}`);
+});
+
 it('keeps the administrator repair in the shared native Setup review presentation', async () => {
   const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
   const remedy = 'Choose an administrator with its own sudo-to-root right, then retry.';
@@ -30,9 +38,8 @@ it('names the refused setup target and keeps its typed reason in the error prese
   const description = describeMachineSetupPlanFailure({ ok: false, errorCode: 'permission_denied',
     error: 'Machine access was refused.', details: { target: { homeId: 'home', machineId: 'shop' } } },
   id => id === 'shop' ? 'shop-prod' : id);
-  expect(description).toContain('shop-prod');
-  expect(description).toContain('permission_denied');
-  expect(description).toContain('Machine access was refused.');
+  const { t } = await import('@/text');
+  expect(description).toBe(`shop-prod · ${t('errors.permissionDenied')}`);
 });
 
 it('explains a second package configuration conflict before any native work or approval', async () => {
