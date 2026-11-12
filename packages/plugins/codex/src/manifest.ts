@@ -274,7 +274,11 @@ export const CODEX_PLUGIN = definePlugin({
           required: false,
           materializationKinds: ['files'],
           credentialKinds: ['oauth'],
-        }, ...CODEX_KEY_DECLARATIONS],
+        }, ...CODEX_KEY_DECLARATIONS.map(row => ({
+          ...row,
+          materializationKinds: [...row.materializationKinds],
+          credentialKinds: [...row.credentialKinds],
+        }))],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: {
             delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported', usageEvidence: 'reported',

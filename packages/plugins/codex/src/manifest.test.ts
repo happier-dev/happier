@@ -10,6 +10,7 @@ import { mkdtemp, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/pro
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { extractGitHubReleaseAsset } from '../../../cli-common/src/agents/extractGitHubReleaseAsset.js';
+import { PLUGIN_MANIFEST as KIMI_PLUGIN_MANIFEST } from '../../kimi/src/manifest.js';
 import { PLUGIN_MANIFEST as OPENAI_PLUGIN_MANIFEST } from '../../openai/src/manifest.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
@@ -88,9 +89,15 @@ describe('Codex plugin manifest', () => {
     if (!openAiResult.ok) {
       throw new Error(`Expected the OpenAI plugin manifest to ingest: ${JSON.stringify(openAiResult.diagnostics)}`);
     }
+    const kimiResult = ingestPluginManifestV2(KIMI_PLUGIN_MANIFEST);
+    if (!kimiResult.ok) {
+      throw new Error(`Expected the Kimi plugin manifest to ingest: ${JSON.stringify(kimiResult.diagnostics)}`);
+    }
+    // Codex declares the Kimi and OpenAI API-key connected accounts, so both descriptor owners join the set.
     expect(resolvePluginManifestSetReferencesV2([
       result.manifest,
       openAiResult.manifest,
+      kimiResult.manifest,
     ])).toEqual({ ok: true });
     expect(ingestPluginManifestV2(JSON.stringify(PLUGIN_MANIFEST))).toEqual(result);
     const missingAgentResult = ingestPluginManifestV2({
@@ -172,7 +179,7 @@ describe('Codex plugin manifest', () => {
     expect(PLUGIN_MANIFEST.hostAccess.required.find(
       (request) => request.id === 'codex-process',
     )?.scope).toMatchObject({
-      envKeys: ['CODEX_HOME', 'CODEX_SQLITE_HOME'],
+      envKeys: expect.arrayContaining(['CODEX_HOME', 'CODEX_SQLITE_HOME']),
     });
     expect(PLUGIN_MANIFEST.contributes.hooks?.map((hook) => hook.on)).toEqual([
       'agent.resolvePrerequisites', 'agent.spawnEnv.augment',
@@ -183,7 +190,10 @@ describe('Codex plugin manifest', () => {
       required: false,
       credentialKinds: ['oauth'],
       materializationKinds: ['files'],
-    }]);
+    },
+    expect.objectContaining({ purpose: 'kimi-code-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
+    expect.objectContaining({ purpose: 'openai-api-key', credentialKinds: ['token'], materializationKinds: ['environment'] }),
+    ]);
     expect(result.manifest.contributes.agents[0]?.capabilities.sessions.startupInstructions).toEqual({
       versions: [1],
       revisionChanges: 'resume',
