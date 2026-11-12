@@ -71,8 +71,17 @@ function NativeListing(props: Props & CustomModalInjectedProps & Readonly<{
     <Item title={t('projects.deployments.settingsSections.previewEditor.nativeTemplate')} detail={listing.app.title} mode="info"
       rightElement={<SectionActionButton testID={`${id}.template.change`} title={t('common.change')} onPress={props.onChooseTemplate} />} />
     {data?.engine === 'postgres' && data.logicalBackup?.adapter === 'postgres-v1'
-      ? <NativeSource {...props} templateRef={listing.templateRef} service={data.service}
-        dataExportNames={Object.keys(listing.app.exports ?? {})} />
+      ? <>
+        <Item testID={`${id}.empty`} title={t('projects.deployments.settingsSections.previewEditor.nativeEmpty')}
+          subtitle={t('projects.deployments.settingsSections.previewEditor.nativeEmptyBody')} mode="info"
+          rightElement={<SectionActionButton testID={`${id}.empty.save`} title={t('common.save')}
+            onPress={() => {
+              props.onSelect({ kind: 'template', templateRef: listing.templateRef, dataExportNames: Object.keys(listing.app.exports ?? {}) });
+              props.onClose();
+            }} />} />
+        <NativeSource {...props} templateRef={listing.templateRef} service={data.service}
+          dataExportNames={Object.keys(listing.app.exports ?? {})} />
+      </>
       : <SurfaceStateCard testID={`${id}.unsupported`} size="line" kind="empty"
         title={t('projects.deployments.settingsSections.previewEditor.nativeUnsupported')} />}
   </View></ListPresentationProvider>;

@@ -40,6 +40,8 @@ const previewEditorCopy = {
   addFact: 'Deployment value',
   configure: 'Configure previews',
   nativeTemplate: 'Database template',
+  nativeEmpty: 'Start empty',
+  nativeEmptyBody: 'Each preview starts with a fresh database. No production data is copied; seed it separately.',
   nativeSource: 'Copy data from',
   nativeSourceEmpty: 'No readable environments',
   nativeSourceEmptyBody: 'Choose an environment with PostgreSQL and a verified backup.',

@@ -1439,7 +1439,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('authors an unseeded native preview from another Project capture through the existing intent writer', async () => {
+  it.each(['empty', 'capture'] as const)('authors an unseeded native preview with %s data through the existing intent writer', async mode => {
     await homes.reset();
     // The app entry initializes sync before a Saved Secret catalog consumer mounts.
     await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
@@ -1566,6 +1566,17 @@ describe('Environment → Settings: checks, backups, previews', () => {
       const rowId = `store.kind.app.row.app|${sourceId}|postgresql`;
       expect(await settle(rowId)).not.toBeNull();
       await screen.pressByTestIdAsync(rowId);
+      if (mode === 'empty') {
+        expect(await settle(`${id}.native.empty.save`)).not.toBeNull();
+        expect(inventoryReads).toBe(0);
+        await screen.pressByTestIdAsync(`${id}.native.empty.save`);
+        await vi.waitFor(() => expect(saved).toHaveLength(1));
+        expect(saved[0]!.data).toEqual([{ kind: 'template', templateRef: expect.objectContaining({
+          sourceId, itemId: 'postgresql', version: expect.any(String) }), dataExportNames: Object.keys(app.exports ?? {}) }]);
+        expect(inventoryReads).toBe(0);
+        expect(homes.requests.filter(request => /\/v1\/actions\/deployments\.(templates\.instantiate|backups\.(configure|run|restore))($|\/)/.test(request.path))).toEqual([]);
+        return;
+      }
       expect(await settle(`${id}.native.source:source-data`), diagnostics()).not.toBeNull();
       expect(inventoryReads).toBe(0);
       await screen.pressByTestIdAsync(`${id}.native.source:source-data`);
@@ -1581,8 +1592,11 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await act(async () => screen.changeTextByTestId(`${id}.native.backup.path.input`, '/preview-backups'));
       await act(async () => screen.changeTextByTestId(`${id}.native.backup.prefix`, 'pull-requests'));
       await screen.pressByTestIdAsync(`${id}.native.backup.role.repositoryPassword.choose`);
-      expect(await settle(`saved-secret:${ref}`), diagnostics()).not.toBeNull();
-      await screen.pressByTestIdAsync(`saved-secret:${ref}`);
+      const { SavedSecretChoiceList } = await import('@/components/secrets/SavedSecretChoiceList');
+      const secretChoices = screen.findByType(SavedSecretChoiceList);
+      const secretRow = `${secretChoices.props.testIDPrefix}:saved:${ref}`;
+      expect(await settle(secretRow), diagnostics()).not.toBeNull();
+      await screen.pressByTestIdAsync(secretRow);
       await screen.pressByTestIdAsync(`${id}.native.backup.save`);
       await vi.waitFor(() => expect(saved, diagnostics()).toHaveLength(1));
       expect(saved[0]!.data).toEqual([{ kind: 'template', templateRef: expect.objectContaining({ sourceId, itemId: 'postgresql', version: expect.any(String) }),
@@ -2319,4 +2333,45 @@ describe('Environment → Variables: secrets linked into a Team Environment', ()
       }
     },
   );
+});
+
+
+it('Variables presents only this Environment’s pending ref-only secret request and retires it when settled', async () => {
+  const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+  const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+  const { storage } = await import('@/sync/domains/state/storage');
+  const home = await homes.addHome({ name: 'Environment approval', serverUrl: 'https://environment-approval.test',
+    accountId: 'account-owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(home);
+  const detail = createDeploymentEnvironmentDetailV1();
+  const request = (environmentId: string) => ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    actionId: 'deployments.bindings.set', summary: 'Choose deployment credential', requestedSurface: 'agent',
+    actionArgs: { serverId: home, environmentId, expectedRevision: 1,
+      set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime', source: { kind: 'secret', ref: 'person_selects' } }], remove: [] },
+    createdBy: { surface: 'agent', sessionId: 'session' }, executionOriginV1: { v: 1, actionId: 'deployments.bindings.set',
+      requestId: 'request', authority: 'account_automation', surface: 'agent', serverId: home, accountId: 'account-owner',
+      caller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 } } });
+  const row = (id: string, approval: ReturnType<typeof request>) => ({ id, sourceServerId: home, ownerAccountId: 'account-owner',
+    access: 'owner' as const, isDecrypted: true as const, title: approval.summary,
+    header: buildApprovalRequestArtifactHeaderV1(approval), rawHeader: buildApprovalRequestArtifactHeaderV1(approval),
+    body: JSON.stringify(approval), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+  const selected = row('selected-secret', request(detail.environment.id));
+  const other = row('other-secret', request('another-environment'));
+  const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+  for (const artifact of [selected, other]) homes.artifacts(home).replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'account-owner'));
+  await act(async () => { storage.setState({ isDataReady: true, profileScope: { serverId: home, accountId: 'account-owner' } });
+    storage.getState().applyArtifacts([selected, other]); });
+  expect(storage.getState().artifactInboxOrder).toHaveLength(2);
+  const { screen, controller, settle } = await renderTab('variables', detail, {}, { lifetime: account.accountLifetime, serverId: home });
+  try {
+    expect(await settle('project-deployments.environment.secret-request.selected-secret')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.environment.secret-request.other-secret')).toBeNull();
+    await screen.pressByTestIdAsync('project-deployments.environment.secret-request.selected-secret.review');
+    expect(await settle('approvals.in-place')).not.toBeNull();
+    const settled = { ...request(detail.environment.id), status: 'canceled' as const };
+    await act(async () => { storage.getState().updateArtifact({ ...selected, header: buildApprovalRequestArtifactHeaderV1(settled),
+      body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2 }); });
+    expect(screen.findByTestId('project-deployments.environment.secret-request.selected-secret')).toBeNull();
+    expect(screen.findByTestId('approvals.in-place')).toBeNull();
+  } finally { await screen.unmount(); controller.retire(); account.dispose(); }
 });
