@@ -164,7 +164,7 @@ test('source changes renew the confirmation quiet window and a transient watcher
 
 test('sentinel subset consumes the canonical graph declarations', () => {
   assert.deepEqual(sentinelGraphs().map(graph => graph.id).sort(),
-    ['bundled-plugin-manifests', 'daemon', 'protocol-import-cycles', 'schema-sync', 'server', 'tracked-migrations', 'ui-catalog', 'ui-web-bundle']);
+    ['bundled-plugin-manifests', 'daemon', 'protocol-import-cycles', 'schema-sync', 'sdk-publication-spec', 'server', 'tracked-migrations', 'ui-catalog', 'ui-web-bundle']);
   for (const graph of sentinelGraphs().filter(graph => ENTRY_GRAPHS.some(entry => entry.id === graph.id))) assert.ok(ENTRY_GRAPHS.includes(graph));
 });
 

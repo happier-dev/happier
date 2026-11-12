@@ -1,3 +1,4 @@
+import { SDK_PUBLICATION_SPEC_GRAPH, loadSdkPublicationSpec } from './sdk-publication-spec.mjs';
 import { SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, loadSchemaSync, loadTrackedMigrations } from './schema-migration-probes.mjs';
 import { BUNDLED_MANIFEST_GRAPH, loadBundledManifestContracts } from './contract-manifests.mjs';
 import { WEB_BUNDLE_GRAPH, loadWebBundle } from './web-bundle.mjs';
@@ -11,7 +12,7 @@ import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../..
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
   const ids = ['protocol-import-cycles', 'ui-catalog', 'server', 'daemon'];
-  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH, SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, BUNDLED_MANIFEST_GRAPH];
+  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH, SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, BUNDLED_MANIFEST_GRAPH, SDK_PUBLICATION_SPEC_GRAPH];
 }
 
 export function isSentinelSource(filename) {
@@ -87,6 +88,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
     else if (graph.id === SCHEMA_SYNC_GRAPH.id) result = await loadSchemaSync({ repoDir, signal, env });
     else if (graph.id === TRACKED_MIGRATIONS_GRAPH.id) result = await loadTrackedMigrations({ repoDir, signal, env });
     else if (graph.id === BUNDLED_MANIFEST_GRAPH.id) result = await loadBundledManifestContracts({ repoDir, signal, env });
+    else if (graph.id === SDK_PUBLICATION_SPEC_GRAPH.id) result = await loadSdkPublicationSpec({ repoDir, signal, env });
     else result = await loadEntryGraph(graph, { repoDir, signal, env, traceImports: true });
     return { ...result, startedAt, endedAt: new Date().toISOString() };
   }
