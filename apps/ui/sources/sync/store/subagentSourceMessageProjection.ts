@@ -21,9 +21,27 @@ type SourceMessageSnapshot = Readonly<{
 export type SubagentSourceMessageProjection = Readonly<{
     messages: readonly Message[];
     snapshots: readonly SourceMessageSnapshot[];
+    snapshotsByMessage: WeakMap<Message, SourceMessageSnapshot>;
 }>;
 
-function captureSourceMessage(message: Message): SourceMessageSnapshot {
+function captureSourceMessage(
+    message: Message,
+    snapshotsByMessage: WeakMap<Message, SourceMessageSnapshot>,
+): SourceMessageSnapshot {
+    const cached = snapshotsByMessage.get(message);
+    // Published messages are immutable except for shared permission decisions. Walk tools
+    // to observe those decisions, but reuse unchanged text/run parsing and child snapshots.
+    if (cached && message.kind !== 'tool-call') return cached;
+    const snapshot = captureUncachedSourceMessage(message, snapshotsByMessage, cached);
+    snapshotsByMessage.set(message, snapshot);
+    return snapshot;
+}
+
+function captureUncachedSourceMessage(
+    message: Message,
+    snapshotsByMessage: WeakMap<Message, SourceMessageSnapshot>,
+    cached?: SourceMessageSnapshot,
+): SourceMessageSnapshot {
     if (message.kind === 'agent-text') {
         return {
             message,
@@ -32,20 +50,42 @@ function captureSourceMessage(message: Message): SourceMessageSnapshot {
         };
     }
     if (message.kind !== 'tool-call') return { message };
+    const permissionStatus = message.tool.permission?.status;
+    const children = captureSourceMessages(message.children, snapshotsByMessage, cached?.children);
+    if (cached) {
+        return cached.permissionStatus === permissionStatus && cached.children === children
+            ? cached
+            : { ...cached, permissionStatus, children };
+    }
     const runningRun = message.tool.name === 'SubAgentRun' && message.tool.state === 'running';
     return {
         message,
         // Permission decisions can mutate the shared object; retain the observed value separately.
-        permissionStatus: message.tool.permission?.status,
+        permissionStatus,
         ...(runningRun ? {
             runningFields: readTranscriptExecutionRunToolFields(message.tool),
             resultStatus: readExecutionRunResultStatus(message.tool.result),
         } : {}),
-        children: message.children.map(captureSourceMessage),
+        children,
     };
 }
 
+function captureSourceMessages(
+    messages: readonly Message[],
+    snapshotsByMessage: WeakMap<Message, SourceMessageSnapshot>,
+    previous?: readonly SourceMessageSnapshot[],
+): readonly SourceMessageSnapshot[] {
+    let next = previous?.length === messages.length ? undefined : new Array<SourceMessageSnapshot>(messages.length);
+    for (let index = 0; index < messages.length; index += 1) {
+        const snapshot = captureSourceMessage(messages[index], snapshotsByMessage);
+        if (!next && snapshot !== previous![index]) next = previous!.slice();
+        if (next) next[index] = snapshot;
+    }
+    return next ?? previous!;
+}
+
 function areSourceMessagesEqual(left: SourceMessageSnapshot, right: SourceMessageSnapshot): boolean {
+    if (left === right) return true;
     const a = left.message;
     const b = right.message;
     if (a.id !== b.id || a.kind !== b.kind || a.seq !== b.seq || a.createdAt !== b.createdAt
@@ -80,8 +120,10 @@ export function reconcileSubagentSourceMessageProjection(
     messages: readonly Message[],
     previous?: SubagentSourceMessageProjection,
 ): SubagentSourceMessageProjection {
-    const snapshots = messages.map(captureSourceMessage);
+    // Owned by the session projection: cache eviction also releases this memoization.
+    const snapshotsByMessage = previous?.snapshotsByMessage ?? new WeakMap<Message, SourceMessageSnapshot>();
+    const snapshots = captureSourceMessages(messages, snapshotsByMessage, previous?.snapshots);
     return previous && areSourceSnapshotsEqual(previous.snapshots, snapshots)
         ? previous
-        : { messages, snapshots };
+        : { messages, snapshots, snapshotsByMessage };
 }

@@ -600,8 +600,9 @@ export function reducer(
     const sidechainChildIds = new Set<string>();
     const sidechainParentByChildId = new Map<string, string>();
     for (const [sidechainId, chain] of state.sidechains) {
-        const parentId = state.toolIdToMessageId.get(sidechainId)
-            ?? state.sidechainToolIdToMessageId.get(sidechainId);
+        // A root permission mirror is not the nested tool's ancestor.
+        const parentId = state.sidechainToolIdToMessageId.get(sidechainId)
+            ?? state.toolIdToMessageId.get(sidechainId);
         for (const m of chain) {
             sidechainChildIds.add(m.id);
             if (parentId) sidechainParentByChildId.set(m.id, parentId);

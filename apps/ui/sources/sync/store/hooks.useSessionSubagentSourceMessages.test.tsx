@@ -56,6 +56,57 @@ function seed(message: Message, subagentSourceVersion: number): void {
 }
 
 describe('useSessionSubagentSourceMessages', () => {
+    it('reuses unchanged nested text and run payload projections across source arrivals', async () => {
+        let textReads = 0;
+        let runFieldReads = 0;
+        const announcement: Message = {
+            kind: 'agent-text', id: 'announcement', localId: null, createdAt: 1,
+            get text() { textReads += 1; return 'Execution run started run_12345678'; },
+        };
+        const run = runningSubAgentRunMessage({
+            get runId() { runFieldReads += 1; return 'run_1'; },
+            status: 'running',
+        });
+        run.tool = { ...run.tool, input: {} };
+        const root = createToolCallMessageFixture({ id: 'root', children: [announcement, run] });
+        seed(root, 1);
+        const hook = await renderHook(() => useSessionSubagentSourceMessages(SESSION_ID));
+        expect(textReads).toBeGreaterThan(0);
+        expect(runFieldReads).toBeGreaterThan(0);
+        textReads = 0;
+        runFieldReads = 0;
+
+        for (let version = 2; version <= 5; version += 1) {
+            await act(async () => {
+                storage.getState().applyMessages(SESSION_ID, [{
+                    id: `new-${version}`, localId: null, createdAt: 2000 + version, role: 'agent', isSidechain: false,
+                    content: [{ type: 'tool-call', id: `call-${version}`, name: 'Task', input: { prompt: 'Review' }, description: null, uuid: `new-${version}`, parentUUID: null }],
+                }]);
+            });
+            expect(hook.getCurrent()).toHaveLength(version);
+            expect(hook.getCurrent().find((message) => message.id === root.id)).toBe(root);
+        }
+        expect(storage.getState().sessionMessages[SESSION_ID].subagentSourceVersion).toBeGreaterThan(1);
+        expect({ textReads, runFieldReads }).toEqual({ textReads: 0, runFieldReads: 0 });
+        await hook.unmount();
+    });
+
+    it('observes nested in-place permission changes even when every message reference is unchanged', async () => {
+        const child = runningSubAgentRunMessage(null);
+        child.tool.permission = { id: 'permission-1', status: 'pending' };
+        const root = createToolCallMessageFixture({ id: 'root', children: [child] });
+        seed(root, 1);
+        const hook = await renderHook(() => useSessionSubagentSourceMessages(SESSION_ID));
+        const first = hook.getCurrent();
+        await act(async () => {
+            child.tool.permission!.status = 'approved';
+            seed(root, 2);
+        });
+        expect(hook.getCurrent()).not.toBe(first);
+        expect(hook.getCurrent()[0]).toMatchObject({ children: [{ tool: { permission: { status: 'approved' } } }] });
+        await hook.unmount();
+    });
+
     it('keeps the projection identity when only prose inside a running run result changes', async () => {
         const previousState = storage.getState();
         try {
