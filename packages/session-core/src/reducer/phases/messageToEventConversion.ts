@@ -52,9 +52,9 @@ export function runMessageToEventConversion({
       continue;
     }
 
-    // Composition is retained usage evidence, not a conversational event. Its
-    // dedicated usage reader opens the raw record independently of these rows.
-    if (msg.role === 'event' && msg.content.type === 'prompt-composition') {
+    // Usage evidence is retained for its dedicated raw-record reader, not
+    // converted into conversational rows (including on persisted history reads).
+    if (msg.role === 'event' && (msg.content.type === 'prompt-composition' || msg.content.type === 'mcp-binding-usage')) {
       state.messageIds.set(msg.id, msg.id);
       continue;
     }
