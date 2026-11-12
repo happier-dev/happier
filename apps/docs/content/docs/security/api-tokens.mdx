@@ -173,24 +173,18 @@ an already allowed selection.
 
 ## CLI and daemon approvals
 
-In 0.3 development, an Agent or MCP call can ask you to create, edit or revoke an
+In 0.3 development, an Agent or MCP call can ask you to edit or revoke an
 API token (including an embed configuration).
 These calls always create an Ask-first request; they never apply automatically.
 Approving any present-user change requires your signed-in present-user authority.
 An Approve-scoped token can reject the request, but cannot approve its own or another
 agent's security change. Direct token/security mutations from an API token stay refused.
 Agents can read non-secret token summaries and Account security state normally.
-When you approve an Agent or MCP token-creation request, the waiting caller
-receives the new bearer once. Keep that request connected until you decide.
-The approving app and approval history receive only the non-secret summary.
-Review its label, expiry and complete grant, including Actions and Automation IDs,
-before approving. **Settings → Actions** can disable the request; waiving its
-prompt never gives an agent present-user authority.
-
-Encryption access for agent-requested creation remains unavailable in this
-development flow: `encryption` returns `api_token_encryption_not_ready` before
-creation. Create an encryption-capable token from the trusted signed-in app or
-interactive CLI, which owns the wrapping material.
+Creating a PAT remains a human-only UI action in 0.3. Agent/MCP requests,
+including Session-origin requests, return `action_disabled` before an approval
+or effect. Create the token from the trusted signed-in app; its live invocation
+shows the bearer once, and storage retains only its digest. Approval history and
+observers retain only the non-secret summary.
 
 The generic CLI also accepts `hdev actions invoke account.apiTokens.create`
 and `account.apiTokens.update` with `--input-json`. Creation needs a fresh UUID

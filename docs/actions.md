@@ -8133,14 +8133,15 @@ separate dangerous approval default and visible Agent attribution.
 
 In 0.3 development, Agent, MCP and trusted-plugin calls can invoke person-class
 mutations, including
-API-token creation, update (including embed configuration), revocation,
+API-token update (including embed configuration), revocation,
 and sign-out-everywhere. Requestability derives
 from the Action's authority and custody metadata, not a mutation allowlist.
 `resolveCredentialActionAdmissionV1` admits host automation; only scoped external
 credentials are refused. The single approval policy requests a deferred approval
 Artifact by default. A surface waiver or explicit false policy runs the Action
-directly under ordinary admission (owner ruling 2026-10-29). API-token creation explicitly retains its blocking
-invocation so the one-time bearer returns to the requester after human approval.
+directly under ordinary admission (owner ruling 2026-10-29). Creating a PAT remains
+a human-only UI action for 0.3 (owner ruling 2026-11-07); Agent/MCP creation is
+refused before approval or execution.
 The signed-root CLI catalog admits token creation, access updates, inventory
 and revocation. The API-token catalog still excludes token self-management.
 Credential-bearing input is the other custody exception: the admitted
@@ -9444,28 +9445,13 @@ a show-once bearer:
   summary for the artifact.
 - `account.apiTokens.create`. The API token is shown once and stored only as a digest, so like
   the external key it stays on the admitted invocation and never enters approval history.
-  In current 0.3 development, Agent/MCP creation also retains that blocking
-  invocation. The approving app sends its authenticated decision to the existing
-  exact-daemon replay owner, which resumes the original waiter; the bearer goes
-  only to that requesting caller. Approval history, observers and repeat decisions
-  receive only the non-secret summary. For signed Session requests, the exact
-  daemon replay owner privately retains the deciding human's admitted Account
-  context for the approved token effect, bound to the Artifact, original request,
-  reviewed input, Account, Home and Machine. This is a one-shot live continuation,
-  not an upgrade of the Session root or use of the daemon's ambient credentials;
-  cancellation/currentness checks fail closed and release retained custody.
-  Approved execution rechecks current Action availability and policy before
-  invoking that retained native port.
-  Native Session transcript normalization retains the correlated built-in
-  Action's observation projection and applies it before normalization and
-  Account-mode sealing. Both displayed output and `_raw` contain that safe
-  projection; the live native tool response still belongs to the requester.
-  A later read of redacted history cannot recover that one-time receipt.
-  Encryption access remains a trusted-device
-  UI/interactive-CLI operation: automated creation with `encryption` returns
-  `api_token_encryption_not_ready` before an approval or effect. The deciding app
-  cannot prepare a compound credential for this requester using the existing
-  decision-only continuation, so no wrapping secret or new secret store is added.
+  In current 0.3 development, creating a PAT is a human-only UI action.
+  Agent/MCP creation, including Session-origin requests, is refused as
+  `action_disabled` before approval or execution, so a new bearer never enters
+  an agent flow. Agents/MCP may request PAT revocation through the normal
+  approval card; the effect runs after the person approves. The creating
+  person's live UI invocation receives the once-shown bearer, while approval
+  history, observers and repeated decisions retain only the non-secret summary.
 - `plugin.webhook.endpoint.ensure`. In 0.3 development, Agent/MCP can request endpoint
   setup as a person-class Action with a user-waivable approval default; a waived
   automated request runs directly and retains its intentional live result. A
@@ -9481,8 +9467,7 @@ a show-once bearer:
   the existing Webhooks credential-rotation flow, not another endpoint or secret store.
 
 For a present-user invocation, these rows retain the blocking result rather than
-durable raw-result custody. API-token creation explicitly keeps that same custody
-for Agent/MCP requests. Other Agent/MCP present-user requests remain deferred and
+durable raw-result custody. Agent/MCP present-user requests remain deferred and
 return their Artifact reference; only the deciding human receives fresh live custody.
 If the live invocation is lost, the secret is intentionally unrecoverable: revoke or
 rotate it through the existing credential owner.
