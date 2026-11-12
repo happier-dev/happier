@@ -1,3 +1,5 @@
+import { SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, loadSchemaSync, loadTrackedMigrations } from './schema-migration-probes.mjs';
+import { BUNDLED_MANIFEST_GRAPH, loadBundledManifestContracts } from './contract-manifests.mjs';
 import { WEB_BUNDLE_GRAPH, loadWebBundle } from './web-bundle.mjs';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -9,7 +11,7 @@ import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../..
 export function sentinelGraphs() {
   // The incident corridor; entry paths, loaders and execution stay with the owner.
   const ids = ['protocol-import-cycles', 'ui-catalog', 'server', 'daemon'];
-  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH];
+  return [...ENTRY_GRAPHS.filter(graph => ids.includes(graph.id)).sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id)), WEB_BUNDLE_GRAPH, SCHEMA_SYNC_GRAPH, TRACKED_MIGRATIONS_GRAPH, BUNDLED_MANIFEST_GRAPH];
 }
 
 export function isSentinelSource(filename) {
@@ -32,6 +34,7 @@ function failureIdentity(result) {
 
 export function formatLoadSentinelResult(result) {
   return { graph: result.graph, status: result.status, elapsedMs: result.elapsedMs,
+    startedAt: result.startedAt, endedAt: result.endedAt,
     ...(result.status === 'passed' ? {} : { code: failureIdentity(result).code }) };
 }
 
@@ -78,8 +81,14 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
   waitForQuiet = () => delay(DEFAULT_FILE_CHANGE_CATCH_UP_MS, undefined, { signal }) }) {
   const failures = new Map();
   async function load(graph) {
-    if (graph.id === WEB_BUNDLE_GRAPH.id) return loadWebBundle({ repoDir, signal, env });
-    return loadEntryGraph(graph, { repoDir, signal, traceImports: true });
+    const startedAt = new Date().toISOString();
+    let result;
+    if (graph.id === WEB_BUNDLE_GRAPH.id) result = await loadWebBundle({ repoDir, signal, env });
+    else if (graph.id === SCHEMA_SYNC_GRAPH.id) result = await loadSchemaSync({ repoDir, signal, env });
+    else if (graph.id === TRACKED_MIGRATIONS_GRAPH.id) result = await loadTrackedMigrations({ repoDir, signal, env });
+    else if (graph.id === BUNDLED_MANIFEST_GRAPH.id) result = await loadBundledManifestContracts({ repoDir, signal, env });
+    else result = await loadEntryGraph(graph, { repoDir, signal, env, traceImports: true });
+    return { ...result, startedAt, endedAt: new Date().toISOString() };
   }
   let pending = false;
   let running;

@@ -49,7 +49,7 @@ export async function loadEntryGraph(graph, { signal, repoDir = repo, env = proc
       const result = await probeRuntimeImport({ entrypoint,
         args: graph.args ?? (ui ? ['run', '--config', join(repoDir, 'apps/ui/vitest.config.ts'),
           ...(traceImports ? ['--reporter', fileURLToPath(new URL('./ui-import-trace.mjs', import.meta.url))] : []),
-          'sources/agents/catalog/catalog.test.ts']
+          ...graph.testFiles]
           : [`--child=${graph.id}`, `--repo-dir=${repoDir}`]),
         nodeArgs,
         cwd: join(repoDir, graph.cwd), signal,

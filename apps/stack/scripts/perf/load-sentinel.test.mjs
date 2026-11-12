@@ -164,8 +164,8 @@ test('source changes renew the confirmation quiet window and a transient watcher
 
 test('sentinel subset consumes the canonical graph declarations', () => {
   assert.deepEqual(sentinelGraphs().map(graph => graph.id).sort(),
-    ['daemon', 'protocol-import-cycles', 'server', 'ui-catalog', 'ui-web-bundle']);
-  for (const graph of sentinelGraphs().filter(graph => graph.id !== 'ui-web-bundle')) assert.ok(ENTRY_GRAPHS.includes(graph));
+    ['bundled-plugin-manifests', 'daemon', 'protocol-import-cycles', 'schema-sync', 'server', 'tracked-migrations', 'ui-catalog', 'ui-web-bundle']);
+  for (const graph of sentinelGraphs().filter(graph => ENTRY_GRAPHS.some(entry => entry.id === graph.id))) assert.ok(ENTRY_GRAPHS.includes(graph));
 });
 
 test('loader source text and credential-shaped messages never enter board output', async t => {
@@ -300,6 +300,9 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   const require = createRequire(new URL('../../../ui/package.json', import.meta.url));
   const config = require('./metro.config.js');
   const transformer = require(config.transformer.babelTransformerPath);
+  const resolverSource = fixture.path('resolve-package.mjs');
+  await writeFile(resolverSource, "import { createRequire } from 'node:module'; createRequire(import.meta.url).resolve('@happier-dev/protocol/package.json');");
+  const { probeRuntimeImport } = await import('../utils/proc/runtimeImportProbe.mjs');
   let requests = 0;
   let mode = 'bundle';
   const server = createServer(async (req, res) => {
@@ -308,6 +311,12 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
     requests++;
     if (mode === 'malformed') { res.writeHead(500); return res.end('invalid'); }
     try {
+      if (mode === 'exports') {
+        // Package export maps are cached by Node. A fresh resolver observes each
+        // fixture edit, just as a restarted consumer would.
+        const resolved = await probeRuntimeImport({ entrypoint: resolverSource, signal: t.signal });
+        if (resolved.status === 'failed') throw new Error('Package export resolution failed');
+      }
       await transformer.transform({ filename: source, src: await readFile(source, 'utf8'), plugins: [],
         options: { ...config.transformer, projectRoot: uiDir, platform: 'web',
           dev: true, type: 'module', experimentalImportSupport: false,
@@ -332,7 +341,7 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   const { pathToFileURL } = await import('node:url');
   await writeFile(entry, `await import(${JSON.stringify(pathToFileURL(source).href)});`);
   // Exercise the four existing loader branches on the same temporary source.
-  const oldGraphs = sentinelGraphs().filter(g => g.id !== 'ui-web-bundle')
+  const oldGraphs = sentinelGraphs().filter(g => ENTRY_GRAPHS.some(entry => entry.id === g.id))
     .map(g => ({ ...graph, id: g.id, args: [] }));
   const posts = [], results = [];
   const sentinel = createLoadSentinel({ repoDir: fixture.root, env,
@@ -352,6 +361,20 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   assert.equal(posts.length, 2);
   assert.match(posts[1], /cleared/);
   assert.equal(requests, 4, 'a healthy pass fetches one bundle without retries');
+  // Historical export map: ./* also selects package.json and resolves it to a
+  // nonexistent source module. Exercise package resolution at the HTTP boundary.
+  const protocol = fixture.path('node_modules/@happier-dev/protocol');
+  await mkdir(protocol, { recursive: true });
+  const packagePath = `${protocol}/package.json`;
+  await writeFile(packagePath, JSON.stringify({ name: '@happier-dev/protocol', exports: { './*': './src/*.ts' } }));
+  mode = 'exports';
+  await sentinel.request();
+  assert.equal(posts.length, 3, 'package export failure must break the web graph');
+  await writeFile(packagePath, JSON.stringify({ name: '@happier-dev/protocol',
+    exports: { './package.json': './package.json', './*': './src/*.ts' } }));
+  await sentinel.request();
+  assert.equal(posts.length, 4);
+  assert.match(posts[3], /cleared/);
   const { loadWebBundle } = await import('./web-bundle.mjs');
   mode = 'malformed';
   assert.equal((await loadWebBundle({ repoDir: fixture.root, env })).loadError.code, 'expo_http_500');
@@ -363,7 +386,7 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   assert.equal(unavailable.loadError.code, 'expo_unavailable');
   assert.equal(unavailable.status, 'unavailable');
   await sentinel.request();
-  assert.equal(posts.length, 2, 'endpoint outage must not announce a source break');
+  assert.equal(posts.length, 4, 'endpoint outage must not announce a source break');
 });
 
 
@@ -423,4 +446,56 @@ test('web bundle follows checkout identity without a selected stack and preserve
   assert.equal(posts.length, 1, 'the known source break remains deduplicated after an outage');
   mode = 'healthy'; await sentinel.request();
   assert.equal(posts.length, 2); assert.match(posts[1], /cleared/);
+});
+
+
+test('UI graph includes generated voice declarations in its strict boot-contract check', async t => {
+  const { fixture } = await fixtureGraph(t);
+  const graph = ENTRY_GRAPHS.find(graph => graph.id === 'ui-catalog');
+  await mkdir(fixture.path('apps/ui/sources/agents/catalog'), { recursive: true });
+  await mkdir(fixture.path('apps/ui/sources/voice/registry'), { recursive: true });
+  await writeFile(fixture.path('apps/ui/vitest.config.ts'), 'export default {test:{environment:"node", globals:true}};');
+  await writeFile(fixture.path(graph.entry), 'test("catalog", () => {});');
+  const { createRequire } = await import('node:module');
+  const require = createRequire(new URL('../../../ui/package.json', import.meta.url));
+  const zod = require.resolve('zod');
+  const voiceTest = fixture.path('apps/ui/sources/voice/registry/providerRegistry.test.ts');
+  // Historical mismatch: the strict turn schema lost replay while generated
+  // declarations still carried it. Real Zod parsing must reach the UI graph.
+  await writeFile(voiceTest, `import { z } from ${JSON.stringify(zod)};
+test('generated voice boot contract', () => {
+  z.strictObject({ turn: z.strictObject({ cancelResponse: z.boolean() }) })
+    .parse({ turn: { cancelResponse: false, replay: 'stable_ids' } });
+});`);
+  const posts = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph], signal: t.signal,
+    waitForQuiet: async () => {}, post: async value => posts.push(value) });
+  await sentinel.request();
+  assert.equal(posts.length, 1, 'a green catalog must not hide a generated voice schema failure');
+  await writeFile(voiceTest, 'test("repaired projection", () => {});');
+  await sentinel.request();
+  assert.equal(posts.length, 2);
+  assert.match(posts[1], /cleared/);
+});
+
+
+test('machine recipe, firewall and contributions cycle reaches the sentinel as a real TDZ', async t => {
+  const { fixture, graph, entry } = await fixtureGraph(t);
+  const root = fixture.path('packages/protocol/src');
+  await mkdir(root, { recursive: true });
+  await writeFile(`${root}/machineRecipeV1.mjs`, "import { firewall } from './machineFirewallV1.mjs'; export const canonicalRecipeSchema = { firewall };");
+  await writeFile(`${root}/machineFirewallV1.mjs`, "import { contributions } from './contributions.mjs'; export const firewall = { contributions };");
+  await writeFile(`${root}/contributions.mjs`, "import { canonicalRecipeSchema } from './machineRecipeV1.mjs'; export const contributions = { recipe: canonicalRecipeSchema };");
+  await writeFile(entry, "import '../../../packages/protocol/src/machineRecipeV1.mjs';");
+  const posts = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [{ ...graph, args: [] }], signal: t.signal,
+    waitForQuiet: async () => {}, post: async value => posts.push(value) });
+  await sentinel.request();
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /symbol=canonicalRecipeSchema/);
+  assert.match(posts[0], /contributions.mjs/);
+  await writeFile(`${root}/contributions.mjs`, 'export const contributions = {};');
+  await sentinel.request();
+  assert.equal(posts.length, 2);
+  assert.match(posts[1], /cleared/);
 });
