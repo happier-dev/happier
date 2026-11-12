@@ -36,6 +36,9 @@ import { useActiveServerAccountScope } from '@/sync/store/hooks';
 
 import { showMachineTerminalSheet } from '@/components/machines/terminal/MachineTerminalSheet';
 import { useMachineShellAvailability } from '@/hooks/machine/useMachineShellAvailability';
+import { resolveTerminalFailureMessage } from '@/components/sessions/terminal/terminalErrorCopy';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { readSafeFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { useMachineStartSession } from './useMachineStartSession';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -241,6 +244,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         if (machineId && machineShell.availability?.ok) showMachineTerminalSheet({ serverId: target.serverId, machineId, machineName, machineShell: machineShell.availability });
     }, [machineId, machineName, machineShell, target.serverId]);
     const canOpenTerminal = target.online && machineShell.state.kind === 'available';
+    const shellFailure = machineShell.state.kind === 'unavailable' ? machineShell.failure : null;
+    const shellUnavailableReason = shellFailure ? resolveTerminalFailureMessage(shellFailure) : null;
 
     // Roles come from the exact deployment references (plan 30 row 28), read only while the page is presented.
     const deploymentRoles = useMachineDeploymentRoles({ serverId: target.serverId, machineId: target.machineId ?? '',
@@ -321,6 +326,12 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                 </PageHeaderMarkSlot>
             )}
             meta={meta}
+            details={shellUnavailableReason && shellFailure ? (
+                <SurfaceFreshnessLine testID="machine-detail-shell-unavailable" presentation="inline" glyph="terminal"
+                    reason={shellUnavailableReason} action={{ label: t('approvals.technicalDetails'),
+                        onPress: () => showActionFailureDetails({ code: shellFailure.errorCode,
+                            context: readSafeFailureDetails(shellFailure.details) }) }} />
+            ) : undefined}
             actions={machine ? (
                 <View style={styles.actions}>
                     {attachedPresets?.length ? <MachineAttachedPresetsChip serverId={target.serverId} attached={attachedPresets}

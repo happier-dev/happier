@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { DaemonTerminalListResponseV1Schema, type DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
+import { readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
@@ -12,6 +13,7 @@ export type MachineShellAvailabilityState = Readonly<{
 
 export type MachineShellAvailability = Readonly<{
     availability: DaemonTerminalShellAvailabilityV1 | null;
+    failure: ActionExecuteFailure | null;
     state: MachineShellAvailabilityState;
 }>;
 
@@ -50,6 +52,7 @@ export function useMachineShellAvailability(input: Readonly<{
         settled: boolean;
         unsupported: boolean;
         availability: DaemonTerminalShellAvailabilityV1 | null;
+        failure?: ActionExecuteFailure;
     }>>({ key, settled: false, unsupported: false, availability: null });
     React.useEffect(() => {
         if (!input.enabled || !input.machineId || !execution.ready) {
@@ -61,20 +64,33 @@ export function useMachineShellAvailability(input: Readonly<{
         void execution.execute('machines.terminal.list', { serverId: input.serverId, machineId: input.machineId, machineShell: true }, { signal: controller.signal })
             .then(result => {
                 if (!current()) return;
-                const parsed = result.ok ? DaemonTerminalListResponseV1Schema.safeParse(result.result) : null;
-                if (!parsed?.success) {
-                    setState({ key, settled: true, unsupported: false, availability: null });
+                if (!result.ok) {
+                    setState({ key, settled: true, unsupported: false, availability: null, failure: result });
+                    return;
+                }
+                const parsed = DaemonTerminalListResponseV1Schema.safeParse(result.result);
+                if (!parsed.success) {
+                    setState({ key, settled: true, unsupported: false, availability: null,
+                        failure: { ok: false, errorCode: 'terminal_invalid_response', error: 'terminal_invalid_response' } });
                 } else if (parsed.data.ok) {
                     setState({ key, settled: true, unsupported: parsed.data.machineShell == null, availability: parsed.data.machineShell ?? null });
                 } else {
                     setState({ key, settled: true, unsupported: false, availability: parsed.data });
                 }
-            }, () => { if (current()) setState({ key, settled: true, unsupported: false, availability: null }); });
+            }, error => {
+                if (!current()) return;
+                const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+                const code = diagnostic.errorCode ?? 'action_failed';
+                setState({ key, settled: true, unsupported: false, availability: null,
+                    failure: { ok: false, errorCode: code, error: code, details: diagnostic } });
+            });
         return () => controller.abort();
     }, [input.enabled, input.machineId, input.serverId, execution.execute, execution.isCurrent, execution.ready, key]);
     const availability = input.enabled && execution.ready && state.key === key ? state.availability : null;
     return {
         availability,
+        failure: input.enabled && execution.ready && state.key === key
+            ? state.failure ?? (availability?.ok === false ? availability : null) : null,
         state: resolveMachineShellAvailabilityState({ enabled: input.enabled, machineId: input.machineId,
             executionReady: execution.ready, reachability: presence.reachability, settled: input.enabled && execution.ready && state.key === key && state.settled,
             unsupported: state.unsupported, availability }),

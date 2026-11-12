@@ -30,6 +30,8 @@ import { SessionTerminalTrustNotice } from '@/components/sessions/terminal/strip
 import { usePaneDestinationWindowActions } from '@/components/appShell/panes/useOpenPaneDestinationWindow';
 import { useProjectRunningTerminals } from '../useProjectRunningTerminals';
 import { useMachineShellAvailability } from '@/hooks/machine/useMachineShellAvailability';
+import { resolveTerminalFailureMessage } from '@/components/sessions/terminal/terminalErrorCopy';
+import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { initializeSessionTerminalWorkspaceForScope } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { describeMachineShareTrust } from '@/components/sharing/machines/machineShareTrust';
@@ -153,11 +155,15 @@ export const ProjectTerminalSurface = React.memo((props: Readonly<{
     const shellStateBlocksEmpty = workspace.tabs.length === 0 && shell.state.kind !== 'available';
     if (!authority || retired || running.status === 'loading' || running.status === 'unavailable' || shellStateBlocksEmpty) {
         const loading = authority && !retired && (running.status === 'loading' || shell.state.kind === 'loading');
+        const shellFailure = authority && !retired && !loading && shell.state.kind === 'unavailable' ? shell.failure : null;
+        const failureDetails = shellFailure ? readSafeFailureDetails(shellFailure.details) : {};
         return <SurfaceStateCard kind={loading ? 'loading' : 'unavailable'} iconName="terminal"
             title={!authority || retired ? t('machines.terminals.denied')
                 : loading ? t('common.loading')
                     : shell.state.kind === 'offline' ? t('terminalWorkspace.states.offline', { machine: terminalMachine })
-                        : t('machines.terminals.unavailable')}
+                        : shellFailure ? resolveTerminalFailureMessage(shellFailure) : t('machines.terminals.unavailable')}
+            diagnosticCode={shellFailure?.errorCode}
+            diagnosticDetail={Object.keys(failureDetails).length ? JSON.stringify(failureDetails, null, 2) : undefined}
             action={authority && !retired && canOpenNewShell ? { label: t('terminalWorkspace.states.emptyAction'), onPress: openShell } : undefined} />;
     }
     // Shells this device did not open, found running on the Machine: the list says what they are before one is opened.

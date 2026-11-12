@@ -1,4 +1,6 @@
-import type { TranslationKey } from '@/text';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { t, type TranslationKey } from '@/text';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export type TerminalErrorCopy = Readonly<{
     bodyKey: TranslationKey;
@@ -40,4 +42,11 @@ export function resolveTerminalErrorCopy(errorCode: string | null): TerminalErro
     const code = typeof errorCode === 'string' ? errorCode.trim() : '';
     if (!code) return null;
     return COPY_BY_ERROR_CODE[code] ?? null;
+}
+
+/** Shell availability and admission keep the terminal owner's reason, including Action-level refusals. */
+export function resolveTerminalFailureMessage(failure: ActionExecuteFailure): string {
+    const copy = resolveTerminalErrorCopy(resolveTerminalAdmissionErrorCode(failure));
+    const fallback = t('machines.terminals.unavailable');
+    return copy ? t(copy.bodyKey) : resolveActionExecutionFailureMessage(failure, fallback) ?? fallback;
 }

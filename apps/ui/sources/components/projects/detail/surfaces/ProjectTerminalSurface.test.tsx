@@ -3,7 +3,7 @@ import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
@@ -79,16 +79,16 @@ function ActiveProjectPane(props: React.PropsWithChildren<{ scopeId: string }>) 
     return <>{props.children}</>;
 }
 
-function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[]) {
+function serveCensusHome(serverId: string, refs: readonly WorkspaceRefV1[], machine?: ReturnType<typeof createMachineFixture>) {
     return serveActionHomes({ homes: [{ key: 'project', serverUrl: `https://${serverId}.test`, accountId: 'bob', serverIdentityId: serverId,
         settings: { actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'session.terminals.open': ['ui'] } } } }],
         route: request => request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
             ? Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: refs }))
             : request.path === '/v1/machines'
-            ? Response.json([createPlainMachineRowFixture({ id: 'machine', accountId: 'bob' })])
+            ? Response.json([createPlainMachineRowFixture({ id: 'machine', accountId: 'bob', machine })])
             : request.path === '/v1/machines/read-batch' && request.method === 'POST'
             ? createMachineReadBatchResponseFixture(request.body, id => id === 'machine'
-                ? createPlainMachineRowFixture({ id, accountId: 'bob' }) : null)
+                ? createPlainMachineRowFixture({ id, accountId: 'bob', machine }) : null)
             : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
 }
 
@@ -324,17 +324,20 @@ describe('Project terminal through the incumbent pane workspace', () => {
     it.each([
         { kind: 'offline', active: false, response: { ok: false, errorCode: 'terminal_unavailable', error: 'offline' } },
         { kind: 'unsupported', active: true, response: { ok: true, terminals: [] } },
+        { kind: 'refused', active: true, response: { ok: false, errorCode: 'terminal_forbidden', error: 'terminal_forbidden' } },
+        { kind: 'cwd-denied', active: true, response: { ok: true, terminals: [], machineShell: { ok: false, errorCode: 'terminal_cwd_denied', error: 'terminal_cwd_denied' } } },
         { kind: 'online', active: true, response: { ok: true, terminals: [], machineShell: { ok: true, cwd: '/accepted' } } },
     ] as const)('uses typed Shell availability for an empty Project pane: $kind', async ({ kind, active, response }) => {
         const serverId = `srv_shell_state_${kind}`;
         const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
         const refs = [{ id: workspace.workspaceId, serverId, machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }];
-        const home = await serveCensusHome(serverId, refs);
+        const machine = createMachineFixture({ id: workspace.machineId, active, activeAt: active ? Date.now() : 1 });
+        const home = await serveCensusHome(serverId, refs, machine);
         try {
             publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             await vi.waitFor(() => expect(readCurrentProjectAccountRows(storage.getState())).toMatchObject({ status: 'ready', workspaceRefs: refs }));
-            const machine = createMachineFixture({ id: workspace.machineId, active, activeAt: active ? Date.now() : 1 });
             storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+            publishMachineActivityForTest([machine]);
             observeMachinePresenceForTest({ serverId, accountId: 'bob' }, [machine.id]);
             outputRpc.mockResolvedValue(response);
             const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
@@ -350,7 +353,12 @@ describe('Project terminal through the incumbent pane workspace', () => {
                 const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.kind === 'unavailable')!;
                 expect(card.props.title).toBe(kind === 'offline'
                     ? t('terminalWorkspace.states.offline', { machine: getMachineDisplayName(machine) ?? workspace.machineId })
+                    : kind === 'refused' ? t('machines.terminals.denied')
+                    : kind === 'cwd-denied' ? t('terminalEmbedded.errors.cwdDenied')
                     : t('machines.terminals.unavailable'));
+                if (kind === 'refused' || kind === 'cwd-denied') {
+                    expect(card.props.diagnosticCode).toBe(kind === 'refused' ? 'terminal_forbidden' : 'terminal_cwd_denied');
+                }
                 expect(card.props.action).toBeUndefined();
             }
             await screen.unmount();

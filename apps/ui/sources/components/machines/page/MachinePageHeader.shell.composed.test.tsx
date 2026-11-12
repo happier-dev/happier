@@ -7,6 +7,7 @@ import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, s
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -14,6 +15,8 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { EmbeddedTerminalPaneFrame } from '@/components/terminal/embedded/EmbeddedTerminalPaneFrame';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { Modal } from '@/modal';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { t } from '@/text';
 
 // Machine RPC and the terminal DOM renderer are external boundaries. The mounted
 // header, Action front door, schemas, adapter and terminal controller stay real.
@@ -31,7 +34,12 @@ vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
 const { MachinePageHeader } = await import('./MachinePageHeader');
 afterEach(() => standardCleanup());
 
-it.each(['manage', 'use'] as const)('opens a shared %s member Shell in the requester root through the real header and Action', async role => {
+it.each([
+    { role: 'manage', refusal: null },
+    { role: 'use', refusal: null },
+    { role: 'manage', refusal: 'terminal_unavailable' },
+    { role: 'manage', refusal: 'terminal_forbidden' },
+] as const)('settles a shared $role Shell through the real header and Action ($refusal)', async ({ role, refusal }) => {
     let machine = createMachineFixture({ id: 'shared-shell', isShared: true, active: true, activeAt: Date.now(),
         metadata: { ...createMachineFixture().metadata!, homeDir: '/custodian/private' },
         access: { role, resourceMode: 'plain', accessState: 'ready', custodian: { accountId: 'alice', displayName: 'Alice' } } });
@@ -46,8 +54,9 @@ it.each(['manage', 'use'] as const)('opens a shared %s member Shell in the reque
         custodian: { accountId: 'alice', displayName: 'Alice' }, machineId: machine.id,
         actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials', execute: input => {
             availabilityReads.push({ input });
-            return pendingAvailability ?? { ok: true, terminals: [], machineShell: { ok: true, cwd } };
-        } });
+            return refusal ? { ok: false, errorCode: refusal, error: refusal }
+                : pendingAvailability ?? { ok: true, terminals: [], machineShell: { ok: true, cwd } };
+        }, failure: () => refusal ? { errorCode: refusal, error: refusal } : null });
     const openBoundary = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'bob',
         custodian: { accountId: 'alice', displayName: 'Alice' }, machineId: machine.id,
         actionId: 'machines.terminal.open', tokenEpoch: 0, requesterInvocation: 'credentials', execute: input => {
@@ -67,7 +76,7 @@ it.each(['manage', 'use'] as const)('opens a shared %s member Shell in the reque
         } });
     const serverId = home.homes.member!.id;
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'bob' }, [machine]);
     rpc.mockReset();
     rpc.mockResolvedValue({ ok: false, errorCode: 'terminal_forbidden', error: 'foreign_terminal' });
     const listReads = () => availabilityReads;
@@ -81,6 +90,17 @@ it.each(['manage', 'use'] as const)('opens a shared %s member Shell in the reque
         await flushHookEffects();
         expect(listReads()).toHaveLength(0);
         await screen.update(body(true));
+        if (refusal) {
+            await vi.waitFor(() => expect(screen.findByTestId('machine-detail-shell-unavailable')).not.toBeNull());
+            expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
+            const line = screen.findByType(SurfaceFreshnessLine);
+            expect(line.props.reason).toBe(t(refusal === 'terminal_forbidden' ? 'machines.terminals.denied' : 'machines.terminals.unavailable'));
+            await act(async () => line.props.action.onPress());
+            expect(vi.mocked(Modal.alert).mock.calls.at(-1)).toEqual([t('approvals.technicalDetails'), refusal]);
+            expect(listReads()).toHaveLength(1);
+            expect(openedShells).toHaveLength(0);
+            return;
+        }
         await vi.waitFor(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
         expect(listReads()).toHaveLength(1);
         expect(listReads()[0]).toMatchObject({ input: { serverId, machineId: machine.id, machineShell: true } });
@@ -117,7 +137,7 @@ it.each(['manage', 'use'] as const)('opens a shared %s member Shell in the reque
             await vi.waitFor(() => expect(openedShells).toHaveLength(1));
             expect(openedShells[0]).toMatchObject({ serverId, machineId: machine.id, cwd: '/members/bob/new-policy' });
             await vi.waitFor(() => expect(sheet.findByType(EmbeddedTerminalPaneFrame).props.controller)
-                .toMatchObject({ status: 'not-open', terminalId: null }));
+                .toMatchObject({ status: 'error', terminalId: null, error: 'terminal_forbidden' }));
             expect(openedShells).toHaveLength(1);
         } finally { await sheet.unmount(); }
     } finally { await screen.unmount(); await home.dispose(); }
@@ -134,7 +154,7 @@ it.each([
         ? createMachineReadBatchResponseFixture(request.body, () => row) : undefined });
     const serverId = home.homes.owner!.id;
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    await publishMachineInventoryForTest({ serverId, accountId: 'bob' }, [machine]);
     rpc.mockReset();
     rpc.mockResolvedValue({ ok: true, terminals: [], ...(machineShell ? { machineShell } : {}) });
     const screen = await renderScreen(<MachinePageHeader target={{ machineId: machine.id, requestedServerId: serverId,
@@ -144,5 +164,10 @@ it.each([
         await vi.waitFor(() => expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_LIST)).toHaveLength(1));
         await flushHookEffects();
         expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
+        if (machineShell) {
+            expect(screen.findByType(SurfaceFreshnessLine).props.reason).toBe(t('terminalEmbedded.errors.cwdDenied'));
+            await act(async () => screen.findByType(SurfaceFreshnessLine).props.action.onPress());
+            expect(vi.mocked(Modal.alert).mock.calls.at(-1)).toEqual([t('approvals.technicalDetails'), machineShell.errorCode]);
+        }
     } finally { await screen.unmount(); await home.dispose(); }
 });
