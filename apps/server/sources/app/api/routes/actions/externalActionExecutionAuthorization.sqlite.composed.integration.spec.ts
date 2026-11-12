@@ -2,7 +2,6 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import Fastify from "fastify";
 import axios from 'axios';
 import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
-import * as sqliteStorage from '@/storage/prisma';
 import { z } from 'zod/mini';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -915,40 +914,45 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('keeps an eligibility database outage at 503 through signed-root HTTP admission and accepts the same root after recovery', async () => {
+    it('refuses fresh root admission with 503 during an eligibility database outage and admits the same request after recovery', async () => {
+        const envBefore = snapshotEnv();
         const fixture = await createFixture({ qualifiedPat: false });
+        await db.accountIdentity.create({ data: { accountId: fixture.account.id, provider: 'github',
+            providerUserId: 'eligibility-requester', providerLogin: 'eligibility-requester', profile: {} } });
+        applyEnvValues({ AUTH_REQUIRED_LOGIN_PROVIDERS: 'github', AUTH_GITHUB_ALLOWED_USERS: 'eligibility-requester',
+            AUTH_GITHUB_ALLOWED_ORGS: '', AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: '0' });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const actionId = 'browser.diagnostics.snapshot';
         const envelope = { ...fixture.envelope, input: { browserSessionId: 'browser-session', viewId: 'browser-view' } };
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, app => enableErrorHandlers(app));
+        const request = { method: 'POST' as const, url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } };
         try {
-            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
-            expect(minted.statusCode).toBe(200);
-            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
-            authorizationRequests.set(authorization.token, { target: authorization.binding.target,
-                installationId: fixture.machine.installationId!, requestId: authorization.binding.requestId });
-            const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
-            const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
-            const request = { method: 'POST' as const, url: path, payload: body,
-                headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
-                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) };
-            // Fail database IO only; real signed-root admission, eligibility and
-            // HTTP failure handling decide whether this is rejection or outage.
-            // SQLite snapshot IO uses its own connection, outside the main db
-            // proxy. Fail only that persistent-database boundary before reads.
-            const readSnapshot = sqliteStorage.withSqliteReadSnapshot;
-            const snapshot = vi.spyOn(sqliteStorage, 'withSqliteReadSnapshot')
-                .mockImplementationOnce(readSnapshot) // Home environment read precedes signed principal eligibility.
+            // OWNER-RULINGS.md:17 (2026-10-29): eligibility belongs to fresh admission,
+            // not a second read while spending an already-admitted signed root.
+            // Replace only persistent DB IO; the real provider eligibility owner and HTTP handler run.
+            const identityDelegate = db.accountIdentity;
+            const readIdentity = identityDelegate.findFirst.bind(identityDelegate);
+            const identityRead = vi.spyOn(identityDelegate, 'findFirst').mockImplementation(readIdentity)
                 .mockRejectedValueOnce(Object.assign(new Error('private connection details'), { code: 'P2024' }));
             try {
                 const failed = await app.inject(request);
-                expect(failed.statusCode).toBe(503);
+                expect(failed.statusCode, failed.body).toBe(503);
+                expect(identityRead).toHaveBeenCalledOnce();
                 expect(JSON.stringify(failed.json())).not.toContain('private connection details');
-            } finally { snapshot.mockRestore(); }
-            const recovered = await app.inject(request);
-            expect(recovered.statusCode).toBe(200);
-        } finally { await app.close(); }
+                const recovered = await app.inject(request);
+                expect(recovered.statusCode, recovered.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(recovered.json());
+                authorizationRequests.set(authorization.token, { target: authorization.binding.target,
+                    installationId: fixture.machine.installationId!, requestId: authorization.binding.requestId });
+                const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+                const body = { v: 1, admittedMachineRole: authorization.binding.admittedMachineRole };
+                const verified = await app.inject({ method: 'POST', url: path, payload: body,
+                    headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                        method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+                expect(verified.statusCode, verified.body).toBe(200);
+            } finally { identityRead.mockRestore(); }
+        } finally { restoreEnv(envBefore); await app.close(); }
     });
 
     it.each(['account', 'terminal'] as const)('authenticates signed native Discussion creation outside the API-token catalog (%s)', async kind => {
@@ -1499,11 +1503,16 @@ describe("external Action execution authorization", () => {
             expect(currentness.statusCode, currentness.body).toBe(200);
             expect((await get('/v1/account/encryption/currentness')).statusCode).toBe(200);
             expect((await get('/v1/account/encryption/currentness', actionId, unnamed)).statusCode).toBe(401);
-            // Losing Manage on A stops A's next read; a revoked B is refused; H keeps its own purposes.
+            // OWNER-RULINGS.md:17 (2026-10-29): the admitted setup keeps its paired reads;
+            // lost Manage refuses the next admission rather than re-admitting every read.
             await grantTarget('view');
-            expect((await get('/v1/account/encryption/currentness')).statusCode).toBe(401);
-            expect((await get(sourcePath(selected.source.id), 'projects.sources.read')).statusCode).toBe(401);
-            expect((await get(`/v1/artifacts/${content.contentArtifactId}`)).statusCode).toBe(401);
+            expect((await get('/v1/account/encryption/currentness')).statusCode).toBe(200);
+            expect((await get(sourcePath(selected.source.id), 'projects.sources.read')).statusCode).toBe(200);
+            expect((await get(`/v1/artifacts/${content.contentArtifactId}`)).statusCode).toBe(200);
+            const denied = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
+            expect(denied.statusCode, denied.body).toBe(403);
+            expect(denied.json()).toMatchObject({ error: 'credential_scope_denied' });
             await db.machine.update({ where: { id: peerMachine.id }, data: { revokedAt: new Date() } });
             expect((await get(sourcePath(other.source.id), 'projects.sources.read', peer)).statusCode).toBe(401);
             const hostAfter = await get('/v1/account/encryption/currentness', actionId, rootHost);
@@ -2062,12 +2071,13 @@ describe("external Action execution authorization", () => {
         } finally { installationSettings.mockRestore(); await app.close(); }
     });
 
-    it('runs unsigned UI setup approval through exact-daemon replay and real Home preparation admission', async () => {
+    it('runs native-confirmed own-UI setup through real Home preparation admission', async () => {
         await db.account.create({ data: { id: 'account', publicKey: null, encryptionMode: 'plain' } });
         const token = await auth.createToken('account', undefined, { kind: 'account', authority: 'present_user' });
         const homeId = await getOrCreateServerIdentityId();
         const { app } = await createApp('unused-team');
-        const httpReads: Array<{ root: string | null; effect: string; path: string; status: number }> = [];
+        const httpReads: Array<{ root: string | null; effect: string | null; path: string; status: number }> = [];
+        const rowReads: Array<{ key: unknown; result: unknown }> = [];
         const h = await createInstalledProjectApprovalHarness('projects.script.run', 'allowed', true, homeId, {
             token,
             mintAuthorization: async (actionId, envelope) => {
@@ -2079,8 +2089,12 @@ describe("external Action execution authorization", () => {
             request: async input => {
                 const response = await app.inject({ method: input.method, url: input.path, headers: input.headers,
                     ...(input.body === undefined ? {} : { payload: JSON.stringify(input.body) }) });
-                const binding = await auth.verifyExternalActionExecutionAuthorization(input.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]!);
-                httpReads.push({ root: binding?.actionId ?? null, effect: input.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]!,
+                const proof = input.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+                const binding = proof ? await auth.verifyExternalActionExecutionAuthorization(proof) : null;
+                if (input.path === '/v1/account/project-rows/read') rowReads.push({
+                    key: z.object({ key: z.unknown() }).parse(input.body).key, result: response.json(),
+                });
+                httpReads.push({ root: binding?.actionId ?? null, effect: input.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] ?? null,
                     path: input.path, status: response.statusCode });
                 return { status: response.statusCode, data: response.json() };
             },
@@ -2105,25 +2119,36 @@ describe("external Action execution authorization", () => {
             const reviewed = await h.reviewSetup();
             expect(reviewed.kind).toBe('reviewed');
             if (reviewed.kind !== 'reviewed') throw new Error('Setup review unavailable');
-            const setup = await h.run({ workspace, phase: 'setup', expectedEffectDigest: reviewed.plan.reviewedEffectDigest,
-                consentScope: 'thisTime' }, 'ui', 'unsigned-ui', 'present_user', 'projects.prepare', 'this-time-setup');
-            expect(setup).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'projects.prepare' } });
-            expect((await h.approval()).preview).toMatchObject({ setupReview: {
-                reviewedEffectDigest: reviewed.plan.reviewedEffectDigest,
-                reviewedEffect: { commands: [{ kind: 'command', command: 'echo setup-reviewed' }] },
-            } });
-            expect(await h.decide('approve')).toMatchObject({ ok: true });
-            const execution = (await h.approval()).execution;
+            const setupInput = { workspace, phase: 'setup', expectedEffectDigest: reviewed.plan.reviewedEffectDigest,
+                consentScope: 'thisTime' };
+            // docs/actions.md own-UI admission uses native review rather than a self-approval Artifact.
+            const nativeReview = await h.run(setupInput, 'ui', 'unsigned-ui', 'present_user', 'projects.prepare', 'native-setup');
+            expect(nativeReview, JSON.stringify({ nativeReview, httpReads })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+                details: { review: { preview: { setupReview: { reviewedEffectDigest: reviewed.plan.reviewedEffectDigest } } },
+                    reviewDigest: expect.any(String) } });
+            expect(h.spawned).toHaveLength(0);
+            const { reviewDigest } = z.object({ reviewDigest: z.string() }).parse(nativeReview.ok ? null : nativeReview.details);
+            // UI externalActionAccountTransport seals a fresh press with the receiving host's native review (docs/actions.md:1090).
+            const execution = await h.run(setupInput, 'ui', false, 'present_user', 'projects.prepare',
+                'this-time-setup', undefined, reviewDigest);
             expect(execution, JSON.stringify({ execution, httpReads: httpReads.filter(read => !read.path.endsWith('/verify')) }))
                 .toMatchObject({ ok: true, result: { operation: { actionId: 'projects.prepare' } } });
-            if (!execution?.ok) throw new Error('Setup replay refused');
+            if (!execution.ok) throw new Error('Confirmed setup refused');
             const setupOperation = ProjectCommandActionOutputV1Schema.parse(execution.result).operation;
             operationId = setupOperation.operationId;
+            await vi.waitFor(async () => {
+                expect(h.spawned.length, JSON.stringify(await h.readReviewedOperation(operationId!))).toBe(1);
+            });
             (await h.waitForSpawn(0)).exit(0);
             expect(await h.waitForTerminal(setupOperation.operationId)).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-            // Setup resolves its known workspace through the canonical exact-row reader.
-            expect(httpReads).toContainEqual({ root: 'approval.request.decide', effect: 'approval.request.decide',
-                path: '/v1/account/project-rows/read', status: 200 });
+            // projectAccountRows.requestHeaders uses the sealed own-UI Account credential;
+            // the real Home route must return the paired workspace before native setup succeeds.
+            expect(httpReads).toContainEqual({ root: null, effect: null, path: '/v1/account/project-rows/read', status: 200 });
+            expect(rowReads).toContainEqual({ key, result: expect.objectContaining({ status: 'present',
+                row: expect.objectContaining({ key, content: { t: 'plain', v: { key, value: h.ref } } }) }) });
+            expect(httpReads).toContainEqual({ root: 'projects.prepare', effect: 'projects.prepare',
+                path: '/v1/actions/projects.prepare/execution-authorization/verify', status: 200 });
+            expect(h.hasApproval()).toBe(false);
             expect(h.networkPaths).not.toContain('POST /v1/account/project-trust/mutate');
         } finally {
             if (operationId) await h.cancelOperation(operationId);
@@ -2349,7 +2374,17 @@ describe("external Action execution authorization", () => {
             }
             await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
                 machineId, principal, level: 'view' }));
-            expect(await verify()).toBeNull();
+            // OWNER-RULINGS.md:17 (2026-10-29), 4c6138dc498: admitted native work finishes.
+            // Plan readiness is a new child admission; it still requires current Manage.
+            if (actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply') expect(await verify()).toBeNull();
+            else expect(await verify()).toMatchObject({ binding: authorization.binding, effectActionId });
+            const denied = await app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, machineId,
+                    envelope: { ...envelope, requestId: crypto.randomUUID() } } });
+            expect(denied.statusCode, denied.body).toBe(403);
+            expect(denied.json()).toMatchObject({ error: 'credential_scope_denied',
+                failureCause: { errorCode: 'machine_manage_required' } });
         } finally { await app.close(); }
     });
 
@@ -3649,13 +3684,15 @@ describe("external Action execution authorization", () => {
                 }
                 expect((await post(reader, { operation: 'cancel', publisherMachineId: fixture.machine.id,
                     runId, expectedRevision: 0 })).statusCode).toBe(401);
-                expect((await post(reader, history, { publisher: false })).statusCode).toBe(401);
+                // OWNER-RULINGS 2026-10-29: trusted plugins share the installation's read authority.
+                expect((await post(reader, history, { publisher: false })).statusCode).toBe(200);
                 expect((await post(reader, { ...history, publisherMachineId: crypto.randomUUID() })).statusCode).toBe(401);
             }
-            expect((await post(start, history, { publisher: false })).statusCode).toBe(401);
+            // OWNER-RULINGS 2026-10-29 plugin trust: the extra publisher header is not read authority.
+            expect((await post(start, history, { publisher: false })).statusCode).toBe(200);
             expect((await post(start, { ...history, publisherMachineId: crypto.randomUUID() })).statusCode).toBe(401);
             expect((await post(start, history, { effectActionId: 'workflow.run.cancel' })).statusCode).toBe(401);
-            expect((await post(start, read, { publisher: false })).statusCode).toBe(401);
+            expect((await post(start, read, { publisher: false })).statusCode).toBe(200);
             expect((await post(start, { ...read, publisherMachineId: crypto.randomUUID() })).statusCode).toBe(401);
             expect((await post(start, read, { effectActionId: 'workflow.run.cancel' })).statusCode).toBe(401);
             expect((await post(start, read, { effectActionId: 'workflow.definition.get' })).statusCode).toBe(401);
@@ -4506,23 +4543,38 @@ describe("external Action execution authorization", () => {
 
     it('admits connected Session name set and clear, persists approval custody, and executes each decision once', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
+            storedContentMode: 'plain', metadata: createTestMetadata({ machineId: fixture.machine.id }), agentState: null });
         const session = await db.session.create({ data: { accountId: fixture.account.id,
-            tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+            tag: crypto.randomUUID(), active: true, encryptionMode: 'plain', metadataLayoutVersion: fields.metadataLayoutVersion,
+            metadata: fields.sharedMetadata.ciphertext, ownerMetadata: JSON.stringify(fields.ownerMetadata), agentState: fields.agentState } });
         await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
             sessionId: session.id, data: 'opaque-source-key' } });
         // Socket publisher discovery is the external boundary; HTTP, installed
         // signatures, admission, approval codecs/CAS and SQLite remain real.
         let publisher: string | null = fixture.machine.id;
         let effects = 0;
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1 } });
+        const socket = createAuthenticatedFakeSocket({ nsp: { server: createSocketRoomDiscoveryHarness(async () => []) },
+            data: { clientType: 'machine-scoped', machineId: fixture.machine.id,
+                verifiedMachineInstallationId: fixture.machine.installationId } });
+        machineUpdateHandler(fixture.account.id, socket as unknown as Socket, {
+            operationSocketBatchLimits: { ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 } },
+        });
+        const enqueue = getSocketHandler(socket, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1);
+        const { sessionPendingRoutes } = await import('@/app/api/routes/session/pendingRoutes');
+        const { SessionInputEnqueueResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
         const { app } = await createApp(fixture.team.id, false, async () => publisher, undefined, false, routes => {
             artifactsRoutes(routes);
+            sessionPendingRoutes(routes);
             registerAccountApiTokenManagementRoutes(routes);
             routes.addHook('onRequest', async (request) => {
                 if (request.method === 'POST' && request.url === '/v1/account/profile') effects += 1;
             });
         });
-        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
-        const credentials = { token, encryption: null };
         const homeId = await getOrCreateServerIdentityId();
         const serverId = 'name-clear-profile';
         const target = { kind: 'machine' as const, machineId: fixture.machine.id };
@@ -4552,8 +4604,16 @@ describe("external Action execution authorization", () => {
                     resolveCurrentSessionAgentSpawnPolicyV1: async () =>
                         (await resolveAvailableAccountSettings({ credentials }))?.sessionAgentSpawnPolicyV1 ?? null,
                 });
-                // This family consumes the real Home/Artifact ports; unused transports are absent.
-                const executor = createActionExecutor({ ...accountDeps, ...artifacts,
+                // Compose the production Session result publisher beside Home and Artifact ports.
+                const executor = createActionExecutor({ ...createCliActionDeps({ token, credentials, serverId,
+                    serverIdentityId: homeId, serverHttpBaseUrl, sessionId: session.id, mode: 'plain', ctx: null,
+                    // Only the authenticated Machine socket transport is replaced.
+                    machineAdmissionTransport: async request => {
+                        let response: unknown;
+                        await enqueue(request, (value: unknown) => { response = value; });
+                        return SessionInputEnqueueResultV1Schema.parse((response as { result: unknown }).result);
+                    } }),
+                    ...accountDeps, ...artifacts,
                     isApprovalExecutionOriginCurrent: ({ origin, request, signal }) => current({ origin, request, signal }),
                 } as ActionExecutorDeps);
                 const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token,
@@ -4598,22 +4658,26 @@ describe("external Action execution authorization", () => {
                             runtimeAccountId: fixture.account.id, actionCaller: { kind: 'host' } });
                     const decided = await decide();
                     const settled = ApprovalRequestV2Schema.parse(await artifacts.approvalsGet({ artifactId, serverId }));
-                    expect(settled.execution?.errorCode, name === '' ? 'clear name replay' : 'set name replay').toBeUndefined();
-                    expect(decided).toMatchObject({ ok: true, result: { status: 'executed' } });
+                    expect(settled.execution?.errorCode, JSON.stringify({ name, execution: settled.execution })).toBeUndefined();
+                    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed' } });
                     expect((await db.account.findUniqueOrThrow({ where: { id: fixture.account.id } })).name).toBe(name || null);
                     expect(effects).toBe(before + 1);
+                    expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id,
+                        localId: `approval-result:${artifactId}` } })).toBe(1);
                     expect(await decide()).toMatchObject({ ok: true });
                     expect(effects).toBe(before + 1);
                 }
                 publisher = null;
                 // Mis-binding the actual source prevents admission even for a
                 // canonical clear; no reference or profile effect may escape.
+                // ced5ea754298 projects the missing issuer fact as action_forbidden.
                 expect(await execute({ kind: 'action.execute', actionId: 'account.name.set', input: { name: '' },
                     requestId: crypto.randomUUID(), witness: { turnId: 'name-turn', inputId: crypto.randomUUID(), callerPermissionMode: 'default',
                         userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
                         agentStartCaller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 } } },
                     { sessionId: session.id, isCurrent: async () => true })).toMatchObject({ ok: false,
-                        errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } });
+                        errorCode: 'action_forbidden', details: { reason: 'external_authorization_refused',
+                            phase: 'session.authorization.preparation', requiredFact: 'session_authorization_preparation' } });
                 expect(effects).toBe(2);
             });
         } finally { await app.close(); }
@@ -5201,8 +5265,9 @@ describe("external Action execution authorization", () => {
             show: 'sessions', scope: 'all_accessible', homeServerIds: ['home'],
         }),
             { storage: 'active', includeInactive: true, mountedHomeServerIds: ['home'] })[0]!.query);
-        const issue = (root = actionId) => mint(app, fixture, root, { ...fixture.envelope, requestId: crypto.randomUUID(),
-            input: { sessionId: { selector: 'followers', of: session.id } } });
+        const terminal = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const issue = (root = actionId, credential = terminal) => mint(app, fixture, root, { ...fixture.envelope, requestId: crypto.randomUUID(),
+            input: { sessionId: { selector: 'followers', of: session.id } } }, credential);
         try {
             const authorization = await issue();
             const verify = (method: string, path: string, body?: unknown, routeInput?: unknown,
@@ -5238,17 +5303,21 @@ describe("external Action execution authorization", () => {
             expect(await verify('GET', followersPath, undefined, { sourceSessionId: session.id }, scope)).not.toBeNull();
             const preview = await mint(app, fixture, 'session.targets.resolve', { ...fixture.envelope,
                 requestId: crypto.randomUUID(), input: { actionId: 'session.goal.get',
-                    target: { selector: 'workers', of: session.id } } });
+                    target: { selector: 'workers', of: session.id } } }, terminal);
             // Inspection prepares the same canonical selection under its own
             // signed read root; the described Action grants no effect authority.
             expect.soft(await verify('GET', '/v1/account/encryption/currentness', undefined, {}, undefined, preview)).not.toBeNull();
             expect.soft(await verify('POST', '/v2/sessions/query', query, query, undefined, preview)).not.toBeNull();
             expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {}, undefined,
                 preview, 'session.goal.get')).toBeNull();
+            // APPROVAL-STALE-TESTS-1112 / 6324db8cb34: terminal inspection cannot spend unrestricted-PAT Account rights.
             expect(await verify('GET', '/v2/account/settings', undefined, {}, undefined, preview)).toBeNull();
+            const unrestricted = await issue(actionId, fixture.pat.token);
+            expect(await verify('GET', '/v2/account/settings', undefined, {}, undefined, unrestricted)).not.toBeNull();
+            expect(await verify('GET', '/v2/account/settings')).toBeNull();
             const goalSelection = await mint(app, fixture, 'session.goal.set', { ...fixture.envelope,
                 requestId: crypto.randomUUID(), input: { objective: 'Selected child goal',
-                    sessionId: { selector: 'self', of: session.id } } });
+                    sessionId: { selector: 'self', of: session.id } } }, terminal);
             const detailPath = `/v2/sessions/${session.id}`;
             const detailProof = (path: string, root = goalSelection, targetSessionId = session.id) => ({
                 authorizationToken: root.token, effectActionId: root.binding.actionId,
@@ -5307,7 +5376,6 @@ describe("external Action execution authorization", () => {
                 ['POST', '/v1/account/project-rows/list', { kinds: ['workspace-ref'], extra: true }, undefined],
                 ['POST', '/v1/account/project-rows/read?extra=true', { key: { kind: 'workspace-ref', serverId: 'home', id: 'checkout' } }, undefined],
                 ['GET', `${assignmentsPath}&includeAllTagAssignments=true`, undefined, { ...assignmentsInput, includeAllTagAssignments: true }],
-                ['GET', '/v2/account/settings', undefined, {}],
             ] as const) expect(await verify(method, path, body, routeInput), path).toBeNull();
             expect(await verify('GET', censusPath, undefined, {}, undefined, authorization, 'follow.list')).toBeNull();
             expect(await verify('GET', censusPath, undefined, {}, undefined, authorization, actionId,
@@ -5317,7 +5385,8 @@ describe("external Action execution authorization", () => {
             await db.accountApiToken.update({ where: { id: fixture.pat.tokenId }, data: { accessGrant: {
                 ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] },
             } } });
-            const actionRestricted = await issue();
+            const actionRestricted = await issue(actionId, fixture.pat.token);
+            expect(await verify('GET', '/v2/account/settings', undefined, {}, undefined, actionRestricted)).toBeNull();
             const privateDenied = await app.inject({ method: 'GET', url: censusPath, headers: machineHeaders({
                 authorizationToken: actionRestricted.token, effectActionId: actionId, method: 'GET', path: censusPath,
                 body: undefined, privateKey: fixture.keyPair.secretKey }) });
@@ -5336,7 +5405,7 @@ describe("external Action execution authorization", () => {
                 ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId, 'session.goal.set'] },
                 targets: { sessions: [session.id], machines: [fixture.machine.id] },
             } } });
-            const restricted = await issue();
+            const restricted = await issue(actionId, fixture.pat.token);
             for (const [method, path, body, routeInput] of [
                 ['POST', '/v2/sessions/query', query, query], ['GET', censusPath, undefined, {}],
                 ['GET', participantsPath, undefined, { discussionId: 'discussion-1' }],
@@ -5434,7 +5503,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('admits only requester Account currentness for an origin-free signed transcript read', async () => {
+    it.each(['api_token', 'restricted_api_token', 'terminal'] as const)('preserves own Account settings credential rights for an origin-free signed transcript read (%s)', async authentication => {
         const fixture = await createFixture({ qualifiedPat: false });
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
             encryptionMode: 'plain', metadata: '{}' } });
@@ -5443,8 +5512,15 @@ describe("external Action execution authorization", () => {
             encryptionMode: 'plain', metadata: '{}' } });
         const { app } = await createApp(fixture.team.id);
         const actionId = 'session.transcript.get';
+        if (authentication === 'restricted_api_token') await db.accountApiToken.update({
+            where: { id: fixture.pat.tokenId },
+            data: { accessGrant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] } } },
+        });
+        const credential = authentication === 'terminal'
+            ? await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' })
+            : fixture.pat.token;
         try {
-            const root = await mint(app, fixture, actionId, { ...fixture.envelope, input: { sessionId: session.id } });
+            const root = await mint(app, fixture, actionId, { ...fixture.envelope, input: { sessionId: session.id } }, credential);
             expect(root.binding.target).toEqual({ kind: 'machine', machineId: fixture.machine.id });
             expect(root.binding.sessionActionOrigin).toBeUndefined();
             const request = (path: string, overrides: Partial<Parameters<typeof machineHeaders>[0]> = {}) =>
@@ -5457,8 +5533,9 @@ describe("external Action execution authorization", () => {
             expect(currentness.json()).toMatchObject({ mode: 'plain' });
             const transcriptPath = `/v1/sessions/${session.id}/messages`;
             expect((await request(transcriptPath)).statusCode).toBe(200);
-            for (const path of ['/v2/account/settings', '/v1/account/encryption',
-                `${currentnessPath}?accountId=${other.account.id}`]) {
+            // APPROVAL-STALE-TESTS-1112 / 6324db8cb34: only the unrestricted PAT retains own-settings access.
+            expect((await request('/v2/account/settings')).statusCode).toBe(authentication === 'api_token' ? 200 : 401);
+            for (const path of authentication === 'api_token' ? [] : ['/v1/account/encryption', `${currentnessPath}?accountId=${other.account.id}`]) {
                 expect((await request(path)).statusCode, path).toBe(401);
             }
             const foreignTranscript = await request(`/v1/sessions/${otherSession.id}/messages`);
@@ -5485,9 +5562,10 @@ describe("external Action execution authorization", () => {
             const contributed = await mint(app, fixture, 'action.invoke', { ...fixture.envelope,
                 requestId: crypto.randomUUID(), input: { action: { pluginId: 'example.session-targets', localId: 'inspect' },
                     input: { sessionId: { selector: 'workers', of: session.id } } } });
+            const terminal = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
             const preview = await mint(app, fixture, 'session.targets.resolve', { ...fixture.envelope,
                 requestId: crypto.randomUUID(), input: { actionId: 'example.session-targets/actions/inspect',
-                    target: { selector: 'workers', of: session.id } } });
+                    target: { selector: 'workers', of: session.id } } }, terminal);
             for (const root of [contributed, preview]) {
                 const verify = (method: string, path: string, body?: unknown, routeInput?: unknown,
                     sessionRouteTarget?: { kind: 'session'; sessionId: string; actionId: 'session.transcript.get' },
@@ -5503,7 +5581,10 @@ describe("external Action execution authorization", () => {
                 expect(await verify('POST', '/v2/sessions/query', query, query)).not.toBeNull();
                 expect(await verify('GET', `/v2/sessions/${session.id}`, undefined, { sessionId: session.id }, scope)).not.toBeNull();
                 expect(await verify('GET', '/v1/account/encryption/currentness', undefined, {}, undefined, 'session.status.get')).toBeNull();
-                expect(await verify('GET', '/v2/account/settings', undefined, {})).toBeNull();
+                // APPROVAL-STALE-TESTS-1112 / 6324db8cb34: only the contributed unrestricted PAT retains own-settings rights.
+                const settings = await verify('GET', '/v2/account/settings', undefined, {});
+                if (root === contributed) expect(settings).not.toBeNull();
+                else expect(settings).toBeNull();
                 const transcript = await verify('GET', `/v1/sessions/${session.id}/messages`, undefined, { sessionId: session.id }, scope);
                 if (root === contributed) expect(transcript).not.toBeNull();
                 else expect(transcript).toBeNull();
@@ -6343,12 +6424,12 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it('admits Project organization label writes through the original requester row HTTP purpose', async () => {
+    it.each(['account', 'terminal'] as const)('admits Project organization label writes through the original requester row HTTP purpose (%s)', async kind => {
         const fixture = await createFixture({ qualifiedPat: false });
-        // Paired terminal credentials originate selected-Machine `actions invoke`.
-        // Account UI intents execute their local Account owner, not this signed root.
-        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-        const accountToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        // O-DEPLOY ruling, BOARD.md 2026-11-12 07:47 UTC: the owner's Account credential may mint this root.
+        // docs/compatibility.md:4020: organization label writes target only that person's existing Project row.
+        const token = await auth.createToken(fixture.account.id, undefined,
+            kind === 'account' ? { kind, authority: 'present_user' } : { kind, authority: 'account_automation' });
         const { app } = await createApp(fixture.team.id);
         try {
             const homeId = await getOrCreateServerIdentityId();
@@ -6358,9 +6439,13 @@ describe("external Action execution authorization", () => {
                 target: { kind: 'machine', machineId: fixture.machine.id }, input: {
                     projectRef: { serverId: homeId, projectKey: key.projectKey }, expectedRevision: 'absent', label: 'Project title',
                 } });
-            const unboundAccount = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
-                headers: { authorization: `Bearer ${accountToken}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
-            expect(unboundAccount.statusCode).toBe(401);
+            await db.accountApiToken.update({ where: { id: fixture.pat.tokenId }, data: { accessGrant: {
+                ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['projects.trust.list'] },
+            } } });
+            const withoutProjectWrite = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${fixture.pat.token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
+            expect(withoutProjectWrite.statusCode).toBe(403);
+            expect(withoutProjectWrite.json()).toMatchObject({ error: 'credential_scope_denied' });
             const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
             expect(minted.statusCode, minted.body).toBe(200);
@@ -7970,9 +8055,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it.each(['grant', 'installation', 'epoch', 'publisher-during-eligibility'] as const)('refuses a Project mutation after final awaited %s loss', async loss => {
-        const envBefore = snapshotEnv();
-        let restoreFetch: (() => void) | undefined;
+    it.each(['grant', 'installation', 'epoch', 'publisher'] as const)('refuses fresh Project admission or mutation after %s loss before the next request', async loss => {
         const fixture = await createFixture({ qualifiedPat: false });
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const destinationKey = tweetnacl.sign.keyPair();
@@ -7991,20 +8074,11 @@ describe("external Action execution authorization", () => {
         expect((await presence.registerPublisher({ socket: publisher,
             binding: { accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id },
             completeActivitySnapshot: { state: 'active', activeCount: 1 } })).status).toBe('registered');
-        let discoveryReads = 0;
-        let retireOnFinalRead = false;
         let publisherVisible = true;
-        let eligibilityRead = false;
         // Socket discovery alone is external; source binding and destination admission use real SQLite owners.
-        const io = { in: (room: string) => ({ fetchSockets: async () => {
-            if (retireOnFinalRead && ++discoveryReads === 2 && loss !== 'publisher-during-eligibility') {
-                if (loss === 'grant') await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
-                    machineId: destination.id, principal: { kind: 'account', accountId: fixture.account.id } }));
-                else if (loss === 'epoch') await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
-                else await db.machine.update({ where: { id: destination.id }, data: { installationId: 'replacement-installation' } });
-            }
-            return publisherVisible && room === getAccountSessionSocketRoom(fixture.account.id, session.id) ? [publisher] : [];
-        } }) } as unknown as Server;
+        const io = { in: (room: string) => ({ fetchSockets: async () =>
+            publisherVisible && room === getAccountSessionSocketRoom(fixture.account.id, session.id) ? [publisher] : [],
+        }) } as unknown as Server;
         const resolvePublisher = (input: Readonly<{ accountId: string; sessionId: string }>) => resolveCurrentSessionMachineFromServer({ io, presence, ...input });
         const { app } = await createApp(fixture.team.id, false, resolvePublisher);
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -8032,40 +8106,31 @@ describe("external Action execution authorization", () => {
             const path = '/v1/account/project-rows/mutate';
             const body = { mutations: [{ key, expectedRevision: 'absent', content: { t: 'plain', v: { key, value: { pinned: true } } } }],
                 expectedRefs: [], topologyChange: false };
-            if (loss === 'publisher-during-eligibility') {
-                await db.accountIdentity.create({ data: { accountId: fixture.account.id, provider: 'github',
-                    providerUserId: 'project-requester', providerLogin: 'project-requester', profile: {},
-                    token: encryptString(['user', fixture.account.id, 'github', 'token'], 'github-oauth-boundary-token') } });
-                applyEnvValues({ AUTH_REQUIRED_LOGIN_PROVIDERS: 'github', AUTH_GITHUB_ALLOWED_USERS: '',
-                    AUTH_GITHUB_ALLOWED_ORGS: 'requester-projects', AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE: 'oauth_user_token',
-                    AUTH_OFFBOARDING_ENABLED: 'false' });
-                // Only GitHub's actual HTTP boundary is replaced. The real eligibility
-                // owner remains eligible while the live source publisher retires.
-                const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
-                    expect(String(url)).toBe('https://api.github.com/orgs/requester-projects/members/project-requester');
-                    eligibilityRead = true;
-                    publisherVisible = false;
-                    return new Response(null, { status: 204 });
-                });
-                restoreFetch = () => fetchSpy.mockRestore();
+            // OWNER-RULINGS.md:17 (2026-10-29): withdraw before the next request,
+            // never force a second source/eligibility read during an admitted mutation.
+            if (loss === 'grant') await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: destination.id, principal: { kind: 'account', accountId: fixture.account.id } }));
+            else if (loss === 'installation') await db.machine.update({ where: { id: destination.id },
+                data: { installationId: 'replacement-installation' } });
+            else if (loss === 'epoch') await db.account.update({ where: { id: fixture.account.id },
+                data: { tokenEpoch: { increment: 1 } } });
+            else publisherVisible = false;
+            if (loss === 'grant') {
+                const denied = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: destination.id, envelope,
+                        sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+                expect(denied.statusCode, denied.body).toBe(409);
+                expect(denied.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
+            } else {
+                const response = await app.inject({ method: 'POST', url: path, headers: machineHeaders({ authorizationToken: authorization.token,
+                    effectActionId: actionId, method: 'POST', path, body, privateKey: destinationKey.secretKey }), payload: body });
+                expect(response.statusCode, response.body).toBe(401);
             }
-            retireOnFinalRead = true;
-            const response = await app.inject({ method: 'POST', url: path, headers: machineHeaders({ authorizationToken: authorization.token,
-                effectActionId: actionId, method: 'POST', path, body, privateKey: destinationKey.secretKey }), payload: body });
-            if (loss === 'publisher-during-eligibility') {
-                expect(eligibilityRead).toBe(true);
-                expect(publisherVisible).toBe(false);
-                expect((await db.account.findUniqueOrThrow({ where: { id: fixture.account.id } })).tokenEpoch).toBe(fixture.account.tokenEpoch);
-                expect((await db.machine.findUniqueOrThrow({ where: { id: destination.id } })).installationId).toBe(destination.installationId);
-                expect(await db.accessKey.findUnique({ where: { accountId_machineId_sessionId: {
-                    accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id } } })).not.toBeNull();
-            } else expect(discoveryReads).toBe(2);
-            expect(response.statusCode, response.body).toBe(401);
             expect(await resolvePublisher({ accountId: fixture.account.id, sessionId: session.id }))
-                .toBe(loss === 'publisher-during-eligibility' ? null : fixture.machine.id);
+                .toBe(loss === 'publisher' ? null : fixture.machine.id);
             expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: fixture.account.id,
                 key: buildProjectAccountRowPhysicalKeyV1(key) } } })).toBeNull();
-        } finally { restoreFetch?.(); restoreEnv(envBefore); await app.close(); }
+        } finally { await app.close(); }
     });
 
     it.each(['full', 'scoped'] as const)('verifies the genuine %s original SOURCE root under the physical writer installation proof before effects', async scope => {
@@ -8431,13 +8496,13 @@ describe("external Action execution authorization", () => {
                         payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
                 };
                 const discovered = await discover();
-                expect(discovered.statusCode, discovered.body).toBe(phase === 'inspect' ? 200 : 403);
-                if (phase === 'inspect') {
-                    expect(discovered.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: parent.id,
-                        installationId: parent.installationId, installationPublicKey: encodeProtocolBase64(parentKey.publicKey, 'base64url') } });
-                    expect((await discover(writer, strangerKey.secretKey)).statusCode).toBe(403);
-                    expect((await discover(stranger, strangerKey.secretKey)).statusCode).toBe(403);
-                }
+                // OWNER-RULINGS.md:17: admitted cleanup survives withdrawal. Discovery returns only
+                // the same destination installation's public identity in inspect and release phases.
+                expect(discovered.statusCode, discovered.body).toBe(200);
+                expect(discovered.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: parent.id,
+                    installationId: parent.installationId, installationPublicKey: encodeProtocolBase64(parentKey.publicKey, 'base64url') } });
+                expect((await discover(writer, strangerKey.secretKey)).statusCode).toBe(403);
+                expect((await discover(stranger, strangerKey.secretKey)).statusCode).toBe(403);
                 const rpcAdmission = { context: transportAdmission, method, workspaceSyncSourceWriterTargetRouting: routing };
                 const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: parent.id,
                     installationId: retainedTarget.parentInstallationId, accountId: targetCustodian.id, rpcAdmission });
@@ -9299,10 +9364,13 @@ describe("external Action execution authorization", () => {
             expect((await verify()).statusCode).toBe(200);
             await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
                 principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
-            expect((await verify()).statusCode).toBe(401);
+            // OWNER-RULINGS.md:17 (2026-10-29), 4c6138dc498: keep admitted work;
+            // the fresh issue below is the next Manage admission boundary.
+            expect((await verify()).statusCode).toBe(200);
             const denied = await issue();
-            expect(denied.statusCode, denied.body).toBe(409);
-            expect(denied.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable' });
+            expect(denied.statusCode, denied.body).toBe(403);
+            expect(denied.json()).toMatchObject({ error: 'credential_scope_denied',
+                failureCause: { errorCode: 'machine_manage_required' } });
         } finally { await app.close(); }
     });
 
@@ -10320,15 +10388,16 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it.each(['projects.open', 'machines.managed.acquire'] as const)('verifies and relays the original Session source proof to a different admitted Machine for %s', async actionId => {
+    it.each(['projects.open', 'machines.managed.acquire', 'projects.inspect'] as const)('verifies and relays the original Session source proof to a different admitted Machine for %s', async actionId => {
         const fixture = await createFixture({ qualifiedPat: false });
-        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const custodian = actionId === 'projects.inspect' ? fixture.account
+            : await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const destinationKeys = tweetnacl.sign.keyPair();
         const destination = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
             metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey, active: true,
             ...machineOperationSupportForTest(),
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(destinationKeys.publicKey) } });
-        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: destination.id,
+        if (custodian.id !== fixture.account.id) await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: destination.id,
             principal: { kind: 'account', accountId: fixture.account.id }, level: actionId === 'machines.managed.acquire' ? 'admin' : 'view' }));
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
             metadata: '{}', encryptionMode: 'plain' } });
@@ -10344,7 +10413,8 @@ describe("external Action execution authorization", () => {
         const target = { id: 'destination-socket', data: { clientType: 'machine-scoped', machineId: destination.id,
             verifiedMachineInstallationId: destination.installationId }, timeout: () => ({ emitWithAck: effect }) };
         qualifyCurrentAccountStoredContentSocket(target);
-        const method = `${destination.id}:${actionId === 'projects.open' ? RPC_METHODS.PROJECTS_OPEN : actionId}`;
+        const method = `${destination.id}:${actionId === 'projects.open' ? RPC_METHODS.PROJECTS_OPEN
+            : actionId === 'projects.inspect' ? getActionSpec(actionId).bindings!.rpcMethod! : actionId}`;
         // Only Socket.IO discovery/delivery are simulated; signing, Home auth, source/publisher and C41 are real.
         const io = createSocketRoomDiscoveryHarness(async room => {
             if (room === getAccountSessionSocketRoom(fixture.account.id, session.id)) {
@@ -10363,6 +10433,8 @@ describe("external Action execution authorization", () => {
         const params = actionId === 'projects.open'
             ? { serverId: homeId, machineId: destination.id, source: { kind: 'folder', path: '/workspace/project' },
                 materialization: { kind: 'attach' } }
+            : actionId === 'projects.inspect' ? { workspace: { serverId: homeId, workspaceId: 'accepted-checkout',
+                machineId: destination.id, rootPath: '/workspace/project' } }
             : { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off', homeId,
                 controller: { machineId: destination.id, installationId: destination.installationId! },
                 launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1,
@@ -11185,7 +11257,17 @@ describe("external Action execution authorization", () => {
             expect((await post('/v1/machines/managed/controller/submit', correlation)).statusCode).toBe(401);
             expect((await post('/v1/machines/managed/controller/report', { ...correlation, result: { kind: 'rejected', code: 'provider_unavailable' } })).statusCode).toBe(401);
             await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
-            expect((await post('/v1/machines/managed/controller/report', { ...correlation, result: { kind: 'pending', nativeOperationRef } })).statusCode).toBe(401);
+            // OWNER-RULINGS.md:17 (2026-10-29), 25b8992449c: a paid allocation's
+            // admitted completion stays tracked after revocation; new acquisition is refused.
+            const retained = await post('/v1/machines/managed/controller/report', { ...correlation,
+                result: { kind: 'pending', nativeOperationRef } });
+            expect(retained.statusCode, retained.body).toBe(200);
+            expect(retained.json()).toMatchObject({ machine: { allocation: 'may-exist', nativeOperationRef,
+                desired: 'delete', cleanup: { disposition: 'pending' } } });
+            const denied = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                    envelope, sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+            expect(denied.statusCode, denied.body).toBe(401);
         } finally { await app.close(); }
     });
 
@@ -12376,12 +12458,14 @@ describe("external Action execution authorization", () => {
                 expect((await read('/v1/account/encryption/currentness')).statusCode,
                     `${actionId} Account mode preparation`).toBe(200);
                 expect((await read('/v2/account/settings')).statusCode,
-                    `${actionId} unrelated private Account read`).toBe(401);
+                    // APPROVAL-STALE-TESTS-1112 / 6324db8cb34: terminal roots do not inherit unrestricted-PAT rights.
+                    `${actionId} own Account settings`).toBe(authentication === 'api_token' ? 200 : 401);
                 expect((await read(`/v1/sessions/${session.id}/messages?limit=1&scope=main&roles=user%2Cagent`)).statusCode,
                     `${actionId} transcript preparation`).toBe(200);
                 expect((await read(`/v2/sessions/${foreignSession.id}`)).statusCode,
                     `${actionId} foreign resource`).toBe(404);
-                expect((await read('/v2/sessions?limit=10')).statusCode,
+                // The unrestricted PAT has ordinary Account route rights; purpose ceilings apply to terminal roots.
+                if (authentication === 'terminal') expect((await read('/v2/sessions?limit=10')).statusCode,
                     `${actionId} unrequested inventory`).toBe(401);
                 expect((await read(`/v2/sessions/${session.id}`, 'session.transcript.get')).statusCode,
                     `${actionId} substituted effect`).toBe(401);
@@ -12435,7 +12519,7 @@ describe("external Action execution authorization", () => {
                 }
                 const path = `/v2/sessions/${session.id}/archive`;
                 const body = SessionArchiveHttpBodyV1Schema.parse({});
-                expect((await app.inject({ method: 'POST', url: path, payload: body,
+                if (authentication === 'terminal') expect((await app.inject({ method: 'POST', url: path, payload: body,
                     headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                         method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) })).statusCode,
                     `${actionId} unrelated mutation`).toBe(401);
@@ -13162,7 +13246,7 @@ describe("external Action execution authorization", () => {
                 });
                 expect(await decide()).toMatchObject({ ok: true });
                 const executed = ApprovalRequestV2Schema.parse(await artifacts.approvalsGet({ artifactId, serverId }));
-                expect(executed.execution?.ok, executed.execution?.errorCode).toBe(true);
+                expect(executed.execution?.ok, JSON.stringify(executed.execution)).toBe(true);
                 expect(executed.status).toBe('executed');
                 const storedRun = await db.automationRun.findUnique({ where: { id: runId } });
                 expect(storedRun?.accountId).toBe(fixture.account.id);
@@ -13171,7 +13255,8 @@ describe("external Action execution authorization", () => {
                 expect(executionAttempts).toBe(1);
                 expect(await db.automationRun.count({ where: { id: runId } })).toBe(1);
                 await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
-                expect(await current({ origin: request.executionOriginV1, request })).toBe(false);
+                // 0a84ccdfc6b preserves Home's typed refusal across requester reads.
+                await expect(current({ origin: request.executionOriginV1, request })).rejects.toMatchObject({ code: 'invalid_token' });
                 await expect(storage.execute({ operation: 'get', runId }, { publisherMachineId: machineId }))
                     .rejects.toMatchObject({ response: { status: 401 } });
             });
@@ -13750,7 +13835,8 @@ describe("external Action execution authorization", () => {
             await db.accountApiToken.update({ where: { id: fixture.pat.tokenId }, data: {
                 accessGrant: { ...API_TOKEN_FULL_GRANT_V1, approve: true },
             } });
-            const authorization = await mint(app, fixture, 'approval.request.decide');
+            const authorization = await mint(app, fixture, 'approval.request.decide', { ...fixture.envelope,
+                input: { artifactId: 'request', decision: 'approve' } });
             const method = 'S1:permission';
             const requestId = crypto.randomUUID();
             const params = { id: 'request', approved: true };

@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { expect, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -340,7 +341,10 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   let changeRequesterRowsBeforePreparation: (() => void) | undefined;
   let originalMoveIngress: ((request: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) => Promise<unknown>) | undefined;
   const homeRequest = (method: 'GET' | 'POST', path: string, body: unknown, headers: unknown) => {
-    if (!home || !headers || typeof headers !== 'object' || !Object.hasOwn(headers, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER)) return null;
+    if (!home || !headers || typeof headers !== 'object') return null;
+    // projectAccountRows spends the sealed own-UI Account credential for its exact-row read.
+    const ownAccountRowRead = path === '/v1/account/project-rows/read' && Reflect.get(headers, 'Authorization') === `Bearer ${home.token}`;
+    if (!Object.hasOwn(headers, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER) && !ownAccountRowRead) return null;
     return home.request({ method, path, ...(body === undefined ? {} : { body }), headers: Object.fromEntries(
       Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) });
   };
@@ -1760,7 +1764,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     },
     async run(input: unknown, surface: 'ui' | 'cli', proposalAtIssuer: boolean | 'unsigned-ui' = false,
       authority: 'present_user' | 'account_automation' = 'account_automation', requestedActionId: ActionId = actionId,
-      requestId = 'original-request', signal?: AbortSignal): Promise<ActionExecuteResult> {
+      requestId = 'original-request', signal?: AbortSignal, reviewDigest?: string): Promise<ActionExecuteResult> {
       const authentication = { kind: surface === 'cli' ? 'terminal' as const : 'account' as const, tokenEpoch: 1 };
       const idempotencyKey = projectExternalActionRunNowIdempotencyKeyV1(requestedActionId, input);
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId, target, input,
@@ -1778,10 +1782,14 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         admittedMachineRole: cliPolicy?.machineRole ?? 'manage', authentication, accountEncryptionMode: 'plain' as const, serverIdentityId: homeId, machineId: target.machineId,
         installationId: installation.installationId, actionId: requestedActionId, requestId: envelope.requestId, target,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
-      if (cliPolicy?.machineCustodianAccountId || actionId === 'account.apiTokens.create' && requestedActionId === 'approval.request.decide') {
+      if (reviewDigest || cliPolicy?.machineCustodianAccountId || actionId === 'account.apiTokens.create' && requestedActionId === 'approval.request.decide') {
         authorization = sealExternalActionRequesterAccountContextV1({ authorization,
           credentials: { ...encodeStoredCredentials(credentials), token: surface === 'cli' ? cliToken : uiToken },
-          invocation: { caller: { kind: 'host' }, surface, authority }, purpose: { kind: 'external_action' },
+          // UI externalActionAccountTransport seals its native confirmation for the receiving host.
+          invocation: { caller: { kind: 'host' }, surface, authority,
+            ...(reviewDigest ? { presentUserConfirmation: { actionId: requestedActionId, accountId: 'account', serverId: homeId,
+              requestId, inputDigest: computeActionInputApprovalDigestV1(requestedActionId, input), reviewDigest,
+              target } } : {}) }, purpose: { kind: 'external_action' },
           installationPublicKey: publicKey, randomBytes: tweetnacl.randomBytes });
       }
       expect(ExternalActionExecutionAuthorizationV1Schema.safeParse(authorization).success).toBe(true);
