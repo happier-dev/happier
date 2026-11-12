@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, rm } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
-import { writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
+import { ensureProtectedLocalStateFileParentDirectory, verifyProtectedLocalStatePath, writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
 
 function isCanonicalRelativeCredentialPath(path: string): boolean {
   return path.length > 0
@@ -26,12 +27,23 @@ function declaredNativeHomeFiles(input: Readonly<{ targetRoot: string; declaredS
   return paths;
 }
 
+export function fingerprintConnectedServiceNativeHomeCredential(contents: Uint8Array): string {
+  return createHash('sha256').update(contents).digest('hex');
+}
+
 /** Revocation removes declared secrets without discarding retained native history. */
 export async function removeConnectedServiceNativeHomeCredentials(input: Readonly<{
   targetRoot: string;
   declaredSecretEntries: readonly string[];
+  /** Withdrawal must prove the current file is still the one the owner published. */
+  expectedFileDigests?: Readonly<Record<string, string>>;
 }>): Promise<void> {
-  for (const path of declaredNativeHomeFiles(input).values()) await rm(path, { recursive: true, force: true });
+  const current = input.expectedFileDigests === undefined ? null : await readConnectedServiceNativeHomeCredentialFiles(input);
+  for (const [fileId, path] of declaredNativeHomeFiles(input)) {
+    if (current && (!current[fileId] || input.expectedFileDigests?.[fileId]
+      !== fingerprintConnectedServiceNativeHomeCredential(current[fileId]))) continue;
+    await rm(path, { recursive: true, force: true });
+  }
 }
 
 /** Snapshot only this prepared home's declared files; no source-home or arbitrary-path reads. */
@@ -79,9 +91,13 @@ export async function materializeConnectedServiceNativeHomeCredentials(input: Re
   targetRoot: string;
   declaredSecretEntries: readonly string[];
   files: Readonly<Record<string, Uint8Array>>;
+  /** Snapshot read after configuration preparation by the serialized home owner. */
+  existingFiles?: Readonly<Record<string, Uint8Array>>;
 }>): Promise<void> {
   const targetRoot = resolve(input.targetRoot);
   const declaredEntries = declaredNativeHomeFiles(input);
+  const existingFiles: Readonly<Record<string, Uint8Array>> = Object.keys(input.files).length === 0 ? {} : input.existingFiles
+    ?? await readConnectedServiceNativeHomeCredentialFiles(input);
 
   for (const [fileId, contents] of Object.entries(input.files)) {
     if (!declaredEntries.has(fileId) || !isCanonicalRelativeCredentialPath(fileId)) {
@@ -95,6 +111,16 @@ export async function materializeConnectedServiceNativeHomeCredentials(input: Re
       || isAbsolute(relativePath)
     ) {
       throw new Error('connected_service_native_home_credential_path_unsafe');
+    }
+    const existing = existingFiles[fileId];
+    if (existing && Buffer.from(existing).equals(contents)) {
+      try {
+        await ensureProtectedLocalStateFileParentDirectory(dirname(path));
+        await verifyProtectedLocalStatePath(path, 'file');
+        continue;
+      } catch {
+        // The existing writer repairs missing/private-mode drift and rejects unsafe identities.
+      }
     }
     await writeProtectedLocalStateFileAtomic(path, contents, { authority: 'owned' });
   }

@@ -37,7 +37,7 @@ import {
   applyConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceNativeHomeRoot,
 } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import { materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
+import { fingerprintConnectedServiceNativeHomeCredential, materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
 import type {
   ConnectedServiceResolvedSelection,
   ConnectedServiceMaterializedStateObservationBinding,
@@ -742,6 +742,9 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               ...(origin.teamId ? { teamId: origin.teamId } : {}),
               credentialPaths: Object.keys(materialization.files).filter(fileId =>
                 stateSharingDescriptor.authIsolation.secretEntries.includes(fileId)),
+              credentialFileDigests: Object.fromEntries(Object.entries(materialization.files)
+                .filter(([fileId]) => stateSharingDescriptor.authIsolation.secretEntries.includes(fileId))
+                .map(([fileId, contents]) => [fileId, fingerprintConnectedServiceNativeHomeCredential(contents)])),
             });
           }
           if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({

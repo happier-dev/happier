@@ -42,7 +42,8 @@ export async function reconcileTeamCredentialNativeHomeCredentials(input: Readon
           // corrupt projection, stale tuple or transport failure cannot prove withdrawal.
           const withdrawn = !resource || resource.readiness.kind === 'available' && !resource.mayReceiveDirect;
           if (!withdrawn) { retained.push(delivery); continue; }
-          await removeConnectedServiceNativeHomeCredentials({ targetRoot: home, declaredSecretEntries: delivery.credentialPaths });
+          await removeConnectedServiceNativeHomeCredentials({ targetRoot: home, declaredSecretEntries: delivery.credentialPaths,
+            expectedFileDigests: delivery.credentialFileDigests ?? {} });
         }
         if (retained.length !== manifest.teamCredentialDeliveries.length) {
           await writeConnectedServiceStateSharingManifest(home, { ...manifest, teamCredentialDeliveries: retained }, undefined, manifest);

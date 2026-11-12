@@ -1,8 +1,15 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as filesystem from 'node:fs/promises';
+
+// Count actual filesystem publication; credential logic and protection remain real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 import { ensurePrivateConnectedServiceMaterializedRoot } from '../materialize/privateMaterializedRoot';
 import { materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from './materializeConnectedServiceNativeHomeCredentials';
@@ -22,6 +29,30 @@ async function createRoot(): Promise<string> {
 }
 
 describe('materializeConnectedServiceNativeHomeCredentials', () => {
+  it('publishes no unchanged credential bytes and still repairs changed, missing and unprotected files', async () => {
+    const targetRoot = await createRoot();
+    await ensurePrivateConnectedServiceMaterializedRoot(targetRoot);
+    const credential = join(targetRoot, 'auth.json');
+    const publish = async (value: number) => await materializeConnectedServiceNativeHomeCredentials({
+      targetRoot, declaredSecretEntries: ['auth.json'], files: { 'auth.json': new Uint8Array([0, 255, value]) },
+    });
+    await publish(1);
+    vi.mocked(filesystem.rename).mockClear();
+    await publish(1);
+    expect(filesystem.rename).toHaveBeenCalledTimes(0);
+    await publish(2);
+    expect(filesystem.rename).toHaveBeenCalledTimes(1);
+    expect(await readFile(credential)).toEqual(Buffer.from([0, 255, 2]));
+    await rm(credential);
+    await publish(2);
+    expect(filesystem.rename).toHaveBeenCalledTimes(2);
+    if (process.platform !== 'win32') {
+      await chmod(credential, 0o644);
+      await publish(2);
+      expect((await lstat(credential)).mode & 0o777).toBe(0o600);
+    }
+  });
+
   it('snapshots only declared existing files as opaque bytes and refuses redirected reads', async () => {
     const root = await createRoot();
     const targetRoot = join(root, 'account-home');

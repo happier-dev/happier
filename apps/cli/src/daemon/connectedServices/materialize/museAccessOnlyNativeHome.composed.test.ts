@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -99,6 +100,7 @@ describe('Muse access-only native home', () => {
       } } });
       expect((await readConnectedServiceStateSharingManifest(targetHome)).teamCredentialDeliveries).toEqual([{
         teamId: 'member-team', resourceId: 'member-share', credentialPaths: ['muse/auth.json'],
+        credentialFileDigests: { 'muse/auth.json': createHash('sha256').update(await readFile(join(targetHome, 'muse/auth.json'))).digest('hex') },
       }]);
       expect(auth.providers.meta).not.toHaveProperty('api_key');
       expect(auth.providers.meta).not.toHaveProperty('refresh_token');
