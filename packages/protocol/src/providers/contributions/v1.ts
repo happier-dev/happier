@@ -165,7 +165,10 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
     /** Exact installed source that owns this service's account-aware model catalog. */
     catalogObservation: z.optional(z.union([
       z.strictObject({ provider: asProtocolZod(PluginContributionIdentityV1Schema) }),
-      z.strictObject({ agent: asProtocolZod(PluginContributionIdentityV1Schema) }),
+      z.strictObject({ agent: asProtocolZod(PluginContributionIdentityV1Schema),
+        /** Exact native selector namespace removed before Provider catalog use. */
+        modelIdPrefix: z.optional(ProviderModelIdSchema),
+      }),
     ])),
   })).check(z.superRefine((declarations, context) => {
     const checked = ConnectedAccountPurposeDeclarationsV1Schema.safeParse(

@@ -1692,8 +1692,13 @@ In unreleased 0.3 development, a managed connected-account purpose may declare
 `catalogObservation` with an exact qualified `provider` or `agent` contribution
 reference. A Provider source uses the shared account-aware catalog observation
 owner and the purpose's declared request-auth use; a native Agent source uses
-that Agent's existing model capability. Browsing a service needs no Agent when
-it declares a Provider source. Provider-source current-only reads use metadata and cached
+that Agent's existing model capability. A native observation may declare
+`modelIdPrefix` when its Agent selectors include a namespace absent from the
+Provider API. The source observation decoder retains that namespace's rows and
+removes the exact prefix once, before catalog publication and Agent binding.
+For example, Muse's `meta/muse-spark-1.3-contributor` becomes the gateway model
+`muse-spark-1.3-contributor`; Team and direct delivery consume the same source
+descriptor. Browsing a service needs no Agent when it declares a Provider source. Provider-source current-only reads use metadata and cached
 observations without credential acquisition. A successful observed empty catalog
 stays empty; only an absent dynamic observation uses the purpose's static models.
 

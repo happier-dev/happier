@@ -1,4 +1,11 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import OpenAI from 'openai';
+import { openExactSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
+import { PROVIDER_BROKER_ENDPOINT_PATH_HEADER } from '@/providers/broker/providerBrokerPrivateProtocol';
 import type { ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import { resolveTeamCredentialModelCompatibility } from '@/providers/broker/teamCredentialModelCompatibility';
@@ -50,7 +57,9 @@ it('reads custodian Muse models for a Team member without impersonating requeste
       v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': { source: 'connected', profileId: 'custodian-muse' } },
     } } });
     return nativeAvailable ? { ok: true, result: { agentId: 'muse', source: 'dynamic', supportsFreeform: false,
-      availableModels: [{ id: 'muse-spark-1.3-contributor', name: 'Muse Spark' }] } }
+      availableModels: [{ id: 'default', name: 'Default' },
+        { id: 'other/foreign-model', name: 'Other source' },
+        { id: 'meta/muse-spark-1.3-contributor', name: 'Muse Spark' }] } }
       : { ok: false, error: { code: 'native_unavailable', message: 'Unavailable' } };
   } }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] }, buildContext: async () => ({ cliSnapshot: null }) });
   const registeredHostCapabilities = registerCapabilitiesHandlers(rpc);
@@ -88,7 +97,7 @@ it('reads custodian Muse models for a Team member without impersonating requeste
     expect(result.catalogs.every(catalog => catalog.rows.length === 1
       && catalog.rows[0]?.descriptor.id === 'muse-spark-1.3-contributor' && catalog.rows[0]?.confidence === 'probe')).toBe(true);
     expect(nativeReads).toBe(1);
-    const catalog = result.catalogs[0]!;
+    const catalog = result.catalogs.find(candidate => candidate.application.protocol === 'openai-responses')!;
     await expect(resolveTeamCredentialModelCompatibility({ lease: fixture.lease, agentId: 'pi',
       model: { ...catalog.rows[0]!, application: { ...catalog.application, agentTargetKey: 'agent:happier.agent.pi/pi' },
         deliveryMode: 'brokered' },
@@ -119,6 +128,56 @@ it('reads custodian Muse models for a Team member without impersonating requeste
       readResource: async () => resource, readSourceModelCatalogs: services.readSourceModelCatalogs });
     expect(policy?.modelCatalog.models).toEqual([{ id: 'muse-spark-1.3-contributor', name: 'Muse Spark' }]);
     expect(nativeReads).toBe(2);
+    const receivedModels: unknown[] = [];
+    // The real worker binding discovers this tunnel endpoint and materializes
+    // Pi models.json; only Home admission and the upstream network are supplied.
+    const endpoint = createServer(async (request, response) => {
+      if (request.method === 'GET') {
+        response.writeHead(204, { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' });
+        response.end(); return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const model = body && typeof body === 'object' && 'model' in body ? body.model : undefined;
+      receivedModels.push(model);
+      response.writeHead(model === 'muse-spark-1.3-contributor' ? 200 : 422, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: 'response', object: 'response', output: [] }));
+    });
+    endpoint.listen(0, '127.0.0.1');
+    await once(endpoint, 'listening');
+    vi.stubEnv('PI_CODING_AGENT_DIR', join(fixture.happyHomeDir, 'member-pi-home'));
+    let opened: Awaited<ReturnType<typeof openExactSessionTeamCredentialProviderBinding>> | undefined;
+    try {
+      const address = endpoint.address();
+      if (!address || typeof address === 'string') throw new Error('Missing Team tunnel endpoint');
+      const model = catalog.rows[0]!;
+      if (!model.sourceFacts) throw new Error('Expected source endpoint facts');
+      opened = await openExactSessionTeamCredentialProviderBinding({
+        sessionId: authority.consumer.kind === 'session' ? authority.consumer.sessionId : '',
+        machineId: authority.initiator.machineId, agentId: 'pi', lease: fixture.lease,
+        selection: { resourceId: resource.id, brokerMachineId: machineId, expectedResourceRevision: resource.revision,
+          agentTargetKey: 'agent:happier.agent.pi/pi', modelId: model.descriptor.id, descriptor: model.descriptor,
+          sourceFacts: model.sourceFacts, application: authority.application, sourceRevision: catalog.sourceRevision },
+        materializationBaseDir: join(fixture.happyHomeDir, 'team-member-materialization'), signal: new AbortController().signal,
+        openBroker: async () => ({ ok: true, authority: { payload: authority,
+          signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } },
+          target: { custodianAccountId: 'owner-a', brokerMachineId: machineId, endpointId: 'b'.repeat(64),
+            endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
+        openTunnel: async () => ({ localPort: address.port, localCapability: 'c'.repeat(64), observedPath: 'relay',
+          retire: async () => undefined, close: async () => undefined }),
+      });
+      const materialization = opened.providerBinding.materialization;
+      if (materialization.kind !== 'configFile') throw new Error('Expected native Pi model materialization');
+      const nativeConfiguration: unknown = JSON.parse(await readFile(join(materialization.rootPath, 'models.json'), 'utf8'));
+      expect(nativeConfiguration).toMatchObject({ providers: { 'happier-provider': { models: [{ id: 'muse-spark-1.3-contributor' }] } } });
+      await new OpenAI({ apiKey: 'test', baseURL: opened.providerBinding.upstream.normalizedUrl, maxRetries: 0 })
+        .responses.create({ model: opened.providerBinding.model.id, input: 'member-first-turn' });
+      expect(receivedModels).toEqual(['muse-spark-1.3-contributor']);
+    } finally {
+      await opened?.cleanup(); vi.unstubAllEnvs(); endpoint.closeAllConnections();
+      await new Promise<void>((resolve, reject) => endpoint.close(error => error ? reject(error) : resolve()));
+    }
     // The installed capability registration exposes the same host-owned
     // service. A malformed native selection reaches its real decoder rather
     // than being mistaken for requester execution before decoding.

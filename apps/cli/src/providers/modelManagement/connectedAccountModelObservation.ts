@@ -78,9 +78,12 @@ export function createConnectedAccountModelObserver(input: Readonly<{
     const observation = parsed.data;
     if (observation.source !== 'dynamic') return { source: 'static', models: [], stale: false };
     const ids = new Set<string>();
-    const models = observation.availableModels.filter(model => model.id !== 'default').map(model => {
+    const models = observation.availableModels.filter(model => model.id !== 'default'
+      && (!declared.modelIdPrefix || model.id.startsWith(declared.modelIdPrefix))).map(model => {
       const descriptor = ProviderModelDescriptorV1Schema.parse(Object.fromEntries(
-        Object.entries(model).filter(([key]) => Object.hasOwn(ProviderModelDescriptorV1Schema.shape, key)),
+        Object.entries({ ...model,
+          id: declared.modelIdPrefix ? model.id.slice(declared.modelIdPrefix.length) : model.id,
+        }).filter(([key]) => Object.hasOwn(ProviderModelDescriptorV1Schema.shape, key)),
       ));
       if (ids.has(descriptor.id)) throw new TypeError('Duplicate observed source model id');
       ids.add(descriptor.id);

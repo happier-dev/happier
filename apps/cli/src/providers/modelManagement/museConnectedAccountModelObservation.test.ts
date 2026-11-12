@@ -31,7 +31,7 @@ it('observes native Muse models through its published managed account declaratio
         'happier.agent.muse/muse-account': { source: 'connected', profileId: account.accountId },
       } } });
       return { ok: true, result: { agentId: 'muse', source: 'dynamic', supportsFreeform: false,
-        availableModels: [{ id: 'observed', name: 'Observed' }] } };
+        availableModels: [{ id: 'meta/observed', name: 'Observed' }] } };
     } });
     const result = await readConnectedAccountModelCatalog({ registry, observeModels,
       resolveSelection: purposes.resolveBindingIntentSelection,
