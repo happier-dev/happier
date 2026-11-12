@@ -1,4 +1,16 @@
 import axios from 'axios';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { executeDeploymentAction } from '@happier-dev/protocol/actions/executor/deploymentAction';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { prepareProjectOpenReceiptPersistence } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
+import fastify from 'fastify';
+import { createPlatformFailureNoticeFixture } from './platformFailureNotices.testkit';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readDeploymentActionOperationRequestIdV1, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -77,7 +89,7 @@ describe('provider link preparation through the installed Action host', () => {
                 serverId: 'home', projectSourceId: existing.projectSourceId, environmentId: existing.id }, targetLinkId: link.id });
             else {
                 const error = comparison === 'partial' ? 'deployment_content_unavailable'
-                    : comparison === 'denied' ? 'artifact_read_unavailable'
+                    : comparison === 'denied' ? 'action_forbidden'
                         : comparison === 'mode-mismatch' ? 'artifact_account_mode_mismatch' : 'client_required';
                 expect(result).toMatchObject({ ok: false, errorCode: error });
                 expect(result).not.toHaveProperty('targetLinkId');
@@ -88,4 +100,116 @@ describe('provider link preparation through the installed Action host', () => {
         expect(requests.filter(path => path === '/v1/deployments/targets/list')).toHaveLength(comparison === 'partial' ? 2 : 4);
         expect(artifactWrites).not.toHaveBeenCalled();
     });
+});
+
+it('refuses a runtime create before native effect when the admitted operation owner is unavailable', async () => {
+    const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
+    // HTTP is the external boundary; no Home/native request may precede durable operation admission.
+    const http = vi.spyOn(axios, 'request').mockImplementation(async () => { throw new Error('Create escaped operation custody'); });
+    const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://link.test',
+        machineId: 'controller', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        acquirePluginRuntimeRegistryLease: async () => { throw new Error('Create escaped operation custody'); } });
+    const deps = createDaemonDeploymentActionDeps({ credentials, accountArtifacts: createCredentialedAccountArtifactStore(credentials),
+        serverId: 'home', serverHttpBaseUrl: 'https://link.test', machineId: 'controller', runtime,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const result = await deps.deploymentAction('deployments.targets.link', {
+        serverId: 'home', environmentId: 'environment', expectedRevision: 1, requestKey: 'create-once',
+        targetId: 'runtime', role: 'runtime', targetKind: 'platform', machines: [],
+        source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'runtime' } },
+        providerCreate: { resourceName: 'reviewed-name', providerAccountId: 'native-account', providerEnvironment: { kind: 'production' },
+            credentialRef: { service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' },
+            credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
+                consumer: { pluginId: 'example.deploy', localId: 'create' }, purpose: 'manage' }, target: { kind: 'account', account: {
+                    service: { pluginId: 'example.deploy', localId: 'service' }, accountId: 'credential' } } } },
+    }, {});
+    expect(result).toMatchObject({ ok: false, errorCode: 'source_unavailable' });
+    expect(http).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('retains a native create acknowledgment before a failed Home follow-up without repeating unknown creates (unknown=%s)', async unknown => {
+    const fixture = createPlatformFailureNoticeFixture(true, true);
+    const { credentials } = fixture.host;
+    const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } } as const;
+    const request = DeploymentTargetLinkCreateIntentInputV1Schema.parse({ serverId: 'home', environmentId: 'environment',
+        expectedRevision: 1, requestKey: 'create-once', targetId: 'platform', targetKind: 'example', role: 'runtime', machines: [], source,
+        providerCreate: { credentialRef: fixture.credentialPrincipal.target.account, credentialPrincipal: fixture.credentialPrincipal,
+            providerAccountId: 'native-owner', providerEnvironment: { kind: 'production' }, resourceName: 'reviewed-name' } });
+    const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
+        providerAccountId: 'native-owner', providerResourceId: 'returned-native-id', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'returned-name' } };
+    const timeline: string[] = [];
+    const directory = await mkdtemp(join(tmpdir(), 'native-link-custody-'));
+    const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),
+        keyPath: join(directory, 'key.json'), accountId: 'custodian', machineId: 'controller' });
+    let interruptedSnapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null | undefined;
+    const home = vi.spyOn(axios, 'request').mockImplementation(async () => {
+        timeline.push('home');
+        const retained = (await open()).retained;
+        expect(retained).toHaveLength(1);
+        expect(retained[0]).toMatchObject({ snapshot: { state: 'running', domainRef: {
+            kind: 'deploymentTargetLink', serverId: 'home', environmentId: request.environmentId,
+            requestKey: request.requestKey, purpose: 'create' }, result: {
+            ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } } });
+        const interrupted = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+            resolveAccountId: async () => 'owner', projectOpenReceiptPersistence: await open() });
+        expect(await interrupted.runActionOperation({ actionId: 'deployments.targets.link', input: request,
+            context: { ...context, actionRequestId: 'retry-after-coordinator-loss' },
+            execute: activeContext => executeDeploymentAction('deployments.targets.link', request, activeContext, deps),
+        })).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', effectAttempted: true });
+        interruptedSnapshot = interrupted.store.get({ accountId: 'owner', machineId: 'controller' }, 'native-create-operation');
+        timeline.push('durable-checkpoint');
+        throw new Error('Home unavailable');
+    });
+    const runtime = createOwnServerDeploymentRuntimeForHost({ ...fixture.host,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const deps = createDaemonDeploymentActionDeps({ ...fixture.host, accountArtifacts: createCredentialedAccountArtifactStore(credentials), runtime,
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+    const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.targets.link', input: request, context: {} });
+    if (!plan || 'ok' in plan) throw new Error('Expected reviewed native create plan');
+    const app = fastify();
+    // Native child execution is an HTTP boundary; declarations, reviewed-child policy and host flow stay real.
+    app.post('/child', async () => {
+        expect((await open()).retained[0]).toMatchObject({ snapshot: {
+            operationId: 'native-create-operation', requestId: readDeploymentActionOperationRequestIdV1('deployments.targets.link', request),
+            domainRef: { kind: 'deploymentTargetLink', requestKey: request.requestKey, purpose: 'create' } } });
+        timeline.push('native'); return unknown
+        ? { ok: false, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown' }
+        : { ok: true, result: provider }; });
+    const context: ActionExecutorContext = {
+        hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'deployments.targets.link', input: request, context: {}, plan,
+            async execute(input, _context, actionId) {
+                return ActionExecuteResultSchema.parse((await app.inject({ method: 'POST', url: '/child', payload: { actionId, input } })).json());
+            } }),
+    };
+    try {
+        const createOperations = async () => createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+            resolveAccountId: async () => 'owner', generateOperationId: () => 'native-create-operation',
+            projectOpenReceiptPersistence: await open() });
+        const operations = await createOperations();
+        const invoke = (owner: Awaited<ReturnType<typeof createOperations>>, actionRequestId: string) => owner.runActionOperation({
+            actionId: 'deployments.targets.link', input: request, context: { ...context, actionRequestId },
+            execute: activeContext => executeDeploymentAction('deployments.targets.link', request, activeContext, deps),
+        });
+        const result = await invoke(operations, 'first-transport');
+        expect(timeline.filter(step => step === 'native')).toHaveLength(1);
+        if (unknown) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+            expect((await open()).retained[0]?.snapshot.result).toBeUndefined();
+            expect(home).not.toHaveBeenCalled();
+        } else {
+            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_link_incomplete', details: {
+                recovery: { requestKey: request.requestKey, provisioned: true, provider },
+                failure: { error: expect.stringContaining('target_link.environment_read') } } });
+            expect(timeline).toContain('durable-checkpoint');
+            expect(interruptedSnapshot).toMatchObject({ state: 'failed',
+                error: { errorCode: 'action_outcome_unknown', effectAttempted: true },
+                result: { ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } });
+            expect((await open()).retained[0]?.snapshot).toMatchObject({ state: 'failed', result: {
+                ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } });
+        }
+        const restarted = await createOperations();
+        expect(await invoke(restarted, 'fresh-transport-after-restart')).toMatchObject({ ok: false,
+            errorCode: unknown ? 'action_outcome_unknown' : 'deployment_link_incomplete' });
+        expect(timeline.filter(step => step === 'native')).toHaveLength(1);
+    } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
 });

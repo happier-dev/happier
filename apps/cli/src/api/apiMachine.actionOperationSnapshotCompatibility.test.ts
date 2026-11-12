@@ -25,6 +25,31 @@ describe('Action operation snapshot producer compatibility', () => {
     } });
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['plain', 'e2ee'] as const)('publishes current TargetLink Environment identity through the existing %s Account push', async mode => {
+    const accountId = 'target-link-owner-' + mode;
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, updatedAt: 1 } });
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => accountId,
+      serverBaseUrl: 'https://target-link-home.example',
+      readCredentials: async () => ({ token, encryption: mode === 'plain' ? null : material }),
+      publishContent: content => { contents.push(content); } });
+    const snapshot: ActionOperationSnapshotV1 = { version: 1, operationId: 'link-operation', revision: 2,
+      actionId: 'deployments.targets.link', state: 'running', scope: { accountId, machineId: 'controller' },
+      title: 'Link target', createdAt: 1, startedAt: 2, cancellation: 'unsupported',
+      domainRef: { kind: 'deploymentTargetLink', serverId: 'home', environmentId: 'environment', requestKey: 'link-request', purpose: 'create' } };
+    await publisher(snapshot);
+    expect(contents).toHaveLength(1);
+    const content = contents[0]!;
+    const opened = content.t === 'plain' ? content.v : openAccountScopedBlobCiphertext({
+      kind: 'action_operation_snapshot', material, ciphertext: content.c,
+    })?.value;
+    expect(ActionOperationSnapshotV1Schema.parse(opened)).toEqual(snapshot);
+    // The older client drops this new domain while ordinary Actions retain V1 projection.
+    expect(PredecessorSnapshotSchema.safeParse(opened).success).toBe(false);
+  });
   it.each(['plain', 'e2ee'] as const)('publishes full terminal setup success through ordinary and acknowledged %s pushes', async mode => {
     const accountId = 'setup-terminal-owner';
     const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;

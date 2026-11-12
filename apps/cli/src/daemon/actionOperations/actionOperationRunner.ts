@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createPendingSessionBirth } from './pendingSessionBirth';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -24,6 +25,8 @@ import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol';
 import { MachineServiceExecResultV1Schema } from '@happier-dev/protocol';
 import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { MachineAdminAccessMutationResultV1Schema, MachineRebootResultV1Schema, MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol';
+
+import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 import { parseActionOperationProgressUpdate } from './actionOperationProgress';
 import { projectActionOperationFailure } from './actionOperationFailure';
@@ -122,6 +125,8 @@ export function createActionOperationRunner(deps: Readonly<{
     restoredDeploymentOperationId?: string;
     /** Observation only: a prepared host callback may never create or restart. */
     existingDeploymentOperationId?: string;
+    /** Only the observing Agent/MCP request returns on admission; execution retains its owner. */
+    response?: 'admission';
     requestId?: string;
     /** Original carried confirmation retries observe an existing proposal, not its decision. */
     rejoinPendingApproval?: true;
@@ -179,6 +184,10 @@ export function createActionOperationRunner(deps: Readonly<{
     const terminalSpawnObserver = action.actionId === 'session.spawn_new' && spawnSelection?.observeSessionCommit !== true;
     const approvedDeploymentObserver = action.actionId === 'deployments.deploy' && Boolean(request.approvedActionReplay);
     const observeInvocation = async (operationId: string, invocation: Pick<ActiveInvocation, 'result' | 'acceptance'>): Promise<ActionExecuteResult> => {
+      if (request.response === 'admission') {
+        void invocation.result.catch(() => undefined);
+        return { ok: true, result: { status: 'accepted', operationId, machineId: request.scope.machineId } };
+      }
       if (!approvedDeploymentObserver) return await (terminalSpawnObserver
         ? invocation.result : Promise.race([invocation.result, invocation.acceptance]));
       // Approval settlement consumes the existing operation's terminal evidence,
@@ -266,7 +275,14 @@ export function createActionOperationRunner(deps: Readonly<{
           cancellation = update.cancellation;
           deps.store.updateCancellation(operationId, cancellation);
         }
-        if (update.outcome !== undefined) ownerEvidence.outcome = update.outcome;
+        if (update.outcome !== undefined) {
+          ownerEvidence.outcome = update.outcome;
+          if (isDeploymentTargetLinkActionIdV1(action.actionId) && update.outcome.ok) {
+            // Persist returned provider coordinates before later association can fail.
+            const result = DeploymentActionOutputSchemasV1[action.actionId].parse(update.outcome.result);
+            deps.store.updateObservation(operationId, null, result);
+          }
+        }
         if (update.domainRef) {
           const domainRef = ActionOperationDomainRefV1Schema.safeParse(update.domainRef);
           if (domainRef.success) deps.store.updateDomainRef(operationId, domainRef.data);
@@ -497,9 +513,10 @@ export function createActionOperationRunner(deps: Readonly<{
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
-            // Only named Project, Domain, Machine setup and managed-controller producers carry these
+            // Only named Project, Domain, Network, Machine setup and managed-controller producers carry these
             // validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || action.actionId.startsWith('machines.managed.')
+              || MACHINE_REACHABILITY_ACTION_IDS_V1.some(actionId => actionId === action.actionId)
               || action.actionId === 'machines.setup.apply'
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
               || action.actionId === 'deployments.templates.instantiate'

@@ -109,7 +109,7 @@ describe('current runtime membership replacement', () => {
                 include: { machines: true } })).toMatchObject({ deletedAt: null, detachedAt: null,
                 activeDeploymentId: serving.id, machines: [{ machineId: machines[0]!.id }] });
             expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, preparedMove.json().targetLinkId)))
-                .toMatchObject({ predecessorTargetLinkId: attempted.json().targetLinkId, machines: [machines[1]!.id] });
+                .toMatchObject({ predecessorTargetLinkId: attempted.json().targetLinkId, state: 'deployed', machines: [machines[1]!.id] });
             expect(await db.deployment.count({ where: { environmentId: environment.id, operation: 'teardown' } })).toBe(0);
         });
     });

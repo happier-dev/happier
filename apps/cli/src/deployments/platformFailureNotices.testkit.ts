@@ -1,3 +1,4 @@
+import { DeploymentTargetLinkProviderContentV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentReceiptDetailV1Schema,
     DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/deployment-protocol/v1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -12,18 +13,19 @@ import { createPlatformFailureNotices } from './platformFailureNotices';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-services/src/manifest';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 
-export function createPlatformFailureNoticeFixture(_withEnrollment = false) {
+export function createPlatformFailureNoticeFixture(_withEnrollment = false, withCreate = false) {
     const pluginId = 'example.deploy';
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const roles = [...(['inspect', 'link', 'deploy', 'observe'] as const), ...(withCreate ? ['create' as const] : [])];
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'External target',
         entrypoints: { daemon: './daemon.js' }, contributes: {
-            actions: [...(['inspect', 'link', 'deploy', 'observe'] as const).map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
+            actions: roles.map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
                 execution: { target: 'daemon' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1[id].jsonSchema,
-                resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
-                dangerLevel: id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal' }))],
+                resultSchema: id === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema : DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+                dangerLevel: id === 'create' ? 'writesRemote' : id === 'inspect' || id === 'observe' ? 'safe' : 'writesLocal' })),
             deploymentTargets: [{ id: 'platform', targetKind: 'example', title: 'External target', role: 'runtime', icon: 'server-outline',
                 targetSchema: closed, linkSchema: closed,
-                actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' } }],
+                actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe', ...(withCreate ? { create: 'create' } : {}) } }],
         } });
     const loaded: LoadedPlugin = { pluginId, pluginRootPath: '/plugins/example', manifestPath: '/plugins/example/plugin.json',
         daemonEntryPath: '/plugins/example/daemon.js', devDaemonEntryPath: null,

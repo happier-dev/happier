@@ -2494,8 +2494,11 @@ creation runs on the Environment controller through `deployments.targets.link`,
 after admission into the existing encrypted Action operation record. Its original
 request key prevents another native create, and the acknowledged provider identity
 is retained before private Artifact publication or Home association. An incomplete
-link returns that exact resource for an explicit association retry. An unacknowledged
-native outcome remains uncertain and is observed on its original controller; changing
+link returns that exact resource for an explicit association retry while the
+Environment remains at that intent's expected revision. A later Environment write
+supersedes that incomplete recovery; reopening Add platform offers a fresh choice
+without rebasing or replaying the old intent. An unacknowledged native outcome
+remains uncertain and is observed on its original controller; changing
 future placement does not replay it elsewhere. Provider-console links use only a
 destination supplied by the adapter. These development paths remain under integration
 validation; real vendor tenants are release checks.

@@ -36,7 +36,7 @@ import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protoco
 type ContentReference = Pick<ReturnType<typeof DeploymentDeployInputV1Schema.parse>,
     'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 type ScopeRequest = Readonly<{ environmentId: string; targetLinkId: string; context: ActionExecutorContext }>;
-type Role = Exclude<DeploymentTargetRuntimeRoleV1, 'inspect' | 'link'>;
+type Role = Exclude<DeploymentTargetRuntimeRoleV1, 'create' | 'inspect' | 'link'>;
 type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
@@ -454,18 +454,21 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                         ? { providerDeploymentId: receipt.content.platform.observation.providerDeploymentId } : {}),
                     ...(address.cursor ? { cursor: address.cursor } : {}),
                     ...(address.kind === 'build' ? { ...(address.ref ? { ref: address.ref } : {}),
-                        ...(address.tail ? { tail: address.tail } : {}) } : { service: address.service }) });
+                        ...(address.tail ? { tail: address.tail } : {}) } : address.service ? { service: address.service } : {}) });
                 await scope.admit(input, 'execution', receipt);
                 return { children: [{ action: scope.action, role, input: normalizeStrictJsonValue(input) }],
                     executeAdmittedAction: async ({ context }) => {
                         if (!context.hostReviewedChild) return failure('unsupported_action');
                         const result = await context.hostReviewedChild.invoke({ action: scope.action, role, input: normalizeStrictJsonValue(input) });
                         if (!result.ok) return result;
-                        const logs = DeploymentTargetLogsResultV1ProtocolSchema.parse(result.result);
+                        const logs = context.machineServiceLogsResource?.observation
+                            ? { kind: 'page' as const, page: { sourceRevision: input.providerDeploymentId,
+                                text: '', nextCursor: null, truncated: true } }
+                            : DeploymentTargetLogsResultV1ProtocolSchema.parse(result.result);
                         return { ok: true, result: DeploymentLogsReadSuccessV1Schema.parse({ ok: true,
                             environmentId: address.environmentId, deploymentId: address.deploymentId, targetLinkId: address.targetLinkId,
                             machineId: address.machineId, installationId: address.installationId, kind: address.kind,
-                            ...(address.kind === 'runtime' ? { service: address.service } : {}), logs }) };
+                            ...(address.kind === 'runtime' && address.service ? { service: address.service } : {}), logs }) };
                     } };
             });
         } catch (error) {

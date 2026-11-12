@@ -13,12 +13,13 @@ import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOp
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import type { LiveWorkCategoryV1, LiveWorkItemV1, LiveWorkInventoryV1, LiveWorkListenerV1 } from '@/daemon/lifecycle/managedActivity';
 import { isDeepStrictEqual } from 'node:util';
-import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionOperationCredentialUseV1Schema, isActionOutcomeUnknownErrorCodeV1, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentTargetLinkProvisionedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
-import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { logger } from '@/ui/logger';
 
@@ -192,9 +193,11 @@ export function createActionOperationStore(options?: Readonly<{
 
   const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
     const metadata = invocationMetadata.get(snapshot.operationId);
-    // Recovery needs admission and the terminal fact, not a disk write per log/progress revision.
-    const backupProgressOnly = isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) && previous !== undefined && !isTerminal(snapshot);
-    if (!backupProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
+    // Recovery needs admission, returned resource facts and terminal settlement, not each progress revision.
+    const transientProgressOnly = previous !== undefined && !isTerminal(snapshot)
+      && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
+        || isDeploymentTargetLinkActionIdV1(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
+    if (!transientProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
       try {
         if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
@@ -221,16 +224,20 @@ export function createActionOperationStore(options?: Readonly<{
     notifySubscribers(change);
   };
 
-  // Successful recovery evidence is not disposable activity history: the native
-  // snapshot and prepared restore can remain usable after history expiry/restart.
-  const retainsBackupEvidence = (snapshot: ActionOperationSnapshotV1): boolean => snapshot.state === 'succeeded'
-    && isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
-    && invocationMetadata.get(snapshot.operationId)?.backupInput !== undefined;
+  // Native creation identity and backup recovery evidence cannot be reconstructed
+  // from activity history after expiry: retain them across history pruning.
+  const retainsRecoveryEvidence = (snapshot: ActionOperationSnapshotV1): boolean =>
+    (snapshot.state === 'succeeded' && isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
+      && invocationMetadata.get(snapshot.operationId)?.backupInput !== undefined)
+    || (isDeploymentTargetLinkActionIdV1(snapshot.actionId) && snapshot.domainRef?.kind === 'deploymentTargetLink'
+      && snapshot.domainRef.purpose === 'create'
+      && (isActionOutcomeUnknownErrorCodeV1(snapshot.error?.errorCode)
+        || DeploymentTargetLinkProvisionedResultV1Schema.safeParse(snapshot.result).success));
 
   const prune = (): void => {
     const cutoff = now() - settledRetentionMs;
     const retainedSettled = [...snapshots.values()]
-      .filter(snapshot => isTerminal(snapshot) && !retainsBackupEvidence(snapshot))
+      .filter(snapshot => isTerminal(snapshot) && !retainsRecoveryEvidence(snapshot))
       .sort((left, right) => (right.settledAt ?? 0) - (left.settledAt ?? 0));
     const retainedIds = new Set(
       retainedSettled
@@ -285,7 +292,10 @@ export function createActionOperationStore(options?: Readonly<{
     const { observation: _observation, setupReview: _review, result: _result, ...remaining } = prior;
     const settledAt = Math.max(prior.startedAt ?? prior.createdAt, now());
     const snapshot = isTerminal(prior) ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
-      ...remaining, revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
+      ...remaining,
+      // A created provider resource remains adoptable after the coordinator is lost.
+      ...(isDeploymentTargetLinkActionIdV1(prior.actionId) && prior.result !== undefined ? { result: prior.result } : {}),
+      revision: prior.revision + 1, state: 'failed', cancellation: 'unsupported',
       startedAt: prior.startedAt ?? settledAt, settledAt,
       error: { errorCode: 'action_outcome_unknown', error: 'The Machine restarted before the Action operation settled',
         effectAttempted: true, ...(prior.error?.failureCause ? { failureCause: prior.error.failureCause } : {}) },
@@ -593,7 +603,7 @@ export function createActionOperationStore(options?: Readonly<{
       for (const operationId of ids) {
         const snapshot = snapshots.get(operationId);
         if (!snapshot) continue;
-        if (isTerminal(snapshot) && !retainsBackupEvidence(snapshot) && (snapshot.settledAt ?? 0) < cutoff) {
+        if (isTerminal(snapshot) && !retainsRecoveryEvidence(snapshot) && (snapshot.settledAt ?? 0) < cutoff) {
           removeSnapshot(operationId);
           removed = true;
           continue;

@@ -34,17 +34,19 @@ import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projec
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema,
   MachineAgentIsolationSetResultV1Schema } from '../../machines/agentIsolationV1.js';
+import { DeploymentTargetLinkProvisionedResultV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAuthorityMismatch.js';
 import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
+import { MachineReachabilityNativeFailureDetailsV1Schema } from '../../machines/reachability/nativeFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
   type DeploymentBackupFailureResultV1 } from '../../deployments/deploymentBackupActionsV1.js';
 import { MachineProvisionerSnapshotResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import { DeploymentRestoreFailureResultV1Schema, type DeploymentRestoreFailureResultV1 } from '../../deployments/deploymentBackupRestoreV1.js';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1, isDeploymentTargetLinkActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 export { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
 
@@ -255,12 +257,16 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
     MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
     DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema,
+    MachineReachabilityNativeFailureDetailsV1Schema,
     DeploymentExecutionFailureDetailsV1Schema,
     MachineAvailabilityDiagnosticV1Schema])),
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
   ? 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
-    : 'failure' in failure.details ? failure.errorCode === failure.details.failure.code
-      || failure.errorCode === failure.details.cleanupFailure?.code
+    : 'failure' in failure.details ? (!!failure.details.failure && ('kind' in failure.details.failure
+      ? failure.errorCode === failure.details.failure.reason
+        || (MachineElevationFailureV1Schema.safeParse(failure.details.failure).success && failure.errorCode === failure.details.failure.kind)
+      : failure.errorCode === failure.details.failure.code))
+      || ('cleanupFailure' in failure.details && failure.errorCode === failure.details.cleanupFailure?.code)
     : 'requiredFact' in failure.details
     ? DeploymentFailureRecoveryV1Schema.shape.requiredFact.safeParse(failure.details.requiredFact).success || failure.errorCode === 'target_unavailable'
     : failure.errorCode === 'approval_stale')
@@ -367,6 +373,10 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     kind: z.literal('machineService'), serverId: ActionOperationIdentifierV1Schema,
     operation: z.enum(['start', 'stop', 'restart']), generation: ActionOperationIdentifierV1Schema,
     subject: MachineServiceHealthCheckSubjectV1Schema,
+  }),
+  z.strictObject({
+    kind: z.literal('deploymentTargetLink'), serverId: ActionOperationIdentifierV1Schema,
+    environmentId: ActionOperationIdentifierV1Schema, requestKey: ActionOperationIdentifierV1Schema, purpose: z.enum(['create', 'associate']),
   }),
   z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
@@ -571,12 +581,14 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
       && backup.data.code === (snapshot.state === 'cancelled' ? 'cancelled' : snapshot.error?.errorCode);
     const restore = backupSettlement && snapshot.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
       ? DeploymentRestoreFailureResultV1Schema.safeParse(snapshot.result) : null;
+    const linkProvisioned = isDeploymentTargetLinkActionIdV1(snapshot.actionId) && snapshot.state !== 'accepted'
+      ? DeploymentTargetLinkProvisionedResultV1Schema.safeParse(snapshot.result) : null;
     const contributed = snapshot.state === 'failed' && parseQualifiedPluginContributionKey(snapshot.actionId)
       ? PluginActionFailureResponseV1Schema.safeParse(snapshot.result) : null;
     const contributedRefusal = contributed?.success && contributed.data.code === snapshot.error?.errorCode;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
       && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
-      && !backupFailure && !restore?.success && !contributedRefusal && !isolationRefusal) {
+      && !backupFailure && !restore?.success && !linkProvisioned?.success && !contributedRefusal && !isolationRefusal) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }

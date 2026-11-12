@@ -7,6 +7,7 @@ import type { readStoredCredentials } from '@/persistence';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
@@ -67,10 +68,11 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
             },
         ) });
         if (accountMode.kind !== 'resolved') return false;
-        // Reboot facts and successful setup output must reach the outside holder
-        // before their last effect can replace this process. Closed predecessor
-        // readers drop these current domains; other pushes retain their projection.
-        const outward = (snapshot: Snapshot) => snapshot.actionId === 'machines.reboot'
+        // Native creation recovery, reboot facts and successful setup output must
+        // reach the outside holder. Closed predecessor readers drop these current
+        // domains; other pushes retain their projection.
+        const outward = (snapshot: Snapshot) => isDeploymentTargetLinkActionIdV1(snapshot.actionId)
+            || snapshot.actionId === 'machines.reboot'
             || (snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
                 && snapshot.state === 'succeeded' && snapshot.domainRef?.kind === 'machineSetup')
             ? snapshot : projectActionOperationSnapshotForV1Reader(snapshot);

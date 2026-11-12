@@ -9,7 +9,7 @@ import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publi
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import type { PluginResourceContributionV2 } from './v2.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema,
+    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLinkProviderContentV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
 export * from './deploymentTargetRolesV1.js';
@@ -29,7 +29,7 @@ const closedSchema = lazyZodSchema(() => PluginJsonSchemaV2Schema.check(z.superR
 /** Contribution and normalized catalogs share the role grammar, with boundary-specific references. */
 export function createDeploymentTargetRuntimeActionsV1Schema<TSchema extends z.ZodMiniType>(action: TSchema) {
     return z.strictObject({
-        inspect: action, link: action, deploy: action, observe: action,
+        inspect: action, link: action, deploy: action, observe: action, create: z.optional(action),
         uploadDeploy: z.optional(action), cancel: z.optional(action), rollback: z.optional(action),
         promote: z.optional(action), teardown: z.optional(action),
         variables: z.optional(z.strictObject({ read: z.optional(action), sync: z.optional(action) })),
@@ -170,7 +170,8 @@ export function validateDeploymentTargetContributionsV1(
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
                             normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema))
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
-                            normalizePluginJsonSchema((binding.role.startsWith('domains.') ? DeploymentTargetDomainResultV1ProtocolSchema
+                            normalizePluginJsonSchema((binding.role === 'create' ? DeploymentTargetLinkProviderContentV1ProtocolSchema
+                                : binding.role.startsWith('domains.') ? DeploymentTargetDomainResultV1ProtocolSchema
                                 : binding.role.startsWith('logs.')
                                 ? DeploymentTargetLogsResultV1ProtocolSchema
                                 : role === 'variables.read' ? DeploymentTargetVariablesReadResultV1ProtocolSchema

@@ -151,7 +151,8 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
         ...(plugin ? { sourceKind: 'plugin', pluginId: plugin.contribution.pluginId, contributionLocalId: plugin.contribution.localId,
             machineId: input.machineId, installationId: input.installationId }
             : { sourceKind: 'host', hostTargetId: input.targetId }),
-        targetKind: plugin ? input.targetKind! : 'ownServer', state: retainsOwnServer ? previous.state : 'configured',
+        targetKind: plugin ? input.targetKind! : 'ownServer',
+        state: retainsOwnServer ? previous.state : input.provisioned ? 'provisioned' : 'configured',
         createdByAccountId: actorAccountId, ...deploymentContentReference(input),
         ...(previous ? { predecessorTargetLinkId: previous.id,
             ...(retainsOwnServer ? { activeDeploymentId: previous.activeDeploymentId } : {}) } : {}),

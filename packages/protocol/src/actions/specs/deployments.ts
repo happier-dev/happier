@@ -7,7 +7,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type D
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
-import { isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
 
@@ -27,6 +27,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const backup = isDeploymentBackupActionIdV1(id);
   const query = isDeploymentDataQueryActionIdV1(id);
   const backupConfigure = id === 'deployments.backups.configure';
+  const rolloutReview = id === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(id);
   const irreversible = id === 'deployments.backups.prune' || id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.targets.unlink' || id === 'deployments.environments.delete' || id === 'deployments.domains.remove';
   const preparedContentRequired = id !== 'deployments.environments.create' && id !== 'deployments.targets.link'
     && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !backupConfigure && !isDeploymentPromoteActionIdV1(id);
@@ -229,14 +230,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       const parsed = DeploymentActionInputSchemasV1['deployments.environments.update'].safeParse(input);
       return parsed.success && (parsed.data.patch?.deployerMode !== undefined || parsed.data.patch?.deployerPrincipals !== undefined);
     } } : {}),
-    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible ? 'policy' : 'direct',
+    approval: { result: 'required' }, approvalPolicy: { uiConfirmation: irreversible || rolloutReview ? 'policy' : 'direct',
       ...(id === 'deployments.teardown' && previewForInput
         ? { uiConfirmationForInput: (input: unknown): boolean => !previewForInput(input) } : {}) },
     ...(irreversible ? { irreversible: true as const } : {}),
     ...(id === 'deployments.bindings.set' ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== 'deployments.environments.create' && id !== 'deployments.environments.list' && id !== 'deployments.publish.prepare'
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: query || backup || backupConfigure || isDeploymentDomainChildActionIdV1(id) || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || isDeploymentDomainChildActionIdV1(id) || id === 'deployments.prepare' || id === 'deployments.publish.prepare' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.restart' || id === 'deployments.backups.restore' || id === 'deployments.receipts.observe' || id === 'deployments.observation.get' ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === 'deployments.environments.create' ? {
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
@@ -254,7 +255,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
     ...(id === 'deployments.environments.create' || isDeploymentDomainChildActionIdV1(id)
-      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : backup || backupConfigure || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository'
+      ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rolloutReview || backup || backupConfigure || id === 'deployments.backups.restore' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository'
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
@@ -282,7 +283,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
         'source', 'destination', 'snapshot', 'snapshotReview', 'expectedRevision', 'prepareOperationId'] } } : {}),
     inputHints,
-    ...(backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
+    ...(isDeploymentTargetLinkActionIdV1(id) || backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === 'deployments.backups.restore' || id === 'deployments.domains.add' || id === 'deployments.domains.remove' || id === 'deployments.templates.instantiate' || id === 'deployments.environments.moveToRepository' || id === 'deployments.deploy' || id === 'deployments.rollback' || id === 'deployments.restart' || id === 'deployments.promote' || id === 'deployments.teardown' ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
     // Review describes the stored ref string; the interactive picker selects a ref/revision pair.

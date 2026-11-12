@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod/mini';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isDeploymentBackupEvidenceActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -43,7 +43,7 @@ function entryName(operationId: string): string {
 
 export function requiresActionOperationReceiptPersistence(actionId: string | undefined): boolean {
     return isProjectWorkspaceSyncOpenActionV1(actionId)
-        || (actionId !== undefined && isDeploymentBackupEvidenceActionIdV1(actionId));
+        || (actionId !== undefined && (isDeploymentBackupEvidenceActionIdV1(actionId) || isDeploymentTargetLinkActionIdV1(actionId)));
 }
 
 export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
