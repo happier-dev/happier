@@ -13,7 +13,13 @@ import type { NewSessionMachineSelectionContentProps } from '../components/NewSe
 
 // This model never renders Markdown; only the external rendering dependency is replaced.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
-installNewSessionScreenModelCommonModuleMocks({ routerConfig: { pathname: '/', params: {} } });
+const viewport = vi.hoisted(() => ({ width: 1440 }));
+installNewSessionScreenModelCommonModuleMocks({
+    routerConfig: { pathname: '/', params: {} },
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: viewport.width, height: 900, scale: 1, fontScale: 1 }),
+    }),
+});
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
@@ -29,13 +35,14 @@ const { applyTeamProjection, resetTeamsSnapshotsForTests } = await import('@/syn
 const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 
-beforeEach(async () => { network.resetRequests(); storage.setState(storage.getInitialState(), true); resetTeamsSnapshotsForTests(); await prepareSessionDraftPersistenceStorage(); });
+beforeEach(async () => { viewport.width = 1440; network.resetRequests(); storage.setState(storage.getInitialState(), true); resetTeamsSnapshotsForTests(); await prepareSessionDraftPersistenceStorage(); });
 afterEach(async () => { standardCleanup(); resetTeamsDirectoryEngineForTests(); resetTeamsSnapshotsForTests(); await disconnectActiveServerConnection(); });
 afterAll(() => network.dispose());
 
 describe('shared Team defaults through New Session', () => {
-    it.each([{ late: false, override: true }, { late: true, override: true },
-        { late: false, override: false }, { late: true, override: false }])('restores explicit placement=$override and Team label with late snapshot=$late', async ({ late, override }) => {
+    it.each<{ late: boolean; override: boolean; blank?: boolean }>([{ late: false, override: true }, { late: true, override: true },
+        { late: false, override: false }, { late: true, override: false },
+        { late: false, override: false, blank: true }])('restores explicit placement=$override and Team label with late snapshot=$late blank=$blank', async ({ late, override, blank }) => {
         const home = await network.addHome('https://shared-team-defaults.test', 'admin-a');
         const placement = { kind: 'preset', homeId: home.id, presetId: '0459116f-1a83-483a-b734-fdcfe8c7f2bf' } as const;
         const agentTargetKey = 'agent:happier.agent.claude/claude';
@@ -66,7 +73,7 @@ describe('shared Team defaults through New Session', () => {
         storage.getState().applyAuthoringMemory({ recentMachinePaths: [{ machineId: 'machine-1', path: '/repo' }] });
         const publish = () => { teamArrival.resolve(); applyTeamProjection({ scope, address: { serverId: member.id, teamId: 'team-1' }, observedAt: 2, team }); };
         if (!late) publish();
-        let model = await renderHook(() => useNewSessionScreenModel({ draftId: `shared-team-${late}-${override}` }));
+        let model = await renderHook(() => useNewSessionScreenModel({ draftId: `shared-team-${late}-${override}-${blank ?? false}` }));
         const simple = () => {
             const current = model.getCurrent();
             if (current.variant !== 'simple') throw new Error('Expected Home composer');
@@ -78,7 +85,7 @@ describe('shared Team defaults through New Session', () => {
         if (typeof render !== 'function') throw new Error('Expected access editor');
         const editor = render({ requestClose: () => {}, maxHeight: 600 });
         if (!React.isValidElement<SessionAccessEditorProps>(editor)) throw new Error('Expected access editor element');
-        await act(async () => simple().promptStore.setPrompt('Continue the Team task'));
+        if (!blank) await act(async () => simple().promptStore.setPrompt('Continue the Team task'));
         await act(async () => editor.props.actions.addPrincipal({ kind: 'team', teamId: 'team-1' }));
         if (late) {
             expect(simple().selectedMachineId).toBe('machine-1');
@@ -102,9 +109,18 @@ describe('shared Team defaults through New Session', () => {
         expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
         expect(simple().modelMode).toBe(override ? 'default' : 'sonnet');
         if (override) expect(simple().selectedMachineId).toBe('machine-1');
+        // Resize at the RN window boundary, then restore the same draft as a
+        // responsive host remount does. Sharing is authored even before typing.
+        viewport.width = 390;
+        await model.rerender();
+        expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
+        expect(simple().agentInputExtraActionChips?.find(chip => chip.key === 'session-access')?.collapsedContentPopover?.label).toBe(team.name);
+        viewport.width = 1440;
+        await model.rerender();
+        expect(simple().permissionMode).toBe(override ? 'default' : 'read-only');
         await model.unmount();
-        const saved = readNewSessionDraftFromRepository({ scope, draftId: `shared-team-${late}-${override}` });
-        expect(saved?.input).toBe('Continue the Team task');
+        const saved = readNewSessionDraftFromRepository({ scope, draftId: `shared-team-${late}-${override}-${blank ?? false}` });
+        expect(saved?.input).toBe(blank ? '' : 'Continue the Team task');
         expect(saved?.permissionModeExplicit).toBe(override ? true : undefined);
         expect(saved?.permissionMode).toBe('default');
         expect(saved?.modelSelection).toBe(override ? null : undefined);
@@ -112,7 +128,7 @@ describe('shared Team defaults through New Session', () => {
         if (late) { teamArrival = createDeferred<void>(); resetTeamsSnapshotsForTests(); }
         // Returning from another page opens the draft without the old picker route handoff.
         router.setParams({ machineId: undefined, spawnServerId: undefined, machinePoolId: undefined });
-        model = await renderHook(() => useNewSessionScreenModel({ draftId: `shared-team-${late}-${override}` }));
+        model = await renderHook(() => useNewSessionScreenModel({ draftId: `shared-team-${late}-${override}-${blank ?? false}` }));
         if (late) await act(async () => { publish(); });
         // Wait for the same qualified binding that supplies restored defaults.
         const binding = await renderHook(() => useTeamBinding(member.id, 'team-1'));

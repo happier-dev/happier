@@ -753,6 +753,12 @@ function hasNewSessionAuthoredContent(document: unknown): boolean {
     const value = (fieldId: string) => getSessionDraftDocumentFieldValue(document, { kind: 'authoring', fieldId });
     const sessionName = value('sessionName');
     if (typeof sessionName === 'string' && sessionName.trim()) return true;
+    // Sharing and Team context are deliberate draft edits, including before
+    // the first prompt. Keep them when responsive hosts remount the composer.
+    const primaryTeamId = value('primaryTeamId');
+    if (typeof primaryTeamId === 'string' && primaryTeamId.trim()) return true;
+    const access = value('access');
+    if (access && typeof access === 'object' && 'grants' in access && isNonEmptyArray(access.grants)) return true;
     const identity = value('initialSessionFacts');
     if (identity && typeof identity === 'object' && ('bot' in identity || 'createdAsBot' in identity)) return true;
     const promptStack = value('promptStack');

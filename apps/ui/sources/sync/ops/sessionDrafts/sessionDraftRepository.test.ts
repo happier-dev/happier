@@ -28,6 +28,7 @@ import {
     readSessionScmDraftFromDraft,
     type SessionDraftRepositoryCipher,
     type SessionDraftRepositoryTransport,
+    type NewSessionDraftPatch,
 } from './sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from './sessionDraftCipherError';
 import { getSessionDraftDocumentField } from './sessionDraftDocumentFields';
@@ -60,6 +61,21 @@ function createMemoryStorage() {
 function draftRecordKey(replicaKey: string, recordScope: { serverId: string; accountId: string } = scope): string {
     return sessionDraftRowKey(`session-drafts-repository-v1:${serverAccountScopeKeySuffix(recordScope)}`, replicaKey);
 }
+
+it.each<NonNullable<NewSessionDraftPatch['authoring']>>([
+    { primaryTeamId: 'team-1' },
+    { access: { grants: [{ subject: { kind: 'team', teamId: 'team-1' }, accessLevel: 'view', canApprovePermissions: false }] } },
+])('keeps deliberately authored sharing before the first prompt: %j', async (authoring) => {
+    const storage = createMemoryStorage();
+    const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+    const address = { kind: 'newSession', draftId: uuid(987) } as const;
+    repository.writeNewSessionDraft({ scope, draftId: address.draftId, patch: { authoring }, materializationIntent: 'userEdit' });
+    expect(repository.getSessionDraftSnapshot(scope, address)?.materialized).toBe(true);
+    await repository.flushSessionDraftLocally({ scope });
+    const reopened = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+    await reopened.prepareLocalSessionDraftScope(scope);
+    expect(reopened.getSessionDraftSnapshot(scope, address)?.materialized).toBe(true);
+});
 
 it('re-reads only the transferred draft after subscribe while retaining sibling draft ownership', async () => {
     const storage = createMemoryStorage();
