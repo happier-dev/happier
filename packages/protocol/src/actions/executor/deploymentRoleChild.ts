@@ -8,15 +8,22 @@ import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1
   isDeploymentBackupConfigureNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { ActionId } from '../actionIds.js';
+import { getActionSpec } from '../actionSpecs.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../externalActionApi.js';
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
 import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
+import { readTeamCredentialActionHttpPurposeV1 } from '../../teams/credentials/actionHttpPurposeV1.js';
 import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
   HostReviewedChildPortV1, HostReviewedChildInvocationV1, HostReviewedChildrenPlanV1 } from './types.js';
 
 const deploymentRoleChild = Symbol('deploymentRoleChild');
 const credentialScopeAdmission = Symbol('credentialScopeAdmission');
+
+function reviewedChildScopeDenied(reason: 'issuer_binding' | 'issuer_target' | 'aborted' | 'child_mismatch' | 'no_plan'): ActionExecuteFailure {
+  return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+    failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: reason, httpStatus: null } };
+}
 type ReviewedOperation = Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> & Readonly<{ [deploymentRoleChild]?: true }>;
 type RootActionId = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.cancel' | 'deployments.receipts.observe' | 'deployments.logs.read';
 export type HostReviewedChildPolicyV1 = Readonly<{
@@ -203,6 +210,8 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
   const reviewedChild = proof.reviewedChild;
   const rootActionId = proof.rootActionId;
   if (!reviewedChild || !rootActionId || !authorization || !http) return;
+  // Without an invocation envelope the issuer received a core ActionId.
+  const coreWriter = !proof.envelope && getActionSpec(proof.qualifiedActionId as ActionId).sideEffectClass === 'write';
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
     originalAuthorization: { value: originalAuthorization },
@@ -216,8 +225,21 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
         // Host reads retain the admitted parent purpose; child effects carry
         // the exact operand accepted by ordinary Action admission and review.
         const { reviewedChild: _reviewedChild, ...parentRequest } = request;
+        // A writer's Artifact/currentness GET prepares its effect under the
+        // admitted root; the exact child mutation retains its review proof.
+        if (coreWriter && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET')
+          return http.createRequestHeaders({ ...parentRequest, effectActionId: rootActionId });
+        const credentialPurpose = request.effectActionId === rootActionId
+          ? readTeamCredentialActionHttpPurposeV1(request) : null;
+        const carriesChildCredential = credentialPurpose
+          && credentialPurpose.consumer.operationId === originalAuthorization?.binding.requestId
+          && credentialPurpose.consumer.actionId === reviewedChild.actionId
+          && (credentialPurpose.kind === 'direct_material' || credentialPurpose.inputDigest === reviewedChild.inputDigest);
         return http.createRequestHeaders(request.effectActionId === rootActionId
-          ? parentRequest : { ...request, effectActionId: proof.qualifiedActionId, reviewedChild });
+          ? carriesChildCredential ? { ...parentRequest, reviewedChild } : parentRequest
+          : proof.envelope || request.effectActionId === proof.qualifiedActionId
+            ? { ...request, effectActionId: proof.qualifiedActionId, reviewedChild }
+            : parentRequest);
       },
     }), enumerable: false },
   });
@@ -304,30 +326,27 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   environmentId?: string;
   execute(input: unknown, context: ActionExecutorContext, actionId: TAction | 'action.invoke'): Promise<T>;
 }>): Promise<T | ActionExecuteFailure> {
-  const denied = (): ActionExecuteFailure => ({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
   const { context } = params;
   const { child, parent } = params;
   const binding = context.externalActionExecutionAuthorization?.binding;
   const receiving = params.receivingAdmission;
-  if (!parent.actionId
-    || context.signal?.aborted
-    || receiving && (!binding || receiving.actorAccountId !== binding.accountId
+  if (context.signal?.aborted) return reviewedChildScopeDenied('aborted');
+  // The domain admission owns the reviewed parent's relationship to the request.
+  if (!parent.actionId || receiving && (!binding || receiving.actorAccountId !== binding.accountId
       || receiving.actorAccountId !== context.runtimeAccountId)
-    // The domain admission owns the relationship between reviewed parent and
-    // request: SOURCE/receipt roots or an independently Home-bound Run child.
-    || binding && (binding.accountId !== context.runtimeAccountId
-      || !sameStrictJsonValue(context.externalActionTarget, binding.target))) return denied();
+    || binding && binding.accountId !== context.runtimeAccountId) return reviewedChildScopeDenied('issuer_binding');
+  if (binding && !sameStrictJsonValue(context.externalActionTarget, binding.target)) return reviewedChildScopeDenied('issuer_target');
   const childInput = normalizeStrictJsonValue(child.input);
   const parentInput = normalizeStrictJsonValue(parent.input);
-  if (!parentInput || typeof parentInput !== 'object' || Array.isArray(parentInput)) return denied();
+  if (!parentInput || typeof parentInput !== 'object' || Array.isArray(parentInput)) return reviewedChildScopeDenied('child_mismatch');
   const action = typeof child.action === 'string' ? child.action : { ...child.action };
   const invocation = action === 'action.invoke'
     ? PluginContributionIdentityV1Schema.safeParse(readRecord(childInput).action) : undefined;
-  if (invocation && !invocation.success) return denied();
+  if (invocation && !invocation.success) return reviewedChildScopeDenied('child_mismatch');
   const envelope: ChildProof['envelope'] = typeof action === 'string'
     ? invocation?.success ? { ...(childInput as Record<string, JsonValue>), action: invocation.data } : undefined
     : { action, input: childInput };
-  if (!envelope && (!childInput || typeof childInput !== 'object' || Array.isArray(childInput))) return denied();
+  if (!envelope && (!childInput || typeof childInput !== 'object' || Array.isArray(childInput))) return reviewedChildScopeDenied('child_mismatch');
   const qualifiedActionId = envelope ? formatQualifiedPluginActionId(envelope.action) : action as ActionId;
   const proofInput = envelope ? envelope.input ?? null : childInput;
   const callerProof = readProof(context, parent.actionId, parentInput);
@@ -382,20 +401,19 @@ export function createHostReviewedChildPortV1(params: Readonly<{
     : isDeploymentChildEffectActionIdV1(params.actionId)) || params.actionId === 'deployments.teardown'
     || params.actionId === 'deployments.cancel' || params.actionId === 'deployments.receipts.observe'
     || params.actionId === 'deployments.logs.read') && typeof parentInput.environmentId === 'string' ? parentInput.environmentId : undefined;
-  const denied = (): ActionExecuteResult => ({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
   const port: ReviewedChildPort = {
     ...(params.reviewAdmitted ? { parent, [deploymentRoleChild]: true as const } : {}),
     ...(plan ? { preparedChildren: plan.children.flatMap(child => child.input === undefined ? []
       : [{ action: child.action, role: child.role, input: child.input }]) } : {}),
     invoke: async request => {
       const execute = params.execute;
-      if (!plan || !execute) return denied();
+      if (!plan || !execute) return reviewedChildScopeDenied('no_plan');
       const matches = plan.children.flatMap((child, index) => child.role === request.role
         && sameStrictJsonValue(child.action, request.action)
         && (child.input === undefined || sameStrictJsonValue(child.input, request.input))
         && (child.scopeInput === undefined || Object.entries(child.scopeInput)
           .every(([key, value]) => sameStrictJsonValue(readRecord(request.input)[key], value))) ? [index] : []);
-      if (matches.length !== 1) return denied();
+      if (matches.length !== 1) return reviewedChildScopeDenied('child_mismatch');
       return invokeHostReviewedChildV1({ parent, context: params.context,
         child: { action: request.action, role: request.role, input: request.input },
         ...(request.invocationServices ? { invocationServices: request.invocationServices } : {}),

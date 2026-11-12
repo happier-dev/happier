@@ -5,14 +5,14 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { DeploymentTargetRoleInputSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
-import { invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
 import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 
-const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
+const input = { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
   targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
 const credentialRef = { service: { pluginId: 'acme.fixture', localId: 'service' }, accountId: 'provider-account' };
-const roleInput = DeploymentTargetRoleInputSchemasV1.deploy.parse({ v: 1 as const, serverId: 'home', environmentId: 'environment', expectedRevision: 4,
+const roleInput = DeploymentTargetRoleInputSchemasV1.deploy.parse({ v: 1 as const, serverId: 'home-identity', environmentId: 'environment', expectedRevision: 4,
   targetLinkId: 'link', expectedTargetLinkRevision: 4, deploymentId: 'receipt', expectedDeploymentRevision: 1,
   actionOperationId: 'operation', credentialRef,
   credentialPrincipal: { kind: 'account' as const, accountId: 'owner',
@@ -34,7 +34,7 @@ function context(): ActionExecutorContext {
     environmentId: 'environment', requestId: 'deploy-request', requestEnvelopeDigest: 'A'.repeat(43),
     target: { kind: 'machine', machineId: 'controller' },
   } });
-  return { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home',
+  return { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home-identity',
     serverIdentityId: 'home-identity', runtimeAccountId: 'owner', actionRequestId: 'deploy-request',
     externalActionCredential: { accountId: 'owner', principalId: 'principal', credentialId: 'deployment-token', grant },
     externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
@@ -47,9 +47,9 @@ describe('deployment role host-child scope', () => {
     const root = context();
     const authorization = root.externalActionExecutionAuthorization!;
     const child = { action: 'deployments.backups.configure' as const, role: 'preview.backup',
-      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'markNotNeeded' } };
+      input: { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 3, intent: 'markNotNeeded' } };
     const result = await invokeHostReviewedChildV1({
-      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } },
+      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home-identity' } },
       child,
       context: { ...root, externalActionExecutionAuthorization: { ...authorization,
         binding: { ...authorization.binding, actionId: 'deployments.environments.create' } } },
@@ -65,15 +65,15 @@ describe('deployment role host-child scope', () => {
     const root = context();
     const authorization = root.externalActionExecutionAuthorization!;
     const configure = { action: 'deployments.backups.configure' as const, role: 'preview.backup',
-      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'save',
+      input: { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 3, intent: 'save',
         configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.local', localId: 'open' },
           occurrenceId: 'destination', config: { path: '/private/repository' }, credentialBindings: [],
           sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
           ownership: { environmentId: 'environment', prefix: '' }, retention: { kind: 'keepEverything' } } } };
     const binding = { action: 'deployments.bindings.set' as const, role: 'backup.bindings',
-      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 4, set: [], remove: [] } };
+      input: { serverId: 'home-identity', environmentId: 'environment', expectedRevision: 4, set: [], remove: [] } };
     const result = await invokeHostReviewedChildV1({
-      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home' } }, child: configure,
+      parent: { actionId: 'deployments.environments.create', input: { serverId: 'home-identity' } }, child: configure,
       context: { ...root, externalActionExecutionAuthorization: { ...authorization,
         binding: { ...authorization.binding, actionId: 'deployments.environments.create' } } },
       admittedReview: { action: configure.action, role: configure.role, surface: 'api' },
@@ -276,3 +276,25 @@ describe('deployment role host-child scope', () => {
   });
 
 });
+
+
+it.each(['issuer_binding', 'issuer_target', 'aborted', 'child_mismatch', 'no_plan'] as const)(
+  'retains a closed reviewed-child refusal for %s before execution', async reason => {
+    const root: ActionExecutorContext = { ...context(),
+      ...(reason === 'issuer_binding' ? { runtimeAccountId: 'other-account' } : {}),
+      ...(reason === 'issuer_target' ? { externalActionTarget: { kind: 'machine', machineId: 'other-machine' } as const } : {}),
+      ...(reason === 'aborted' ? { signal: AbortSignal.abort() } : {}),
+    };
+    let executions = 0;
+    const execute = async () => { executions++; return { ok: true as const, result: null }; };
+    const parent = { actionId: 'deployments.deploy', input };
+    const result = reason === 'no_plan' || reason === 'child_mismatch'
+      ? await createHostReviewedChildPortV1({ ...parent, context: root, execute,
+          ...(reason === 'child_mismatch' ? { plan: { children: [request] } } : {}),
+        }).invoke({ ...request, ...(reason === 'child_mismatch' ? { role: 'other-role' } : {}) })
+      : await invokeHostReviewedChildV1({ parent, child: request, context: root, execute });
+    expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied',
+      failureCause: { phase: 'deployment.reviewed_child', errorClass: 'Error', errorCode: reason, httpStatus: null } });
+    expect(executions).toBe(0);
+    expect(JSON.stringify(result)).not.toMatch(/fixture-root|other-account|other-machine|provider-account/);
+  });
