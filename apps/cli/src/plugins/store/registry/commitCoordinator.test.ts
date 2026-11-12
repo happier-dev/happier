@@ -28,12 +28,31 @@ const canonicalUnlinkBarrier = vi.hoisted(() => {
     release: () => releaseResolve?.(),
   };
 });
+const lockWriteFailure = vi.hoisted(() => ({ path: null as string | null, prefix: '', reclaimPrefix: null as string | null, replaceFailedCreate: false }));
 const lockReadFailure = vi.hoisted(() => ({ path: null as string | null, error: null as Error | null }));
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (lockWriteFailure.reclaimPrefix && String(args[0]).startsWith(lockWriteFailure.reclaimPrefix) && args[1] === 'wx') {
+        throw Object.assign(new Error('no space for recovery publication'), { code: 'ENOSPC' });
+      }
+      const handle = await actual.open(...args);
+      if (String(args[0]) === lockWriteFailure.path && args[1] === 'wx') {
+        lockWriteFailure.path = null;
+        vi.spyOn(handle, 'writeFile').mockImplementationOnce(async () => {
+          await actual.writeFile(args[0], lockWriteFailure.prefix);
+          if (lockWriteFailure.replaceFailedCreate) {
+            await actual.unlink(args[0]);
+            await actual.writeFile(args[0], lockWriteFailure.prefix);
+          }
+          throw Object.assign(new Error('injected fence write failure'), { code: 'ENOSPC' });
+        });
+      }
+      return handle;
+    },
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       if (String(args[0]) === lockReadFailure.path && lockReadFailure.error) throw lockReadFailure.error;
       return await actual.readFile(...args);
@@ -100,6 +119,63 @@ async function bootstrap(happyHomeDir: string): Promise<ReturnType<typeof resolv
 }
 
 describe('PluginRegistryCommitCoordinator', () => {
+  it.each(['', '{"t":'])('removes its failed fence write (%j) so the next commit proceeds', async (prefix) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-registry-failed-write-'));
+    try {
+      const paths = await bootstrap(home);
+      const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'writer' },
+        sleep: async () => { throw new Error('must not wait on its failed publication'); } });
+      const expectedCurrent = await readPluginRegistryCommitRecord(paths);
+      const commit = () => coordinator.commit({ transactionId: 'retry-write', baseRevision: 0, expectedCurrent,
+        buildNext: current => createNext(current!, 'retry-write') });
+      lockWriteFailure.path = paths.registryCommitLockFilePath;
+      lockWriteFailure.prefix = prefix;
+      lockWriteFailure.reclaimPrefix = `${paths.registryCommitLockFilePath}.reclaim`;
+      await expect(commit()).rejects.toMatchObject({ code: 'ENOSPC' });
+      lockWriteFailure.reclaimPrefix = null;
+      await expect(readFile(paths.registryCommitLockFilePath)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(commit()).resolves.toMatchObject({ status: 'committed', record: { revision: 1 } });
+    } finally {
+      lockWriteFailure.path = null;
+      lockWriteFailure.reclaimPrefix = null;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a successor inode with identical empty bytes after a failed fence write', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-registry-failed-successor-'));
+    try {
+      const paths = await bootstrap(home);
+      lockWriteFailure.path = paths.registryCommitLockFilePath;
+      lockWriteFailure.prefix = '';
+      lockWriteFailure.replaceFailedCreate = true;
+      await expect(withPluginRegistryCommitFence({ paths, owner: { pid: process.pid, instanceId: 'writer' },
+        operation: async () => { throw new Error('must not operate'); } })).rejects.toMatchObject({ code: 'ENOSPC' });
+      expect(await readFile(paths.registryCommitLockFilePath, 'utf8')).toBe('');
+    } finally {
+      lockWriteFailure.path = null;
+      lockWriteFailure.replaceFailedCreate = false;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['', '{', '{}'])('settles an unreadable owner record (%j) without waiting or deleting it', async (raw) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-registry-malformed-fence-'));
+    try {
+      const paths = await bootstrap(home);
+      await writeFile(paths.registryCommitLockFilePath, raw);
+      const coordinator = createPluginRegistryCommitCoordinator({ paths, owner: { pid: process.pid, instanceId: 'contender' },
+        sleep: async () => { throw new Error('must not wait on an indeterminate owner'); } });
+      await expect(coordinator.commit({ transactionId: 'malformed', baseRevision: 0,
+        expectedCurrent: await readPluginRegistryCommitRecord(paths),
+        buildNext: current => createNext(current!, 'malformed') })).rejects.toThrow(/fence ownership.*indeterminate/i);
+      expect(await readFile(paths.registryCommitLockFilePath, 'utf8')).toBe(raw);
+      expect(await readPluginRegistryCommitRecord(paths)).toMatchObject({ revision: 0 });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('cancels before publication when retirement arrives during asynchronous prepublication work', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-registry-publication-cancel-'));
     const paths = await bootstrap(happyHomeDir);

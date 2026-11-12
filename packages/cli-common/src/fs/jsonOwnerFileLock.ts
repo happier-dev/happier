@@ -309,6 +309,13 @@ async function unlinkExactFile(path: string, expected: FileSnapshot): Promise<bo
   }
 }
 
+/** Retire an unsuccessful exclusive create without allocating a recovery guard. */
+export async function unlinkCreatedJsonOwnerFileLock(path: string, createdIdentity: FileIdentity): Promise<boolean> {
+  const current = await readSnapshot(path);
+  if (!current || !sameIdentity(current.identity, createdIdentity)) return false;
+  return await unlinkExactFile(path, current);
+}
+
 async function restoreQuarantinedFile(quarantinePath: string, destinationPath: string, moved: FileSnapshot): Promise<boolean> {
   if (!(await snapshotStillMatches(quarantinePath, moved))) return false;
   try {

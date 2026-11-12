@@ -4,5 +4,6 @@
  */
 export {
   reclaimJsonOwnerFileLockSnapshot,
+  unlinkCreatedJsonOwnerFileLock,
   withJsonOwnerFileLock,
 } from '@happier-dev/cli-common/fs/jsonOwnerFileLock';

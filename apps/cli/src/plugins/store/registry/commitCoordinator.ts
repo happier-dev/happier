@@ -5,7 +5,7 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { isPidPresent } from '@happier-dev/cli-common/process';
-import { reclaimJsonOwnerFileLockSnapshot } from '@/utils/fs/jsonOwnerFileLock';
+import { reclaimJsonOwnerFileLockSnapshot, unlinkCreatedJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 
 import type { PluginStorePaths } from '../paths';
 import {
@@ -50,10 +50,15 @@ async function readLock(path: string): Promise<LockSnapshot | null> {
   try {
     const raw = await readFile(path, 'utf8');
     const parsed = LockRecordStoredReadSchema.safeParse(JSON.parse(raw) as unknown);
-    return parsed.success ? { record: parsed.data, raw } : null;
+    if (!parsed.success) {
+      throw new Error('Plugin registry commit fence ownership became indeterminate during recovery');
+    }
+    return { record: parsed.data, raw };
   } catch (error) {
     if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
-    if (error instanceof SyntaxError) return null;
+    if (error instanceof SyntaxError) {
+      throw new Error('Plugin registry commit fence ownership became indeterminate during recovery', { cause: error });
+    }
     throw error;
   }
 }
@@ -85,15 +90,16 @@ async function acquireFence(input: Required<Pick<CoordinatorDependencies,
     const raw = JSON.stringify(record);
     try {
       const handle = await open(path, 'wx', 0o600);
-      let writeCompleted = false;
       try {
         await handle.writeFile(raw, 'utf8');
-        writeCompleted = true;
         await handle.sync();
       } catch (error) {
+        // Failed publication owns this exclusive create, even when ENOSPC left no bytes.
+        // Cleanup must not allocate a reclaim guard on the same full filesystem.
+        const createdIdentity = await handle.stat().catch(() => null);
         await handle.close().catch(() => undefined);
-        if (writeCompleted) {
-          await reclaimJsonOwnerFileLockSnapshot(path, raw).catch(() => undefined);
+        if (createdIdentity) {
+          await unlinkCreatedJsonOwnerFileLock(path, createdIdentity).catch(() => undefined);
         }
         throw error;
       }
