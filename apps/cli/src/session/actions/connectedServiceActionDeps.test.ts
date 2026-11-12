@@ -767,29 +767,40 @@ describe('native connected-service Action adapter', () => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const account = { service, accountId: 'work-account' };
     const machineRequests: unknown[] = [];
-    const http = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { success: true } });
-    const action = createCliConnectedServiceAction({ credentials: { token: 'boundary-token', encryption: null },
-      serverId: 'work-home', serverHttpBaseUrl: 'https://work.invalid',
-      resolveHeaders() { return { Authorization: 'Bearer boundary-token' }; },
-      async callMachineAction(request) {
-        machineRequests.push(request);
-        return { status: 'described', service,
-          descriptor: { id: 'openai-codex', title: 'Codex', authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/oauth/callback', pkce: 'required', outcomeReconciliation: 'none' }] } },
-          occurrenceId: 'occurrence-1', sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-1' } },
-          accounts: [], operationTransport: { kind: 'v4' },
-        };
-      },
+    const home = 'https://work.invalid';
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(home, { includeBundledPluginIds: [service.pluginId] });
+    const request = axios.request.bind(axios);
+    let noUsageObserved = false;
+    // Substitute Home HTTP and Machine RPC while retaining real host admission.
+    const http = vi.spyOn(axios, 'request').mockImplementation(async config => {
+      if (new URL(config.url ?? '/', home).pathname !== '/v4/connect/qualified/quotas/refresh') return request(config);
+      return noUsageObserved ? { status: 404, data: { error: 'no_usage_observed' } }
+        : { status: 200, data: { success: true } };
     });
-    const args = { actionId: 'connectedServices.quota.refresh' as const, input: { account, machineId: 'work-machine' }, context: { surface: 'cli' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } } };
-    expect(await action(args)).toEqual({ applied: true });
-    expect(machineRequests).toEqual([{ machineId: 'work-machine', serverId: 'work-home', method: 'daemon.connectedAccounts.control.command',
-      request: { v: 1, machineId: 'work-machine', command: { operation: 'describeService', service, requiredOperation: 'quota_refresh' } },
-      authority: 'account_automation', authorization: undefined,
-      context: { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } },
-      effectActionId: 'connectedServices.quota.refresh', exactMachine: true }]);
-    expect(http).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://work.invalid/v4/connect/qualified/quotas/refresh', method: 'POST', data: { ref: account } }));
-    http.mockResolvedValue({ status: 404, data: { error: 'quota_refresh_unavailable' } });
-    await expect(action(args)).rejects.toMatchObject({ code: 'quota_refresh_unavailable' });
+    try {
+      const action = createCliConnectedServiceAction({ credentials: fixture.credentials,
+        serverId: 'work-home', serverHttpBaseUrl: home,
+        resolveHeaders() { return { Authorization: `Bearer ${fixture.credentials.token}` }; },
+        async callMachineAction(request) {
+          machineRequests.push(request);
+          return { status: 'described', service,
+            descriptor: { id: 'openai-codex', title: 'Codex', authentication: { defaultModeId: 'oauth', modes: [{ id: 'oauth', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/oauth/callback', pkce: 'required', outcomeReconciliation: 'none' }] } },
+            occurrenceId: 'occurrence-1', sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'cli_version_root', versionRootId: 'cli-1' } },
+            accounts: [], operationTransport: { kind: 'v4' },
+          };
+        },
+      });
+      const args = { actionId: 'connectedServices.quota.refresh' as const, input: { account, machineId: 'work-machine' }, context: { surface: 'cli' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } } };
+      expect(await action(args)).toEqual({ applied: true });
+      expect(machineRequests).toEqual([{ machineId: 'work-machine', serverId: 'work-home', method: 'daemon.connectedAccounts.control.command',
+        request: { v: 1, machineId: 'work-machine', command: { operation: 'describeService', service, requiredOperation: 'quota_refresh' } },
+        authority: 'account_automation', authorization: undefined,
+        context: { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } },
+        effectActionId: 'connectedServices.quota.refresh', exactMachine: true }]);
+      expect(http).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://work.invalid/v4/connect/qualified/quotas/refresh', method: 'POST', data: { ref: account } }));
+      noUsageObserved = true;
+      await expect(action(args)).rejects.toMatchObject({ code: 'no_usage_observed' });
+    } finally { await fixture.close(); }
   });
 
   it('persists a default through the real purpose row and qualified Agent catalog without rewriting unrelated preferences', async () => {
