@@ -371,7 +371,7 @@ function isTransientSpawnFailure(spawnResponse: unknown): boolean {
 }
 
 function readSpawnFailureCode(
-  response: Readonly<{ errorCode?: unknown; errorDetail?: unknown }> | null | undefined,
+  response: Readonly<{ errorCode?: unknown; errorDetail?: unknown; errorMessage?: unknown }> | null | undefined,
   fallback: string,
 ): string {
   // Preserve the typed refusal through retained Action operations, whose
@@ -380,9 +380,11 @@ function readSpawnFailureCode(
   if (detail?.kind === 'requester_home_unavailable') {
     return 'project_requester_home_unavailable';
   }
-  if (detail?.kind === 'launch_error') return detail.code;
-  return typeof response?.errorCode === 'string' && response.errorCode.trim().length > 0
+  const errorCode = typeof response?.errorCode === 'string' && response.errorCode.trim().length > 0
     ? response.errorCode : fallback;
+  const failure = projectSessionSpawnFailure({ errorCode,
+    errorMessage: response?.errorMessage, errorDetail: response?.errorDetail });
+  return failure.code === 'spawn_failed' ? failure.launchError?.code ?? errorCode : failure.code;
 }
 
 async function assertStoredAuthTokenValidForSpawn(token: string): Promise<void> {
@@ -610,7 +612,8 @@ async function dispatchCommittedSpawn(args: Readonly<{
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (settled.type === 'error' && isDefiniteSpawnPreAdmissionRejection(settled.errorCode)) {
-      const detail = normalizeSpawnSessionErrorDetail(settled.errorDetail);
+      const failure = projectSessionSpawnFailure(settled);
+      const launchError = failure.code === 'spawn_failed' ? failure.launchError : undefined;
       // The committed child has no admitted runner or input. Settle its known
       // startup refusal through the existing host lifecycle, never raw daemon prose.
       const lifecycle = createSessionTurnLifecycle({
@@ -633,7 +636,9 @@ async function dispatchCommittedSpawn(args: Readonly<{
           issue: classifyPrimarySessionRuntimeIssue({
             cause: 'session_error',
             ...(settled.agentId ? { provider: settled.agentId } : {}),
-            error: { code: detail?.kind === 'launch_error' ? detail.code : settled.errorCode, severity: 'error' },
+            error: { code: launchError?.code ?? settled.errorCode, severity: 'error',
+              ...(launchError?.failureCause ? { failureCause: launchError.failureCause } : {}),
+            },
           }),
         });
       } finally {

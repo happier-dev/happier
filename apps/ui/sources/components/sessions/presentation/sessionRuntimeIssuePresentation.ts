@@ -125,7 +125,6 @@ function resolveSessionStartupFailureCause(
     const reconnect = teamCredentialReconnectPresentation(code);
     if (reconnect) return reconnect.message;
     if (code === 'update_required') return resourceStateLabel('update_required');
-    if (code === 'no_eligible_member') return t('connectedServices.diagnostics.body.no_eligible_group_member');
     if (code === 'machine_target_not_current') return t('session.startFailure.cause.admission_unavailable');
     const startupRecovery = presentSessionStartupFailureRecovery([code]);
     if (startupRecovery) return startupRecovery.cause;
@@ -147,6 +146,9 @@ function resolveSessionStartupFailureCause(
     if (requester) return t(`session.startFailure.cause.${requester}`);
     const preparation = readSessionPreparationFailureCode(code);
     if (!preparation) return null;
+    if (preparation === 'no_eligible_member' || preparation === 'no_eligible_group_member') {
+        return t('connectedServices.diagnostics.body.no_eligible_group_member');
+    }
     if (preparation === 'agent_isolation_unavailable' || preparation === 'filesystem_identity_custody_unavailable') {
         return t('errors.agentIsolationUnavailable');
     }

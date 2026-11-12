@@ -8208,6 +8208,17 @@ inspected `../0.2` frontier `b825a99dfedcb68e223155a1ba0be84babe9e2d0`
 has no Connected Account purpose declaration module at this path, so no
 predecessor adapter is introduced.
 
+The unreleased 0.3 `DaemonProviderModelProjectionRequestV1` also accepts optional
+`connectedServices` using the existing closed qualified V2 binding schema. It
+selects only the Agent declaration's managed-purpose catalogs and is mutually
+exclusive with explicit source and Team catalog selectors. Omission preserves
+saved Provider projection. This is routing and credential-selection input, so
+older strict readers reject it; it must not be ignored. Matching UI, Protocol
+and CLI hosts reload together under the same direct development cut, with no
+new wire epoch, capability or persistence migration. The inspected `../0.2`
+frontier `7b0f74960b1393886b994dbda71dcb3439c1ab57` has no affected Provider RPC
+module or scoped working changes; no predecessor adapter is needed.
+
 Unreleased 0.3 plugin Session input sources and durable `pluginSession`
 provenance accept optional `displayNameSnapshot`, a descriptive source label
 using the existing NFC/128-code-point display snapshot contract. Actor names
@@ -11108,6 +11119,14 @@ protocol-epoch change.
 The optional browser-extension payload `listing` carries upstream display version, declared permissions and website patterns; summary publisher comes from the Store detail organization or Offered-by name, falling back to a supplied manifest author. The existing content ref and summary version remain the package digest. These facts are informational: acquired-manifest permission review remains the browser owner's mutation contract. This unreleased 0.3 closed development contract loads matching daemon, Protocol and UI readers together; an older strict reader can reject the new field. No persisted format, epoch or compatibility adapter is introduced. The inspected `../0.2` frontier at `57cd3db058af7767335d6d5a4ed44904460c50bb` has no corresponding registry-item schema.
 
 ## Native startup failure diagnostics (unreleased 0.3)
+
+Committed Session startup refusals preserve the existing `no_eligible_member`
+and `no_eligible_group_member` Connected Account codes through the canonical
+spawn-failure projection and Session turn issue. The closed startup catalog and
+UI recognize both codes after a reload; private adapter prose is excluded.
+This changes presentation and classification of existing codes, with no new
+record, envelope, migration, epoch or compatibility adapter. Development CLI
+and UI readers must adopt together for the corrected diagnostic presentation.
 
 The existing optional `SessionRuntimeFailureCauseV1.providerErrorCode` accepts
 redacted native string codes alongside integers. Existing enum strings remain

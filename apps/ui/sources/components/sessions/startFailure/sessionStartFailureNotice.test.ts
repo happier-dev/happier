@@ -19,6 +19,11 @@ function issue(overrides: Partial<SessionRuntimeIssueV1>): SessionRuntimeIssueV1
 }
 
 describe('resolveSessionStartFailureNotice', () => {
+    it.each(['no_eligible_member', 'no_eligible_group_member'])('retains Connected Account refusal %s after reload', code => {
+        const notice = resolveSessionStartFailureNotice({ issue: issue({ code }), sessionActive: false });
+        expect(notice?.message).toBe(t('connectedServices.diagnostics.body.no_eligible_group_member'));
+    });
+
     it('explains a disabled Agent without offering another resume attempt', () => {
         const notice = resolveSessionStartFailureNotice({ issue: issue({ code: 'plugin_disabled', source: 'dependency_failure' }), sessionActive: false });
         expect(notice).toMatchObject({ code: 'plugin_disabled', retryable: false });

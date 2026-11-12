@@ -114,6 +114,8 @@ export const TEAM_CREDENTIAL_FAILURE_PREVIEW = 'Shared Team credential refused t
  * may cross startup diagnostic and launch-result boundaries. Broker codes use
  * their schema at lookup time so cyclic Protocol entry graphs can initialize. */
 export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
+  no_eligible_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
+  no_eligible_group_member: 'No eligible Connected Account is available. Review Connected Accounts, then retry the session.',
   connected_account_purpose_catalog_unavailable: 'Default Connected Accounts are temporarily unavailable. Retry starting the session.',
   connected_services_default_settings_invalid: 'Default Connected Account settings are invalid. Review Connected Accounts, then retry starting the session.',
   agent_cli_not_runnable: 'This Agent cannot run as this member. Install its Happier-managed runtime.',
