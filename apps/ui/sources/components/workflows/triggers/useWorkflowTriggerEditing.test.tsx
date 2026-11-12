@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -35,6 +36,10 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 vi.mock('@/components/ui/popover', async importOriginal =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
+
+// Expo is the native HTTP boundary; preserve the real host placement and Account Action owners.
+vi.mock('expo/fetch', async () => (await import('@/dev/testkit/mocks/expoFetch'))
+    .createExpoFetchModuleMock((input, init) => home.request(input, init)));
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -151,6 +156,23 @@ async function seedChannels() {
     channels = await installPortableAccountPluginReleaseForTest({ manifest: PLUGIN_MANIFEST, activate,
         accountLifetime: lifetime, publishProjection: true });
 }
+/** The explicit Session Machine is a remote process; its HTTP carrier stays below real admission. */
+async function answerChannelsMachineMetadata() {
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { SessionPullRequestWatchInputV1Schema, SessionPullRequestWatchReadResultV1Schema } = await import('@happier-dev/channels-protocol/v1');
+    await answerExternalActionAccountForHome(home, serverId, {
+        machineId: projectTarget.machineId, actionId: 'action.invoke', tokenEpoch: 0,
+        execute(input) {
+            const invocation = getActionSpec('action.invoke').inputSchema.parse(input);
+            expect(invocation.action).toEqual({ pluginId: 'happier.channels', localId: 'session-pull-request-watch-v1' });
+            const request = SessionPullRequestWatchInputV1Schema.parse(invocation.input);
+            if (request.kind !== 'get') throw new Error('Expected a Session pull-request metadata read');
+            return SessionPullRequestWatchReadResultV1Schema.parse({ kind: 'ready', sessionId: request.sessionId, bindings: [] });
+        },
+    });
+}
+const previousPlatform = Platform.OS;
 function resetTriggerSets() {
     const state = storage.getState();
     if (!('resetWorkflowTriggerSets' in state) || typeof state.resetWorkflowTriggerSets !== 'function') throw new Error('Real trigger store reset required');
@@ -167,9 +189,13 @@ beforeEach(async () => {
     await home.reset();
     disposeLoader = await installRealActionExecutorModuleLoader();
     const homeProfileId = await home.addHome({ name: 'Trigger history', serverUrl: `https://trigger-history-${crypto.randomUUID()}.test`,
-        accountId: 'account-a', serverIdentityId: `srv_trigger-history-${crypto.randomUUID()}` });
+        accountId: 'account-a', currentAccount: true, serverIdentityId: `srv_trigger-history-${crypto.randomUUID()}` });
     serverId = (await import('@/sync/domains/server/serverProfiles')).resolveServerProfileScopeIdForIdentifier(homeProfileId);
     home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+    // Restore Sync through the real census so the Session's Machine has answered scoped presence.
+    home.answer(serverId, '/v1/machines', { select: () => ({ body: [createPlainMachineRowFixture({
+        id: projectTarget.machineId, accountId: 'account-a',
+    })] }) });
     // Trigger custody resolves the selected Machine's current Account access at HTTP admission.
     home.answer(serverId, `/v1/machines/${projectTarget.machineId}`, {
         body: { machine: createPlainMachineRowFixture({ id: projectTarget.machineId, accountId: 'account-a' }) },
@@ -212,6 +238,7 @@ beforeEach(async () => {
     await seedChannels();
 });
 afterEach(async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: previousPlatform });
     await standardCleanup();
     await channels?.dispose(); channels = undefined;
     resetTriggerSets();
@@ -603,6 +630,8 @@ describe('workflow trigger editing lifetime', () => {
         expect(rows[0]?.triggers).toEqual([]);
     });
     it('reads Session and Account Habits while the real pull-request observer attachment is pending', async () => {
+        // A native client runs this portable Account Action locally; browser placement requires an advertised daemon receiver.
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
@@ -618,6 +647,7 @@ describe('workflow trigger editing lifetime', () => {
         try {
             storage.setState({ sessions });
             await seedChannels();
+            await answerChannelsMachineMetadata();
             const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
             const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
             const ready = await executeDefaultActionInCapturedAccount(await captureLazyActionAccountContext(serverId), 'action.invoke', {
@@ -703,6 +733,10 @@ describe('workflow trigger editing lifetime', () => {
         expect(hook.getCurrent().status).toBe('ready');
     });
     it('renews a pending Session-trigger read after same-Account retirement', async () => {
+        // A native client runs this portable Account Action locally; browser placement requires an advertised daemon receiver.
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        // Reinstall the release for the native executable platform selected by this case.
+        await seedChannels();
         const { useSessionTriggers } = await import('./useSessionTriggers');
         const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -717,7 +751,8 @@ describe('workflow trigger editing lifetime', () => {
             input: { kind: 'get', sessionId: 'session-a' },
         }, { surface: 'ui', defaultSessionId: 'session-a' });
         // A plugin release alone cannot read through an unrestored Account runtime.
-        expect(await readLinks()).toMatchObject({ ok: false, errorCode: 'plugin_settings_scope_unavailable' });
+        const unrestoredLinks = await readLinks();
+        expect(unrestoredLinks, JSON.stringify(unrestoredLinks)).toMatchObject({ ok: false, errorCode: 'plugin_settings_scope_unavailable' });
         const sessions = storage.getState().sessions;
         // Channels reads Account settings through the real connected Sync owner.
         // Saved credentials alone are not a restored Account runtime.
@@ -726,6 +761,7 @@ describe('workflow trigger editing lifetime', () => {
             configureSocket: configureConnectedServerSocketBoundary });
         storage.setState({ sessions });
         await seedChannels();
+        await answerChannelsMachineMetadata();
         const retired = createDeferred<void>();
         try {
             const beforeLinks = await readLinks();
