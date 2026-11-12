@@ -97,3 +97,17 @@ test('new generated Action families enter the author inventory without changing 
   await writeFile(exportList, `${await readFile(exportList, 'utf8')}\n/** @since 0.1.0 */\n`);
   await assert.rejects(readCurrentApiSurfaceInventory({ packageRoot: sdk }), /publisher-owned @since/u);
 });
+
+test('hosting scope services publish only from the daemon runtime entry', async () => {
+  const inventory = await readCurrentApiSurfaceInventory();
+  for (const exportName of ['readCurrentHostingProviderRuntimeServices', 'runWithHostingProviderRuntimeServices']) {
+    const symbols = inventory.symbols.filter(symbol => symbol.exportName === exportName);
+    assert.equal(symbols.length, 1, `${exportName} has one public home`);
+    assert.equal(symbols[0].specifier, './scm/hosting/runtime');
+    assert.equal(symbols[0].realm, 'daemon');
+  }
+  const runtime = inventory.entrypoints.find(entry => entry.specifier === './scm/hosting/runtime');
+  assert.equal(runtime?.realm, 'daemon');
+  assert.equal(runtime.conditions.browser, undefined);
+  assert.equal(runtime.conditions['react-native'], undefined);
+});

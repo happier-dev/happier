@@ -4135,7 +4135,7 @@ test('vertical-a fixture configuration keeps its author test aligned with the ro
     );
     assert.match(
       configuredSource,
-      /import \{ readCurrentHostingProviderRuntimeServices \} from '@happier-dev\/plugin-sdk\/scm\/hosting';/u,
+      /import \{ readCurrentHostingProviderRuntimeServices \} from '@happier-dev\/plugin-sdk\/scm\/hosting\/runtime';/u,
     );
     assert.match(
       configuredSource,

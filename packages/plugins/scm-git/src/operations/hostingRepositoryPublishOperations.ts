@@ -24,10 +24,8 @@ import {
   type HostingProviderRepositoryPublishingCapability,
   type ScmHostingProviderKind,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
-import {
-    readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
-    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/scm/hosting';
+import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';

@@ -16,15 +16,60 @@ import {
   PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST,
   githubPullRequestAdapter,
 } from '@happier-dev/plugins-scm-github';
+import { PLUGIN_MANIFEST as AZURE_PLUGIN_MANIFEST, azureDevopsOperationsAdapter } from '@happier-dev/plugins-scm-azure-devops';
 
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 
 import { runWithHostingProviderExecutionAuthority } from './executionAuthority';
 import { createHostScmHostingProviderRuntimeServices } from './runtimeServices';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import { readCurrentHostingProviderRuntimeServices, runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { readCurrentHostingProviderRuntimeServices, runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 
 type RuntimeServicesInput = Parameters<typeof createHostScmHostingProviderRuntimeServices>[0];
+
+it('refuses an unmapped Azure Team selection before native effects while preserving personal operations', async () => {
+  const descriptor = AZURE_PLUGIN_MANIFEST.contributes.scmHostingProviders[0]!;
+  const providerId = `${AZURE_PLUGIN_MANIFEST.id}/${descriptor.id}`;
+  const purpose = { consumer: { pluginId: AZURE_PLUGIN_MANIFEST.id, localId: descriptor.id }, purpose: 'authentication' };
+  let durable: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [], teamResourceSelections: [{
+    purpose, teamId: 'shared-team', selection: { source: 'team_resource', resourceId: 'source-credential', deliveryMode: 'brokered' },
+  }] };
+  let selectionReads = 0;
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => { selectionReads += 1; return durable; }, update: async mutate => { durable = mutate(durable); return durable; }, subscribe: () => ({ dispose() {} }) },
+    selectTarget: async () => { throw new Error('Unexpected selection'); },
+    resolveTarget: async () => null,
+    assertTargetAccountMaterializable: async () => undefined,
+    materializeAccount: async () => { throw new Error('Azure native operation must not open an Account credential'); },
+  });
+  const services = createHostScmHostingProviderRuntimeServices({
+    contributes: {
+      scmHostingProviders: [{ id: descriptor.id, provenance: 'external', source: { kind: 'path' }, pluginId: AZURE_PLUGIN_MANIFEST.id,
+        definition: ScmHostingProviderContributionSchema.parse(descriptor) }],
+      connectedAccountDescriptors: AZURE_PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.map(definition => ({
+        provenance: 'external' as const, source: { kind: 'path' as const }, pluginId: AZURE_PLUGIN_MANIFEST.id,
+        definition: PluginConnectedAccountDescriptorContributionV2Schema.parse(definition),
+      })),
+    },
+    scmHostingProvidersById: new Map([[providerId, { pluginId: AZURE_PLUGIN_MANIFEST.id, occurrenceId: 'azure-current',
+      registration: { id: descriptor.id, adapter: { pullRequests: azureDevopsOperationsAdapter } } }]]),
+    resolveConnectedAccountPurposeBindingOwner: () => owner,
+  });
+  let nativeEffects = 0;
+  const registry = await services.resolveScmHostingProviderRegistry!();
+  selectionReads = 0;
+  const list = registry.getPullRequests(providerId)!.listPullRequests;
+  const input = { provider: { id: providerId, kind: 'azure-devops', displayName: 'Azure DevOps',
+      baseUrl: 'https://dev.azure.com/team', nameWithOwner: 'team/project/repository' }, head: 'feature',
+    runtimeServices: { executeCommand: async () => { nativeEffects += 1; return { ok: true, stdout: '[]', stderr: '', exitCode: 0 }; } } } as const;
+  await expect(list(input)).rejects.toMatchObject({ code: 'plugin_connected_account_team_resource_unavailable' });
+  expect(nativeEffects).toBe(0);
+  expect(selectionReads).toBe(1);
+  durable = { v: 1, bindings: [] };
+  await expect(list(input)).resolves.toEqual([]);
+  expect(nativeEffects).toBe(1);
+  expect(selectionReads).toBe(2);
+});
 
 function createRuntimeInput(): RuntimeServicesInput {
   return {

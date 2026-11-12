@@ -215,15 +215,16 @@
     "./scm/hosting": {
       "happier-source": "./src/scm/hosting/index.ts",
       "types": "./dist/scm/hosting/index.d.ts",
-      "react-native": {
-        "happier-source": "./src/scm/hosting/index.browser.ts",
-        "default": "./dist/scm/hosting/index.browser.js"
-      },
       "browser": {
         "happier-source": "./src/scm/hosting/index.browser.ts",
         "default": "./dist/scm/hosting/index.browser.js"
       },
       "default": "./dist/scm/hosting/index.js"
+    },
+    "./scm/hosting/runtime": {
+      "happier-source": "./src/scm/hosting/runtime/index.ts",
+      "types": "./dist/scm/hosting/runtime/index.d.ts",
+      "default": "./dist/scm/hosting/runtime/index.js"
     },
     "./secrets": {
       "happier-source": "./src/secrets/index.ts",

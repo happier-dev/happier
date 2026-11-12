@@ -15,7 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/scm/backend';
 import type {
     HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
-import { runWithHostingProviderRuntimeServices as runWithHostSuppliedScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithHostingProviderRuntimeServices as runWithHostSuppliedScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import type { ScmBackend } from '../types';

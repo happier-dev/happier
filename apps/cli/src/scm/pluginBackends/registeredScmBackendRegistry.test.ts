@@ -15,7 +15,7 @@ import type {
     BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
 } from '@happier-dev/plugin-sdk/scm/backend';
 import { readCurrentBackendRuntimeServices as readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
-import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import { PLUGIN_MANIFEST as GIT_PLUGIN_MANIFEST } from '@happier-dev/plugins-scm-git';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';

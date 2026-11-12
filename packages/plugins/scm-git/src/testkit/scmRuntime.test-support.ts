@@ -1,9 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 
-import {
-    runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices,
-    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/scm/hosting';
+import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import {
     runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
     type BackendCommandRunInput as ScmBackendCommandRunInput,

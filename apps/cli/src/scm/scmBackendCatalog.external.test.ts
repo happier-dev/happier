@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';

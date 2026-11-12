@@ -4725,7 +4725,7 @@ export async function configureVerticalAPlugin(params) {
     "import { randomUUID } from 'node:crypto';",
     "import { appendFileSync, readFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
-    "import { readCurrentHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';",
+    "import { readCurrentHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';",
     "import type { HostingProviderRuntimeAdapter } from '@happier-dev/plugin-sdk/scm/hosting';",
     "import type { JsonValue, PluginApi } from '@happier-dev/plugin-sdk';",
     "import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';",
