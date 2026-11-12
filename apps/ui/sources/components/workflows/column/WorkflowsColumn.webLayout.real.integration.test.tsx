@@ -58,6 +58,9 @@ beforeEach(async () => {
         expect(storage.getState().settingsScope).toEqual(scope);
         expect(storage.getState().settingsVersion).toBe(1);
     });
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    await sync.resumeSync('server-reachable');
     storage.getState().applySettingsLocal({ experiments: true,
         featureToggles: { ...storage.getState().settings.featureToggles, automations: true } });
     boundary.prime();
@@ -75,7 +78,7 @@ it('makes a failed-library retry visibly keyboard focusable with its button role
     const artifactRequests: string[] = [];
     setRuntimeFetch(async (url, init) => {
         const target = new URL(String(url));
-        if (target.pathname === '/v1/artifacts' && target.searchParams.get('includeBody') === 'true') {
+        if (target.pathname === '/v1/artifacts' && JSON.parse(target.searchParams.get('kinds') ?? '[]').includes('workflow-definition.v1')) {
             artifactRequests.push(target.href);
             return Response.json({ artifacts: 'invalid-page' });
         }

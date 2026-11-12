@@ -193,9 +193,11 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
             const input: unknown = JSON.parse(String(init.body));
             const details = input !== null && typeof input === 'object' && 'details' in input && input.details === true;
             const query = details ? AutomationDefinitionDetailsRequestSchema.parse(input) : AutomationDefinitionListRequestSchema.parse(input);
-            // This fixture's default rows come from saved definitions. Standalone Account
-            // Workflows use automationDefinitions above to supply their admitted private page.
-            if (query.scope === 'account_inline') return json({ automations: [], nextCursor: null });
+            // This fixture generates saved-definition triggers only; inline and managed definitions
+            // are supplied through automationDefinitions when a case needs them.
+            if (query.scope === 'account_inline' || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined) {
+                return json({ automations: [], nextCursor: null });
+            }
             const ids = query.workflowDefinitionIds;
             if (ids === undefined) return json({ error: 'invalid_parameters' }, 400);
             return json({ automations: automations.automations.filter(row => row.workflowDefinitionId != null

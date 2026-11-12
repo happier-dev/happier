@@ -7,6 +7,10 @@ import { View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
 
 /**
@@ -18,6 +22,14 @@ vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/workflows' }).module);
 
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
+// The recycler is a platform boundary; Collection and its row/header geometry remain real.
+vi.mock('@legendapp/list/react-native', async original =>
+    (await import('@/dev/testkit/mocks/legendList')).createCapturingLegendListMock({ original: await original<Record<string, unknown>>() }).module);
+installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 installWebLayoutBridge();
 
 const fixtureResponse = async (actionId: string) => {
@@ -36,7 +48,7 @@ let WorkflowsLibraryHome: typeof import('./WorkflowsLibraryHome')['WorkflowsLibr
 try {
     ({ WorkflowsLibraryHome } = await import('./WorkflowsLibraryHome'));
 } finally {
-    preloadBoundary.dispose();
+    await preloadBoundary.dispose();
 }
 
 let root: Root | null = null;
@@ -44,6 +56,9 @@ let host: HTMLElement | null = null;
 let boundary: Awaited<ReturnType<typeof installWorkflowActionHttpBoundary>> | undefined;
 let previousState: ReturnType<typeof import('@/sync/domains/state/storageStore')['storage']['getState']>;
 
+const searchRuntime = { open: () => {}, buildCommands: () => [] };
+let singleton: Awaited<ReturnType<typeof loadSyncSingletonForTests>>;
+let fixtureHome = 0;
 beforeEach(async () => {
     // jsdom has no Web Locks API (a browser platform boundary); one tab holds every lock at once.
     if (!('locks' in navigator)) {
@@ -52,13 +67,19 @@ beforeEach(async () => {
     }
     const { storage } = await import('@/sync/domains/state/storageStore');
     previousState = storage.getState();
-    boundary = await installWorkflowActionHttpBoundary({ fixtureResponse });
+    singleton = await loadSyncSingletonForTests();
     const runtime = await import('@/sync/domains/server/serverRuntime');
     const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-    const home = await runtime.upsertAndActivateServer({ serverUrl: 'http://library-layout.test', name: 'Library' });
+    const home = await runtime.upsertAndActivateServer({ serverUrl: `http://library-layout-${++fixtureHome}.test`, name: 'Library' });
+    boundary = await installWorkflowActionHttpBoundary({ fixtureResponse });
+    await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer(boundary.credentials);
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    await sync.resumeSync('server-reachable');
     publishAppliedActiveServerSnapshot(runtime.getActiveServerSnapshot());
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     storage.setState({ profileScope: { serverId: home.id, accountId: 'account-a' },
+        settingsScope: { serverId: home.id, accountId: 'account-a' }, settingsVersion: 1,
         settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } },
         workflowRunListWindows: {}, workflowRunsById: {} });
     boundary.prime();
@@ -70,7 +91,8 @@ afterEach(async () => {
     host?.remove();
     host = null;
     (await import('./workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
-    boundary?.dispose();
+    await boundary?.dispose();
+    singleton?.dispose();
     boundary = undefined;
     (await import('@/sync/domains/state/storageStore')).storage.setState(previousState);
 });
@@ -82,8 +104,10 @@ describe('Workflows home, as a browser lays it out', () => {
         document.body.appendChild(host);
         root = createRoot(host);
         await act(async () => {
-            root!.render(React.createElement(View, { style: { width } }, React.createElement(WorkflowsLibraryHome)));
+            root!.render(React.createElement(View, { style: { width } }, <InjectedAuthProvider credentials={boundary!.credentials}><UniversalSearchRuntimeProvider value={searchRuntime}><WorkflowsLibraryHome /></UniversalSearchRuntimeProvider></InjectedAuthProvider>));
         });
+        // Windowed Collection rows mount after its browser onLayout boundary has measured the viewport.
+        await measureWebLayout(host, { viewport: { width, height: 3200 }, settle: replay => act(replay) });
         await act(async () => {
             await vi.waitFor(() => expect(host!.querySelector('[data-testid="workflows-home:row:saved"]')).not.toBeNull());
         });
