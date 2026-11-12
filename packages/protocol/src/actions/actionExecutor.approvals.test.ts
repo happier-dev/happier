@@ -4229,6 +4229,7 @@ describe('createActionExecutor (approvals)', () => {
       ok: false,
       errorCode: 'approval_execution_outcome_unknown',
       error: 'approval_execution_outcome_unknown',
+      failureCause: { errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null, phase: 'approval.settlement' },
     });
     expect(effects).toBe(1);
     expect(storedRequest.status).toBe('executing');
@@ -5173,7 +5174,7 @@ describe('createActionExecutor (approvals)', () => {
       : executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' });
     await expect(decide())
       .resolves.toMatchObject({ ok: false, errorCode: failurePhase === 'claim-response' ? 'update_failed'
-        : failurePhase === 'decision' ? 'P2024' : 'approval_context_unavailable' });
+        : failurePhase === 'decision' || failurePhase === 'read' ? 'P2024' : 'approval_context_unavailable' });
     expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
     expect(stored.execution).toBeUndefined();
     expect(effects).toBe(0);

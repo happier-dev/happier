@@ -86,6 +86,7 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
   let subscription: ReturnType<ReturnType<typeof subscribeCliApprovalChanges>> | undefined;
   let stopped = false;
   let abortObservation: (() => void) | undefined;
+  let refreshObservation: (() => void) | undefined;
   try {
     let localDecision: Promise<ActionExecuteResult> | undefined;
     const notification = Promise.resolve().then(() => options.onApprovalRequested!(pending.data.artifactId, signal, decision => {
@@ -127,6 +128,7 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
           }
         })().catch(reject);
       };
+      refreshObservation = invalidate;
       abortObservation = () => reject(signal.reason ?? new Error('approval_wait_aborted'));
       signal.addEventListener('abort', abortObservation, { once: true });
       if (signal.aborted) { abortObservation(); return; }
@@ -150,6 +152,9 @@ export async function consumeDeferredCliApprovalResult(result: ActionExecuteResu
       if (live.success) return live.data;
     }
     if (settled.kind === 'observation') return settled.execution;
+    // Decision completion is also a change signal: its terminal write may
+    // precede (or lose) the socket push after our initial open-state read.
+    refreshObservation?.();
     return await observation;
   } finally {
     stopped = true;

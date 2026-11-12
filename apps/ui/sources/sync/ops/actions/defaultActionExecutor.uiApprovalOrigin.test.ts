@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -23,6 +25,17 @@ installHomeGovernanceBoundaries(harness);
 await loadSyncSingletonForTests();
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
 const { Modal } = await import('@/modal');
+
+/** A receiving Machine without a presenter: it carries its review back and admits only a confirmation of that review. */
+const REVIEW_DIGEST = 'M'.repeat(43);
+const refusedWithReview = Symbol('refused-with-review');
+const refuseWithReview = (input: unknown, summary: string) => ({ [refusedWithReview]: { input, summary } });
+const carriedMachineReview = (result: unknown) => {
+    if (typeof result !== 'object' || result === null || !(refusedWithReview in result)) return null;
+    const carried = (result as { [refusedWithReview]: { input: unknown; summary?: string; preview?: unknown } })[refusedWithReview];
+    return { errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+        details: { review: { actionArgs: carried.input, preview: carried.preview ?? { summary: carried.summary } }, reviewDigest: REVIEW_DIGEST } };
+};
 
 describe('present-user UI approval origin at the Action host', () => {
     beforeEach(async () => {
@@ -231,10 +244,19 @@ describe('present-user UI approval origin at the Action host', () => {
         } });
         const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
         const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifact.id, header: null }, request, '', serverId));
-        if (failure !== 'claimed') {
+        expect(store.read('recovered-role')).toBeNull();
+        if (failure === 'recoverable') {
+            // 0edec5eadf0 preserves consent until execution is claimed. Once
+            // storage recovers, the explicit approval can claim and execute it.
+            await expect(hook.getCurrent()('approve')).resolves.toBeDefined();
+            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'executed',
+                execution: { ok: true } });
+            expect(store.read('recovered-role')).not.toBeNull();
+        } else if (failure === 'persistent') {
             await expect(hook.getCurrent()('approve')).rejects.toMatchObject({ code: 'approval_context_unavailable' });
-            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'failed',
-                execution: { ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable' } });
+            const retained = JSON.parse(store.readPlainBody(artifact.id) ?? 'null');
+            expect(retained).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+            expect(retained.execution).toBeUndefined();
             await expect(hook.getCurrent()('approve')).rejects.toMatchObject({ code: 'approval_context_unavailable' });
             expect(store.read('recovered-role')).toBeNull();
         } else {
@@ -242,7 +264,9 @@ describe('present-user UI approval origin at the Action host', () => {
                 code: 'approval_execution_outcome_unknown',
             });
             expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'outcome_unknown',
-                execution: { ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown' } });
+                execution: { ok: false, errorCode: 'approval_execution_outcome_unknown' } });
+            // 2d29685e1f4 leaves effect evidence unknown after a lost claim ACK.
+            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null').execution.effectAttempted).toBeUndefined();
             expect(store.read('recovered-role')).toBeNull();
         }
         expect(failedClaims).toBeGreaterThan(0);
@@ -269,60 +293,136 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('recovers a native Restart review through the receiving Machine before replacing the running Service', async () => {
+    it('confirms a native Restart with the Machine\'s own review, then restarts exactly that Service once', async () => {
         const actionId = 'localServices.actions.restartManaged' as const;
         const machineId = 'restart-machine';
         const serverId = await harness.addHome({ name: 'Restart Home', serverUrl: 'https://restart-review.test', accountId: 'alice',
             serverIdentityId: 'srv_restart_review', currentAccount: true });
-        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId });
         const input = getActionSpec(actionId).inputSchema.parse({ requestId: 'restart-native-review', action: 'restart_managed',
             target: { kind: 'managed_service', managedServiceId: 'running-service', machineId } });
-        const received: string[] = [];
-        vi.mocked(Modal.confirm).mockResolvedValue(true);
-        harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            received.push(actionId);
-            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } }) };
-        } });
-        harness.answer(serverId, '/v1/actions/approval.request.create', { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            expect(envelope.input).toMatchObject({ actionId, actionArgs: input, createdBy: { surface: 'system' } });
-            received.push('approval.request.create');
-            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.create',
-                requestId: envelope.requestId, execution: { ok: true, result: { artifactId: 'native-restart-review' } } }) };
-        } });
+        const received: boolean[] = [];
+        // The Machine's own review: the exact child it would start (as its approval builder produces it).
+        const workspace = { serverId: 'srv_restart_review', machineId, workspaceId: 'checkout', rootPath: '/repo' };
+        const start = { machineId, workspace, targetId: 'web', declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
+            expectedEffectDigest: 'a'.repeat(64) };
+        const restartPreview = { hostReviewedChildren: { children: [{ action: 'localServices.launcher.start', role: 'service.restart.start', input: start }] },
+            hostReviewedContent: { serviceStartReview: LocalServiceStartApprovalReviewV1Schema.parse({ request: start, target: workspace,
+                reviewedEffectDigest: start.expectedEffectDigest, setup: { required: false, project: { serverId: 'srv_restart_review', projectId: 'project' },
+                    reviewedEffectDigest: 'b'.repeat(64), reviewedEffect: {} },
+                reviewedEffect: { command: { source: { kind: 'command', command: 'serve web' } } } }) } };
+        // The Machine cannot present the Restart review; it carries it back until the person's press confirms it.
+        await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+            failure: carriedMachineReview,
+            execute: (received_, context) => {
+                const confirmed = context.invocation?.presentUserConfirmation?.reviewDigest === REVIEW_DIGEST;
+                received.push(confirmed);
+                return confirmed ? { v: 1, requestId: input.requestId, action: 'restart_managed', status: 'succeeded', auditEvents: [] }
+                    : { [refusedWithReview]: { input: received_, preview: restartPreview } };
+            } });
+        vi.mocked(Modal.confirm).mockReset();
+        // The native confirmation presents the Machine's own review; the person confirms it once.
+        const shown: Array<Readonly<{ title: unknown; preview: unknown; actionArgs: unknown }>> = [];
+        vi.mocked(Modal.show).mockImplementationOnce(config => {
+            const props = config.props as { preview: unknown; actionArgs: unknown; onAnswer(confirmed: boolean): void };
+            shown.push({ title: config.chrome?.kind === 'card' ? config.chrome.title : null, preview: props.preview, actionArgs: props.actionArgs });
+            queueMicrotask(() => props.onAnswer(true));
+            return 'restart-review';
+        });
         const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
-        expect(result, JSON.stringify({ result, received })).toMatchObject({ ok: true,
-            result: { kind: 'approval_request_created', actionId, artifactId: 'native-restart-review' } });
-        expect(received).toEqual([actionId, 'approval.request.create']);
+        expect(result, JSON.stringify({ result, received })).toMatchObject({ ok: true, result: { status: 'succeeded' } });
+        expect(received).toEqual([false, true]);
+        // The Machine-discovered consequence (the command it will start) is what the person confirms: its review,
+        // not a sentence restating the input. The review presenter renders `serve web` (ActionConfirmationReview.test).
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(shown).toEqual([{ title: expect.any(String), preview: restartPreview, actionArgs: input }]);
+        expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
-    it('opens one review of the exact Install updates plan when the receiving Machine refuses it for review', async () => {
+    it.each(['confirms', 'cancels'] as const)('asks with the Machine\'s own review and installs the exact updates plan once the person confirms, after the Machine refuses their own Install (%s)', async choice => {
         const actionId = 'machines.setup.updates.apply' as const;
         const machineId = 'updates-machine';
-        const homeId = 'srv_updates_review';
-        const serverId = await harness.addHome({ name: 'Updates Home', serverUrl: 'https://updates-review.test', accountId: 'alice',
+        const homeId = `srv_updates_review_${choice}`;
+        const serverId = await harness.addHome({ name: 'Updates Home', serverUrl: `https://updates-review-${choice}.test`, accountId: 'alice',
             serverIdentityId: homeId, currentAccount: true });
-        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId });
         const input = getActionSpec(actionId).inputSchema.parse({ homeId, machineId, scope: 'all',
             plan: { v: 1, basis: { kind: 'updates', machineId, scope: 'all' }, steps: [], nativeFacts: [], planDigest: 'b'.repeat(64) } });
-        const received: string[] = [];
-        // The Machine has no presenter for "Ask each time", so it refuses before any password prompt or effect.
-        harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            received.push(actionId);
-            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
-                execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } }) };
-        } });
+        const dispatched: Array<Readonly<{ input: unknown; confirmed: boolean }>> = [];
+        // "Ask each time": the Machine cannot present the review, so it carries it back before any password prompt.
+        await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+            failure: carriedMachineReview,
+            execute: (received, context) => {
+                const confirmed = context.invocation?.presentUserConfirmation?.reviewDigest === REVIEW_DIGEST;
+                dispatched.push({ input: received, confirmed });
+                return confirmed ? { operationId: 'updates-operation', terminalId: 'updates-terminal' }
+                    : refuseWithReview(received, 'Install 53 updates as the administrator you name');
+            } });
+        vi.mocked(Modal.confirm).mockReset();
+        vi.mocked(Modal.confirm).mockResolvedValue(choice === 'confirms');
         const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
-        expect(result, JSON.stringify({ result, received })).toMatchObject({ ok: true,
-            result: { kind: 'approval_request_created', actionId } });
-        // One dispatch, no effect, and one open review of exactly the refused plan.
-        expect(received).toEqual([actionId]);
-        const artifactId = (result as { result: { artifactId: string } }).result.artifactId;
-        expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')))
-            .toMatchObject({ status: 'open', actionId, actionArgs: input });
+        if (choice === 'confirms') {
+            expect(result, JSON.stringify({ result, dispatched })).toMatchObject({ ok: true, result: { operationId: 'updates-operation' } });
+            expect(dispatched).toEqual([{ input, confirmed: false }, { input, confirmed: true }]);
+        } else {
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(dispatched).toEqual([{ input, confirmed: false }]);
+        }
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(Modal.confirm).mock.calls[0]?.[1]).toContain('Install 53 updates');
+        expect(harness.artifacts(serverId).list()).toEqual([]);
+    });
+
+    it('lets the Install updates step host the Machine\'s carried review, so no dialog follows its own press', async () => {
+        const actionId = 'machines.setup.updates.apply' as const;
+        const machineId = 'updates-step-machine';
+        const homeId = 'srv_updates_step';
+        const serverId = await harness.addHome({ name: 'Updates Home', serverUrl: 'https://updates-step.test', accountId: 'alice',
+            serverIdentityId: homeId, currentAccount: true });
+        const input = getActionSpec(actionId).inputSchema.parse({ homeId, machineId, scope: 'all',
+            plan: { v: 1, basis: { kind: 'updates', machineId, scope: 'all' }, steps: [], nativeFacts: [], planDigest: 'c'.repeat(64) } });
+        const dispatched: boolean[] = [];
+        await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+            failure: carriedMachineReview,
+            execute: (received, context) => {
+                const confirmed = context.invocation?.presentUserConfirmation?.reviewDigest === REVIEW_DIGEST;
+                dispatched.push(confirmed);
+                return confirmed ? { operationId: 'updates-operation', terminalId: 'updates-terminal' }
+                    : refuseWithReview(received, 'Install 53 updates as the administrator you name');
+            } });
+        vi.mocked(Modal.confirm).mockReset();
+        vi.mocked(Modal.show).mockClear();
+        const shownInStep: unknown[] = [];
+        const result = await createDefaultActionExecutor({ presentUserActionConfirmation: async ({ preview }) => {
+            shownInStep.push(preview);
+            return true;
+        } }).execute(actionId, input, { surface: 'ui', serverId });
+        expect(result).toMatchObject({ ok: true, result: { operationId: 'updates-operation' } });
+        expect(dispatched).toEqual([false, true]);
+        expect(shownInStep).toEqual([{ summary: 'Install 53 updates as the administrator you name' }]);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(Modal.show).not.toHaveBeenCalled();
+    });
+
+    it('keeps the Machine\'s refusal when its review digest arrives without the review it binds', async () => {
+        const actionId = 'machines.setup.updates.apply' as const;
+        const machineId = 'updates-blind-machine';
+        const homeId = 'srv_updates_blind';
+        const serverId = await harness.addHome({ name: 'Updates Home', serverUrl: 'https://updates-blind.test', accountId: 'alice',
+            serverIdentityId: homeId, currentAccount: true });
+        const input = getActionSpec(actionId).inputSchema.parse({ homeId, machineId, scope: 'all',
+            plan: { v: 1, basis: { kind: 'updates', machineId, scope: 'all' }, steps: [], nativeFacts: [], planDigest: 'd'.repeat(64) } });
+        const dispatched: unknown[] = [];
+        await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+            failure: () => ({ errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+                details: { reviewDigest: REVIEW_DIGEST } }),
+            execute: received => { dispatched.push(received); return {}; } });
+        vi.mocked(Modal.confirm).mockReset();
+        vi.mocked(Modal.show).mockClear();
+        const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
+        // A confirmation of consequences the person never saw would be blind approval: nothing is asked or re-run.
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        expect(dispatched).toHaveLength(1);
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(Modal.show).not.toHaveBeenCalled();
     });
 
     it('executes the real Project trust mutation once after accepting its Ask confirmation', async () => {

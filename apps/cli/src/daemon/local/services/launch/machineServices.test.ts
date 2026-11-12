@@ -958,8 +958,10 @@ describe('Machine service watch front door', () => {
             const reloaded = createMachineServicesRuntime({ target, readMetadata: () => metadata, captureMetadataPort: () => port });
             await reloaded.reconcile();
             const afterReload = MachineServicesListResultV1Schema.parse(await reloaded.execute({ actionId: 'machines.services.list', input: target, context }));
+            // The externally observed start above retired the admitted Stop intent;
+            // its later external stop must remain ordinary down health after reload.
             expect(afterReload).toEqual({ ...listed, services: listed.services.map(row => ({ ...row, state: 'stopped', baseUrl: 'http://127.0.0.1:45432', port: 45432,
-                health: { ...row.health, status: 'down', reason: 'stopped', observedAtMs: expect.any(Number), expectedDown: 'stop' }, native: {
+                health: { ...row.health, status: 'down', reason: 'stopped', observedAtMs: expect.any(Number) }, native: {
                 phase: 'stopped', readiness: 'not_reported',
             } })) });
             await writeFile(nativeState, JSON.stringify({ ...JSON.parse(await readFile(nativeState, 'utf8')),
@@ -997,7 +999,6 @@ describe('Machine service watch front door', () => {
             expect(registry.projectManagedServices.listMachineServices()).toEqual([]);
             expect(JSON.parse(await readFile(nativeState, 'utf8'))).toMatchObject({ controls: ['stop', 'stop', 'stop', 'stop', 'stop'] });
             expect(metadata).toMatchObject({ metadata: { displayName: 'Unrelated edit', serviceWatchesV1: { v: 1, watches: [] } } });
-            await reloaded.dispose();
             expect(environmentStops).toBe(0);
             expect(observationReleases).toBe(0);
             environmentControllable = true;
@@ -1008,9 +1009,19 @@ describe('Machine service watch front door', () => {
                     .toMatchObject({ ok: true, result: { kind: 'observed', serviceId: environmentControlInput.serviceId } });
                 expect(environmentStops).toBe(1);
             } finally { controlHttp.mockRestore(); }
+            await reloaded.dispose();
+            expect(environmentStops).toBe(1);
+            expect(observationReleases).toBe(2);
             // Final registry disposal must collect a still-demanded native
             // Resource too, not only watches explicitly closed by a client.
-            expect(await runtime.execute({ actionId: 'machines.services.watch', input: watchInput, context })).toMatchObject({ kind: 'applied' });
+            const finalDiscovery = MachineServicesDiscoveryResultV1Schema.parse(await runtime.execute({
+                actionId: 'machines.services.discovery', input: target, context,
+            }));
+            const finalCandidate = finalDiscovery.kind === 'snapshot'
+                ? finalDiscovery.candidates.find(item => item.candidateId === candidate.candidateId) : undefined;
+            if (!finalCandidate) throw new Error('Expected the current native candidate after its display name changed');
+            expect(await runtime.execute({ actionId: 'machines.services.watch',
+                input: { ...watchInput, expectedRevision: finalCandidate.revision }, context })).toMatchObject({ kind: 'applied' });
             const finalServices = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
             if (finalServices.kind !== 'snapshot') throw new Error('Expected the final admitted native service');
             const finalService = finalServices.services.find(row => row.authority === 'machine');

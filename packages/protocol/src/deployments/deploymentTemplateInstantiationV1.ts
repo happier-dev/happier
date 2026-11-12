@@ -239,8 +239,10 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
     ? (input.purpose !== 'preview' || input.previewCompanionOfEnvironmentId === undefined)
     && input.preview !== undefined && input.projectSourceId !== undefined
     && input.newProject === undefined && input.copyFrom === undefined && input.definition === undefined && input.firstTargetLink === undefined
-    && input.protection === 'nonProduction' : input.preview === undefined && input.name.trim().length > 0,
-    { message: 'A preview or its named companion derives from one template and existing Source; ordinary creation requires a name.' }),
+    && input.protection === 'nonProduction' : input.preview === undefined,
+    { message: 'A preview or its named companion derives from one template and existing Source.' }),
+  z.refine(input => input.purpose === 'preview' || input.previewCompanionOfEnvironmentId !== undefined || input.name.trim().length > 0,
+    { path: ['name'], message: 'Ordinary creation requires a name.' }),
   z.refine(input => input.newProject === undefined || input.definition?.from !== 'repository', { message: 'A new repository-free Project needs a stored definition.' }),
   z.refine(input => input.newProject === undefined || input.copyFrom === undefined, { message: 'A new repository-free Project selects its stored definition.' }),
   z.refine(input => input.definition?.from === 'catalogApp'

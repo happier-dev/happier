@@ -22,6 +22,7 @@ vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/ico
 vi.mock('@react-navigation/native', async () => (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
+const CARRIED_REVIEW_DIGEST = 'S'.repeat(43);
 // Test Renderer paints the real menu at the external DOM renderer boundary.
 vi.mock('@/utils/web/reactDomCjs', async () => (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
@@ -153,7 +154,7 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
     await screen.pressByTestIdAsync(`${registry}.secret`);
     await act(async () => refreshSavedSecretCatalog(context.accountLifetime.scope, { includeMaterial: false }));
     await measureMountedCollections(screen);
-    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}`);
+    await screen.pressByTestIdAsync(`saved-secret-picker:saved:${entry.ref}`);
     await screen.pressByTestIdAsync(`${registry}.save`);
     await vi.waitFor(() => expect(writes.at(-1)).toEqual({ set: [{ ...binding, registryOrigin: 'https://other.registry',
       source: { ...binding.source, resourceRevision: entry.revision } }], remove: [] }));
@@ -162,6 +163,8 @@ it.each(['plain', 'e2ee'] as const)('edits and removes registry access through t
 });
 
 it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavailable'] as const)('opens recovery from Settings after %s', async code => {
+  const { Modal } = await import('@/modal');
+  vi.mocked(Modal.confirm).mockClear().mockResolvedValue(true);
   const mode = 'plain';
   let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
   const writes: unknown[] = [];
@@ -182,11 +185,19 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
   let detail = { ...initial, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(initial), memberVersions: {}, secretRevisions: [] };
   boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
     serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: detail.environment.controllerMachineId,
-    actionId: 'deployments.environments.update', tokenEpoch: 0, ...(encryption ? { encryption } : {}), execute: raw => {
+    actionId: 'deployments.environments.update', tokenEpoch: 0, ...(encryption ? { encryption } : {}), execute: (raw, invocationContext) => {
       const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
       writes.push(input.patch?.ownServer);
-      return { ok: false, error: code };
-    }, failure: () => ({ errorCode: code, error: code }) });
+      // A controller without a presenter carries its review back and admits only a confirmation of that review.
+      if (code === 'action_interactive_review_required'
+        && invocationContext.invocation.presentUserConfirmation?.reviewDigest === CARRIED_REVIEW_DIGEST) {
+        return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1 };
+      }
+      return { ok: false, error: code, input };
+    }, failure: result => typeof result === 'object' && result !== null && 'ok' in result && result.ok === true ? null
+      : { errorCode: code, error: code, ...(code === 'action_interactive_review_required' ? { details: {
+        review: { actionArgs: (result as { input: unknown }).input, preview: { summary: 'Start the new release first' } },
+        reviewDigest: CARRIED_REVIEW_DIGEST } } : {}) } });
   const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
     transport: createDeploymentReadTransport(context.accountLifetime) });
   const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
@@ -200,9 +211,11 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
     await screen.pressByTestIdAsync('project-deployments.environment.settings.rollout.rollout:startFirst');
     const refused = `project-deployments.outcome.refused.${code === 'machine_unavailable' ? 'machine' : 'other'}`;
     if (code === 'action_interactive_review_required') {
-      // The controller's refusal opens one review of this exact Save; nothing reruns and nothing reads as a failure.
-      await vi.waitFor(() => expect(requested).toHaveLength(1));
-      expect(writes).toHaveLength(1);
+      // The person confirms the controller's own review natively; the exact Save runs once more with it,
+      // never a self-approval Artifact and never a failure banner.
+      await vi.waitFor(() => expect(writes).toHaveLength(2));
+      expect(Modal.confirm).toHaveBeenCalledTimes(1);
+      expect(requested).toEqual([]);
       expect(screen.findByTestId(refused)).toBeNull();
       return;
     }

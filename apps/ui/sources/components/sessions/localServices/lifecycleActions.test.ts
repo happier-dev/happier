@@ -3,18 +3,14 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 type RuntimeActionExecute = FrontDoorRuntimeActionExecute;
 
-const daemon = vi.hoisted(() => ({ rpc: vi.fn() }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
-    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(daemon.rpc));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 installDisconnectedServerSocketBoundary();
@@ -50,7 +46,7 @@ function managedCopyTarget(): LocalServiceLaunchTarget {
 
 describe('local service lifecycle action helpers', () => {
     beforeEach(async () => { await home.reset(); });
-    afterEach(async () => { standardCleanup(); retirePresentationNotice(); daemon.rpc.mockReset(); await home.reset(); });
+    afterEach(async () => { standardCleanup(); retirePresentationNotice(); await home.reset(); });
 
     it('preserves unsupported and uncertain canonical control outcomes in the shared result owner', () => {
         expect(readLocalServiceActionOutcome({ kind: 'unsupported', reason: 'unsupported' }))
@@ -331,22 +327,24 @@ describe('local service lifecycle action helpers', () => {
     });
 
     it.each(['cancel', 'refused'] as const)('keeps native Undo cancellation quiet and a real refusal visible through the notice owner (%s)', async decision => {
-        const serverId = await home.addHome({ name: 'Services', serverUrl: 'https://services-undo.test', accountId: 'owner', currentAccount: true });
+        const serverId = await home.addHome({ name: 'Services', serverUrl: 'https://services-undo.test', accountId: 'owner',
+            serverIdentityId: 'srv_services_undo', currentAccount: true });
         // Restore the signed-in Account scope used by the mounted Services page.
         const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
         storage.setState({ profileScope: scope, settingsScope: scope });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-        // Only daemon IO and native presentation are replaced; Action policy and the notice owner stay real.
-        daemon.rpc.mockImplementation(async (rpc: Readonly<{ method: string; payload: unknown }>) => {
-            expect(rpc.method).toBe(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE);
-            const request = LocalServiceActionRequestV1Schema.parse(rpc.payload);
-            const refused = decision === 'refused' && request.undoKey !== undefined;
-            return DaemonLocalServiceActionExecuteResponseV1Schema.parse({ protocolVersion: 1,
-                result: { v: 1, requestId: request.requestId, action: request.action,
+        // The installed Machine's HTTP carrier and native presentation are boundaries; Action policy and notices stay real.
+        const requests: ReturnType<typeof LocalServiceActionRequestV1Schema.parse>[] = [];
+        await answerExternalActionAccountForHome(home, serverId, { machineId: 'machine-a', installationId: 'installation-a',
+            actionId: 'localServices.actions.forget', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+                const request = LocalServiceActionRequestV1Schema.parse(input);
+                requests.push(request);
+                const refused = decision === 'refused' && request.undoKey !== undefined;
+                return { v: 1, requestId: request.requestId, action: request.action,
                     status: refused ? 'denied' : 'succeeded', ...(refused ? { reasonCode: 'wrong_machine' } : { undoKey: 'suppression' }),
                     auditEvents: [{ v: 1, eventId: `event:${request.requestId}`, requestId: request.requestId,
-                        machineId: request.target.machineId, action: request.action, result: refused ? 'denied' : 'succeeded', recordedAt: 1 }] } });
-        });
+                        machineId: request.target.machineId, action: request.action, result: refused ? 'denied' : 'succeeded', recordedAt: 1 }] };
+            } });
         const runtimeActionExecute = createFrontDoorRuntimeActionExecutor();
         let forget: ReturnType<typeof useDetectedLocalServiceForgetAction>;
         function Harness() {
@@ -356,15 +354,17 @@ describe('local service lifecycle action helpers', () => {
             return React.createElement('View');
         }
         await renderScreen(React.createElement(Harness));
+        let forgetResult: unknown;
         await act(async () => {
-            await forget?.({ id: 'inventory:entry-a', source: 'inventory_entry', title: 'Web',
+            forgetResult = await forget?.({ id: 'inventory:entry-a', source: 'inventory_entry', title: 'Web',
                 sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry-a' },
                 machineId: 'machine-a', confidence: 'high', state: 'available', actions: [] });
         });
         const notice = readPresentationNotice();
-        expect(notice?.undo).toBeDefined();
+        expect(notice?.undo, JSON.stringify(forgetResult)).toBeDefined();
         if (decision === 'refused') {
             await act(async () => { await notice?.undo?.run(); });
+            expect(requests[1]?.undoKey).toBe('suppression');
             const failure = readPresentationNotice();
             expect(failure?.severity).toBe('error');
             // The host retires the clicked notice, not the newer remote-failure notice.
@@ -377,7 +377,7 @@ describe('local service lifecycle action helpers', () => {
             expect(Modal.confirm).toHaveBeenCalledTimes(1);
             expect(home.artifacts(serverId).list()).toHaveLength(0);
             expect(readPresentationNotice()).toBe(notice);
-            expect(daemon.rpc).toHaveBeenCalledTimes(1);
+            expect(requests).toHaveLength(1);
         }
     });
 

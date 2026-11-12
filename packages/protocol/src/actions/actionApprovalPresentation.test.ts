@@ -20,6 +20,7 @@ import { TriageStartEntrySessionInputV1Schema } from '../../../plugins/triage/sr
 import { createTriageSelectedPrStartApprovalInput } from '../../../plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support.js';
 import { SharedSavedSecretRefV1Schema } from '../machines/managed/providerFactsV1.js';
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
 
 describe('approval field presentation', () => {
   it('names a nested Voice Saved Secret binding by its retained reference', () => {
@@ -895,7 +896,7 @@ describe('approval field presentation', () => {
             definition: { kind: 'installed', surface: { pluginId: 'happier.triage', localId: 'latest' } }, bindings: {} } },
         ] } };
     expect(getActionSpec('widgets.group.add').approvalPresentation?.summary(input))
-      .toBe('Add “Capacity and PRs copy” to Home with Capacity · New in PRs & Issues.');
+      .toBe(`Add “Capacity and PRs copy” to Home with ${readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_capacity' })?.title} · New in PRs & Issues.`);
     const row = describeApprovalActionFields({ actionId: 'widgets.group.add', actionArgs: input }).rows.find(row => row.path === 'group');
     if (row?.kind !== 'value') throw new Error('Missing group reading');
     expect(row.entries?.filter(entry => ['opaque-group', 'opaque-capacity', 'opaque-prs', 'happier.triage', 'latest'].includes(entry.value ?? '')))
@@ -912,7 +913,7 @@ describe('approval field presentation', () => {
       },
     } };
     expect(getActionSpec('widgets.fragment.create').approvalPresentation?.summary(input))
-      .toBe('Save “Release checks” to Your widgets with Capacity.');
+      .toBe(`Save “Release checks” to Your widgets with ${readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_capacity' })?.title}.`);
     const fields = describeApprovalActionFields({ actionId: 'widgets.fragment.create', actionArgs: input });
     expect(fields.rows.find(row => row.path === 'artifactId')).toMatchObject({ technical: true });
     const fragment = fields.rows.find(row => row.path === 'fragment');

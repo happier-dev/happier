@@ -95,19 +95,31 @@ describe('workflow authoring starters through Actions', () => {
     } else if (key === 'restore-drill') expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel',
       failurePolicy: 'collect_outcomes' });
     else expect(example.definition.blocks[0]).toMatchObject({ kind: 'action',
-      actionId: key === 'backup-verify' ? 'deployments.backups.verify' : 'deployments.backups.run' });
+      actionId: key === 'backup-verify' ? 'deployments.backups.verify' : 'deployments.environments.get' });
     if (key === 'nightly-backups') {
       expect(example.definition.blocks).toMatchObject([
-        { kind: 'action', id: 'backup' },
+        { kind: 'action', id: 'current', actionId: 'deployments.environments.get', input: {
+          serverId: { kind: 'input', name: 'backupEnvironment', path: ['serverId'] },
+          environmentId: { kind: 'input', name: 'backupEnvironment', path: ['environmentId'] },
+          backupPolicy: { kind: 'input', name: 'backupPolicy' },
+        } },
+        { kind: 'action', id: 'backup', actionId: 'deployments.backups.run', input: {
+          environmentId: { kind: 'result', producer: { blockId: 'current', scope: { kind: 'current' } }, path: ['backupTarget', 'environmentId'] },
+        } },
         { kind: 'loop', repetition: { kind: 'items', execution: 'sequential', failurePolicy: 'fail_stop',
           items: { kind: 'result', producer: { blockId: 'backup', scope: { kind: 'current' } }, path: ['manifests'] } },
           body: [{ kind: 'action', actionId: 'deployments.backups.verify', input: {
+            environmentId: { kind: 'result', producer: { blockId: 'current', scope: { kind: 'outer', levels: 1 } }, path: ['backupTarget', 'environmentId'] },
             backupOperationId: { kind: 'result', producer: { blockId: 'backup', scope: { kind: 'outer', levels: 1 } }, path: ['operationId'] },
             snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] },
           } }] },
-        { kind: 'action', actionId: 'deployments.backups.prune', input: { retention: { kind: 'input', name: 'retention' } } },
+        { kind: 'action', actionId: 'deployments.backups.prune', input: { retention: { kind: 'input', name: 'backupPolicy', path: ['retention'] } } },
       ]);
-      expect(example.definition.inputs).toContainEqual({ name: 'retention', valueType: 'json', required: true });
+      expect(example.definition.inputs).toEqual([
+        { name: 'backupEnvironment', valueType: 'json', required: true },
+        { name: 'backupPolicy', valueType: 'json', required: true },
+        { name: 'verificationLevel', valueType: 'string', required: true },
+      ]);
     }
     expect(example).not.toHaveProperty('sessionTarget');
     expect(example).not.toHaveProperty('triggerSeed');

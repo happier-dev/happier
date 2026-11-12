@@ -328,25 +328,39 @@ describe('createCliActionExecutorHarness', () => {
     } finally { releaseDecision(); await result.catch(() => undefined); restoreHttp(); featureHttp.mockRestore(); await app.close(); }
   });
 
-  it.each(['live', 'recorded', 'notification', 'refused', 'rejected'] as const)(
+  it.each(['live', 'recorded', 'late-recorded', 'notification', 'refused', 'rejected'] as const)(
     'consumes one forwarded approval without resubmitting its Action (%s)', async delivery => {
       const pending = { kind: 'approval_request_created', artifactId: 'forwarded-approval', actionId: 'browser.diagnostics.snapshot' };
       const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
       const failure = { ok: false as const, errorCode: 'approval_rejected', error: 'approval_rejected' };
-      const notification = vi.fn(async () => delivery === 'notification' ? undefined
+      let releaseRead!: () => void;
+      const initialRead = new Promise<void>(resolve => { releaseRead = resolve; });
+      let completed = delivery !== 'late-recorded';
+      const notification = vi.fn(async () => {
+        if (delivery === 'late-recorded') {
+          await initialRead;
+          await new Promise<void>(resolve => setImmediate(resolve));
+          completed = true; // The deciding host persisted completion; its push is lost.
+        }
+        return delivery === 'notification' ? undefined
         : delivery === 'refused' ? failure
           : { ok: true as const, result: { ok: true, status: delivery === 'rejected' ? 'rejected' : 'executed',
-            ...(delivery === 'live' ? { liveExecution: { ok: true, result: receipt } } : {}) } });
+            ...(delivery === 'live' ? { liveExecution: { ok: true, result: receipt } } : {}) } };
+      });
       // The installed browser adapter is an OS/daemon transport boundary.
       const native = vi.fn(async () => pending);
-      const read = vi.fn(async () => ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 2,
+      const read = vi.fn(async () => {
+        const terminal = completed;
+        releaseRead();
+        return ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 2,
         createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: pending.actionId,
         actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
         executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
           serverId: 'home', actionId: pending.actionId, requestId: 'browser-request' },
-        status: delivery === 'rejected' ? 'rejected' : 'executed',
-        decision: { kind: delivery === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 },
-        ...(delivery === 'rejected' ? {} : { execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } }) }));
+        status: !terminal ? 'open' : delivery === 'rejected' ? 'rejected' : 'executed',
+        ...(terminal ? { decision: { kind: delivery === 'rejected' ? 'reject' : 'approve', decidedAtMs: 2 } } : {}),
+        ...(!terminal || delivery === 'rejected' ? {} : { execution: { ok: true, effectAttempted: true, executedAtMs: 2, result: receipt } }) });
+      });
       const { executor } = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
         onApprovalRequested: notification }, { ...createUnavailableActionTransportDeps(),
         runtimeActionExecute: native, approvalsGet: read });
@@ -392,7 +406,7 @@ describe('createCliActionExecutorHarness', () => {
     // Only HTTP, daemon transport and terminal presentation are replaced.
     // The Action executor, Artifact decoder and deferred waiter remain real.
     const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
-      serverHttpBaseUrl: 'https://approval-home.example.test',
+      serverId: 'home', serverHttpBaseUrl: 'https://approval-home.example.test',
       onApprovalRequested: async () => {
         notified = true;
         return { ok: true, result: { ok: true, artifactId, status: 'approved' } };
