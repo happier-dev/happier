@@ -417,6 +417,57 @@ describe('PhoneDestinationsMenu', () => {
         expect(itemFor(menu, 'compact-app-destination:bots')?.rightElement).toBeTruthy();
     });
 
+    // Owner 11-06 (lab mnBots A): a Bot is a bar destination like any other — Bar, More or none — through the
+    // one placement owner; on the bar it is its face with its needs-you dot, and one tap opens its conversation.
+    it('places each Bot on the Bar, in More or nowhere, and opens its conversation from the bar', async () => {
+        vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '' }, addEventListener: () => {}, removeEventListener: () => {} });
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+        const botId = (sessionId: string) => `bot:${runtime.serverId}:${sessionId}`;
+        setCatalog({ pages: [], navigationPlacements: { phoneLauncher: { orderedIds: [], placements: {
+            [botId('gardener')]: 'pinned', [botId('reviewer')]: 'overflow' } } } });
+        const needsYou = createSessionViewerFixture({ attention: { needsAttention: true,
+            reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' } });
+        const rows = [
+            createSessionListRenderableSessionFixture({ id: 'gardener', metadata: { path: '/repo', name: 'Gardener', bot: { kind: 'bot' } }, viewer: needsYou }),
+            createSessionListRenderableSessionFixture({ id: 'reviewer', metadata: { path: '/repo', name: 'Reviewer', bot: { kind: 'bot' } } }),
+            createSessionListRenderableSessionFixture({ id: 'triage', metadata: { path: '/repo', name: 'Triage', bot: { kind: 'bot' } } }),
+        ];
+        storage.setState({ sessionListBotRowsByServerId: { [runtime.serverId]: Object.fromEntries(rows.map(row => [row.id, row])) } });
+        const { CockpitTabBar } = await import('@/components/navigation/mobile/chrome/bars/CockpitTabBar');
+        const menu = await renderMenu();
+        const barTab = (id: string) => menu.findByType(CockpitTabBar).props.tabs
+            .find((tab: { id: string }) => tab.id === id) as { label: string; badge?: unknown; icon: unknown } | undefined;
+        // Bar: the Bot rides the bar after the tabs, as its face (not a glyph), with the needs-you dot.
+        expect(barTab(botId('gardener'))).toMatchObject({ label: 'Gardener', badge: { kind: 'attention' } });
+        expect(typeof barTab(botId('gardener'))?.icon).toBe('object');
+        expect(barTab(botId('reviewer'))).toBeUndefined();
+        expect(barTab(botId('triage'))).toBeUndefined();
+        // More lists the Bot placed in More, and the pinned one under Pinned; a Bot left nowhere is not listed.
+        const sections = groups(menu);
+        expect(sections.more).toContain(`phone-launcher-bot:${botId('reviewer')}`);
+        expect(sections.onBar).toContain(`phone-launcher-bot:${botId('gardener')}`);
+        expect(Object.values(sections).flat()).not.toContain(`phone-launcher-bot:${botId('triage')}`);
+        // One tap on the bar slot opens the Bot's conversation.
+        routeState.push.mockReset();
+        await act(async () => { menu.findHostByTestId(`tabbar-tab-${botId('gardener')}`)?.props.onPress(); });
+        expect(JSON.stringify(routeState.push.mock.calls.at(-1))).toContain('gardener');
+        // The same customizer lists every Bot beside the other destinations, each Bar, More or none.
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show');
+        onTestFinished(() => { show.mockRestore(); });
+        await select(menu, 'phone-launcher-customize');
+        await vi.waitFor(() => expect(show).toHaveBeenCalled());
+        const customizable = (show.mock.calls.at(-1)?.[0] as { props: { items: readonly { id: string; title: string; defaultPlacement?: string }[] } }).props.items;
+        const ids = customizable.map(item => item.id);
+        expect(customizable.filter(item => item.id.startsWith('bot:'))).toEqual([
+            expect.objectContaining({ id: botId('gardener'), title: 'Gardener', defaultPlacement: 'hidden' }),
+            expect.objectContaining({ id: botId('reviewer'), title: 'Reviewer', defaultPlacement: 'hidden' }),
+            expect.objectContaining({ id: botId('triage'), title: 'Triage', defaultPlacement: 'hidden' }),
+        ]);
+        // Each Bot follows the Bots roster entry.
+        expect(ids.indexOf(botId('gardener'))).toBe(ids.indexOf('bots') + 1);
+    });
+
     it('keeps a destination whose rail icon is hidden reachable from the phone', async () => {
         setCatalog({
             pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })],

@@ -36,6 +36,8 @@ export type NavigationPlacementItem = NavigationPlacementPolicy & Readonly<{
     /** The surface supplies an admitted source name when it has one. */
     menuTitle?: string;
     icon?: IconName;
+    /** The item's own picture when a glyph cannot stand for it (a Bot's face); drawn in the glyph column. */
+    glyph?: React.ReactNode;
     group?: string;
     placementNote?: string;
     /** The one repair the note leads to, written as words ending it (a link into the setting that fixes it). */
@@ -259,7 +261,7 @@ function PlacementRows(props: PlacementRowsProps) {
     const groupIdsOf = (id: string) => (sections.find(section => section.items.some(item => item.id === id))?.items ?? []).map(item => item.id);
     const grouped = sections.some(section => section.title !== undefined);
     // Titles align down the list: when any row has a glyph, a row without one keeps the glyph's column.
-    const hasGlyphColumn = items.some(item => item.icon) || (props.fixedItems ?? []).some(item => item.icon);
+    const hasGlyphColumn = items.some(item => item.icon || item.glyph) || (props.fixedItems ?? []).some(item => item.icon);
     // A fixed row has no handle: it keeps the handle's column, at the grip density the reorder rows draw.
     const fixedRowHandleInset = HAPPIER_DRAG_GRIP_METRICS[useHoverCapablePrimaryPointer() ? 'pointer' : 'touch'].box + LEADING_STYLE.gap;
     const binding = buildPlacementReorderBinding({ scope: props.scope ?? null, dragSurfaceId: props.dragSurfaceId, items,
@@ -297,8 +299,8 @@ function PlacementRows(props: PlacementRowsProps) {
                         // A destination that can only stay on the bar: its siblings' row, with the fixed rows' lock.
                         leftElement={<View style={LEADING_STYLE}>
                             {renderHandle(`${testID}.move:${item.id}`)}
-                            {item.icon ? <Icon name={item.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-                                : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null}
+                            {item.glyph ?? (item.icon ? <Icon name={item.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
+                                : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null)}
                         </View>}
                         rightElement={<PlacementLock testID={`${testID}.locked:${item.id}`} />}
                         showChevron={false} /> : <SegmentedChoiceItem title={item.title}
@@ -312,8 +314,8 @@ function PlacementRows(props: PlacementRowsProps) {
                         // The handle, then the destination's own glyph, so each row reads as the rail item it places.
                         leftElement={<View style={LEADING_STYLE}>
                             {renderHandle(`${testID}.move:${item.id}`)}
-                            {item.icon ? <Icon name={item.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
-                                : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null}
+                            {item.glyph ?? (item.icon ? <Icon name={item.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
+                                : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null)}
                         </View>}
                         value={selectedPlacement(item, props.preferences, placements.effectivePlacements[item.id])}
                         // One line per place (owner, 11-10): handle, glyph and name, then the compact choice at the

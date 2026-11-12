@@ -2,9 +2,13 @@ import * as React from 'react';
 import { View } from 'react-native';
 
 import { BotsEntrySummary } from '@/components/sessions/bots/BotsEntrySummary';
-import { useBotsSummary } from '@/components/sessions/bots/botsSummary';
+import { orderedBotAccessibilityLabel, useBotsSummary, useOrderedBotNames, useOrderedBots } from '@/components/sessions/bots/botsSummary';
+import type { OrderedBot } from '@/components/sessions/bots/botActivity';
+import { BOTS_GLYPH } from '@/components/sessions/bots/botsGlyph';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { NavigationPlacementTabMenu } from '@/components/ui/navigation/NavigationPlacementTabMenu';
 import { NavigationPlacementPinButton } from '@/components/ui/navigation/NavigationPlacementPinButton';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
@@ -48,6 +52,18 @@ export type PhoneMainTabs = Readonly<{ activeId: string | null; onTabPress: (tab
 const NATIVE_ANCHOR_STYLE = { width: 0, height: 0 } as const;
 /** Home leads the shortcuts (owner 2026-11-04): the page the desktop opens on, one tap away on a phone. */
 const HOME_ITEM_ID = 'phone-launcher:home';
+/**
+ * A Bot is a bar destination like any other (owner 11-06, lab mnBots A): Bar, More or none, through the same
+ * placements. Its id names the Session it opens; it starts nowhere, since More's Bots entry already lists every Bot.
+ */
+const BOT_PLACEMENT_PREFIX = 'bot:';
+const botPlacementId = (bot: OrderedBot) => `${BOT_PLACEMENT_PREFIX}${bot.serverId}:${bot.sessionId}`;
+
+/** One launcher row: a catalog destination, or a Bot from the roster's own projection. */
+type LauncherEntry = Readonly<{ id: string; defaultPlacement: NavigationPlacement }> & (
+    | Readonly<{ kind: 'destination'; destination: CompactAppDestination }>
+    | Readonly<{ kind: 'bot'; bot: OrderedBot; name: string }>
+);
 
 function phoneLauncherDefaultPlacement(destination: CompactAppDestination): NavigationPlacement {
     // Contextual pages wait in Customize. Settings is a main screen like the others (owner 11-10): in More until pinned.
@@ -69,7 +85,16 @@ function phoneLauncherOrder(destinations: readonly CompactAppDestination[]): rea
     return [...destinations].sort((left, right) => lead(left) - lead(right));
 }
 
-function phoneBarTab(destination: CompactAppDestination, botsNeedsYou: number): CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }> {
+function phoneBarTab(entry: LauncherEntry, botsNeedsYou: number): CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }> {
+    if (entry.kind === 'bot') {
+        const { bot } = entry;
+        // The Bot's face is the slot, with the bar's own needs-you dot. UIKit takes symbols only: there it is the Bots glyph.
+        return { id: entry.id, label: entry.name, sfSymbol: sfSymbolForCockpitTabIcon(BOTS_GLYPH),
+            icon: { render: ({ size }) => <SessionBotFace facts={bot.face} size={size} mood={bot.activity} motion /> },
+            badge: bot.activity === 'needsYou' ? { kind: 'attention' } : undefined,
+            accessibilityLabel: orderedBotAccessibilityLabel(bot, entry.name) };
+    }
+    const { destination } = entry;
     return {
         id: destination.id, label: destination.title,
         sfSymbol: sfSymbolForCockpitTabIcon(destination.icon),
@@ -104,9 +129,28 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
     const openHome = useOpenPhoneHome();
     const onHome = useDestinationPathname() === PHONE_HOME_ROUTE;
     const [open, setOpen] = React.useState(false);
-    const placed = React.useMemo(() => resolveNavigationPlacements(phoneLauncherOrder(destinations).map((destination) => ({
-        id: destination.id, destination, defaultPlacement: phoneLauncherDefaultPlacement(destination),
-    })), placement.preferences), [destinations, placement.preferences]);
+    // A held tab's menu: a kept destination moves or hides; a main tab moves between the bar and More.
+    const [tabMenu, setTabMenu] = React.useState<Readonly<{ id: string; label: string; open: boolean }> | null>(null);
+    // The Bots' projection is read only while a Bot is placed or a menu that lists them is open.
+    const botPlaced = React.useMemo(() => Object.entries(placement.preferences.placements)
+        .some(([id, place]) => id.startsWith(BOT_PLACEMENT_PREFIX) && place !== 'hidden'), [placement.preferences]);
+    const bots = useOrderedBots(open || tabMenu !== null || botPlaced);
+    const botNames = useOrderedBotNames(bots);
+    const navigateToSession = useNavigateToSession();
+    const entries = React.useMemo((): readonly LauncherEntry[] => {
+        const kept = phoneLauncherOrder(destinations).map((destination): LauncherEntry => ({
+            kind: 'destination', id: destination.id, destination, defaultPlacement: phoneLauncherDefaultPlacement(destination),
+        }));
+        // A stable order (the roster's is by activity): a Bot on the bar never moves on its own.
+        const botEntries = bots.map((bot, index) => ({
+            kind: 'bot' as const, id: botPlacementId(bot), bot, name: botNames[index] ?? '', defaultPlacement: 'hidden' as const,
+        })).sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+        // Each Bot follows the Bots entry.
+        const roster = kept.findIndex(entry => entry.kind === 'destination' && entry.destination.activation === 'botsRoster');
+        const at = roster < 0 ? kept.length : roster + 1;
+        return [...kept.slice(0, at), ...botEntries, ...kept.slice(at)];
+    }, [botNames, bots, destinations]);
+    const placed = React.useMemo(() => resolveNavigationPlacements(entries, placement.preferences), [entries, placement.preferences]);
     // The bar's own tabs: the same placement owner and preferences, pinned until the person moves one to More.
     const mainKeys = useMainAppTabKeys();
     const mainPlaced = React.useMemo(() => resolveNavigationPlacements(mainKeys.map((key) => ({
@@ -118,14 +162,14 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
     // The open item that waits in More, a main tab or a destination, rides the bar last, just before More:
     // the one visitor rule every phone bar uses (resolveNavigationVisitor).
     const visitorEntry = React.useMemo(() => {
-        type Entry = Readonly<{ kind: 'main'; key: TabType } | { kind: 'destination'; entry: (typeof placed.ordered)[number] }>;
+        type Entry = Readonly<{ kind: 'main'; key: TabType } | { kind: 'destination'; entry: LauncherEntry }>;
         const main = (key: TabType): Entry => ({ kind: 'main', key });
-        const destination = (entry: (typeof placed.ordered)[number]): Entry => ({ kind: 'destination', entry });
+        const destination = (entry: LauncherEntry): Entry => ({ kind: 'destination', entry });
         // The open item is the launcher destination on screen when there is one, otherwise the open main tab
         // (the catalog also names main tabs' pages, which are not launcher destinations).
-        const onDestination = placed.ordered.some(entry => entry.destination.id === currentId);
+        const onDestination = placed.ordered.some(entry => entry.kind === 'destination' && entry.destination.id === currentId);
         const isOpen = (item: Entry) => onDestination
-            ? item.kind === 'destination' && item.entry.destination.id === currentId
+            ? item.kind === 'destination' && item.entry.kind === 'destination' && item.entry.destination.id === currentId
             : item.kind === 'main' && item.key === mainActiveId;
         return resolveNavigationVisitor([...mainTabKeys.map(main), ...placed.pinned.map(destination)],
             [...mainPlaced.ordered.map(entry => main(entry.key)), ...placed.ordered.map(destination)], isOpen);
@@ -133,8 +177,8 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
     const mainVisitorKey = visitorEntry?.kind === 'main' ? visitorEntry.key : null;
     const visitor = visitorEntry?.kind === 'destination' ? visitorEntry.entry : null;
     const onBar = React.useMemo(() => visitor ? [...placed.pinned, visitor] : placed.pinned, [placed, visitor]);
-    const { needsYou } = useBotsSummary(onBar.some(entry => entry.destination.activation === 'botsRoster'));
-    const barTabs = React.useMemo(() => onBar.map((entry) => phoneBarTab(entry.destination, needsYou)), [onBar, needsYou]);
+    const { needsYou } = useBotsSummary(onBar.some(entry => entry.kind === 'destination' && entry.destination.activation === 'botsRoster'));
+    const barTabs = React.useMemo(() => onBar.map((entry) => phoneBarTab(entry, needsYou)), [onBar, needsYou]);
     const pinnedTitle = t('phoneNav.bar.pinnedSection');
     const categoryTitles = React.useMemo(() => ({ onBar: pinnedTitle }), [pinnedTitle]);
 
@@ -162,6 +206,15 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
                 disabled: destination.availability !== 'available',
             };
         };
+        // A Bot's row: its face and name, with the same pin.
+        const botItem = (entry: Extract<LauncherEntry, { kind: 'bot' }>, pinned: boolean): DropdownMenuItem => ({
+            id: entry.id, testID: `phone-launcher-bot:${entry.id}`, title: entry.name, category: pinned ? 'onBar' : 'more',
+            icon: <SessionBotFace facts={entry.bot.face} size={ICON_SIZE.md} mood={entry.bot.activity} motion />,
+            rightElement: open ? <NavigationPlacementPinButton surfaceId="phoneLauncher" entryId={entry.id} pinned={pinned}
+                label={t(pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar')} preferences={placement.preferences}
+                testID={`phone-launcher-pin:${entry.id}`} /> : undefined,
+        });
+        const entryItem = (entry: LauncherEntry, pinned: boolean) => entry.kind === 'bot' ? botItem(entry, pinned) : item(entry.destination, pinned);
         // The bar's own tabs list beside the destinations: open, and pinned or taken off the bar.
         const mainItem = (key: TabType, pinned: boolean): DropdownMenuItem => {
             const facts = resolveMainAppTabFacts(key);
@@ -178,9 +231,9 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
             { id: HOME_ITEM_ID, testID: 'phone-launcher-home', title: t('common.home'), category: 'home',
                 icon: <Icon name="house" />, checked: onHome },
             ...mainPlaced.overflow.map((entry) => mainItem(entry.key, false)),
-            ...placed.overflow.map((entry) => item(entry.destination, false)),
+            ...placed.overflow.map((entry) => entryItem(entry, false)),
             ...mainPlaced.pinned.map((entry) => mainItem(entry.key, true)),
-            ...placed.pinned.map((entry) => item(entry.destination, true)),
+            ...placed.pinned.map((entry) => entryItem(entry, true)),
             { id: CUSTOMIZE_ITEM_ID, testID: 'phone-launcher-customize', title: t('navigationPlacement.customize'),
                 category: 'customize', icon: <Icon name="sliders-horizontal" /> },
             ...(pluginPages.item ? [{ ...pluginPages.item, category: 'recovery' }] : []),
@@ -202,10 +255,10 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
         if (id === CUSTOMIZE_ITEM_ID) {
             const customizable = [...mainKeys.map((key) => ({ id: `${MAIN_TAB_PLACEMENT_PREFIX}${key}`,
                 title: resolveMainAppTabFacts(key).label, icon: resolveMainAppTabFacts(key).icon,
-                defaultPlacement: 'pinned' as const, allowedPlacements: MAIN_TAB_PLACEMENTS })), ...destinations.map((destination) => ({
-                id: destination.id, title: destination.title, icon: destination.icon,
-                defaultPlacement: phoneLauncherDefaultPlacement(destination),
-            }))];
+                defaultPlacement: 'pinned' as const, allowedPlacements: MAIN_TAB_PLACEMENTS })), ...entries.map((entry) => entry.kind === 'bot'
+                ? { id: entry.id, title: entry.name, defaultPlacement: entry.defaultPlacement,
+                    glyph: <SessionBotFace facts={entry.bot.face} size={ICON_SIZE.md} mood={entry.bot.activity} motion /> }
+                : { id: entry.id, title: entry.destination.title, icon: entry.destination.icon, defaultPlacement: entry.defaultPlacement })];
             fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
                 Modal.show({ component: NavigationPlacementCustomizer,
                     props: { surfaceId: 'phoneLauncher', items: customizable, testID: 'phone-launcher-customizer',
@@ -214,18 +267,21 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
             }), { tag: 'PhoneDestinationsMenu.customize' });
             return;
         }
+        const bot = entries.find((entry) => entry.kind === 'bot' && entry.id === id);
+        if (bot?.kind === 'bot') {
+            void navigateToSession(bot.bot.sessionId, { serverId: bot.bot.serverId });
+            return;
+        }
         const destination = destinations.find((candidate) => candidate.id === id);
         if (!destination || destination.availability !== 'available') return;
         const scope = captureActiveServerAccountScopeLifetime()?.scope ?? null;
         activate(destination, { searchScope: scope ? {
             accountId: scope.accountId, serverId: scope.serverId, sessionId: null, machineId: null, rootPath: null,
         } : undefined });
-    }, [activate, destinations, input.main, mainKeys, openHome, pluginPages.select]);
+    }, [activate, destinations, entries, input.main, mainKeys, navigateToSession, openHome, pluginPages.select]);
 
     const openMenu = React.useCallback(() => setOpen(true), []);
     const available = destinations.length > 0;
-    // A held tab's menu: a kept destination moves or hides; a main tab moves between the bar and More.
-    const [tabMenu, setTabMenu] = React.useState<Readonly<{ id: string; label: string; open: boolean }> | null>(null);
     const tabAnchor = React.useRef<unknown>(null);
     const holdTab = React.useCallback((id: string, anchor: unknown, label: string) => {
         tabAnchor.current = anchor;
@@ -234,11 +290,11 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean; main
     const closeTabMenu = React.useCallback((next: boolean) => {
         if (!next) setTabMenu(current => current && { ...current, open: false });
     }, []);
-    const heldDestination = tabMenu ? destinations.find((destination) => destination.id === tabMenu.id) : undefined;
+    const heldEntry = tabMenu ? entries.find((entry) => entry.id === tabMenu.id) : undefined;
     const renderMenu = (metrics: TabBarMetrics) => !available ? null : <>
         {tabMenu ? <NavigationPlacementTabMenu testID="phone-launcher-tab-menu" address="phoneLauncher" preferences={placement.preferences}
-            item={heldDestination
-                ? { id: heldDestination.id, title: heldDestination.title, defaultPlacement: phoneLauncherDefaultPlacement(heldDestination) }
+            item={heldEntry
+                ? { id: heldEntry.id, title: heldEntry.kind === 'bot' ? heldEntry.name : heldEntry.destination.title, defaultPlacement: heldEntry.defaultPlacement }
                 : { id: `${MAIN_TAB_PLACEMENT_PREFIX}${tabMenu.id}`, title: tabMenu.label, defaultPlacement: 'pinned', allowedPlacements: MAIN_TAB_PLACEMENTS }}
             open={tabMenu.open} anchorRef={tabAnchor} onOpenChange={closeTabMenu} onCustomize={() => select(CUSTOMIZE_ITEM_ID)} /> : null}
         <DropdownMenu
