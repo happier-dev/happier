@@ -55,8 +55,12 @@ export function presentActionFailureTechnicalDetails(failure: ApprovalFailureDia
     const authoredRecovery = conflict.success ? conflict.data : domain.success ? domain.data
         : environmentRemoval.success ? environmentRemoval.data : sourceAdmission ?? (backup?.success ? backup.data : genericRecovery.success ? genericRecovery.data
             : settlementRecovery.success ? settlementRecovery.data : partial.success ? partial.data : receiptFailure);
+    // A deployment failure no named schema matched still carries its typed cause (a Compose file the revision lacks):
+    // the recovery owner reads it, so the stored remedy line and the reason are one decision.
+    const unnamedDeploymentFacts = scope === 'deployment' && typeof failure.details === 'object' && failure.details !== null
+        && !Array.isArray(failure.details) ? failure.details as Record<string, unknown> : {};
     const recovery = scope === 'deployment' || authoredRecovery
-        ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? {}, failure.errorCode) : null;
+        ? projectDeploymentFailureRecoveryV1(authoredRecovery ?? unnamedDeploymentFacts, failure.errorCode) : null;
     const cause = failure.failureCause ?? receiptFailure?.failureCause;
     add('failure-phase', t('approvals.failureTechnicalLabels.phase'), finiteCommand.success ? finiteCommand.data.phase
         : setupFailure && 'phase' in setupFailure ? setupFailure.phase : receiptFailure?.phase ?? (domain.success ? domain.data.step
