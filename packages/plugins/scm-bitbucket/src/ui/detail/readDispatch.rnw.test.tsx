@@ -38,7 +38,7 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'example-workspace/deploy-tools' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'example-workspace/deploy-tools', state: { presentation: 'active', nativeLabel: 'Open' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' = 'checks', diffFailure?: PluginError) {
+async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' | 'files' = 'checks', diffFailure?: PluginError, providerFailure = false) {
   let panel: 'checks' | 'overview' | 'files' = initialPanel;
   let entryId = '42';
   const input = () => {
@@ -51,6 +51,7 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
   const pending = new Promise<void>(resolve => { release = resolve; });
   const transport = createHttpStub(url => {
     if (url.endsWith('/2.0/user')) return { body: currentUser };
+    if (providerFailure && (url.includes('/diffstat') || url.includes('/statuses'))) return { status: 404, body: { error: { message: 'Fixture route is missing' } } };
     if (url.includes('/diffstat')) return { body: { values: [] } };
     if (url.endsWith('/diff')) return { bodyBytes: '' };
     if (url.includes('/statuses')) return { body: { values: [{ uuid: '{7c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f}', key: 'PIPELINE', name: 'Dispatch pipeline', state: 'SUCCESSFUL' }] } };
@@ -69,6 +70,7 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
   const producerResults: unknown[] = [];
   const overviewResults: unknown[] = [];
   const actions: string[] = [];
+  const issuedRequestIds: string[] = [];
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'bitbucket-dispatch', mountNonce: 'bitbucket-dispatch-mount' },
@@ -79,7 +81,8 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
       }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture({ translations: {
         'plugins.triage.sourceSettings.failure.permission': TRIAGE_SOURCE_FAILURE_COPY_V1.permission,
       } }), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { executeAction: async ({ action, input }) => {
+      handlers: { executeAction: async ({ action, input, requestId }) => {
+        issuedRequestIds.push(requestId);
         if (typeof action === 'string' || action.pluginId !== BITBUCKET_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
         actions.push(action.localId);
         // The host transport boundary can lose a receipt after dispatch.
@@ -95,7 +98,7 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
     });
   });
   mounted.push(detail);
-  return { detail, producerResults, overviewResults, release, actions, requests: transport.requests,
+  return { detail, producerResults, overviewResults, release, actions, issuedRequestIds, requests: transport.requests,
     async selectPanel(nextPanel: typeof panel, nextEntryId = entryId) {
       panel = nextPanel;
       entryId = nextEntryId;
@@ -106,6 +109,17 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
   };
 }
 describe('registered Bitbucket detail read dispatch', () => {
+  it.each(['checks', 'overview', 'files'] as const)('discloses the provider code and read request identity on %s', async panel => {
+    const { detail, release, issuedRequestIds, actions } = await mountRegisteredDetail(false, panel, undefined, true);
+    await act(async () => { release(); });
+    const disclosures = await detail.getAllByRole('button', { name: 'Details' });
+    for (const disclosure of disclosures) await act(async () => { await detail.press(disclosure); });
+    await expect(detail.getByText('route-not-found')).resolves.toBeDefined();
+    await expect(detail.getByText('Request ID')).resolves.toBeDefined();
+    await expect(detail.getByText('Fixture route is missing')).resolves.toBeDefined();
+    const readId = issuedRequestIds[actions.indexOf(panel === 'checks' ? BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds : BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff)]!;
+    await expect(detail.getByText(readId)).resolves.toBeDefined();
+  });
   it.each([
     ['timeout', 'unknown'],
     ['denied', 'permission'],

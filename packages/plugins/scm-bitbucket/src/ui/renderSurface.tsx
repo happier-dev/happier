@@ -78,6 +78,7 @@ import {
 } from '../triage/source/detail.js';
 
 import {
+  TriageSourceReadFailureDetails,
   TriageActivityTimeline,
   TriageDetailPanel,
   TriageDetailStory,
@@ -123,7 +124,7 @@ function PageFailureBanner({
   const text = usePluginTranslation();
   if (state.failure === null) return null;
   return (
-    <Banner
+    <><Banner
       tone="warning"
       title="Showing what was read so far"
       titleKey="plugins.bitbucket.ui.partial"
@@ -131,7 +132,7 @@ function PageFailureBanner({
         state.failure,
         text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text,
       )}
-    />
+    /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
   );
 }
 
@@ -266,8 +267,8 @@ function BitbucketStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceI
   return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
     more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.bitbucket.ui.readingDiff" />
-      : state.kind === 'unavailable' ? <ErrorState title="The diff is unavailable" titleKey="plugins.bitbucket.ui.diffUnavailable"
-        description={failureDescription(state.failure, text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text)} />
+      : state.kind === 'unavailable' ? <><ErrorState title="The diff is unavailable" titleKey="plugins.bitbucket.ui.diffUnavailable"
+        description={failureDescription(state.failure, text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text)} /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
       : <PageFailureBanner state={state} />}
   </TriageDetailChangeSummary>;
 }
@@ -325,6 +326,7 @@ function OverviewPanel({
             )}
           />
         )}
+        <TriageSourceReadFailureDetails failures={[controller.failure]} />
         {!(overview.projectionTruncated || overviewResult?.descriptionTruncated) ? null : (
           <Banner
             tone="neutral"
@@ -417,14 +419,14 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
   }
   if (state.kind === 'unavailable') {
     return (
-      <ErrorState
+      <><ErrorState
         title="The diff is unavailable"
         titleKey="plugins.bitbucket.ui.diffUnavailable"
         description={failureDescription(
           state.failure,
           text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text,
         )}
-      />
+      /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
     );
   }
   const changedFiles = (
@@ -539,14 +541,14 @@ function BuildsPanel({
   }
   if (state.kind === 'unavailable') {
     return (
-      <ErrorState
+      <><ErrorState
         title="The builds are unavailable"
         titleKey="plugins.bitbucket.ui.buildsUnavailable"
         description={failureDescription(
           state.failure,
           text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'), text,
         )}
-      />
+      /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
     );
   }
 
@@ -777,11 +779,11 @@ function ActivityStreamPanel({
   const readFailed = text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.');
   if (activity.state.kind === 'unavailable' && comments.state.kind === 'unavailable') {
     return (
-      <ErrorState
+      <><ErrorState
         title="The activity is unavailable"
         titleKey="plugins.bitbucket.ui.activityUnavailable"
         description={failureDescription(activity.state.failure, readFailed, text)}
-      />
+      /><TriageSourceReadFailureDetails failures={[activity.state.failure, comments.state.failure]} /></>
     );
   }
   return (
@@ -794,20 +796,20 @@ function ActivityStreamPanel({
       header={(
         <Stack gap="small">
           {activity.state.kind === 'unavailable' ? (
-            <Banner
+            <><Banner
               tone="warning"
               title="The activity is unavailable"
               titleKey="plugins.bitbucket.ui.activityUnavailable"
               description={failureDescription(activity.state.failure, readFailed, text)}
-            />
+            /><TriageSourceReadFailureDetails failures={[activity.state.failure]} /></>
           ) : <PageFailureBanner state={activity.state} />}
           {comments.state.kind === 'unavailable' ? (
-            <Banner
+            <><Banner
               tone="warning"
               title="The comments are unavailable"
               titleKey="plugins.bitbucket.ui.commentsUnavailable"
               description={failureDescription(comments.state.failure, readFailed, text)}
-            />
+            /><TriageSourceReadFailureDetails failures={[comments.state.failure]} /></>
           ) : <PageFailureBanner state={comments.state} />}
           <BitbucketReviewCommentReplyControls input={input} comments={commentRows} />
         </Stack>

@@ -56,8 +56,8 @@ const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
   code: 'bitbucket-detail-result-unreadable',
 });
 
-function dispatchFailure(execution: ExecuteResult, fallbackCode: string): TriageSourceFailureV1 {
-  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'bitbucket-detail-read-not-dispatched');
+function dispatchFailure(execution: ExecuteResult, fallbackCode: string, sourceFailure?: TriageSourceFailureV1): TriageSourceFailureV1 {
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'bitbucket-detail-read-not-dispatched', sourceFailure);
 }
 
 type ExecuteResult = PluginActionExecution;
@@ -255,9 +255,9 @@ export function useBitbucketActivity(
       };
     }
     const parsed = BitbucketActivityResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
+    if (!parsed.success) return { kind: 'failed' as const, failure: dispatchFailure(execution, UNREADABLE_RESULT.code, UNREADABLE_RESULT) };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'bitbucket-detail-read-failed', parsed.data.failure) };
     }
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, lastKnownLocator, instance, localRef]);
@@ -318,9 +318,9 @@ export function useBitbucketBuilds(
       };
     }
     const parsed = BitbucketBuildsResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
+    if (!parsed.success) return { kind: 'failed' as const, failure: dispatchFailure(execution, UNREADABLE_RESULT.code, UNREADABLE_RESULT) };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'bitbucket-detail-read-failed', parsed.data.failure) };
     }
     const page = parsed.data;
     if (continuation === null) {
@@ -372,9 +372,9 @@ export function useBitbucketComments(
       };
     }
     const parsed = BitbucketCommentsResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
+    if (!parsed.success) return { kind: 'failed' as const, failure: dispatchFailure(execution, UNREADABLE_RESULT.code, UNREADABLE_RESULT) };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'bitbucket-detail-read-failed', parsed.data.failure) };
     }
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, lastKnownLocator, instance, localRef]);
@@ -434,7 +434,7 @@ export function useBitbucketOverview(
         setResult(parsed.data);
       } else {
         setFailure(parsed?.success === true && parsed.data.kind === 'unavailable'
-          ? parsed.data.failure
+          ? dispatchFailure(execution, 'bitbucket-overview-read-failed', parsed.data.failure)
           : dispatchFailure(execution, 'bitbucket-overview-read-failed'));
       }
       setPending(false);
@@ -488,9 +488,9 @@ export function useBitbucketDiff(
       ) };
     }
     const parsed = BitbucketDiffResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
+    if (!parsed.success) return { kind: 'failed' as const, failure: dispatchFailure(execution, UNREADABLE_RESULT.code, UNREADABLE_RESULT) };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'bitbucket-detail-read-failed', parsed.data.failure) };
     }
     if (!signal.aborted && continuation === null) setRaw(parsed.data.raw ?? null);
     return { kind: 'page' as const, page: toPage({
