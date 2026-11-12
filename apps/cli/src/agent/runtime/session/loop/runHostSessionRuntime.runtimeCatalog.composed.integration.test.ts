@@ -1054,6 +1054,28 @@ async function useShellBridgeRuntimeFixture(config: HostSessionRuntimeConfig) {
 }
 
 describe('runHostSessionRuntime', () => {
+  it.each(['terminal', 'daemon', 'newer-stop', 'open-fails'] as const)('releases only the observed Stop after standalone native resume opens (%s)', async scenario => {
+    const harness = createHarness();
+    const stop = { v: 1 as const, cause: 'explicit_stop' as const, requestId: 'original-stop', requestedAtMs: 100 };
+    await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, sessionExplicitStopV1: stop }));
+    if (scenario === 'open-fails') harness.queue.pushIsolate({ text: 'Original request', localId: 'startup-original' }, { permissionMode: 'default' });
+    harness.opts.startedBy = scenario === 'daemon' ? 'daemon' : 'terminal';
+    harness.opts.existingSessionId = harness.session.sessionId;
+    harness.opts.resume = 'provider-session';
+    const open = harness.config.createSessionRuntime!;
+    harness.config.createSessionRuntime = async params => {
+      expect(harness.session.getMetadataSnapshot().sessionExplicitStopV1).toEqual(stop);
+      if (scenario === 'open-fails') throw new Error('native open failed');
+      if (scenario === 'newer-stop') await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata,
+        sessionExplicitStopV1: { ...stop, requestId: 'newer-stop' } }));
+      return await open(params);
+    };
+    if (scenario === 'open-fails') await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps)).rejects.toThrow('native open failed');
+    else await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    const retained = harness.session.getMetadataSnapshot().sessionExplicitStopV1;
+    if (scenario === 'terminal') expect(retained).toBeUndefined();
+    else expect(retained).toEqual(scenario === 'newer-stop' ? { ...stop, requestId: 'newer-stop' } : stop);
+  });
   it('admits agent-in-Session target inspect only for its admitted portable Home', async () => {
     const [{ default: fastify }, { registerAuthoredAccountActionRelease }, { registerAccountHomeHttp },
       { installAxiosFastifyAdapter }, { manifest }, { createDeploymentEnvironmentDetailV1 },

@@ -58,6 +58,7 @@ import { createSessionModelTransitionRpc } from './createSessionModelTransitionR
 import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+import { clearSessionExplicitStopV1FromMetadata, readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { WORKFLOW_STEP_INPUT_EVENT_MESSAGE, isSessionContextOnlyHostInput } from '@/session/shared/sessionTurnLifecycle';
 import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/contextOnly/workflowOriginInput';
@@ -3218,6 +3219,13 @@ export async function runHostSessionRuntime(
         resolveConversation: voiceAuthority.resolveConversation,
       }).dispose;
   }
+  // Only an explicit standalone Resume releases its observed Stop after native open.
+  // Daemon Resume retains its existing launch/hold owner.
+  const standaloneResumeStop = runtimeOpts.startedBy === 'terminal'
+    && runtimeOpts.existingSessionId === currentLifecycleSession.sessionId
+    && initialResumeId
+    ? readSessionExplicitStopV1FromMetadata(currentLifecycleSession.getMetadataSnapshot())
+    : null;
   startupPhase = 'agent_runtime_open';
   try {
     createdRuntime = await config.createSessionRuntime(sessionRuntimeParams);
@@ -3263,6 +3271,10 @@ export async function runHostSessionRuntime(
   }
   constructedRuntimeForConstructionCleanup = hookRuntime;
   await createSessionTurnLifecycle({ session: currentLifecycleSession, agentId: policyAgentId }).confirmSessionOpened();
+  if (standaloneResumeStop && !('status' in standaloneResumeStop)) {
+    await currentLifecycleSession.updateMetadataAsCurrentPublisher(metadata =>
+      clearSessionExplicitStopV1FromMetadata(metadata, standaloneResumeStop.requestId) as typeof metadata);
+  }
   const parentRegistrationStartedAt = performance.now();
   // The accepted native open already admits ordinary input. Registration is
   // needed by child inheritance and later auth changes, which join this same
