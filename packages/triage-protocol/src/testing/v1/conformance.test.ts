@@ -69,6 +69,7 @@ function declareAction(
         resultSchema: declaration.resultSchema.jsonSchema,
         surfaces: declaration.surfaces,
         dangerLevel: declaration.dangerLevel,
+        ...(declaration.dangerLevel === 'safe' ? {} : { confirmation: { title, body: title } }),
         run: async () => result,
     };
 }
@@ -162,7 +163,7 @@ describe('Triage sources V1 contribution conformance', () => {
         expect(get.instance.binding).toEqual({ purpose: fixture.descriptor.purpose, source: 'accountData' });
     });
 
-    it('admits optional source-owned Session relationship roles with their declared write approval', () => {
+    it('admits optional source-owned Session relationship roles with their declared danger levels', () => {
         expect(sourceOperations).toHaveProperty('linkSession');
         expect(sourceOperations).toHaveProperty('readSessionLinks');
         const manifest = mutableManifest();
@@ -184,8 +185,11 @@ describe('Triage sources V1 contribution conformance', () => {
         const result = checkTriageSourceContributionV1(manifest);
         expect(result.ok, result.ok ? undefined : result.errors.join('\n')).toBe(true);
         const action = manifest.contributes.actions.find((item) => item.id === 'author/linksession')!;
-        action.dangerLevel = 'safe';
-        expect(checkTriageSourceContributionV1(manifest).ok).toBe(false);
+        action.dangerLevel = 'writesRemote';
+        action.confirmation = { title: 'Change task link', body: 'Change the task Session relationship.' };
+        const incompatible = checkTriageSourceContributionV1(manifest);
+        expect(incompatible.ok).toBe(false);
+        expect(!incompatible.ok && incompatible.errors.join(' ')).toContain('incompatible danger level');
     });
 
     it('accepts the canonical account-only specialization without widening a source to native credentials', () => {
