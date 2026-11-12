@@ -538,6 +538,7 @@ export const RPC_METHODS = {
   SCM_LOG_LIST: 'scm.log.list',
   SCM_HISTORY_ENTRIES: 'scm.history.entries',
   SCM_BRANCH_LIST: 'scm.branch.list',
+  SCM_WORK_EVIDENCE_READ: 'scm.workEvidence.read',
   SCM_BRANCH_CREATE: 'scm.branch.create',
   SCM_BRANCH_CHECKOUT: 'scm.branch.checkout',
   SCM_BRANCH_MERGE: 'scm.branch.merge',

@@ -70,6 +70,15 @@ it('admits optional exact Session read proof on PR evidence without changing Mac
   }
 });
 
+it('keeps batched SCM evidence on Home admission and excludes its stamp from generic caller proof', () => {
+  expect(socketProtocol.resolveSocketRpcSessionAuthorization(`machine:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`))
+    .toMatchObject({ authority: 'readTranscript', routeToSessionOwnerDaemon: false });
+  expect(resolveMachineRpcRoutePolicy(RPC_METHODS.SCM_WORK_EVIDENCE_READ))
+    .toMatchObject({ routeClass: 'server_required', readOnly: true, rpcClassification: 'internal_only' });
+  expect(socketProtocol.parseSocketRpcAuthorizationContext({ kind: 'scm.workEvidence.admitted',
+    admissions: [{ kind: 'session.write', sessionId: 'other-session' }] })).toBeNull();
+});
+
 it('keeps Machine access-loss custody server-origin private and closed', () => {
   const marker = { kind: 'machine.accessLoss.serverOrigin' };
   expect(socketProtocol.isSocketRpcMachineAccessLossServerOriginAuthorizationContext(marker)).toBe(true);

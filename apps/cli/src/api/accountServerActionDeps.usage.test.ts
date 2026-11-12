@@ -20,7 +20,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ScmPullRequestWorkEvidenceSchema } from '@happier-dev/protocol/scm';
+import { ScmPullRequestWorkEvidenceSchema, ScmWorkEvidenceReadResponseSchema } from '@happier-dev/protocol/scm';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { handleActionsCommand } from '@/cli/commands/actions';
@@ -374,16 +374,16 @@ describe('CLI and MCP personal usage Account transport', () => {
       boundary: 'host_pre_dispatch', deliveryKind: 'newTurn', coverage: 'host_only', components: ['a', 'c'].map(source => ({
         sourceId: source.repeat(64), digest: 'b'.repeat(64), kind: 'instructions', location: 'user', byteLength: 200,
         tokenCount: null, tokenizerId: null, cacheClass: 'unknown', overlap: 'none' })), nativePrefix: null, contextWindowTokens: null };
+    const workPackets: unknown[] = [];
     socketBoundary.mockImplementation(() => createApiSessionSocketStub({ emitWithAck: (event, payload) => {
       if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error('Unexpected socket event');
-      const packet = z.object({ method: z.string(), params: z.object({ cwd: z.string(), workEvidence: z.object({ sessionId: z.string() }),
-        state: z.optional(z.string()) }), authorization: z.optional(z.unknown()) }).parse(payload);
-      expect(packet.params).toMatchObject({ cwd: '/repo', workEvidence: { sessionId } });
-      expect(packet.authorization).toMatchObject({ kind: 'session.write', sessionId });
-      return { ok: true, result: packet.method.endsWith('scm.branch.list')
-        ? { success: true, branches: [], branchEvidenceStatus: 'partial', branchEvidence: [{ ...checkpoint,
-          branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }] }
-        : { success: true, pullRequests: [], workEvidenceStatus: 'partial', workEvidence: packet.params.state === 'merged' ? [witness] : [] } };
+      workPackets.push(payload);
+      const packet = z.object({ method: z.string(), params: z.unknown(), authorization: z.optional(z.unknown()) }).parse(payload);
+      expect(packet.method).toBe('machine:scm.workEvidence.read');
+      expect(packet.params).toEqual({ sessions: [{ sessionId, cwd: '/repo', turnIds: ['turn'] }] });
+      expect(packet.authorization).toEqual({ kind: 'scm.workEvidence', sessionIds: [sessionId] });
+      return { ok: true, result: ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId, status: 'partial', evidence: [witness],
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } }] }] }) };
     } }));
     const accounting = { ...response, contributions: [{ id: 'turn-cost', observedAtMs: 150, sessionId,
       turnId: 'turn', agentId: 'claude', modelId: null, machineId: 'machine', projectKey: null, workspaceId: null,
@@ -470,6 +470,7 @@ describe('CLI and MCP personal usage Account transport', () => {
       return UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
     };
     const opened = await read();
+    expect(workPackets).toHaveLength(1);
     if (detail === 'summary') {
       expect(opened.howYouWork).toMatchObject({ intervals: { agentTimeMs: 60, elapsedWaitMs: 10 }, detailStatus: 'partial',
         permissions: { requestCount: 1, pairedDecisionCount: 1, decisionLatencyMs: 10, byAnsweringClient: { web: 1 } } });

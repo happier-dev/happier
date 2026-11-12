@@ -13,6 +13,7 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcEr
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ScmWorkEvidenceAuthorizationSelectorSchema, type ScmWorkEvidenceAdmission } from '@happier-dev/protocol/scm';
 import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -47,7 +48,6 @@ import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/m
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
 import { auth } from "@/app/auth/auth";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { admitApiTokenSessionOperation } from "@/app/api/utils/apiTokenRouteAdmission";
 import { hasCurrentSocketCredential } from "../socketCredentialCurrentness";
 import { transferRelayLifecycle } from "../transferRelayLifecycle";
 import {
@@ -122,6 +122,7 @@ import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
 import { readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
 import { resolveSessionBrowserRpcCapabilityV1, type SocketRpcSessionBrowserAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { resolveSessionBrowserAdmission } from './sessionBrowserAdmission';
+import { admitSessionRpc } from './admitSessionRpc';
 
 const MAX_RPC_METHOD_NAME_LENGTH = 512;
 const MACHINE_VISIBLE_CLIENT_RPC_METHODS = new Set<string>([
@@ -1673,7 +1674,26 @@ export function registerSocketRpcHandlers(params: Readonly<{
             }
 
             const sessionAuthorization = detachedMachine ? null : methodSessionAuthorization;
-            if (sessionAuthorization
+            const isScmWorkEvidenceBatch = method === RPC_METHODS.SCM_WORK_EVIDENCE_READ
+                || method.slice(method.indexOf(':') + 1) === RPC_METHODS.SCM_WORK_EVIDENCE_READ;
+            if (isScmWorkEvidenceBatch) {
+                const selector = ScmWorkEvidenceAuthorizationSelectorSchema.safeParse(rawSessionAuthorization);
+                if (!readMachineIdPrefix(method) || !selector.success || !sessionAuthorization) {
+                    callback?.(buildForbiddenRpcResponse());
+                    return;
+                }
+                const admissions: ScmWorkEvidenceAdmission['admissions'] = [];
+                for (const sessionId of new Set(selector.data.sessionIds)) {
+                    const decision = await admitSessionRpc({ actorAccountId, credentialAccountId: params.userId,
+                        sessionId, rule: sessionAuthorization, authentication: sessionRequestAuthentication,
+                        tokenAuthentication: requestAuthentication, viewerPrincipal: viewer?.principal,
+                        io: params.io, presence: params.sessionPublisherPresence });
+                    admissions.push(decision.status === 'allowed'
+                        ? { kind: 'session.write', sessionId }
+                        : { kind: 'refused', sessionId, errorCode: buildSessionAccessRpcRefusal(decision.status).errorCode });
+                }
+                authorization = { kind: 'scm.workEvidence.admitted', admissions };
+            } else if (sessionAuthorization
                 && (sessionAuthorization.optionalSessionScope !== true || rawSessionAuthorization !== undefined)) {
                 const separatorIndex = method.lastIndexOf(":");
                 const rawAuthorization = (data as { authorization?: unknown } | undefined)?.authorization;
@@ -1707,45 +1727,20 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     callback?.(buildForbiddenRpcResponse());
                     return;
                 }
-                const apiTokenAction = viewer && sessionAuthorization.actionId ? {
-                    actionId: sessionAuthorization.actionId,
-                    targetMachineId: await resolveCurrentSessionMachineFromServer({
-                        io: params.io, presence: params.sessionPublisherPresence, accountId: params.userId, sessionId,
-                    }),
-                } : undefined;
-                const tokenAdmission = viewer && apiTokenAction
-                    ? await admitApiTokenSessionOperation({
-                        principal: viewer.principal, sessionId,
-                        ...apiTokenAction,
-                        ...(sessionAuthorization.authority === 'sessionOwner' ? {} : { capability: sessionAuthorization.authority }),
-                        authentication: requestAuthentication,
-                    }) : null;
-                if (viewer && !tokenAdmission?.ok) {
-                    callback?.(buildForbiddenRpcResponse());
-                    return;
-                }
-                const decision: SessionAccessOperationDecision = tokenAdmission?.ok
-                    ? { status: 'allowed', access: tokenAdmission.access }
-                    : await resolveSessionAccessForOperation(db, {
-                    accountId: actorAccountId,
-                    sessionId,
-                    authentication: sessionRequestAuthentication,
-                    ...(sessionAuthorization.authority === "sessionOwner"
-                        ? {}
-                        : { capability: sessionAuthorization.authority }),
+                const decision = await admitSessionRpc({
+                    actorAccountId, credentialAccountId: params.userId,
+                    sessionId, rule: sessionAuthorization, authentication: sessionRequestAuthentication,
+                    tokenAuthentication: requestAuthentication, viewerPrincipal: viewer?.principal,
+                    io: params.io, presence: params.sessionPublisherPresence,
                 });
-                const admitted = decision.status === "allowed"
-                    && (sessionAuthorization.authority !== "sessionOwner" || decision.access.level === "owner");
-                if (!admitted) {
+                if (decision.status !== 'allowed') {
                     recordRpcCallFailure(method, "forbidden");
                     observeRpcCall({
                         method,
                         durationMs: Date.now() - startedAt,
                         result: "error",
                     });
-                    callback?.(decision.status === "allowed"
-                        ? buildForbiddenRpcResponse()
-                        : buildSessionAccessRpcRefusal(decision.status));
+                    callback?.(buildSessionAccessRpcRefusal(decision.status));
                     return;
                 }
                 if (sessionAuthorization.routeToSessionOwnerDaemon) {

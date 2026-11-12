@@ -42,8 +42,48 @@ import * as installationStore from '@/daemon/identity/store';
 import { encodeStoredCredentials } from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import { registerScmHandlers } from '@/rpc/handlers/scm';
 
 describe('authorizeMachineRpcRequest', () => {
+  it('accepts SCM work evidence stamps only through authenticated Home ingress with existing Machine admission', async () => {
+    const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    // The Home permit verifier is the network boundary. Keep manager dispatch,
+    // source admission, SCM registration and per-Session refusal handling real.
+    const boundary: MachineRpcAdmissionBoundary = { machineId: 'machine', resolveInstallationId: () => 'installation',
+      resolveCustodianAccountId: async () => 'owner', resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: async () => true };
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, boundary, source) });
+    registerScmHandlers(rpc, process.cwd(), { machineId: 'machine',
+      accessPolicy: { kind: 'restrictedRoots', roots: [process.cwd()] } });
+    const request = { method: `machine:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`, machineAdmission,
+      callerAuthority: 'present_user' as const,
+      params: { sessions: [
+        { sessionId: 'admitted-session', cwd: join(process.cwd(), '..'), turnIds: [] },
+        { sessionId: 'session', cwd: process.cwd(), turnIds: [] },
+      ] },
+      authorization: ScmWorkEvidenceAdmissionSchema.parse({ kind: 'scm.workEvidence.admitted',
+        admissions: [{ kind: 'session.write', sessionId: 'admitted-session' },
+          { kind: 'refused', sessionId: 'session', errorCode: RPC_ERROR_CODES.FORBIDDEN }] }),
+    };
+    expect(await rpc.handleRequest(request, undefined, 'authenticated_home_socket')).toEqual({ sessions: [
+      { sessionId: 'admitted-session', status: 'error', evidence: [], branchEvidence: [], errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH },
+      { sessionId: 'session', status: 'error', evidence: [], branchEvidence: [], errorCode: RPC_ERROR_CODES.FORBIDDEN },
+    ] });
+    // A genuine Machine permit does not let a direct caller mint Session proofs.
+    expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    for (const authorization of [undefined, { kind: 'scm.workEvidence' as const, sessionIds: ['session'] },
+      { kind: 'session.write' as const, sessionId: 'session' }]) {
+      expect(await rpc.handleRequest({ ...request, authorization }, undefined, 'authenticated_home_socket'))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    }
+    expect(await rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission, installationId: 'replaced' } },
+      undefined, 'authenticated_home_socket')).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+  });
+
   it.each(['native', 'account-owned', 'other-installation', 'other-custodian'] as const)(
     'keeps managed installation socket custody native-only (%s)', async scenario => {
       const controller = scenario === 'account-owned' ? undefined

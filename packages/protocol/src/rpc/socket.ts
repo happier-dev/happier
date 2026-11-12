@@ -437,12 +437,13 @@ export type SocketRpcSessionReadAuthorizationContext = Readonly<{
   sessionId: string;
 }>;
 
-export type SocketRpcSessionWriteAuthorizationContext = Readonly<{
-  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE;
-  sessionId: string;
+export const SocketRpcSessionWriteAuthorizationContextSchema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal(SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE),
+  sessionId: z.string().check(z.minLength(1)),
   /** Server-proven owner classification for an operation that requires this fact. Never caller-authored. */
-  authority?: 'sessionOwner';
-}>;
+  authority: z.optional(z.literal('sessionOwner')),
+}));
+export type SocketRpcSessionWriteAuthorizationContext = Readonly<z.infer<typeof SocketRpcSessionWriteAuthorizationContextSchema>>;
 
 /**
  * Account identity proven by the authenticated server after resolving a
@@ -560,6 +561,8 @@ export type SocketRpcSessionAuthorizationContext =
   | SocketRpcSessionPermissionRespondAuthorizationContext;
 
 export type SocketRpcAuthorizationContext =
+  | import('../scm/workEvidence.js').ScmWorkEvidenceAuthorizationSelector
+  | import('../scm/workEvidence.js').ScmWorkEvidenceAdmission
   | import('../machines/managed/managedInstallationV1.js').ManagedInstallationServerOriginV1
   | SocketRpcSessionAuthorizationContext
   | SessionFollowSourceKeyPrepareAuthorizationV1
@@ -764,6 +767,7 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     ...ADDITIONAL_SESSION_RPC_AUTHORIZATION_ROWS,
     ...[
       RPC_METHODS.SCM_BRANCH_LIST,
+      RPC_METHODS.SCM_WORK_EVIDENCE_READ,
       RPC_METHODS.SCM_PULL_REQUEST_LIST,
       RPC_METHODS.SCM_PULL_REQUEST_GET,
       RPC_METHODS.SCM_DIFF_FILE,

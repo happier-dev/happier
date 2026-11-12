@@ -8,10 +8,6 @@ import { buildGitRollbackBackupRef } from './rollback/gitCheckpointRollbackScope
 import { gitCheckpointAdapter } from './gitCheckpointAdapter';
 import { findRepositoryCheckpointTurnEvidenceByReceipt, readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointCommitEvidence, readRepositoryCheckpointInitialEvidence, readRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointTurnEvidence, retainRepositoryCheckpointTurnEvidence } from './sessionEvidence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
-import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createTestGitRpcManager } from '../rpc/__tests__/testRpcHarness';
 
 describe('checkpoint/commit correspondence', () => {
@@ -19,30 +15,14 @@ describe('checkpoint/commit correspondence', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'happier-usage-non-repository-'));
     try {
       const { call } = createTestGitRpcManager({ workingDirectory: cwd });
-      const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeComparison: false,
-        includeQuotaHistory: false, includeSessionEvidence: false, includeWorkEvidence: true });
-      const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
-        tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
-        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
-        sessionMembership: { turns: [{ sessionId: 'non-repository-session', turnId: 'turn', executions: ['happier'] }] } });
-      const accounting = [{ query, value, status: 'available' as const }];
-      const read = (authorized: boolean) => collectUsageWorkSources({ queries: [query], accounting,
-        assertCurrent: () => {}, readSession: async sessionId => (method, request) => call(method, request,
-          authorized ? { kind: 'session.write', sessionId } : undefined) });
-
-      // The real SCM ingress/detector returns NOT_REPOSITORY for all four reads.
-      const work = await read(true);
-      const result = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], accounting, work }));
-      expect(work[0]).toMatchObject({ status: 'unsupported', evidence: [], branchEvidence: [] });
-      expect(work[0]).not.toHaveProperty('errorCode');
-      expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported' });
-      expect(result.results[0]?.accounting?.totals.tokens.total).toBe(1);
-      expect(result.results[0]?.work?.outcomes ?? []).toEqual([]);
-      expect(result.results[0]?.work?.branches ?? []).toEqual([]);
-
+      const request = { sessions: [{ sessionId: 'non-repository-session', cwd, turnIds: ['turn'] }] };
+      expect(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, request, {
+        kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId: 'non-repository-session' }],
+      })).toEqual({ sessions: [{ sessionId: 'non-repository-session', status: 'unsupported', evidence: [], branchEvidence: [] }] });
       // Removing the transport's authenticated Session proof must still quarantine.
-      const denied = await read(false);
-      expect(denied[0]).toMatchObject({ status: 'error', errorCode: 'work_evidence_failed', evidence: [], branchEvidence: [] });
+      expect(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, request)).toEqual({ sessions: [{
+        sessionId: 'non-repository-session', status: 'error', errorCode: 'INVALID_REQUEST', evidence: [], branchEvidence: [],
+      }] });
     } finally { rmSync(cwd, { recursive: true, force: true }); }
   });
 
@@ -134,6 +114,35 @@ describe('checkpoint/commit correspondence', () => {
       expect(await call(RPC_METHODS.SCM_BRANCH_LIST, { workEvidence: { sessionId: 'session' } },
         { kind: 'session.write', sessionId: 'session' })).toMatchObject({ success: true, branchEvidenceStatus: 'partial',
           branchEvidence: [{ turnId: 'turn', commitSha, branch: { ref: branchRef, headSha: commitSha } }] });
+      const batchRequest = { sessions: [
+        { sessionId: 'session', cwd, turnIds: ['turn'] },
+        { sessionId: 'refused-session', cwd, turnIds: ['turn'] },
+        { sessionId: 'unlisted-session', cwd, turnIds: ['turn'] },
+      ] };
+      const batch = await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, batchRequest, {
+        kind: 'scm.workEvidence.admitted', admissions: [
+          { kind: 'session.write', sessionId: 'session' },
+          { kind: 'refused', sessionId: 'refused-session', errorCode: 'forbidden' },
+        ],
+      });
+      expect(batch).toMatchObject({ sessions: [
+        { sessionId: 'session', status: 'partial', branchEvidence: [{ turnId: 'turn', commitSha }] },
+        { sessionId: 'refused-session', status: 'error', errorCode: 'forbidden', evidence: [], branchEvidence: [] },
+        { sessionId: 'unlisted-session', status: 'error', errorCode: 'INVALID_REQUEST', evidence: [], branchEvidence: [] },
+      ] });
+      expect(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { ...batchRequest,
+        authorization: { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId: 'session' }] },
+      })).toMatchObject({ success: false, errorCode: 'INVALID_REQUEST' });
+      // A singleton proof cannot stand in for the batch's server-stamped decisions.
+      expect(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ, { sessions: [batchRequest.sessions[0]] },
+        { kind: 'session.write', sessionId: 'session' })).toMatchObject({ sessions: [
+          { sessionId: 'session', status: 'error', evidence: [], branchEvidence: [] },
+        ] });
+      // The stamp selects Sessions; requested turns still constrain their disclosed witnesses.
+      expect(await call(RPC_METHODS.SCM_WORK_EVIDENCE_READ,
+        { sessions: [{ sessionId: 'session', cwd, turnIds: ['another-turn'] }] },
+        { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId: 'session' }] }))
+        .toMatchObject({ sessions: [{ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [] }] });
       git(['branch', 'same-graph']);
       expect((await readRepositoryCheckpointBranchEvidence({ cwd, sessionId: 'session' }))
         .map(row => row.branch.ref).sort()).toEqual([branchRef, 'refs/heads/same-graph'].sort());

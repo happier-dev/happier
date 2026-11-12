@@ -103,6 +103,78 @@ describe("rpcHandler", () => {
     });
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it("admits each selected SCM evidence Session independently in one Machine request", async () => {
+        const foreignSession = await db.session.create({ data: { accountId: ownerId, tag: randomUUID(), metadata: '{}' } });
+        const missingSessionId = randomUUID();
+        const method = `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`;
+        const target = createTarget('scm-evidence-daemon', { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const caller = createAuthenticatedFakeSocket();
+        rpcHandler(accountId, caller as unknown as Socket, { io });
+        const callback = vi.fn();
+
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-encrypted-evidence-request',
+            authorization: { kind: 'scm.workEvidence', sessionIds: [sessionId, foreignSession.id, missingSessionId, sessionId] } }, callback);
+
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        expect(target.emitWithAck).toHaveBeenCalledOnce();
+        const forwarded = target.emitWithAck.mock.calls[0]?.[1];
+        expect(forwarded.params).toBe('opaque-encrypted-evidence-request');
+        expect(forwarded.authorization).toEqual({ kind: 'scm.workEvidence.admitted', admissions: [
+            { kind: 'session.write', sessionId },
+            { kind: 'refused', sessionId: foreignSession.id, errorCode: RPC_ERROR_CODES.FORBIDDEN },
+            { kind: 'refused', sessionId: missingSessionId, errorCode: RPC_ERROR_CODES.FORBIDDEN },
+        ] });
+        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
+            sharedWithUserId: accountId, accessLevel: 'view' } });
+        const sharedRead = vi.fn();
+        await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-encrypted-evidence-request',
+            authorization: { kind: 'scm.workEvidence', sessionIds: [foreignSession.id] } }, sharedRead);
+        expect(sharedRead).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        expect(target.emitWithAck).toHaveBeenCalledTimes(2);
+        expect(target.emitWithAck.mock.calls[1]?.[1].authorization).toEqual({ kind: 'scm.workEvidence.admitted',
+            admissions: [{ kind: 'session.write', sessionId: foreignSession.id }] });
+    });
+
+    it("requires the SCM evidence selector and refuses caller-forged batch admission proofs", async () => {
+        const method = `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`;
+        const target = createTarget('scm-evidence-daemon', { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const caller = createAuthenticatedFakeSocket();
+        rpcHandler(accountId, caller as unknown as Socket, { io });
+        for (const authorization of [undefined,
+            { kind: 'session.write', sessionId },
+            { kind: 'scm.workEvidence.admitted', admissions: [{ kind: 'session.write', sessionId }] },
+            { kind: 'scm.workEvidence', sessionIds: [sessionId], admissions: [{ kind: 'session.write', sessionId }] },
+        ]) {
+            const callback = vi.fn();
+            await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-encrypted-evidence-request',
+                ...(authorization ? { authorization } : {}) }, callback);
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        }
+        expect(target.emitWithAck).not.toHaveBeenCalled();
+    });
+
+    it("retains singleton SCM evidence Session admission and shared-reader access", async () => {
+        const foreignSession = await db.session.create({ data: { accountId: ownerId, tag: randomUUID(), metadata: '{}' } });
+        const method = `${machineId}:${RPC_METHODS.SCM_BRANCH_LIST}`;
+        const target = createTarget('singleton-scm-daemon', { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const caller = createAuthenticatedFakeSocket();
+        rpcHandler(accountId, caller as unknown as Socket, { io });
+        const handler = getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL);
+        const refused = vi.fn();
+        await handler({ method, params: 'opaque-request', authorization: { kind: 'session.write', sessionId: foreignSession.id } }, refused);
+        expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(target.emitWithAck).not.toHaveBeenCalled();
+        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
+            sharedWithUserId: accountId, accessLevel: 'view' } });
+        const admitted = vi.fn();
+        await handler({ method, params: 'opaque-request', authorization: { kind: 'session.write', sessionId: foreignSession.id } }, admitted);
+        expect(admitted).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        expect(target.emitWithAck.mock.calls[0]?.[1].authorization).toEqual({ kind: 'session.write', sessionId: foreignSession.id });
+    });
+
     it.each([
         ['view', RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, true],
         ['view', RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH, true],

@@ -593,6 +593,7 @@
   ["scm.log.list","use"],
   ["scm.history.entries","use"],
   ["scm.branch.list","use"],
+  ["scm.workEvidence.read","use"],
   ["scm.stash.list","use"],
   ["scm.stash.show","use"],
   ["scm.worktrees.enrichment","use"],

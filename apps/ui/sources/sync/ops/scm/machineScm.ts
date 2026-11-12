@@ -76,6 +76,8 @@ import type {
     ScmWorktreePruneResponse,
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
+    ScmWorkEvidenceReadRequest,
+    ScmWorkEvidenceReadResponse,
 } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES, ScmLogListResponseSchema, ScmHistoryEntriesResponseSchema } from '@happier-dev/protocol/scm';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -112,6 +114,19 @@ export type MachineScmCallOptions = Readonly<{
     /** Fires when the admitted Action is about to reach the Machine: after any in-place confirmation, never for a decline or a pending approval. */
     onDispatched?: () => void;
 }>;
+
+/** Work reads return independent Session results; preserve transport failures for retention. */
+export async function machineScmWorkEvidenceRead(machineId: string, request: ScmWorkEvidenceReadRequest,
+    options: Pick<MachineScmCallOptions, 'serverId' | 'accountId' | 'signal'>): Promise<ScmWorkEvidenceReadResponse> {
+    return machineRpcWithServerScope<ScmWorkEvidenceReadResponse, ScmWorkEvidenceReadRequest>({
+        machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ,
+        payload: withScmBackendPreference({ ...request, backendPreference: request.backendPreference }),
+        ...(options.serverId ? { serverId: options.serverId } : {}),
+        ...(options.accountId ? { accountId: options.accountId } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
+        authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) },
+    });
+}
 
 type MachineScmRpcRequest = Readonly<{
     cwd?: string;

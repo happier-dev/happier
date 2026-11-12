@@ -1,7 +1,6 @@
-import { RPC_METHODS } from '../rpc/methods.js';
 import { readRpcErrorCode } from '../rpc/errors.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
-import { ScmBranchListResponseSchema, type ScmBranchListRequest, type ScmBranchWorkEvidence, ScmPullRequestListResponseSchema, type ScmPullRequestListRequest } from '../scm/index.js';
+import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmBranchWorkEvidence } from '../scm/index.js';
 import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
@@ -15,7 +14,8 @@ export async function collectUsageWorkSources(input: Readonly<{
     queries: readonly UsageQuery[];
     accounting: readonly UsageAccountingSourceSnapshot[];
     sessionReads?: Map<string, Promise<SessionWorkSourceResult>>;
-    readSession: (sessionId: string) => Promise<((method: string, request: ScmBranchListRequest | ScmPullRequestListRequest) => Promise<unknown>) | null>;
+    resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string }> | null>;
+    readMachine: (machineId: string, request: ScmWorkEvidenceReadRequest) => Promise<unknown>;
     assertCurrent: () => void | Promise<void>;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
     const { queries, accounting } = input;
@@ -27,82 +27,72 @@ export async function collectUsageWorkSources(input: Readonly<{
             ?.flatMap(row => row.sessionId && row.turnId ? [{ sessionId: row.sessionId, turnId: row.turnId }] : [])] as const;
     }));
     const sessionIds = new Set([...turnsByQuery.values()].flatMap(turns => turns?.map(turn => turn.sessionId) ?? []));
-    // Sessions outside a repository have no SCM evidence; the read did not fail.
-    const unsupportedReadFailureCodes = ['FEATURE_UNSUPPORTED', 'NOT_REPOSITORY'];
-    // Generic transport refusals quarantine every private sibling read. Only
-    // explicit native failures may retain other independently witnessed graphs.
-    const nativeReadFailureCodes = ['COMMAND_FAILED', 'COMMAND_TIMEOUT', 'COMMAND_OUTPUT_LIMIT_EXCEEDED',
-        'REMOTE_NETWORK_FAILED', 'REPOSITORY_REFRESH_FAILED'];
-    const loadSession = async (sessionId: string): Promise<SessionWorkSourceResult> => {
-        const read = await input.readSession(sessionId);
-        if (!read) return { status: 'unknown' };
-        const readState = async (state: 'branch' | 'open' | 'closed' | 'merged'): Promise<Readonly<{
-            status: 'partial' | 'unsupported' | 'error' | 'unknown'; evidence?: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[];
-            quarantine?: boolean; notRepository?: boolean;
-        }>> => {
-          try {
+    const turnsBySession = new Map<string, Set<string>>();
+    for (const turns of turnsByQuery.values()) for (const turn of turns ?? []) {
+        const ids = turnsBySession.get(turn.sessionId) ?? new Set<string>();
+        ids.add(turn.turnId);
+        turnsBySession.set(turn.sessionId, ids);
+    }
+    const readKeys = new Map([...sessionIds].map(sessionId => [sessionId,
+        JSON.stringify([sessionId, [...turnsBySession.get(sessionId)!].sort()])]));
+    const missing = [...sessionIds].filter(sessionId => !sessionReads.has(readKeys.get(sessionId)!));
+    const acquire = async (): Promise<Map<string, SessionWorkSourceResult>> => {
+        const results = new Map<string, SessionWorkSourceResult>();
+        const machines = new Map<string, ScmWorkEvidenceReadRequest['sessions']>();
+        const targets = await Promise.all(missing.map(async sessionId => {
             await input.assertCurrent();
-            if (state === 'branch') {
-                const response = ScmBranchListResponseSchema.safeParse(await read(RPC_METHODS.SCM_BRANCH_LIST, { workEvidence: { sessionId } }));
+            return { sessionId, target: await input.resolveSession(sessionId) };
+        }));
+        for (const { sessionId, target } of targets) {
+            if (!target) { results.set(sessionId, { status: 'unknown' }); continue; }
+            const sessions = machines.get(target.machineId) ?? [];
+            sessions.push({ sessionId, cwd: target.cwd, turnIds: [...turnsBySession.get(sessionId)!] });
+            machines.set(target.machineId, sessions);
+        }
+        await Promise.all([...machines].map(async ([machineId, sessions]) => {
+            try {
                 await input.assertCurrent();
-                if (!response.success) return { status: 'error', quarantine: true };
-                if (!response.data.success) {
-                    if (unsupportedReadFailureCodes.includes(response.data.errorCode ?? '')) return { status: 'unsupported',
-                        notRepository: response.data.errorCode === 'NOT_REPOSITORY' };
-                    const nativeFailure = nativeReadFailureCodes.includes(response.data.errorCode ?? '');
-                    return { status: 'error', quarantine: !nativeFailure };
+                const response = ScmWorkEvidenceReadResponseSchema.safeParse(await input.readMachine(machineId, { sessions }));
+                await input.assertCurrent();
+                if (!response.success) throw new Error('Invalid SCM Work evidence response');
+                const rows = new Map<string, (typeof response.data.sessions)[number] | null>();
+                for (const row of response.data.sessions) rows.set(row.sessionId, rows.has(row.sessionId) ? null : row);
+                for (const session of sessions) {
+                    const row = rows.get(session.sessionId);
+                    if (!row || [...row.evidence ?? [], ...row.branchEvidence ?? []].some(witness => witness.sessionId !== session.sessionId)) {
+                        results.set(session.sessionId, { status: 'error', evidence: [], branchEvidence: [] });
+                        continue;
+                    }
+                    const turns = turnsBySession.get(session.sessionId)!;
+                    if (row.status === 'unknown') { results.set(session.sessionId, { status: 'unknown' }); continue; }
+                    if (row.status === 'error' && row.evidence === undefined && row.branchEvidence === undefined) {
+                        results.set(session.sessionId, { status: 'error' });
+                        continue;
+                    }
+                    results.set(session.sessionId, { status: row.status,
+                        evidence: (row.evidence ?? []).filter(witness => turns.has(witness.turnId)),
+                        ...(row.branchEvidence === undefined ? {} : { branchEvidence: row.branchEvidence.filter(witness => turns.has(witness.turnId)) }),
+                    });
                 }
-                if (!response.data.branchEvidence || response.data.branchEvidenceStatus !== 'partial') return { status: 'unsupported' };
-                if (response.data.branchEvidence.some(witness => witness.sessionId !== sessionId)) return { status: 'error', quarantine: true };
-                return { status: 'partial', branchEvidence: response.data.branchEvidence };
+            } catch (error) {
+                await input.assertCurrent();
+                // An unreachable Machine has no evidence. Refusals withdraw its
+                // witnesses; failed replacements retain the existing page facts.
+                const result: SessionWorkSourceResult = readRpcErrorCode(error) === 'target_unavailable' ? { status: 'unknown' }
+                    : readRpcErrorCode(error) === 'RPC_FORBIDDEN' ? { status: 'error', evidence: [], branchEvidence: [] }
+                    : { status: 'error' };
+                for (const session of sessions) results.set(session.sessionId, result);
             }
-            const response = ScmPullRequestListResponseSchema.safeParse(await read(RPC_METHODS.SCM_PULL_REQUEST_LIST, { state, workEvidence: { sessionId } }));
-            await input.assertCurrent();
-            if (!response.success) return { status: 'error', quarantine: true };
-            if (!response.data.success) {
-                if (unsupportedReadFailureCodes.includes(response.data.errorCode ?? '')) return { status: 'unsupported' };
-                // The incumbent transport maps generic refusals to BACKEND_UNAVAILABLE.
-                // Only explicit native-read failures can retain a sibling state's facts.
-                const nativeFailure = nativeReadFailureCodes.includes(response.data.errorCode ?? '');
-                return { status: 'error', quarantine: !nativeFailure };
-            }
-            if (!response.data.workEvidence || !response.data.workEvidenceStatus || response.data.workEvidenceStatus === 'unavailable') {
-                return { status: 'unsupported' };
-            }
-            if (response.data.workEvidence.some(witness => witness.sessionId !== sessionId)) {
-                return { status: 'error', quarantine: true };
-            }
-            // List is current-branch discovery, never proof of complete repository history.
-            return { status: 'partial', evidence: response.data.workEvidence };
-          } catch (error) {
-            await input.assertCurrent();
-            // Home could not reach this Machine. No repository read failed;
-            // authorization and unclassified failures remain errors below.
-            if (readRpcErrorCode(error) === 'target_unavailable') return { status: 'unknown' };
-            return { status: 'error', quarantine: true };
-          }
-        };
-        // Branch discovery establishes whether this admitted workspace is a
-        // repository before acquiring remote PR evidence that it cannot have.
-        const branch = await readState('branch');
-        if (branch.status === 'unknown') return { status: 'unknown' };
-        if (branch.notRepository) return { status: 'unsupported', evidence: [], branchEvidence: [] };
-        const states = [branch, ...await Promise.all((['open', 'closed', 'merged'] as const).map(readState))];
-        // An explicit empty quarantine is an admission withdrawal. A failed
-        // replacement supplies no evidence at all, allowing the page's single
-        // retention owner to distinguish it from a refusal or real empty read.
-        if (states.some(source => source.quarantine)) return { status: 'error', evidence: [], branchEvidence: [] };
-        if (states.every(source => source.status === 'error')) return { status: 'error' };
-        return { status: states.some(source => source.status === 'partial') ? 'partial' as const
-            : states.some(source => source.status === 'error') ? 'error' as const
-            : states.some(source => source.status === 'unknown') ? 'unknown' as const : 'unsupported' as const,
-            evidence: states.flatMap(source => source.evidence ?? []), branchEvidence: states.flatMap(source => source.branchEvidence ?? []) };
+        }));
+        return results;
     };
-    const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => {
-        let read = sessionReads.get(sessionId);
-        if (!read) { read = loadSession(sessionId); sessionReads.set(sessionId, read); }
-        return [sessionId, await read] as const;
-    })));
+    // Install promises before awaiting targets, so concurrent slices share an
+    // already admitted Session read instead of emitting another Machine call.
+    if (missing.length) {
+        const acquisition = acquire();
+        for (const sessionId of missing) sessionReads.set(readKeys.get(sessionId)!, acquisition.then(results => results.get(sessionId)!));
+    }
+    const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
     return queries.map((query): UsageWorkSourceSnapshot => {
         const admittedTurns = turnsByQuery.get(getUsageQueryKey(query));
         if (!admittedTurns) return { query, status: 'unknown' };

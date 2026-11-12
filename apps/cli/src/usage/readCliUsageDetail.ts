@@ -11,6 +11,7 @@ import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, readUsa
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
@@ -237,17 +238,18 @@ export async function readCliUsageDetail(input: Readonly<{
     }
     await input.assertCurrent();
     const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent,
-        readSession: async sessionId => {
+        resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
             if (!session?.canReadWork || !session.machineId || !session.cwd) return null;
-            return async (method, request) => {
-                await input.assertCurrent();
-                const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
-                    machineId: session.machineId!, method, request: { ...request, cwd: session.cwd, outcomeVersion: 1 },
-                    authorization: { kind: 'session.write', sessionId }, signal: input.signal });
-                await input.assertCurrent();
-                return response;
-            };
+            return { machineId: session.machineId, cwd: session.cwd };
+        },
+        readMachine: async (machineId, request) => {
+            await input.assertCurrent();
+            const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
+                machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, request,
+                authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) }, signal: input.signal });
+            await input.assertCurrent();
+            return response;
         },
     });
     await input.assertCurrent();

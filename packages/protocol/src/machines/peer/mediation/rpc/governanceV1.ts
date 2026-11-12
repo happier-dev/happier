@@ -255,6 +255,7 @@ const SESSION_SPAWN_PRIVATE_INTERNAL_METHODS = new Set<string>([
 // have no single ActionSpec; keep their existing governance class and read fact
 // together rather than inferring effects from a route class or method suffix.
 const READ_ONLY_RPC_GOVERNANCE = Object.freeze({
+  [RPC_METHODS.SCM_WORK_EVIDENCE_READ]: 'internal_only',
   [RPC_METHODS.SCM_WORKSPACE_WATCH]: 'internal_only',
   [RPC_METHODS.CAPABILITIES_DESCRIBE]: 'internal_only',
   [SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1]: 'internal_only',

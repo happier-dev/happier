@@ -81,7 +81,8 @@ import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAc
 import type { ScmSuggestionApplyRequest, ScmSuggestionApplyResponse } from '@happier-dev/protocol/scm';
 import type { ScmFileAtRevisionRequest, ScmFileReadResponse } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
-import { ScmLogListRequestSchema, ScmStatusSnapshotRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
+import { ScmLogListRequestSchema, ScmStatusSnapshotRequestSchema, ScmWorkEvidenceAdmissionSchema, ScmWorkEvidenceReadRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
+import type { ScmWorkEvidenceAdmission } from '@happier-dev/protocol/scm';
 import { projectScmStatusSnapshot } from './scmStatusSnapshotProjection';
 import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
@@ -92,6 +93,7 @@ import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/r
 import {
     executeScmActionOperation,
 } from '@/scm/actions/executeScmActionOperation';
+import { readScmWorkEvidence } from '@/scm/actions/readScmWorkEvidence';
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ResolvedScmHostingProviderRegistry } from '@/scm/hostingProviders/registry';
@@ -110,6 +112,7 @@ const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
     context: RpcHandlerContext;
     workingDirectory: string;
     accessPolicy: FilesystemAccessPolicy;
+    workAdmissions?: ReadonlyMap<string, ScmWorkEvidenceAdmission['admissions'][number] | null>;
 }>>();
 
 export function registerScmHandlers(
@@ -184,9 +187,34 @@ export function registerScmHandlers(
     } as const;
     const authorizeWorkSession = async (sessionId: string | undefined): Promise<boolean> => {
         const ingress = scmRpcOperationContextStorage.getStore()?.context;
-        return ingress?.signal.aborted === false && ingress.authorization?.kind === 'session.write'
-            && ingress.authorization.sessionId === sessionId;
+        if (!ingress || ingress.signal.aborted) return false;
+        if (ingress.authorization?.kind === 'session.write') return ingress.authorization.sessionId === sessionId;
+        if (ingress.authorization?.kind === 'scm.workEvidence.admitted') {
+            const decision = sessionId ? scmRpcOperationContextStorage.getStore()?.workAdmissions?.get(sessionId) : undefined;
+            return decision?.kind === 'session.write';
+        }
+        return false;
     };
+    scmRpcHandlerManager.registerHandler(RPC_METHODS.SCM_WORK_EVIDENCE_READ, async (request: unknown) => {
+        const parsed = ScmWorkEvidenceReadRequestSchema.safeParse(request);
+        if (!parsed.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
+        const admission = ScmWorkEvidenceAdmissionSchema.safeParse(scmRpcOperationContextStorage.getStore()?.context.authorization);
+        if (!admission.success) return { sessions: parsed.data.sessions.map(({ sessionId }) => ({
+            sessionId, status: 'error' as const, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, evidence: [], branchEvidence: [],
+        })) };
+        const workAdmissions = new Map<string, ScmWorkEvidenceAdmission['admissions'][number] | null>();
+        for (const decision of admission.data.admissions) {
+            workAdmissions.set(decision.sessionId, workAdmissions.has(decision.sessionId) ? null : decision);
+        }
+        const scope = scmRpcOperationContextStorage.getStore()!;
+        return scmRpcOperationContextStorage.run({ ...scope, workAdmissions }, () => readScmWorkEvidence({
+            request: parsed.data, ...routeBase, authorizeSession: authorizeWorkSession,
+            refusalCode: sessionId => {
+                const decision = workAdmissions.get(sessionId);
+                return decision?.kind === 'refused' ? decision.errorCode : undefined;
+            },
+        }));
+    });
     registerActionSpecRpcHandlers({
         rpcHandlerManager: scopedRegistrar(false),
         actionIds: ['scm.blame.get', 'scm.diff.file', 'scm.diffSummary.capture', 'scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest',

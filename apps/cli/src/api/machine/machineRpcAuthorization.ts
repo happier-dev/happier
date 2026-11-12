@@ -41,6 +41,7 @@ import {
   SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS,
 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
 import {
   PreparedTransferRpcRequestV1Schema,
   resolvePreparedTransferRpcPhaseV1,
@@ -1943,6 +1944,14 @@ export async function authorizeMachineRpcRequest(
     // Home already enforced the method declaration's sharedMachineAccess.
     // Requester-owned Runs retain their Account isolation at the Run store.
     return request.authorization === undefined
+      ? { ok: true }
+      : forbidden('session_authorization');
+  }
+  if (sessionRule?.method === RPC_METHODS.SCM_WORK_EVIDENCE_READ) {
+    // Machine admission above retains its existing target/resource checks.
+    // Session proofs are Home's admission result, never a direct peer's claim.
+    return source === 'authenticated_home_socket'
+      && ScmWorkEvidenceAdmissionSchema.safeParse(request.authorization).success
       ? { ok: true }
       : forbidden('session_authorization');
   }

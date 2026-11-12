@@ -8798,6 +8798,22 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "use",
   },
   {
+    "method": "scm.workEvidence.read",
+    "ownerPacket": "PMS-5",
+    "rationale": "Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.",
+    "readOnly": true,
+    "requesterExecutionIsolationRequired": true,
+    "routeClass": "server_required",
+    "rpcClassification": "internal_only",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": true,
+    },
+    "serverRequiredReason": "ambiguous",
+    "sharedMachineAccess": "use",
+  },
+  {
     "method": "scm.stash.list",
     "ownerPacket": "PMS-5",
     "rationale": "Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.",
