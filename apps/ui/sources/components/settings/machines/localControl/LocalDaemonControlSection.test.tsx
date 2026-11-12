@@ -1,3 +1,4 @@
+import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import * as React from 'react';
 import { Item } from '@/components/ui/lists/Item';
 import renderer from 'react-test-renderer';
@@ -6,11 +7,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { renderScreen, findTestInstanceByTypeWithProps } from '@/dev/testkit';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -83,6 +84,9 @@ async function selectHome(serverUrl: string, name: string) {
     return serverId;
 }
 
+// Read the same installed text boundary as the connection presenters.
+const { t: localizedText } = await import('@/text');
+
 describe('LocalDaemonControlSection', () => {
     // The component's cold module graph is large; loading it once here (after the module mocks above
     // are installed) keeps that one-time cost out of the first test's own timeout, where it timed out
@@ -94,9 +98,12 @@ describe('LocalDaemonControlSection', () => {
     }, 300_000);
 
     beforeEach(async () => {
+        // Desktop authentication uses OS custody, including the real Action entry below.
+        const secureStorage = createDesktopSecureStorageBoundary();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: secureStorage.invoke });
+        vi.stubGlobal('isTauri', true);
         await homes.reset();
         await selectHome('https://relay.example.test', 'Home A');
-        vi.stubGlobal('isTauri', true);
     });
 
     afterEach(() => { standardCleanup(); publishAppliedActiveServerRuntimeAvailability(false); vi.unstubAllGlobals(); });
@@ -159,7 +166,8 @@ describe('LocalDaemonControlSection', () => {
             });
         });
 
-        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'settings.localDaemonControl.status' })?.props.subtitle).toBe('machine.thisComputer.description.daemon_not_running');
+        expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'settings.localDaemonControl.status' })?.props.subtitle)
+            .toBe(localizedText('machine.thisComputer.description.daemon_not_running', { home: 'Home A' }));
         expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'settings.localDaemonControl.machineId' })?.props.subtitle).toBe('machine-local-1');
 
         await screen.pressByTestIdAsync('settings.localDaemonControl.start');
@@ -219,15 +227,17 @@ describe('LocalDaemonControlSection', () => {
         });
 
         expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'settings.localDaemonControl.status' })?.props.subtitle)
-            .toBe('machine.thisComputer.description.daemon_account_mismatch');
+            .toBe(localizedText('machine.thisComputer.description.daemon_account_mismatch', {
+                home: 'Home A', daemonAccount: 'robin', appAccount: 'leeroy',
+            }));
         expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'settings.localDaemonControl.repair' })?.props.title)
-            .toBe('machine.thisComputer.action.daemon_account_mismatch');
+            .toBe(localizedText('machine.thisComputer.action.daemon_account_mismatch', { appAccount: 'leeroy' }));
 
         const confirm = vi.mocked(Modal.confirm);
         confirm.mockClear();
         confirm.mockResolvedValueOnce(false);
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
-        expect(confirm).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
         expect(starts.some((entry) => entry.kind === 'setup.repairThisComputer.v1')).toBe(false);
         storage.setState({ profile: { ...profileDefaults } });
     });
@@ -872,9 +882,9 @@ describe('LocalDaemonControlSection', () => {
 
         expect(starts.map((start) => start.kind)).toEqual(['daemon.service.status.v1']);
         expect([0, 1, 2].map((index) => findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.localDaemonControl.servers.${index}` })?.props.subtitle)).toEqual([
-            'machine.thisComputer.servers.connected',
-            'machine.thisComputer.servers.offline',
-            'machine.thisComputer.servers.attention',
+            localizedText('machine.thisComputer.servers.connected'),
+            localizedText('machine.thisComputer.servers.offline'),
+            localizedText('machine.thisComputer.servers.attention'),
         ]);
     });
 });
