@@ -86,6 +86,7 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
     ?? acquireAuthoritativePluginRuntimeRegistryLease;
 
   return createCommittedContributedActionInvoker({
+    daemonHoldsApprovalWaiter: true,
     ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
     defaultInvocationSurface: 'api',
     acquireRuntimeRegistryLease: () => acquireRuntimeRegistryLease({
@@ -311,7 +312,9 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
           });
           try {
             invocationSignal.throwIfAborted();
-            const replayContext: ActionExecutorContext = { authority: origin.authority, runtimeAccountId: origin.accountId,
+            const replayContext: Omit<ActionExecutorContext, 'hostReviewedChild'> & {
+              hostReviewedChild?: ActionExecutorContext['hostReviewedChild'];
+            } = { authority: origin.authority, runtimeAccountId: origin.accountId,
               recordOperationCredentialUse,
               serverId: origin.serverId,
               serverIdentityId: origin.serverIdentityId,

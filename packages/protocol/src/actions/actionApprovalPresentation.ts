@@ -3,6 +3,7 @@ export { readTeamMemberApprovalPresentation } from './specs/teamMemberApproval.j
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ApprovalStaleFailureDetailsSchema, buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { StoredApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, type StoredApprovalRequestV2, type ApprovalExecutionOriginV1, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
@@ -58,7 +59,12 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
   const target = request.v === 1 ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
   const currentExecution = request.v === 2 ? request.execution : target?.success ? target.data.execution : undefined;
   const operationCredentialUses = currentExecution?.operationCredentialUses;
+  const targetDetails = target?.success && !execution.ok
+    && (execution.errorCode === 'approval_stale' || execution.errorCode === 'approval_origin_unavailable')
+    ? ApprovalStaleFailureDetailsSchema.safeParse(execution.details) : null;
   const failure = request.v === 2 && !execution.ok ? readApprovalExecutionFailure(request) : null;
+  const details = failure?.details ?? (targetDetails?.success && execution.errorCode === buildApprovalOriginFailure(targetDetails.data.reason).errorCode
+    ? targetDetails.data : undefined);
   return {
     executedAtMs: execution.executedAtMs, ok: execution.ok,
     ...(currentExecution?.effectAttempted !== undefined
@@ -66,7 +72,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     ...(execution.ok && execution.result !== undefined ? { result: project ? project(execution.result) : execution.result } : {}),
     ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
     ...(execution.error === undefined ? {} : { error: execution.error }),
-    ...(failure?.details === undefined ? {} : { details: failure.details }),
+    ...(details === undefined ? {} : { details }),
     ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
     ...(operationCredentialUses?.length ? { operationCredentialUses } : {}),
   };

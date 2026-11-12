@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ApprovalRequestPublicReadSchema } from '../approvals/approvalRequestPublicRead';
 import { TargetActionApprovalRequestV1Schema } from '../approvals/targetActionApprovalRequestV1';
 import { buildTargetActionApprovalDecisionResult, createTargetActionApprovalDecision } from './targetActionApprovalDecision';
 import { getActionSpec } from './actionSpecs';
@@ -106,11 +107,29 @@ describe('target Action approval decision custody', () => {
       executeApproved: async () => { effects += 1; throw new Error('Lost inputs cannot execute'); },
     });
     const result = await decide({ artifactId: 'lost-inputs', decision: 'approve' });
-    expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
     expect(stored).toMatchObject({ status: 'failed', execution: { ok: false, effectAttempted: false,
-      errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } });
+      errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } } });
+    expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: {
+      errorCode: 'approval_origin_unavailable', effectAttempted: false, details: { reason: 'live_invocation_unavailable' },
+    } });
     expect(await decide({ artifactId: 'lost-inputs', decision: 'approve' })).toEqual(result);
     expect(effects).toBe(0);
+  });
+
+  it.each([
+    { errorCode: 'approval_stale', reason: 'credential_changed' },
+    { errorCode: 'approval_origin_unavailable', reason: 'live_invocation_unavailable' },
+  ])('publishes only the typed origin reason for $errorCode', ({ errorCode, reason }) => {
+    const request = TargetActionApprovalRequestV1Schema.parse({ ...accountApproval(), status: 'failed',
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: false,
+        effectAttempted: false, errorCode, details: { reason } } });
+    const projected = projectApprovalRequestForPublicRead(request);
+    expect(projected).toMatchObject({ execution: { errorCode, details: { reason } } });
+    expect(ApprovalRequestPublicReadSchema.safeParse(projected).success).toBe(true);
+    expect(projectApprovalRequestForPublicRead({ ...request, execution: { ...request.execution!,
+      details: { reason, privateInput: 'must-stay-private' } } }))
+      .not.toHaveProperty('execution.details');
   });
 
   it('retains the target executor receipt through decision settlement', async () => {
@@ -251,9 +270,9 @@ describe('target Action approval decision custody', () => {
     const decide = createTargetActionApprovalDecision({ read: async () => stored,
       update: async ({ request }) => { stored = request; return { ok: true }; } });
     expect(await decide({ artifactId: 'other-process', decision: 'approve' }))
-      .toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
     expect(stored).toMatchObject({ status: 'failed', decision: { kind: 'approve' }, execution: {
-      ok: false, effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } });
+      ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } } });
   });
 
   it('reconciles a live execution claim observed before the decision write response', async () => {

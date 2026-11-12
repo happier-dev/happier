@@ -104,7 +104,7 @@ it.each(['attached', 'attached_failure', 'disconnected'] as const)('settles %s l
             expect(result.ok).toBe(true);
             expect(await pending).toMatchObject({ ok: false, errorCode: 'connected_account_configuration_target_unavailable' });
         } else {
-            expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
         }
         const content = decodePlainArtifactStoredContent(artifacts.read(artifactId)!.body);
         if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing approval');

@@ -1,3 +1,4 @@
+import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
@@ -545,6 +546,7 @@ import {
   admitActionAgentStartV1, isActionCallerOwnSessionV1, isAgentStartActionV1, isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1, resolveProfileSkillSeedsAtAdmissionV1,
   resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1, projectAgentStartSelectionV1, readAdmittedWorkflowLeafStartDepthV1,
 } from './executor/agentStartAdmission.js';
+import { refuseAgentStartWhenNotReadyV1 } from './executor/agents/agentBackendReadiness.js';
 import {
   SessionCreationDirectoryApprovalV1Schema,
   type SessionCreationDirectoryApprovalV1,
@@ -640,6 +642,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
     const current = resolved && machineId && machineId !== resolved.baseline.machineId
       ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
+    // Every run start (execution.run.start, delegate, plan, voice, review) passes here: refuse a
+    // known not-ready Agent on the Machine that will run it before any Run exists.
+    const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
+      machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
+      backendTarget: input.backendTarget,
+    }, context);
+    if (notReady) return notReady;
     const request = { ...input,
       approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
     return deps.executionRunStart(sessionId, current
@@ -1581,12 +1590,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && !args.privateActionInputContinuation && (args.liveOnlyActionArgs === undefined
         || custodySpec?.approvalInputCustody === 'live_only' && args.ctx.signal?.aborted)
     ) {
-      return await persistExecutionFailure(args.request, {
-        ok: false,
-        errorCode: 'approval_stale',
-        error: 'approval_stale',
-        details: { reason: 'live_invocation_unavailable' },
-      });
+      return await persistExecutionFailure(args.request, buildApprovalOriginFailure('live_invocation_unavailable'));
     }
     // `approvalsUpdate` has already claimed the open→approved transition at
     // the Artifact owner. A stale/non-transactional read may still project the
@@ -1605,12 +1609,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           settle: failure => persistExecutionFailure(request, failure) });
       }
       if (!originIsCurrentBeforeClaim) {
-        return await persistExecutionFailure(request, staleReason ? {
-          ok: false,
-          errorCode: 'approval_stale',
-          error: 'approval_stale',
-          details: { reason: staleReason },
-        } : approvalContextUnavailable());
+        return await persistExecutionFailure(request, staleReason ? buildApprovalOriginFailure(staleReason) : approvalContextUnavailable());
       }
       const executingRequest: ApprovalRequest = {
         ...request,
@@ -1720,8 +1719,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && requestSurface === 'ui' && args.retainedPluginSettingsIntent?.() === true;
     if (requiresRetainedHostInvocation && !args.privateSecretContinuation && !args.privateActionInputContinuation && !retainedPluginContext
       && !retainsHostInvocation && !retainsHostOperation && !retainsUiFieldIntent) {
-      return await persistExecutionFailure(request, { ok: false, errorCode: 'approval_stale', error: 'approval_stale',
-        details: { reason: 'live_invocation_unavailable' } });
+      return await persistExecutionFailure(request, buildApprovalOriginFailure('live_invocation_unavailable'));
     }
     const persistedDirectoryApproval = request.actionId === 'session.spawn_new'
       ? SessionCreationDirectoryApprovalV1Schema.safeParse(
@@ -2040,7 +2038,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const exec = await (async (): Promise<ActionExecuteResult> => {
       if (!originIsCurrent) {
         return staleReason
-          ? { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: { reason: staleReason } }
+          ? buildApprovalOriginFailure(staleReason)
           : approvalContextUnavailable();
       }
       if (!actionId) {
@@ -5645,6 +5643,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!normalizeId(dependencyInput.backendTargetKey) && backendTargetKeys.length === 1) {
             dependencyInput.backendTargetKey = backendTargetKeys[0];
           }
+          // A review's Team credential model needs exactly one engine, named as its Agent target.
+          const engineIds = actionIdRaw === 'review.start' && Array.isArray(dependencyInput.engineIds)
+            ? dependencyInput.engineIds.filter((value): value is string => typeof value === 'string') : [];
+          if (!normalizeId(dependencyInput.backendTargetKey) && engineIds.length === 1) {
+            const engineTargetKey = tryNormalizeExecutionBackendOptionValue(engineIds[0]!);
+            if (engineTargetKey) dependencyInput.backendTargetKey = engineTargetKey;
+          }
           const requiresErgonomicRunTarget = (
             actionIdRaw === 'subagents.plan.start'
             || actionIdRaw === 'subagents.delegate.start'
@@ -5653,6 +5658,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             optionsSourceId === 'agents.models.available'
             || optionsSourceId === 'agents.config_options.available'
             || optionsSourceId === 'sessions.spawn.connected_services.available'
+            || optionsSourceId === 'teams.credential_models.available'
           );
           if (requiresErgonomicRunTarget && !normalizeId(dependencyInput.backendTargetKey)) {
             return {
@@ -7156,7 +7162,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
 
         if (liveCliOrigin) {
-          return await settleApprovedFailure({ ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' });
+          return await settleApprovedFailure(buildApprovalOriginFailure('live_invocation_unavailable'));
         }
 
         if (isBlockingApprovalRequest(approvedRequest)) {

@@ -8332,6 +8332,12 @@ live result when its receipt arrives first. A receipt-only caller receives
 instead of treating that observation as the Action's typed result.
 Actions requiring live-only input keep their existing retained-input
 custody instead of persisting that input for deferred replay.
+Daemon-hosted target-Action approvals retain the daemon's own Machine placement
+when the origin has no Machine, including Account-target UI requests. The existing
+approval decision route delivers consent to that daemon's retained invocation;
+standalone live invocations continue without a daemon placement, even when their
+registry can resolve a Machine. Only the daemon host that holds the waiter supplies
+that private custody fact.
 Account-target live-only invocations use the same CLI approval callback: the
 terminal presents the Artifact id before prompting and keeps the original
 invocation alive. In `--json` mode, an `actions_invoke` envelope carrying
@@ -9490,8 +9496,10 @@ copied from a transcript alone cannot supply that Machine proof.
 such as passwords. The artifact carries only the declared input projection from creation, and a
 replay without the live invocation fails closed. CLI rows with either live-only custody declaration
 retain their blocking invocation; Agent and MCP blocking callers are unchanged.
-In 0.3 development, deciding a request whose live input invocation has ended settles
-the Artifact as `failed`, with `approval_stale`, reason `live_invocation_unavailable`
+In 0.3 development, lost private invocation custody uses `approval_origin_unavailable`,
+with reason `live_invocation_unavailable`, for both built-in and target Actions. Actual
+subject or currentness changes retain `approval_stale`. Deciding a target request whose
+live input invocation has ended settles its Artifact as `failed`
 and `effectAttempted: false`. The Approve Action returns that typed refusal, including
 on repeat decisions; the requester and Inbox can read the same terminal receipt.
 Re-run the original Action to supply fresh live inputs. An attached caller instead

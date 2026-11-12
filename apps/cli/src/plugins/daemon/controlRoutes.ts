@@ -163,6 +163,7 @@ export async function executeAppliedDaemonPluginActionWithController(
   }
   try {
     return await executeContributedAction({
+      daemonHoldsApprovalWaiter: true,
       runtimeRegistry: lease.registry,
       actionId: request.actionId,
       input: request.input,

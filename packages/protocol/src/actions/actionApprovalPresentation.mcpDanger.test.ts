@@ -121,7 +121,7 @@ describe('MCP danger approval review', () => {
       decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } }), approvalsUpdate: async () => ({ ok: true }) });
     const replay = await retired.replayApprovedApprovalRequest({ artifactId: 'import-review', callerAuthority: 'present_user' });
     expect(replay, JSON.stringify(replay))
-      .toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+      .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
   });
   it.each(cases)('%s preserves the reviewed operation privately and in settled history', (actionId, raw, expected) => {
     const spec = getActionSpec(actionId);

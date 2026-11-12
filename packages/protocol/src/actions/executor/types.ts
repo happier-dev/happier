@@ -1079,6 +1079,8 @@ export type ActionExecutorContext = Readonly<{
   /** Host-derived selection change from an admitted Workflow origin; never authored Action input. */
   approvalProfileChange?: boolean;
 
+  /** Host-only diagnostic correlation, separate from retry and approval identity. Never wire input. */
+  operationRequestId?: string;
   /** Stable identity for one externally retryable action invocation. */
   actionRequestId?: string | null;
 
@@ -1745,6 +1747,12 @@ export type ActionExecutorDeps = Readonly<{
   profileActionExecute?: (request: ProfileActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   mcpServerAction?: (request: McpServerActionRequestV1) => Promise<ActionExecuteResult>;
   providerActionExecute?: (request: ProviderActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  /**
+   * The exact Machine's admitted plugin projection with the `agentsById` and Provider-family sections
+   * (Agent Provider requirements + Provider declarations); `null` when it cannot be read.
+   */
+  machinePluginProjectionRead?: (args: Readonly<{ machineId: string; serverId?: string; signal?: AbortSignal }>,
+    context: ActionExecutorContext) => Promise<import('../../daemon/contributionRegistryProjection.js').PluginProjectionV2 | null>;
   remoteHostActionExecute?: (request: RemoteHostActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   /** Client runtime controls delegate to the answering client's native SystemTask owner. */
   homeRuntimeActionExecute?: (request: HomeRuntimeActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;

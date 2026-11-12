@@ -56,9 +56,9 @@ it.each([
     { surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner' });
   if (custody === 'absent') {
     expect(stored, JSON.stringify(decided)).toMatchObject({ status: 'failed', execution: {
-      ok: false, effectAttempted: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } });
-    expect(decided).toMatchObject({ ok: false, errorCode: 'approval_stale' });
-    expect(await adapter(intent)).toMatchObject({ status: 'unavailable', code: 'approval_stale' });
+      ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } } });
+    expect(decided).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    expect(await adapter(intent)).toMatchObject({ status: 'unavailable', code: 'approval_origin_unavailable' });
   } else {
     const admitted = await pending;
     expect(admitted).toMatchObject({ status: 'approved' });

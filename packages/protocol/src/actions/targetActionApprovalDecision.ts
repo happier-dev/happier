@@ -9,7 +9,7 @@ import { getSharedBlockingApprovalCoordinator } from './blockingApprovalCoordina
 import { isPresentUserHostInvocation } from './invocationAuthority.js';
 import { readRpcErrorCode } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
-import { ApprovalStaleFailureDetailsSchema } from '../approvals/approvalStaleReason.js';
+import { ApprovalStaleFailureDetailsSchema, buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { resolveApprovalExecutor } from '../approvals/resolveApprovalExecutor.js';
 
 export type TargetActionApprovalUpdateResult = Readonly<
@@ -19,10 +19,10 @@ export type TargetActionApprovalUpdateResult = Readonly<
 export function buildTargetActionApprovalDecisionResult(request: TargetActionApprovalRequestV1): ActionExecuteResult {
   if (request.status === 'outcome_unknown') return failure('approval_execution_outcome_unknown');
   if (resolveApprovalExecutor(request).kind === 'live_invocation' && request.execution?.effectAttempted === false
-    && request.execution.errorCode === 'approval_stale') {
+    && request.execution.errorCode === 'approval_origin_unavailable') {
     const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
     if (details.success && details.data.reason === 'live_invocation_unavailable') {
-      return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: details.data };
+      return buildApprovalOriginFailure(details.data.reason);
     }
   }
   return { ok: true, result: { ok: true, status: request.status,
@@ -170,8 +170,7 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       const settleUnavailable = async () => {
         const failedAtMs = nextTimestamp(approved);
         const failed: TargetActionApprovalRequestV1 = { ...approved, status: 'failed', updatedAtMs: failedAtMs,
-          execution: { executedAtMs: failedAtMs, ok: false, effectAttempted: false,
-            errorCode: 'approval_stale', error: 'approval_stale', details: { reason: 'live_invocation_unavailable' } } };
+          execution: { executedAtMs: failedAtMs, ...buildApprovalOriginFailure('live_invocation_unavailable'), effectAttempted: false } };
         const persistenceFailure = await persist(failed);
         if (!persistenceFailure) coordinator.notifyApprovalUpdated({ artifactId, request: failed });
         return persistenceFailure ?? buildTargetActionApprovalDecisionResult(failed);

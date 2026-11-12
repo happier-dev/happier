@@ -33,7 +33,7 @@ import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityConfigure
   MachineReachabilityBusyFailureDetailsV1Schema } from '../machines/reachability/actionsV1.js';
 import { ProjectWorkerActionOutputSchemasV1 } from '../actions/specs/projectWorkers.js';
 import { ActionOperationCancelV1ResponseSchema, ManagedNativeFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema } from '../actions/operations/v1.js';
-import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
+import { ApprovalStaleFailureDetailsSchema, buildApprovalOriginFailure } from './approvalStaleReason.js';
 import { isPluginErrorData } from '../plugins/errors.js';
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import { WidgetBindingResolutionV1Schema, WidgetInstanceActionInputSchemasV1 } from '../widgets/actionsV1.js';
@@ -257,10 +257,12 @@ function parseStrictApprovalFailure(input: Readonly<{
       return { ...input.failure, details: details.data };
     }
   }
-  if (input.failure.errorCode === 'approval_stale') {
+  if (input.failure.errorCode === 'approval_stale' || input.failure.errorCode === 'approval_origin_unavailable') {
     const details = (storedRead ? createStoredReadSchema(ApprovalStaleFailureDetailsSchema)
       : ApprovalStaleFailureDetailsSchema).safeParse(input.failure.details);
-    if (details.success) return { ...input.failure, details: details.data };
+    if (details.success && input.failure.errorCode === buildApprovalOriginFailure(details.data.reason).errorCode) {
+      return { ...input.failure, details: details.data };
+    }
   }
   if (input.request.actionId === 'deployments.templates.instantiate'
     || input.request.actionId === 'deployments.environments.create') {

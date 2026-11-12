@@ -64,7 +64,8 @@ export function admitTargetActionApprovalTransition(
   const isApprovedExecution = existing.status === 'approved' && request.status === 'executing'
     && request.decision?.kind === 'approve' && request.execution === undefined;
   const isApprovedStale = existing.status === 'approved' && request.status === 'failed'
-    && request.decision?.kind === 'approve' && request.execution?.ok === false && request.execution.errorCode === 'approval_stale';
+    && request.decision?.kind === 'approve' && request.execution?.ok === false && (request.execution.errorCode === 'approval_stale'
+      || request.execution.errorCode === 'approval_origin_unavailable' && request.execution.effectAttempted === false);
   const isApprovedCancellation = existing.status === 'approved' && request.status === 'failed'
     && request.decision?.kind === 'approve' && request.execution?.ok === false
     && request.execution.errorCode === 'approval_canceled' && request.execution.effectAttempted === false

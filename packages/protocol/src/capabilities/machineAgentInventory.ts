@@ -8,7 +8,8 @@ import type { AcpCatalogSnapshotV1 } from '../acp/catalog/catalogRowsV1.js';
 import { AcpPlatformFitV1Schema } from '../acp/catalog/registry/acpPlatformFitV1.js';
 import { isNewerVersion } from '../updates/versionComparison.js';
 import { buildConfiguredAcpAgentSelectionV1, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '../agents/executionTargetV1.js';
-import { agentRoutingIdAddressesContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { agentRoutingIdAddressesContributionIdentityV1, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
+import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
 
 /** Caller-owned executable facts only. Inventory never carries environment or secret material. */
 export const MachineAcpInventoryDefinitionSchema = lazyZodSchema(() => z.strictObject({
@@ -134,6 +135,35 @@ export function resolveMachineAgentExecutionStateV1(input: Readonly<{
     if (input.signIn.status !== 'signedIn') return 'unknown';
   }
   return 'ready';
+}
+
+/**
+ * A known prerequisite failure. The choice stays visible but is not offered as a
+ * fresh selection; `unknown` and `checking` never block, because no evidence
+ * says the Agent cannot run.
+ */
+export function isMachineAgentExecutionStateBlockingV1(
+  state: MachineAgentExecutionStateV1,
+): state is Extract<MachineAgentExecutionStateV1, 'needsSignIn' | 'notInstalled' | 'unsupported'> {
+  return state === 'needsSignIn' || state === 'notInstalled' || state === 'unsupported';
+}
+
+/** A selectable Agent target, in either the current or the retained backend vocabulary. */
+export type MachineAgentInventoryTargetV1 =
+  | Readonly<{ kind: 'agent'; identity: PluginContributionIdentityV1; definitionId?: string }>
+  | Readonly<{ kind: 'backend'; backendId: string; configuredBackendId?: string }>;
+
+/** The inventory row a target runs as; a plugin Agent may be keyed by its local or qualified id. */
+export function findMachineAgentInventoryItemForTargetV1<T extends Readonly<{ agentId: string; definitionId?: string }>>(
+  items: readonly T[],
+  target: MachineAgentInventoryTargetV1,
+): T | undefined {
+  const keys = new Set(target.kind === 'agent'
+    ? [target.identity.localId, buildQualifiedPluginContributionKey(target.identity)].map(agentId => buildMachineAgentInventoryKey({
+      agentId, ...(target.definitionId === undefined ? {} : { definitionId: target.definitionId }) }))
+    : [buildMachineAgentInventoryKey({ agentId: target.backendId,
+      ...(target.configuredBackendId === undefined ? {} : { definitionId: target.configuredBackendId }) })]);
+  return items.find(item => keys.has(buildMachineAgentInventoryKey(item)));
 }
 
 /** A failed probe carries no installation or readiness facts. */

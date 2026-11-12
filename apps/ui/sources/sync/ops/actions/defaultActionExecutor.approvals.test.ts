@@ -805,7 +805,7 @@ describe('createDefaultActionExecutor approvals', () => {
         }
         const result = await executor.execute('approval.request.decide', { artifactId, decision }, context());
         if (decision === 'approve' && !remote && !live) {
-            expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+            expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
             expect(TargetActionApprovalRequestV1Schema.parse(JSON.parse(homes.artifacts(homeId).readPlainBody(artifactId) ?? 'null')))
                 .toMatchObject({ status: 'failed', execution: { ok: false, effectAttempted: false } });
             expect(outgoing).toEqual([]);

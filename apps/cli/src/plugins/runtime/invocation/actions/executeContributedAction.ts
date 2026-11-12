@@ -329,6 +329,8 @@ export async function executeContributedAction(params: Readonly<{
   captureExecutionOrigin?: true;
   /** Original root authority, captured before normalization or secret projection. */
   approvalExecutionOrigin?: ApprovalExecutionOriginV1;
+  /** Set only by the daemon host that retains the approval waiter. */
+  daemonHoldsApprovalWaiter?: true;
   /** Private admitted host context; never supplied through Action input. */
   approvalContext?: ActionExecutorContext;
   /** Equality-only precondition from ActionsService.executeWithExecutionOrigin only. */
@@ -785,14 +787,15 @@ export async function executeContributedAction(params: Readonly<{
           const { requesterConfirmation } = requesterAdmission;
           let placement: TargetActionApprovalReplayPlacementV1 | undefined;
           let placementServerIdentityId: string | undefined;
-          // Live custody retains the admitted source without requiring a daemon replay placement.
-          if (!liveOnly) {
+          // Standalone live custody needs no Machine. A daemon-held waiter must
+          // retain its host's own placement so another client can deliver consent.
+          if (!liveOnly || params.daemonHoldsApprovalWaiter) {
             const currentPlacement = await resolveCurrentTargetApprovalReplayPlacement(
               runtimeRegistry,
               pluginId,
               request.signal,
             );
-            if (currentPlacement.status !== 'resolved') {
+            if (currentPlacement.status === 'aborted' || (!liveOnly && currentPlacement.status !== 'resolved')) {
               return {
                 status: 'unavailable',
                 code: currentPlacement.status === 'aborted'
@@ -800,16 +803,18 @@ export async function executeContributedAction(params: Readonly<{
                   : 'plugin_action_execution_origin_unavailable',
               };
             }
-            placementServerIdentityId = currentPlacement.placement.serverIdentityId;
-            placement = Object.freeze({
-              serverId: currentPlacement.placement.serverId,
-              machineId: currentPlacement.placement.machineId,
-              ...(params.context.defaultSessionId === undefined
-                ? {}
-                : { defaultSessionId: params.context.defaultSessionId }),
-            });
+            if (currentPlacement.status === 'resolved') {
+              placementServerIdentityId = currentPlacement.placement.serverIdentityId;
+              placement = Object.freeze({
+                serverId: currentPlacement.placement.serverId,
+                machineId: currentPlacement.placement.machineId,
+                ...(params.context.defaultSessionId === undefined
+                  ? {}
+                  : { defaultSessionId: params.context.defaultSessionId }),
+              });
+            }
           }
-          const originSurface = deferredSurface ?? (requestedSurface === 'plugin' ? 'plugin' : null);
+          const originSurface = deferredSurface ?? (requestedSurface === 'plugin' || placement ? requestedSurface : null);
           let originContext = params.approvalContext;
           let resealedRequester = false;
           const retainedAuthorization = params.approvalExecutionOrigin?.externalActionExecutionAuthorization;

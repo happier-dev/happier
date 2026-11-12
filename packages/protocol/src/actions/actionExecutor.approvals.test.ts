@@ -627,10 +627,10 @@ describe('createActionExecutor (approvals)', () => {
           stored = approved;
           coordinator.notifyApprovalUpdated({ artifactId: 'logs-approval', request: approved });
           expect(await executor.replayApprovedApprovalRequest({ artifactId: 'logs-approval' }))
-            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale',
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
               details: { reason: 'live_invocation_unavailable' } });
           expect(await executor.replayApprovedApprovalRequest({ artifactId: 'logs-approval', callerAuthority: 'present_user' }))
-            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale',
+            .toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
               details: { reason: 'live_invocation_unavailable' } });
           expect(coordinator.getLiveWaiterCount('logs-approval')).toBe(1);
           expect(nativeReads).toBe(0);
@@ -5397,7 +5397,7 @@ describe('createActionExecutor (approvals)', () => {
       artifactId: 'a1',
       decision: 'approve',
     })).resolves.toMatchObject({
-      ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
       details: { reason: 'live_invocation_unavailable' },
     });
 
@@ -5406,7 +5406,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(storedRequest.status).toBe('approved');
     expect(storedRequest.execution).toBeUndefined();
     await expect(executor.replayApprovedApprovalRequest({ artifactId: 'a1', callerAuthority: 'present_user' })).resolves.toMatchObject({
-      ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
     });
     expect(homeDomainAction).not.toHaveBeenCalled();
     expect(approvalsUpdate).toHaveBeenCalledOnce();

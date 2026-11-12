@@ -17,6 +17,7 @@ import {
   ApprovalRequestV2Schema,
   ApprovalRequestV2StatusSchema,
 } from './approvalRequestV1.js';
+import { ApprovalStaleFailureDetailsSchema } from './approvalStaleReason.js';
 import { TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1.js';
 
 /** Matches projectApprovalRequestForPublicRead; never accepts private replay custody. */
@@ -54,7 +55,7 @@ const ApprovalPublicExecutionV2Schema = lazyZodSchema(() => z.strictObject({
 }));
 const ApprovalPublicTargetExecutionV1Schema = lazyZodSchema(() => {
   const { details: _details, ...shape } = ApprovalPublicExecutionV2Schema.shape;
-  return z.strictObject(shape);
+  return z.strictObject({ ...shape, details: z.optional(ApprovalStaleFailureDetailsSchema) });
 });
 
 const ApprovalPublicRequestV2Schema = lazyZodSchema(() => z.strictObject({

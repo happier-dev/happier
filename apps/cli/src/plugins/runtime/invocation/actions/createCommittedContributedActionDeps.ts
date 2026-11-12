@@ -111,6 +111,8 @@ function projectExternalActionContext(
 }
 
 export function createCommittedContributedActionInvoker(input: Readonly<{
+  /** Private host fact; standalone invocation custody never implies daemon custody. */
+  daemonHoldsApprovalWaiter?: true;
   /** Constraints already admitted by a containing SDK call, across execution realms. */
   inheritedInvocation?: Pick<Parameters<typeof import('./executeContributedAction').executeContributedAction>[0],
     'requiredDangerLevel' | 'requiredReadOnly' | 'resourceSessionId' | 'readObservation' | 'inheritedTargetedOperation'> & Readonly<{
@@ -212,6 +214,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
+        ...(input.daemonHoldsApprovalWaiter ? { daemonHoldsApprovalWaiter: true as const } : {}),
         ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
         context: {
           ...(input.inheritedInvocation?.operationRequestId === undefined ? {}

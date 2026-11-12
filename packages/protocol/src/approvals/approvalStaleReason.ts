@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import * as z from '../zodRuntimePolicy.js';
 
 /** Failed authority/custody facts only: no ids, policy values or credential content. */
@@ -14,3 +15,9 @@ export const ApprovalStaleReasonSchema = z.enum([
 ]);
 export type ApprovalStaleReason = z.infer<typeof ApprovalStaleReasonSchema>;
 export const ApprovalStaleFailureDetailsSchema = z.strictObject({ reason: ApprovalStaleReasonSchema });
+
+/** Lost private custody is availability; changed authority or subject facts are staleness. */
+export function buildApprovalOriginFailure(reason: ApprovalStaleReason): ActionExecuteFailure {
+  const errorCode = reason === 'live_invocation_unavailable' ? 'approval_origin_unavailable' : 'approval_stale';
+  return { ok: false, errorCode, error: errorCode, details: { reason } };
+}

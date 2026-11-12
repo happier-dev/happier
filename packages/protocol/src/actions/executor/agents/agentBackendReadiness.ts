@@ -1,12 +1,16 @@
-import { parseBackendTargetKeyV2 } from '../../../backends/targets/backendTargetRefV2.js';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, PersistedBackendTargetRefV2Schema } from '../../../backends/targets/backendTargetRefV2.js';
 import {
   findMachineAgentInventoryItemForTargetV1,
+  isMachineAgentExecutionStateBlockingV1,
   MachinesAgentsListOutputSchema,
   resolveMachineAgentExecutionStateV1,
+  type MachineAgentExecutionStateV1,
   type MachineAgentInventoryTargetV1,
 } from '../../../capabilities/machineAgentInventory.js';
+import { SPAWN_SESSION_ERROR_CODES } from '../../../sessions/spawnSession.js';
 import type { AgentBackendInventoryItem, AgentsBackendsListOutput } from '../../agentBackendInventory.js';
-import type { ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+import { withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 
 function readInventoryTarget(item: AgentBackendInventoryItem): MachineAgentInventoryTargetV1 | null {
   if (item.agentTarget) return item.agentTarget;
@@ -20,35 +24,34 @@ function readInventoryTarget(item: AgentBackendInventoryItem): MachineAgentInven
   }
 }
 
+type ReadinessDeps = Pick<ActionExecutorDeps, 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>;
+
 /**
- * The Agent backends a Machine offers, each with the same readiness the shared
- * picker shows: the Machine's own inventory facts (installed, platform,
- * dependencies, native sign-in) composed with the Account's connected-service
- * default for that Agent. A connected default satisfies authentication; an
- * unreadable default leaves sign-in unknown. Without a Machine, or when its
- * inventory cannot be read, rows carry no readiness rather than a guess.
+ * Readiness for each Agent target on one Machine: the Machine's own inventory
+ * facts (installed, platform, dependencies, native sign-in) composed with the
+ * Account's connected-service default for that Agent. A connected default
+ * satisfies authentication; an unreadable default leaves sign-in to the
+ * executable prerequisites. A target whose probe failed is `unknown`; a target
+ * the Machine does not list, or an unreadable inventory, gets no entry.
  */
-export async function listAgentBackendsWithReadinessV1(
-  deps: Pick<ActionExecutorDeps, 'agentsBackendsList' | 'machinesAgentsList' | 'agentsConnectedDefaultRoutesRead'>,
-  args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>,
+async function readAgentTargetReadinessV1(
+  deps: ReadinessDeps,
+  machineId: string,
+  targets: readonly (MachineAgentInventoryTargetV1 | null)[],
   ctx: ActionExecutorContext,
-): Promise<AgentsBackendsListOutput> {
-  const listed = await deps.agentsBackendsList!(args);
-  if (!args.machineId || !deps.machinesAgentsList || !Array.isArray(listed?.items) || listed.items.length === 0) return listed;
+): Promise<readonly (MachineAgentExecutionStateV1 | undefined)[] | null> {
+  if (!deps.machinesAgentsList) return null;
   let inventory;
   try {
-    inventory = MachinesAgentsListOutputSchema.safeParse(await deps.machinesAgentsList({ machineId: args.machineId,
+    inventory = MachinesAgentsListOutputSchema.safeParse(await deps.machinesAgentsList({ machineId,
       ...(ctx.serverId ? { serverId: ctx.serverId } : {}) }, ctx));
   } catch {
     ctx.signal?.throwIfAborted();
-    return listed;
+    return null;
   }
-  if (!inventory.success) return listed;
+  if (!inventory.success) return null;
   const facts = inventory.data;
-  const rows = listed.items.map(item => {
-    const target = readInventoryTarget(item);
-    return { item, target, fact: target ? findMachineAgentInventoryItemForTargetV1(facts.items, target) : undefined };
-  });
+  const rows = targets.map(target => ({ target, fact: target ? findMachineAgentInventoryItemForTargetV1(facts.items, target) : undefined }));
   const agentIds = [...new Set(rows.flatMap(row => row.fact ? [row.fact.agentId] : []))];
   let routes: Readonly<Record<string, 'connected' | 'unavailable' | 'native'>> | null = null;
   if (deps.agentsConnectedDefaultRoutesRead && agentIds.length > 0) {
@@ -59,20 +62,62 @@ export async function listAgentBackendsWithReadinessV1(
       routes = null;
     }
   }
+  return rows.map(({ target, fact }) => {
+    if (!target) return undefined;
+    if (!fact) return findMachineAgentInventoryItemForTargetV1(facts.unavailable ?? [], target) ? 'unknown' : undefined;
+    const route = routes?.[fact.agentId];
+    // Without the Account's connected default, native sign-in cannot decide
+    // authentication: the executable prerequisites still do.
+    const authentication = route === 'connected' || !routes ? { authenticationRequired: false }
+      : route === 'unavailable' ? { credentialRouteReady: false } : {};
+    return resolveMachineAgentExecutionStateV1({ ...fact, ...authentication });
+  });
+}
+
+/**
+ * The Agent backends a Machine offers, each with the same readiness the shared
+ * picker shows (see `readAgentTargetReadinessV1`). Without a Machine, or when
+ * its inventory cannot be read, rows carry no readiness rather than a guess.
+ */
+export async function listAgentBackendsWithReadinessV1(
+  deps: Pick<ActionExecutorDeps, 'agentsBackendsList'> & ReadinessDeps,
+  args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>,
+  ctx: ActionExecutorContext,
+): Promise<AgentsBackendsListOutput> {
+  const listed = await deps.agentsBackendsList!(args);
+  if (!args.machineId || !Array.isArray(listed?.items) || listed.items.length === 0) return listed;
+  const readiness = await readAgentTargetReadinessV1(deps, args.machineId, listed.items.map(readInventoryTarget), ctx);
+  if (!readiness) return listed;
   return {
     ...listed,
-    items: rows.map(({ item, target, fact }) => {
-      if (!target) return item;
-      if (!fact) {
-        const failed = findMachineAgentInventoryItemForTargetV1(facts.unavailable ?? [], target);
-        return failed ? { ...item, readiness: 'unknown' as const } : item;
-      }
-      const route = routes?.[fact.agentId];
-      // Without the Account's connected default, native sign-in cannot decide
-      // authentication: the executable prerequisites still do.
-      const authentication = route === 'connected' || !routes ? { authenticationRequired: false }
-        : route === 'unavailable' ? { credentialRouteReady: false } : {};
-      return { ...item, readiness: resolveMachineAgentExecutionStateV1({ ...fact, ...authentication }) };
-    }),
+    items: listed.items.map((item, index) => readiness[index] === undefined ? item : { ...item, readiness: readiness[index] }),
   };
+}
+
+const START_REFUSAL_BY_READINESS = Object.freeze({
+  notInstalled: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
+  needsSignIn: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
+  unsupported: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_NOT_READY,
+} as const);
+
+/**
+ * Run-start admission on the Machine that will run the Agent: a known blocking
+ * readiness refuses with the same typed code a launch would, before any Run is
+ * created. Unknown, checking, or unreadable readiness admits (launch stays the
+ * authority), so this never refuses on a guess.
+ */
+export async function refuseAgentStartWhenNotReadyV1(
+  deps: ReadinessDeps,
+  args: Readonly<{ machineId: string | null | undefined; backendTarget: unknown }>,
+  ctx: ActionExecutorContext,
+): Promise<ActionExecuteFailure | null> {
+  if (!args.machineId) return null;
+  const parsed = PersistedBackendTargetRefV2Schema.safeParse(args.backendTarget);
+  if (!parsed.success) return null;
+  const target = readInventoryTarget({ targetKey: buildBackendTargetKeyV2(parsed.data) } as AgentBackendInventoryItem);
+  const [readiness] = await readAgentTargetReadinessV1(deps, args.machineId, [target], ctx) ?? [];
+  if (!readiness || !isMachineAgentExecutionStateBlockingV1(readiness)) return null;
+  const code = START_REFUSAL_BY_READINESS[readiness];
+  // The existing run-start failure contract: a typed code and certain "no Run created" evidence.
+  return { ok: false, errorCode: code, error: code, details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
 }

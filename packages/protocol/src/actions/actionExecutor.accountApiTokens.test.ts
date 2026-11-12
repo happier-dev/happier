@@ -132,7 +132,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
       const expired = await executor.execute('approval.request.decide', { artifactId: 'token-request', decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       });
-      expect(expired).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+      expect(expired).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
       expect(stored).toMatchObject({ status: 'approved' });
       expect(effect).toHaveBeenCalledOnce();
     } finally { cancellation.abort(); coordinator.dispose(); await Promise.all([invocation, detached]); }

@@ -1,3 +1,4 @@
+import { buildApprovalOriginFailure } from '../../approvals/approvalStaleReason.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { isInternalActionId } from '../pluginActionSurface.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -97,8 +98,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       // reconstruct its observer; authenticated decide owns its continuation.
       if (request.v === 2 && request.actionId === 'machines.services.logs.read'
         && request.executionOriginV1.originalActionEnvelope) {
-        return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale',
-          details: { reason: 'live_invocation_unavailable' } };
+        return { ...buildApprovalOriginFailure('live_invocation_unavailable'), effectAttempted: false };
       }
       effectMayHaveStarted = true;
       if (request.v === 1) {

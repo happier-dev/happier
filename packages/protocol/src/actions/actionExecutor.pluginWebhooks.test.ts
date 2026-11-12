@@ -60,10 +60,10 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       stored = ApprovalRequestV2Schema.parse({ ...request, approval: { ...request.approval, flow: 'blocking' } });
       expect(await decidingExecutor.execute('approval.request.decide', { artifactId: 'move-approval', decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
-      })).toMatchObject({ ok: true, result: { status: 'failed', execution: {
-        ok: false, errorCode: 'approval_stale', effectAttempted: false,
+      })).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false,
         details: { reason: 'live_invocation_unavailable' },
-      } } });
+      });
+      expect(stored).toMatchObject({ status: 'approved' });
       expect(effects).toEqual([]);
       return;
     }

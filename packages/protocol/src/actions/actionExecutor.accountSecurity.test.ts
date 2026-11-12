@@ -118,17 +118,17 @@ describe('createActionExecutor (Account Security)', () => {
           expect(effects).toBe(1);
           expect(stored?.status).toBe('executed');
         } else {
-          expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale',
+          expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable',
             details: { reason: 'live_invocation_unavailable' } });
           expect(stored).toMatchObject({ status: 'failed', execution: {
-            ok: false, effectAttempted: false, errorCode: 'approval_stale',
+            ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
             details: { reason: 'live_invocation_unavailable' },
           } });
           expect(effects).toBe(0);
           const read = await executor.execute('approval.request.get', { artifactId: 'configuration-lifetime' }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
           });
-          expect(read).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { errorCode: 'approval_stale' } } } });
+          expect(read).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { errorCode: 'approval_origin_unavailable' } } } });
         }
         const repeated = await executor.execute('approval.request.decide', { artifactId: 'configuration-lifetime', decision: 'approve' }, {
           surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
@@ -426,7 +426,7 @@ describe('createActionExecutor (Account Security)', () => {
       serverId: 'server-1',
       actionCaller: { kind: 'host' as const },
     })).resolves.toMatchObject({
-      ok: false, errorCode: 'approval_stale', details: { reason: 'live_invocation_unavailable' },
+      ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' },
     });
     expect(accountPasswordChangeAction).not.toHaveBeenCalled();
   });

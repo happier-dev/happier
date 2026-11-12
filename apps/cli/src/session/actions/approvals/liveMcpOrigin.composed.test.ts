@@ -63,7 +63,7 @@ it('resumes private clipboard input in its original MCP process with unchanged M
   // The remote daemon has no private operands from this MCP process. This is
   // its observed #43 refusal; only transport is substituted, not replay logic.
   vi.spyOn(machineRpc, 'callExactMachineRpc').mockResolvedValue({ ok: false,
-    errorCode: 'approval_stale', error: 'approval_stale', details: { reason: 'live_invocation_unavailable' } });
+    errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' } });
   const effects: unknown[] = [];
   vi.spyOn(controlHttp, 'daemonPost').mockImplementation(async (_path, body) => {
     effects.push(body);

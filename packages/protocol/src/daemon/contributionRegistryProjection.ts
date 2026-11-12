@@ -453,6 +453,9 @@ export const DaemonPluginUiTargetedContributionsReadRequestSchema = lazyZodSchem
   pluginId: PluginIdSchema,
   /** Account targets request the Machine's actual source declarations without a Machine target occurrence. */
   readMode: z.optional(z.literal('sourceDeclarations')),
+  /** Select one source at the Machine query owner. Omit for targeted discovery. */
+  sourcePluginId: z.optional(PluginIdSchema),
+  knownSourceRevision: z.optional(z.string().check(z.minLength(1))),
 }).check(z.superRefine(rejectMismatchedClientPlatforms)));
 export type DaemonPluginUiTargetedContributionsReadRequest = z.infer<
   typeof DaemonPluginUiTargetedContributionsReadRequestSchema
@@ -487,7 +490,8 @@ export const DaemonPluginTargetedSourceDeclarationV1Schema: z.ZodMiniType<Daemon
 }));
 
 export type DaemonPluginUiTargetedContributionsReadResponse =
-  | { status: 'sourceDeclarations'; pluginId: string; sourceDeclarations: DaemonPluginTargetedSourceDeclarationV1[] }
+  | { status: 'sourceDeclarationsUnchanged'; pluginId: string; sourceRevision: string }
+  | { status: 'sourceDeclarations'; pluginId: string; sourceRevision?: string; sourceDeclarations: DaemonPluginTargetedSourceDeclarationV1[] }
   | { status: 'current'; targetedContributions: PluginUiTargetedContributionsV1; targetedSurfaceMounts: DaemonPluginUiTargetedSurfaceMountV1[];
       resourceDeclarationsByPluginId?: DaemonPluginUiResourceDeclarationsByPluginIdV1 }
   | { status: 'unavailable'; code: string };
@@ -503,6 +507,7 @@ export const DaemonPluginUiTargetedContributionsReadResponseSchema: z.ZodMiniTyp
   z.strictObject({
     status: z.literal('sourceDeclarations'),
     pluginId: PluginIdSchema,
+    sourceRevision: z.optional(z.string().check(z.minLength(1))),
     sourceDeclarations: z.array(DaemonPluginTargetedSourceDeclarationV1Schema),
   }).check(z.superRefine((response, context) => {
     const plugins = new Set<string>();
@@ -515,6 +520,8 @@ export const DaemonPluginUiTargetedContributionsReadResponseSchema: z.ZodMiniTyp
       plugins.add(row.manifest.id);
     });
   })),
+  z.strictObject({ status: z.literal('sourceDeclarationsUnchanged'), pluginId: PluginIdSchema,
+    sourceRevision: z.string().check(z.minLength(1)) }),
   z.lazy(() => DaemonPluginUiTargetedContributionsSharedReadResponseSchema),
   DaemonPluginUiTargetedContributionsInlineReadResponseSchema,
   z.strictObject({

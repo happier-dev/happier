@@ -1,3 +1,4 @@
+import { buildApprovalOriginFailure } from '../../approvals/approvalStaleReason.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -115,11 +116,11 @@ export function buildApprovalDecisionResult(request: ApprovalRequest, freshExecu
   // Lost live input is a terminal refusal, not a successful Approve control.
   // Keep ordinary execution receipts and live-only result custody unchanged.
   if (request.v === 2 && request.execution?.effectAttempted === false
-    && request.execution.errorCode === 'approval_stale'
+    && request.execution.errorCode === 'approval_origin_unavailable'
     && currentActionId.success && getActionSpec(currentActionId.data).approvalInputCustody === 'live_only') {
     const details = ApprovalStaleFailureDetailsSchema.safeParse(request.execution.details);
     if (details.success && details.data.reason === 'live_invocation_unavailable') {
-      return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', details: details.data };
+      return buildApprovalOriginFailure(details.data.reason);
     }
   }
   const observedExecution = projectApprovalExecutionForObservation(request);

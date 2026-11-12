@@ -338,6 +338,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         pluginActionExecutionOwner: 'current_process',
         listContributedActionDefinitions: createCommittedContributedActionDefinitionLister(),
         invokeContributedAction: createCommittedContributedActionInvoker({
+          daemonHoldsApprovalWaiter: true,
           requestCurrentIntent: createCredentialedTargetActionCurrentIntent(params.credentials),
         }),
       });

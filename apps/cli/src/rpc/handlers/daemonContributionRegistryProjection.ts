@@ -1,3 +1,4 @@
+import { readDaemonSourceDeclarations } from './daemonSourceDeclarations';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -1828,44 +1829,7 @@ async function readTargetedContributions(
     try {
         const runtimeRegistry = lease.registry;
         if (request.readMode === 'sourceDeclarations') {
-            const declarations = runtimeRegistry.contributes.pluginDeclarations;
-            if (!declarations || !runtimeRegistry.readPluginOccurrenceId || !runtimeRegistry.readPluginSourceCustody) {
-                return { status: 'unavailable', code: 'plugin_targeted_contributions_unavailable' };
-            }
-            const sourceDeclarations: DaemonPluginTargetedSourceDeclarationV1[] = [];
-            for (const declaration of declarations) {
-                const contributions = declaration.manifest.contributes.targetedPluginContributions
-                    .filter((entry) => entry.target.pluginId === request.pluginId);
-                // The mounted Account target needs the execution target's
-                // current custody as well as the provider declarations. It
-                // need not contribute to its own point to supply that fact.
-                if (contributions.length === 0 && declaration.pluginId !== request.pluginId) continue;
-                const occurrenceId = runtimeRegistry.readPluginOccurrenceId(declaration.pluginId);
-                if (!occurrenceId) continue;
-                const sourceCustody = runtimeRegistry.readPluginSourceCustody(declaration.pluginId);
-                if (!sourceCustody) return { status: 'unavailable', code: 'plugin_targeted_contributions_unavailable' };
-                const actionIds = new Set(contributions.flatMap((entry) => Object.values(entry.operations)));
-                const rendererIds = new Set(contributions.flatMap((entry) => Object.values(entry.surfaces ?? {})
-                    .flatMap((surface) => [surface.renderer, ...(surface.fallbackRenderers ?? [])])));
-                // Manifest ingestion already admitted these typed declarations.
-                // Select their references here; the receiver validates the wire.
-                sourceDeclarations.push({
-                    manifest: { id: declaration.pluginId, contributes: {
-                        // An Account Action can delegate to its own native
-                        // helper without that helper being a targeted operation.
-                        // This is declaration projection; the Machine receiver
-                        // still owns executable admission and handler lookup.
-                        actions: declaration.manifest.contributes.actions.filter((entry) => actionIds.has(entry.id)
-                            || (declaration.pluginId === request.pluginId && entry.execution.target === 'daemon')),
-                        pluginContributionPoints: [],
-                        targetedPluginContributions: contributions,
-                        ui: { renderers: declaration.manifest.contributes.ui.renderers.filter((entry) => rendererIds.has(entry.id)) },
-                    } },
-                    occurrenceId,
-                    sourceCustody,
-                });
-            }
-            return { status: 'sourceDeclarations', pluginId: request.pluginId, sourceDeclarations };
+            return readDaemonSourceDeclarations(runtimeRegistry, request);
         }
         const occurrenceId = runtimeRegistry.readPluginOccurrenceId?.(request.pluginId)
             ?? runtimeRegistry.contributes.occurrenceIdsByPluginId?.[request.pluginId]
@@ -3127,6 +3091,7 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 }
             }
             const attempt = await traceStage('contributed.execute', () => executeContributedAction({
+                daemonHoldsApprovalWaiter: true,
                 runtimeRegistry: lease.registry,
                 ...(readObservation ? { readObservation } : {}),
                 actionId: request.data.qualifiedActionId,
