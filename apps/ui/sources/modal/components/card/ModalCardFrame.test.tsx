@@ -306,10 +306,10 @@ describe('ModalCardFrame', () => {
             <SurfaceFreshnessLine testID="line" reason="Some bots couldn't be loaded." />
         </ModalCardFrame>);
         const style = flattenStyle(screen.findHostByTestId('line')?.props.style);
-        // A card or sheet already draws the surface: no filled, ruled strip boxed inside it. A fullscreen
-        // page keeps the strip under its header.
+        // A card or sheet already draws the surface. Fullscreen keeps the shared inset box;
+        // owner 938dadf65f replaced separate top/bottom rules with the all-edge hairline.
         expect(style.backgroundColor === 'transparent').toBe(plain);
-        expect((style.borderTopWidth ?? 0) === 0).toBe(plain);
+        expect((style.borderTopWidth ?? style.borderWidth ?? 0) === 0).toBe(plain);
     });
 
     it('renders a flexing body wrapper (so the overlay scroll host can handle overflow)', async () => {
