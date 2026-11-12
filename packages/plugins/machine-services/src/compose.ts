@@ -187,6 +187,23 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
         try { const rows = await current(instance, context, options); return rows ? observation(rows) : unknown; }
         catch (error) { failure(error, options); options?.signal?.throwIfAborted(); return unknown; }
     },
+    async serviceExec(instance, request, options, context) {
+        if (!context) return { kind: 'unavailable', code: 'native_adapter_invocation_unavailable' };
+        try {
+            const rows = await current(instance, context, options);
+            if (!rows?.length) return { kind: 'unavailable', code: 'compose_service_unavailable' };
+            // Members are the watched resource's own Compose services, never a caller list.
+            const services = [...new Set(rows.map(row => row.service))];
+            const service = request.service ?? (services.length === 1 ? services[0] : undefined);
+            if (!service || !services.includes(service)) return { kind: 'unsupported', code: 'service_selection_invalid' };
+            const member = rows.filter(row => row.service === service && row.state === 'running').map(row => row.id).sort()[0];
+            if (!member) return { kind: 'unavailable', code: 'compose_service_unavailable' };
+            if (request.kind === 'command' && (!request.argv.length || request.argv.some(arg => arg.includes('\0'))))
+                return { kind: 'unsupported', code: 'invalid_request' };
+            return { kind: 'ready', launch: { executable: docker, args: request.kind === 'shell'
+                ? ['exec', '-it', member, '/bin/sh'] : ['exec', member, ...request.argv] } };
+        } catch (error) { return failure(error, options); }
+    },
     // Mutation stays unavailable until the host supplies the same project key
     // and native settlement custody used by deployment admission.
     async stop() { return { status: 'unsupported' }; },

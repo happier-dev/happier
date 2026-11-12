@@ -29,6 +29,7 @@ export type SessionTerminalsActionInputById = {
                 kind: 'service_shell';
                 serviceId: string;
                 expectedGeneration: string;
+                service?: string | undefined;
             } | {
                 kind: 'session_attach';
                 sessionId: string;
@@ -67,6 +68,7 @@ export type SessionTerminalsActionInputById = {
                 kind: 'service_shell';
                 serviceId: string;
                 expectedGeneration: string;
+                service?: string | undefined;
             } | {
                 kind: 'session_attach';
                 sessionId: string;
@@ -105,6 +107,7 @@ export type SessionTerminalsActionInputById = {
                 kind: 'service_shell';
                 serviceId: string;
                 expectedGeneration: string;
+                service?: string | undefined;
             } | {
                 kind: 'session_attach';
                 sessionId: string;
@@ -143,6 +146,7 @@ export type SessionTerminalsActionInputById = {
                 kind: 'service_shell';
                 serviceId: string;
                 expectedGeneration: string;
+                service?: string | undefined;
             } | {
                 kind: 'session_attach';
                 sessionId: string;
@@ -269,6 +273,7 @@ export type SessionTerminalsActionResultById = {
                             kind: 'service_shell';
                             serviceId: string;
                             expectedGeneration: string;
+                            service?: string | undefined;
                         } | {
                             kind: 'session_attach';
                             sessionId: string;
@@ -307,6 +312,7 @@ export type SessionTerminalsActionResultById = {
                             kind: 'service_shell';
                             serviceId: string;
                             expectedGeneration: string;
+                            service?: string | undefined;
                         } | {
                             kind: 'session_attach';
                             sessionId: string;

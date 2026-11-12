@@ -2426,6 +2426,12 @@ sanitizes and retains this output as `native_service_output`; it is a bounded
 failure diagnostic, not a long-lived Service output reader. Observed resource
 death withdraws its endpoint before awaiting output, then publishes terminal
 custody after collection so automatic cleanup cannot retire the output read.
+The optional `serviceExec` callback is the same kind of additive role for an
+adopted Machine watch. It validates an optional Compose-member selection against
+the exact retained resource and returns a literal launch. The host authorizes
+that launch through the invocation's Exec and runs it through the existing
+admitted service command/shell owners. Built-in Compose execs into the selected
+running member's container.
 
 The development Local Services launcher feed carries only diagnostic code,
 severity and sanitized message while a managed lifetime is failed or unhealthy.

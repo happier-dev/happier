@@ -57,10 +57,16 @@ export async function openServiceShellTerminal(input: Readonly<{
                     return { ok: false as const, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
                 }
                 const signal = AbortSignal.any([operation.signal, handle.retirementSignal]);
-                const observed = await handle.withServiceShell({
-                    operation: { operationId: acceptance.operationId, kind: input.actionId, signal: operation.signal },
-                    signal,
-                }, launch => consumeServiceShellTerminal({ terminalSessions: input.terminalSessions,
+                const service = input.request.launch.service;
+                // An Environment service is already one Compose member; a project
+                // watch's plugin validates the selected member.
+                if (service !== undefined && handle.kind !== 'adopted') {
+                    return { ok: false as const, errorCode: 'service_selection_invalid', error: 'service_selection_invalid' };
+                }
+                const shellOptions = { signal,
+                    operation: { operationId: acceptance.operationId, kind: input.actionId, signal: operation.signal } };
+                const consume = (launch: Parameters<typeof consumeServiceShellTerminal>[0]['launch']) => consumeServiceShellTerminal({
+                    terminalSessions: input.terminalSessions,
                     ...(input.admissionDrain ? { admissionDrain: input.admissionDrain } : {}),
                     custody: input.custody, terminalKey: input.request.terminalKey,
                     cols: input.request.cols, rows: input.request.rows, launch, signal,
@@ -69,7 +75,10 @@ export async function openServiceShellTerminal(input: Readonly<{
                         if (!terminal.ok) return;
                         acceptance.accept({ ...terminal, operation: { ...routing, operationId: acceptance.operationId } });
                     },
-                }));
+                });
+                const observed = handle.kind === 'adopted'
+                    ? await handle.withServiceShell!({ ...shellOptions, ...(service !== undefined ? { service } : {}) }, consume)
+                    : await handle.withServiceShell!(shellOptions, consume);
                 if (!observed.terminal.ok) return observed.terminal;
                 if (observed.kind !== 'client_exit' || observed.clientExit.kind !== 'exited') {
                     uncertain();

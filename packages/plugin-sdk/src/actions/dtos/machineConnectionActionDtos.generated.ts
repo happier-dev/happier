@@ -31,6 +31,7 @@ export type MachineConnectionActionInputById = {
             kind: 'service_shell';
             serviceId: string;
             expectedGeneration: string;
+            service?: string | undefined;
         } | {
             kind: 'session_attach';
             sessionId: string;
@@ -130,6 +131,7 @@ export type MachineConnectionActionInputById = {
             kind: 'service_shell';
             serviceId: string;
             expectedGeneration: string;
+            service?: string | undefined;
         } | {
             kind: 'session_attach';
             sessionId: string;

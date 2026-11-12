@@ -14,7 +14,9 @@ import type { Disposable } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActivatedPluginRuntimeRegistry } from '../manager';
 import type { ResolvedActivationTarget } from '../../../projection/registry/types';
-import { readPluginExecProcessCustodyForHost, type PluginExecProcessCustodyForHost } from '../../invocation/services/exec';
+import { authorizePluginExecLaunchForHost, readPluginExecProcessCustodyForHost, type HostAuthorizedPluginExecLaunch,
+    type PluginExecProcessCustodyForHost } from '../../invocation/services/exec';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { isProjectNativeProcessUncertain } from '../../exec/errors';
 import { captureNativeComposeDefinition, type NativeComposeDefinitionCapture } from '@/daemon/local/services/launch/nativeComposeImport';
 
@@ -74,6 +76,9 @@ export type ProjectNativeAdapterProductionResultV1 = Readonly<{
 export type ProjectNativeServiceLifecycleCaptureV1 = Readonly<{ kind: 'ready'; lifecycle: ManagedServiceNativeLifecycleV1;
     /** Explicit adoption, bound to this exact retained watch and invocation. */
     captureComposeDefinition?(profiles: readonly string[], options?: PluginCancellationOptions): Promise<NativeComposeDefinitionCapture>;
+    /** The plugin's exec/shell launch for this exact retained resource, authorized by its own invocation Exec. */
+    launchServiceExec?(request: Parameters<NonNullable<ManagedServiceNativeLifecycleV1['serviceExec']>>[1],
+        options?: PluginCancellationOptions): Promise<HostAuthorizedPluginExecLaunch>;
     release(): Promise<void> }> | Readonly<{
     kind: 'refused';
     code: 'native_adapter_retired' | 'native_adapter_unsupported' | 'native_adapter_reference_mismatch';
@@ -342,6 +347,23 @@ export async function resolveProjectNativeAdapter(params: Readonly<{
                         options: { signal: options?.signal ? AbortSignal.any([invocation.signal, options.signal]) : invocation.signal } });
                     assertAvailable(options);
                     return result;
+                } } : {}),
+                ...(lifecycle.serviceExec && retained ? { async launchServiceExec(request: Parameters<NonNullable<ManagedServiceNativeLifecycleV1['serviceExec']>>[1],
+                    options?: PluginCancellationOptions) {
+                    assertAvailable(options);
+                    const invocation = context();
+                    const result = await lifecycle.serviceExec!(retained, request, options, invocation);
+                    assertAvailable(options);
+                    if (result.kind !== 'ready') throw new PluginError({ code: result.code, details: { kind: result.kind } });
+                    const authorized = await authorizePluginExecLaunchForHost(invocation.services.exec, result.launch,
+                        { agentIsolation: null, ...(options?.signal ? { signal: options.signal } : {}) });
+                    if (authorized.secretRedactionLease) return authorized;
+                    // A watched resource Happier never deployed receives no service
+                    // secrets; keep the ordinary output pipeline and lease lifetime.
+                    const redaction = createProviderRedactionLease({ values: [] });
+                    return { ...authorized, secretRedactionLease: redaction, async release() {
+                        try { await authorized.release(); } finally { redaction.close(); }
+                    } };
                 } } : {}), lifecycle: Object.freeze({
                 ...(lifecycle.discover ? { async discover(candidate: Readonly<{ serverId: string; machineId: string }>, options?: PluginCancellationOptions) {
                     assertAvailable(options);

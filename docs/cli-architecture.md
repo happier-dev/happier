@@ -1721,6 +1721,22 @@ also names a Deployment candidate, but candidate execution and current-service
 environment carrier are consumed by this same executor. This is an unverified
 development-source slice, not a claim of released or loaded-runtime support.
 
+A watched, not-yet-deployed Machine service (an adopted Machine watch) takes
+finite `exec` commands and `service_shell` terminals too (Plan 30 §3.2c). The
+Machine-scope approval that selects the watch, the same admission used for its
+control and logs, is the only caller check; there is no Environment to check.
+An optional `service` on the `current` exec target and on the `service_shell`
+launch selects one Compose member of a project-level watch. The watched plugin's
+optional `ManagedServiceNativeLifecycleV1.serviceExec` role validates it against
+that resource's own members and requires it when there are several. It also
+returns the literal launch, which the plugin's own invocation Exec authorizes
+and the existing `admitNativeServiceCommandForHost` /
+`withAdmittedServiceShellForHost` owners run. A watch receives no Happier
+secrets, so the launch carries an empty masking lease. One-off `run` stays
+unavailable, and an Environment service refuses a `service` selector because it
+is already a single member. An adapter without the role keeps exec and shell
+unsupported.
+
 Fresh Project-custody interactive terminals and Restart use that same current
 preparation owner before opening a shell. The PTY consumes B4's complete
 host-authorized command, arguments, cwd and environment rather than reconstructing

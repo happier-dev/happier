@@ -78,6 +78,8 @@ export const DaemonTerminalLaunchIntentSchema = lazyZodSchema(() => z.discrimina
     kind: z.literal('service_shell'),
     serviceId: z.string().check(z.trim(), z.minLength(1)),
     expectedGeneration: z.string().check(z.trim(), z.minLength(1)),
+    /** One Compose member of a project-level Machine watch, validated by its native owner. */
+    service: z.optional(z.string().check(z.trim(), z.minLength(1))),
   }),
   z.strictObject({
     kind: z.literal('agent_login'),

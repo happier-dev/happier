@@ -456,6 +456,26 @@ built-in Compose follow and the journal-reader setup journey remain under integr
 this example does not establish their loaded-runtime availability. Resource subscribe/resume must
 still enter the originating logs Action's actual-owner policy before native reads.
 
+## Run commands and shells in a watched service in development
+
+The unreleased 0.3 contract adds an optional
+`ManagedServiceNativeLifecycleV1.serviceExec` method. A person can then run a
+command or open a shell in a watched service before Happier has deployed it.
+The host calls it with the exact watched instance and a request of
+`{ kind: 'command', service?, argv }` or `{ kind: 'shell', service? }`.
+
+Check `service` against the members of that resource. Require it when the
+resource has more than one member, and return `{ kind: 'unsupported', code:
+'service_selection_invalid' }` when it is missing or unknown. On success,
+return `{ kind: 'ready', launch }` with the literal Exec spawn request. Don't
+spawn it yourself: the host authorizes the launch through your invocation's
+Exec service and runs it inside the operation it already admitted.
+
+Without this method, exec and shell stay unsupported for your watched
+services. Built-in Compose implements it with `docker exec` into the selected
+running service container. This is development source and has not been
+validated in a loaded runtime.
+
 ## Health check kinds (development source)
 
 The unreleased `healthCheckKinds` author contract lets a plugin describe a finite

@@ -12,7 +12,9 @@ const machine = () => ({ serverId: id(), machineId: id(), argv: argv() });
 export const MachineServiceExecInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
     ...machine(),
-    target: z.strictObject({ kind: z.literal('current'), serviceId: id(), expectedGeneration: id() }),
+    // `service` selects one Compose member of a project-level Machine watch;
+    // the watched resource's native owner validates it.
+    target: z.strictObject({ kind: z.literal('current'), serviceId: id(), expectedGeneration: id(), service: z.optional(id()) }),
     mode: z.enum(['exec', 'run']),
   }),
   z.strictObject({

@@ -40,6 +40,17 @@ describe('DaemonTerminalEnsureRequestSchema', () => {
     }
   });
 
+  it('carries an optional Compose member selector for a project-level watched service shell', () => {
+    const request = { terminalKey: 'service:watched', launch: {
+      kind: 'service_shell', serviceId: 'watch-a', expectedGeneration: 'generation-a', service: 'web',
+    } };
+    expect(DaemonTerminalEnsureRequestSchema.parse(request)).toEqual(request);
+    const action = { ...request, serverId: 'home', machineId: 'machine' };
+    expect(MachineTerminalOpenInputSchema.parse(action)).toEqual(action);
+    const empty = { ...request, launch: { ...request.launch, service: '' } };
+    expect(DaemonTerminalEnsureRequestSchema.safeParse(empty).success).toBe(false);
+  });
+
   it('normalizes the 0.2 startup command into the one typed launch at the parse boundary', () => {
     const legacy = {
       terminalKey: 'service-shell', initialCommand: 'docker compose exec app sh',

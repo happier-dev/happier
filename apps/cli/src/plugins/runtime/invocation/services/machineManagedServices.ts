@@ -13,6 +13,13 @@ import type { ManagedServiceProcessHandle, ManagedServiceProcessHealthSnapshot,
     ManagedServiceProcessSupervisorHost, ProjectBuiltinNativeLifecycle } from './managedProcessSupervisor';
 import type { ManagedServiceSemanticEntry, ManagedServicesSemanticEntry, ManagedServiceHandleWrapper } from './managedServicesOwner';
 import type { ManagedServiceNativeLogReadOptionsForHost } from './managedServiceNativeLogs';
+import { admitNativeServiceCommandForHost, executeAdmittedServiceCommand, withAdmittedServiceShellForHost,
+    type ServiceCommandResultV1, type ServiceCommandV1, type ServiceShellObservation } from '@/daemon/local/services/launch/serviceCommand';
+import type { HostAuthorizedPluginExecLaunch } from './exec';
+
+type MachineServiceEffectOptions = Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal;
+    /** One Compose member of a project-level watch; the plugin validates it against the watched resource. */
+    service?: string }>;
 
 export type MachineManagedServiceHandle = ManagedServiceHandle & Readonly<{
     kind: 'adopted';
@@ -40,6 +47,10 @@ export type MachineManagedServiceHandle = ManagedServiceHandle & Readonly<{
     readLogs(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchLogs: NonNullable<ManagedServiceProcessHandle['watchNativeLogs']>;
     readAccounting?(options?: Readonly<{ signal?: AbortSignal }>): ReturnType<NonNullable<ManagedServiceNativeLifecycleV1['accounting']>>;
+    /** Present only when the watched plugin declares the exec/shell launch role. */
+    executeServiceCommand?(command: ServiceCommandV1, options: MachineServiceEffectOptions): Promise<ServiceCommandResultV1>;
+    withServiceShell?<TTerminal>(options: MachineServiceEffectOptions,
+        consume: (launch: HostAuthorizedPluginExecLaunch) => Promise<ServiceShellObservation<TTerminal>>): Promise<ServiceShellObservation<TTerminal>>;
 }>;
 
 export type MachineManagedServiceSupervisionInput = Readonly<{
@@ -53,6 +64,9 @@ export type MachineManagedServiceSupervisionInput = Readonly<{
     releaseObservation(): Promise<void>;
     /** Exact native coordinates come from the host capture, never from a watch or caller. */
     nativeEffects?: Readonly<{ keys: readonly MachineNativeEffectKey[]; settleNative?: () => Promise<void> }>;
+    /** The captured plugin exec/shell launch role for this exact watch, when declared. */
+    launchServiceExec?(request: Parameters<NonNullable<ManagedServiceNativeLifecycleV1['serviceExec']>>[1],
+        options?: Readonly<{ signal?: AbortSignal }>): Promise<HostAuthorizedPluginExecLaunch>;
 }>;
 
 export type ManagedNativeServiceReference = Readonly<{
@@ -237,7 +251,42 @@ export function createMachineManagedServices(input: Readonly<{
                     assertCurrent();
                     return result;
                 }) : undefined;
+                const launchServiceExec = request.launchServiceExec;
+                // Caller authority was admitted once by the Machine-watch scope that
+                // selected this handle; these effects retain only watch currentness.
+                const effect = (options: MachineServiceEffectOptions) => {
+                    const signal = AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : []),
+                        ...(options.operation.signal ? [options.operation.signal] : [])]);
+                    const assertEffectCurrent = async () => { signal.throwIfAborted(); assertCurrent(); };
+                    return { signal, assertEffectCurrent, admission: { keys: request.nativeEffects?.keys ?? [],
+                        ...(request.nativeEffects?.settleNative ? { settleNative: request.nativeEffects.settleNative } : {}),
+                        operation: { ...options.operation, signal } } };
+                };
+                const select = (options: MachineServiceEffectOptions) => options.service ? { service: options.service } : {};
+                const serviceExec = launchServiceExec ? {
+                    async withServiceShell<TTerminal>(options: MachineServiceEffectOptions,
+                        consume: (launch: HostAuthorizedPluginExecLaunch) => Promise<ServiceShellObservation<TTerminal>>) {
+                        const { signal, assertEffectCurrent, admission } = effect(options);
+                        await assertEffectCurrent();
+                        return runManagedServiceNativeControl(entry, admission, context => withAdmittedServiceShellForHost({
+                            context, signal, assertCurrent: assertEffectCurrent,
+                            launch: () => launchServiceExec({ kind: 'shell', ...select(options) }, { signal }),
+                        }, consume), input.notifyActivity);
+                    },
+                    async executeServiceCommand(command: ServiceCommandV1, options: MachineServiceEffectOptions) {
+                        // A watched resource has no admitted runtime environment for a one-off `run`.
+                        if (command.mode !== 'exec') throw new PluginError({ code: 'service_admission_unavailable',
+                            message: 'A watched service runs commands only in its existing members' });
+                        const { signal, assertEffectCurrent, admission } = effect(options);
+                        await assertEffectCurrent();
+                        return runManagedServiceNativeControl(entry, admission, context => executeAdmittedServiceCommand(
+                            admitNativeServiceCommandForHost({ context, signal, assertCurrent: assertEffectCurrent,
+                                launch: () => launchServiceExec({ kind: 'command', ...select(options), argv: command.argv }, { signal }) })),
+                        input.notifyActivity);
+                    },
+                } : {};
                 const handle = Object.freeze<MachineManagedServiceHandle>({
+                    ...serviceExec,
                     homeServerIdentityId,
                     ...wrapped, kind: 'adopted', serverId: request.serverId, machineId: request.machineId,
                     watch, instance, serviceId: watch.watchId, instanceId: process.snapshot().instanceId, endpointKind: 'native',

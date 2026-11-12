@@ -150,7 +150,8 @@ export function createMachineServicesRuntime(input: Readonly<{
                 // The semantic owner takes release custody, including failed/pending establishment.
                 try {
                     const established = await owner.superviseMachine({ ...target, watch, lifecycle: captured.lifecycle, signal: lifetime.signal,
-                        isCurrent: () => watchCurrent(watch) && selected.lease.isCurrent(), releaseObservation: captured.release });
+                        isCurrent: () => watchCurrent(watch) && selected.lease.isCurrent(), releaseObservation: captured.release,
+                        ...(captured.launchServiceExec ? { launchServiceExec: captured.launchServiceExec } : {}) });
                     adoptedHandles.set(watch.watchId, established);
                 } catch (error) {
                     preserveUnconfirmedNativeProcess(error);

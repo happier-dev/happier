@@ -388,6 +388,16 @@ export interface ManagedServiceNativeLifecycleV1 {
         (instance: ManagedServiceNativeInstanceV1, request: ManagedServiceNativeLogWatchV1,
             context?: PluginInvocationContext): Promise<Disposable>;
     };
+    /** Person-requested command or interactive shell inside one member of this
+     * exact resource. The adapter validates `service` against the resource's
+     * own members (required when it has several) and returns the literal launch;
+     * the host admits, authorizes and spawns it. Omission leaves exec/shell unsupported.
+     */
+    serviceExec?(instance: ManagedServiceNativeInstanceV1, request: Readonly<
+        | { kind: 'command'; service?: string; argv: readonly string[] }
+        | { kind: 'shell'; service?: string }>,
+        options?: PluginCancellationOptions, context?: PluginInvocationContext,
+    ): Promise<Readonly<{ kind: 'ready'; launch: ExecSpawnRequest }> | PluginProjectNativeFailureV1>;
     stop(instance: ManagedServiceNativeInstanceV1, options?: PluginCancellationOptions, context?: PluginInvocationContext): Promise<Readonly<{
         status: 'stopped' | 'accepted' | 'unsupported' | 'termination_incomplete';
     }>>;
