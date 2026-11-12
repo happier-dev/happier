@@ -227,7 +227,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   let binaryPath = '';
   const installRemoteCli = async (signal?: AbortSignal, context?: Pick<InteractiveSystemTaskContext, 'taskId' | 'emit' | 'prompt'>) => {
     await installSharedRemoteCli({ channel: configuration.channel, signal,
-      bootstrap: { parsed: configuration, context, enrolledMachineId: row.enrolledMachineId, createPromptId: deps.createPromptId,
+      bootstrap: { parsed: configuration, context, enrolledMachineId: row.enrolledMachineId,
+        bootstrapInstalled: row.bootstrapInstalled, createPromptId: deps.createPromptId,
         prepareManagedBootstrap: async ({ exec, binaryPath, context, channel }) => {
           await prepareDedicatedDaemonBootstrap({ row, correlation, binaryPath, channel, exec,
             emit: context.emit, prompt: context.prompt, signal, createPromptId: deps.createPromptId });

@@ -136,7 +136,7 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         expect(authorityReads).toBe(3);
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(policy.mode === 'preauthorized'
             ? 'alice ALL=(ALL:ALL) NOPASSWD: ALL\n'
-            : 'Defaults:alice runaspw, runas_default=ops.admin\nalice ALL=(ALL:ALL) ALL\n');
+            : 'Defaults:alice targetpw, timestamp_timeout=0\nalice ALL=(ops.admin) PASSWD: ALL\nops.admin ALL=(root) NOPASSWD: ALL\n');
     });
 
     it('refuses an unknown daemon principal before spawning or writing a grant', async () => {
@@ -233,6 +233,6 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         const lost = await fixture(preauthorized, ask); lost.loseResult();
         expect(await createMachineAdminAccessHost(lost.dependencies).reconcile(lost.input)).toMatchObject({ outcome: 'outcome_unknown' });
         expect(lost.launches).toHaveLength(1);
-        expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toContain('runas_default=ops.admin');
+        expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toContain('happier ALL=(ops.admin) PASSWD: ALL');
     });
 });

@@ -7,7 +7,9 @@ export const MANAGED_SUDOERS_PATH = '/etc/sudoers.d/90-happier-daemon';
 
 function render(daemonUsername: string, policy: Exclude<MachineAdminAccessV1, { mode: 'none' }>): string {
     return policy.mode === 'preauthorized' ? `${daemonUsername} ALL=(ALL:ALL) NOPASSWD: ALL\n`
-        : `Defaults:${daemonUsername} runaspw, runas_default=${policy.administratorUsername}\n${daemonUsername} ALL=(ALL:ALL) ALL\n`;
+        // targetpw is supported by classic sudo and sudo-rs. Authenticate the
+        // named administrator first, then use that administrator's root grant.
+        : `Defaults:${daemonUsername} targetpw, timestamp_timeout=0\n${daemonUsername} ALL=(${policy.administratorUsername}) PASSWD: ALL\n${policy.administratorUsername} ALL=(root) NOPASSWD: ALL\n`;
 }
 
 /** Produces data only; the shared setup file backend owns activation/removal. */
@@ -32,10 +34,11 @@ export function buildManagedSudoersSteps(input: Readonly<{
 export function recognizeManagedSudoersDropIn(content: string, daemonUsername: string): 'valid' | 'invalid' {
     if (!MachineRecipeStepV1Schema.safeParse({ id: 'daemon-principal', kind: 'user', username: daemonUsername }).success) return 'invalid';
     if (content === render(daemonUsername, { version: 1, mode: 'preauthorized' })) return 'valid';
-    const defaults = `Defaults:${daemonUsername} runaspw, runas_default=`;
-    const rule = `\n${daemonUsername} ALL=(ALL:ALL) ALL\n`;
-    if (!content.startsWith(defaults) || !content.endsWith(rule)) return 'invalid';
+    const prefix = `Defaults:${daemonUsername} targetpw, timestamp_timeout=0\n${daemonUsername} ALL=(`;
+    const separator = ') PASSWD: ALL\n';
+    const end = content.indexOf(separator, prefix.length);
+    if (!content.startsWith(prefix) || end < 0) return 'invalid';
     const policy = MachineAdminAccessV1Schema.safeParse({ version: 1, mode: 'ask',
-        administratorUsername: content.slice(defaults.length, -rule.length) });
+        administratorUsername: content.slice(prefix.length, end) });
     return policy.success && policy.data.mode === 'ask' && render(daemonUsername, policy.data) === content ? 'valid' : 'invalid';
 }

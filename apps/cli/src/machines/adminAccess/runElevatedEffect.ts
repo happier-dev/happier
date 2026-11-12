@@ -338,7 +338,8 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
     let child: MachineElevationProcess;
     try {
         child = (dependencies.spawn ?? spawnElevation)({ executable: 'sudo', installedCli: dependencies.installedCli, args: [
-            ...(ask ? ['-k', '-S', '-p', '[happier-sudo-password:%p]\n'] : ['-n']), '-u', 'root', '--',
+            ...(ask ? ['-k', '-S', '-p', '[happier-sudo-password:%p]\n', '-u', policy.administratorUsername, '--',
+                'sudo', '-n', '-u', 'root', '--'] : ['-n', '-u', 'root', '--']),
             dependencies.installedCli, ...(dependencies.installedCliArgs ?? []), 'machine', 'effect-internal', `--operation-id=${input.operationId}`,
             `--installation-id=${dependencies.installationId}`,
         ] });

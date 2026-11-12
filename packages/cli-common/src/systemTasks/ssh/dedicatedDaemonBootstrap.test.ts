@@ -6,8 +6,54 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { checkMachineSetupEffectPlan, applyMachineSetupEffectPlans, createMachineSetupEffectPlan, type MachineSetupBackend, type MachineSetupStepObservationV1 } from '../../machineSetup/index.js';
 import * as bootstrap from '../nativeRemoteSshBootstrap.js';
 import { DEDICATED_DAEMON_INSTALL_HOME } from './remoteBootstrapCommandBuilder.js';
+import { installRemoteCli } from './installRemoteCli.js';
 
 describe('portable dedicated daemon bootstrap', () => {
+  it.each([
+    { state: 'cold or partial bootstrap without completion', bootstrapInstalled: undefined, enrolledMachineId: undefined, prepare: true },
+    { state: 'completed bootstrap awaiting enrollment', bootstrapInstalled: true as const, enrolledMachineId: undefined, prepare: false },
+    { state: 'enrolled retained machine', bootstrapInstalled: undefined, enrolledMachineId: 'retained-machine', prepare: false },
+  ])('refreshes the payload for $state and prepares only unfinished creation', async scenario => {
+    const identity = ManagedMachineEnrollmentIdentityV1Schema.parse({ kind: 'dedicatedDaemonUser', username: 'happier',
+      serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } });
+    const phases: string[] = [];
+    const backend: MachineSetupBackend = {
+      observe: async step => ({ stepId: step.id, status: 'satisfied',
+        facts: step.kind === 'user' ? { present: true, uid: 1002 } : {} }),
+      apply: async () => { throw new Error('Satisfied native state needs no mutation'); },
+    };
+    await installRemoteCli({ channel: 'stable', bootstrap: {
+      parsed: { relay: { relayUrl: 'https://home.example' }, enrollmentIdentity: identity,
+        ssh: { target: 'happier@server', auth: 'agent' } },
+      bootstrapInstalled: scenario.bootstrapInstalled, enrolledMachineId: scenario.enrolledMachineId,
+      context: { taskId: 'retained-install', emit: () => {}, prompt: async () => { throw new Error('Existing administrator needs no establishment'); } },
+      createPromptId: () => 'unused',
+    }, transport: {
+      install: async placement => {
+        phases.push('install');
+        expect(placement).toEqual({ remoteHomeDir: DEDICATED_DAEMON_INSTALL_HOME, daemonUsername: 'happier' });
+        return { binaryPath: '/opt/happier/cli/current/happier' };
+      },
+      exec: async request => {
+        if (!scenario.prepare) throw new Error('Completed creation cannot reacquire passwordless root');
+        if (request.command === 'uname -s') return { status: 0, stdout: 'Linux\n', stderr: '' };
+        if (request.command.includes('useradd')) { phases.push('account'); return { status: 0, stdout: '', stderr: '' }; }
+        if (request.command.includes('/etc/os-release')) return { status: 0, stdout: 'ubuntu\n', stderr: '' };
+        if (request.command === 'id -u happier') return { status: 0, stdout: '1001\n', stderr: '' };
+        const frame = bootstrap.MachineEffectInternalRequestSchema.parse(JSON.parse(request.input!.trim()));
+        phases.push(frame.mode);
+        if (frame.mode === 'check' && 'steps' in frame) {
+          const plan = await checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend });
+          return { status: 0, stdout: JSON.stringify({ type: 'result', result: { status: 'checked', plan } }), stderr: '' };
+        }
+        if (frame.mode !== 'apply' || !('plans' in frame)) throw new Error('Expected reviewed bootstrap apply');
+        const result = await applyMachineSetupEffectPlans({ plans: frame.plans, backend });
+        return { status: 0, stdout: JSON.stringify({ type: 'result', result }), stderr: '' };
+      },
+    } });
+    expect(phases).toEqual(scenario.prepare ? ['account', 'install', 'check', 'apply'] : ['install']);
+  });
+
   it('uses an existing administrator without an establishment question, credential frame, or password-state declaration', async () => {
     const enrollmentIdentity = ManagedMachineEnrollmentIdentityV1Schema.parse({ kind: 'dedicatedDaemonUser', username: 'happier',
       serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } });

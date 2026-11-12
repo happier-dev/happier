@@ -8,15 +8,16 @@ export const DEDICATED_DAEMON_INSTALL_HOME = '/opt/happier';
 
 /** The bootstrap principal supplies privilege only; every ordinary CLI call runs as the dedicated user. */
 export function buildDedicatedDaemonInvocationCommand(command: string): string {
-  const userCommand = [
+  const identity = [
     'set -eu',
     'happier_uid="$(id -u happier)"',
     'test "$happier_uid" -ne 0',
     'happier_home="$(getent passwd happier | cut -d: -f6)"',
     'test -n "$happier_home"',
-    `exec runuser -u happier -- env -i HOME="$happier_home" USER=happier LOGNAME=happier SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HAPPIER_HOME_DIR="$happier_home/.happier" HAPPIER_FIRST_PARTY_INSTALL_HOME=${DEDICATED_DAEMON_INSTALL_HOME} XDG_RUNTIME_DIR="/run/user/$happier_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$happier_uid/bus" sh -c ${safeBashSingleQuote(command)}`,
   ].join('; ');
-  return buildBootstrapRootCommand(userCommand);
+  const invocation = `env -i HOME="$happier_home" USER=happier LOGNAME=happier SHELL=/bin/bash PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HAPPIER_HOME_DIR="$happier_home/.happier" HAPPIER_FIRST_PARTY_INSTALL_HOME=${DEDICATED_DAEMON_INSTALL_HOME} XDG_RUNTIME_DIR="/run/user/$happier_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$happier_uid/bus" sh -c ${safeBashSingleQuote(command)}`;
+  const switchUser = buildBootstrapRootCommand(`${identity}; exec runuser -u happier -- ${invocation}`);
+  return `if [ "$(id -u)" = "$(id -u happier)" ]; then ${identity}; exec ${invocation}; else ${switchUser}; fi`;
 }
 
 /** Fixed bootstrap transport, shared by SSH and native exec. No root daemon fallback. */

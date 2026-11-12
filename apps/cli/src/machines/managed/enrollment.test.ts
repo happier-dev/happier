@@ -328,7 +328,7 @@ describe('runManagedMachineEnrollment', () => {
       expect(plan.basis).toMatchObject({ kind: 'bootstrap', managedId: correlation.managedId, operationId: correlation.requestId });
       expect(plan.steps).toEqual(expect.arrayContaining([
         ...(adminAccessAtCreation === 'none' ? [] : [expect.objectContaining({ kind: 'file', path: '/etc/sudoers.d/90-happier-daemon', content: { kind: 'literal',
-          value: adminAccessAtCreation === 'ask' ? 'Defaults:happier runaspw, runas_default=operator.name\nhappier ALL=(ALL:ALL) ALL\n' : 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n' } })]),
+          value: adminAccessAtCreation === 'ask' ? 'Defaults:happier targetpw, timestamp_timeout=0\nhappier ALL=(operator.name) PASSWD: ALL\noperator.name ALL=(root) NOPASSWD: ALL\n' : 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n' } })]),
         expect.objectContaining({ kind: 'user', username: 'happier-agent', locked: true }),
         expect.objectContaining({ kind: 'group', name: 'docker', members: ['happier'] }),
         expect.objectContaining({ kind: 'serviceUnit', unit: 'docker.service', running: true }),

@@ -10426,13 +10426,39 @@ policy success alone does not establish a host grant; selecting a policy never
 installs a CLI. The native process boundary checks this prerequisite before sudo
 starts, without inspecting protected sudoers content.
 
+In Ask mode, the managed sudoers file uses `targetpw` and
+`timestamp_timeout=0`. The effect runner authenticates the named administrator
+with `sudo -k -S -u <administrator>`, then that administrator invokes root through
+its managed `NOPASSWD` grant. This two-step chain preserves a fresh administrator
+password for each effect on classic sudo and sudo-rs; sudo-rs 0.2.13 does not
+support `runaspw` or `runas_default`. See its [supported defaults](https://github.com/trifectatechfoundation/sudo-rs/blob/v0.2.13/src/defaults/mod.rs)
+and [sudoers manual](https://github.com/trifectatechfoundation/sudo-rs/blob/v0.2.13/docs/man/sudoers.5.md).
+Both rules live in the same managed drop-in and change together with the policy.
+
+For mixed root and daemon-user setup, P10 supplies the observed daemon identity
+in the admitted request. The root interpreter resolves its native non-root UID
+and drops to that account with `runuser` before applying daemon HOME/PATH.
+`SUDO_USER` identifies the authenticating administrator after the two-hop Ask
+chain; it does not select the daemon account.
+Older development Ask drop-ins require native repair or guest recreation before
+using this chain; this is an unreleased 0.3 correction.
+
+Ordinary dedicated-user bootstrap commands run directly in the clean `happier`
+environment when the carrier already has that UID. Other bootstrap principals
+still switch through root into `happier`. Ordinary enrollment does not acquire
+administrator access merely to re-enter the same account.
+
+For native managed Retry, the installer consumes the existing `bootstrapInstalled`
+completion fact to skip completed creation preparation while refreshing the CLI.
+An unfinished bootstrap without that fact still requires privileged preparation.
+
 ## Machine reachability inspection (0.3 development)
 
 `machines.reachability.inspect` observes a Machine even when its saved posture is
 absent. A general inspection returns nullable `posture` and protected native
 firewall facts in `observation.nativeFirewall`, using the existing root CHECK
-interpreter without APPLY or an interactive elevation prompt. Available facts
-include the actual SSH endpoints and their source ranges; unavailable native
+interpreter without APPLY. Ask mode uses the existing attended elevation prompt.
+Available facts include the actual SSH endpoints and their source ranges; unavailable native
 facts name `requiredFact`. Desired posture is never treated as observed SSH
 exposure. A provider-specific membership review reads only its selected provider.
 

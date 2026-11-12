@@ -87,7 +87,7 @@ function nativeFixture() {
     let refuse = false;
     let alterFacts = false;
     let omitResult = false;
-    let passwordPrincipal = 'operator';
+    let passwordPrincipal: string | undefined;
     let passwordless = false;
     const backend: machineSetup.MachineSetupBackend = {
         async observe(step) { return { stepId: step.id, status: installed.has(step.id) ? 'satisfied' : 'drifted', facts: { installed: installed.has(step.id), generation: alterFacts ? 2 : 1 } }; },
@@ -105,7 +105,10 @@ function nativeFixture() {
             const lines = createInterface({ input: stdin, crlfDelay: Infinity });
             const iterator = lines[Symbol.asyncIterator]();
             if (input.args.includes('-S') && !passwordless) {
-                stderr.write(`[happier-sudo-password:${passwordPrincipal}]\n`);
+                // targetpw authenticates the first sudo target, not root or
+                // the invoking daemon. Mirror that native password principal.
+                const principal = passwordPrincipal ?? input.args[input.args.indexOf('-u') + 1];
+                stderr.write(`[happier-sudo-password:${principal}]\n`);
                 const answer = await iterator.next();
                 authentication.push(answer.value ?? '');
                 if (answer.done || refuse || answer.value !== 'one-use-password') { finish(1); return; }

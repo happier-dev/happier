@@ -37,7 +37,11 @@ describe('portable managed enrollment', () => {
       },
     })).resolves.toEqual({ machineId: 'joined' });
   });
-  it.each([false, true])('uses local Account pairing only for the custodian row (requester=%s)', async requesterEnrollment => {
+  it.each([
+    { requesterEnrollment: false, dedicatedRetry: false },
+    { requesterEnrollment: true, dedicatedRetry: false },
+    { requesterEnrollment: false, dedicatedRetry: true },
+  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry)', async ({ requesterEnrollment, dedicatedRetry }) => {
     const commands: string[] = [];
     const phases: string[] = [];
     const events: unknown[] = [];
@@ -55,18 +59,26 @@ describe('portable managed enrollment', () => {
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
       readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: undefined,
+        ...(dedicatedRetry ? { bootstrapInstalled: true as const, enrollmentIdentity: { kind: 'dedicatedDaemonUser' as const,
+          username: 'happier' as const, serviceMode: 'user' as const, role: 'server' as const,
+          adminAccessAtCreation: 'ask' as const, administrator: { username: 'operator' } } } : {}),
         ...(requesterEnrollment ? { enrollmentAccountId: 'requester-account' } : {}) }; },
       createPromptId: () => 'prompt',
       installNativePayload: async input => { phases.push('install'); expect(input).toMatchObject({ os: 'linux', arch: 'x64', home: '/home/guest' });
         return { binaryPath: '/home/guest/.happier/cli/current/happier' }; },
       native: { putFile: async () => {}, exec: async ({ command }) => {
         commands.push(command);
+        const invocation = command.replaceAll(/["']/gu, '');
+        if (dedicatedRetry && (command.includes('useradd') || command.includes("'effect-internal'"))) {
+          return { status: 1, stdout: '', stderr: 'sudo: a password is required' };
+        }
+        if (command === 'uname -s') return { status: 0, stdout: 'Linux\n', stderr: '' };
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
-        if (command.includes("'auth' 'request'")) { expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' }; }
-        if (command.includes("'auth' 'wait'")) { phases.push('wait'); return { status: 0, stdout: JSON.stringify(completion), stderr: '' }; }
-        if (command.includes("'daemon' 'start'")) running = true;
+        if (invocation.includes('auth request')) { expect(phases).toEqual(['install', 'installed']); phases.push('request'); return { status: 0, stdout: JSON.stringify(request), stderr: '' }; }
+        if (invocation.includes('auth wait')) { phases.push('wait'); return { status: 0, stdout: JSON.stringify(completion), stderr: '' }; }
+        if (invocation.includes('daemon start') || invocation.includes('service start')) running = true;
         const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
-          services: [], service: { installed: false }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' },
+          services: [], service: { installed: dedicatedRetry }, daemon: { running, healthy: running }, auth: { needsAuth: false, machineId: 'joined' },
           server: { activeServerId: 'guest-home' } };
         return { status: 0, stdout: JSON.stringify({ ...status, v: 1, ok: true, kind: 'auth_status', data: status }), stderr: '' };
       } },
@@ -89,7 +101,7 @@ describe('portable managed enrollment', () => {
     expect(phases).toEqual(['install', 'installed', 'request', 'approve', 'wait']);
     expect(running).toBe(true);
     expect(rowReads).toBe(1);
-    expect(commands.some(command => command.includes("'service'"))).toBe(false);
+    expect(commands.some(command => command.replaceAll(/["']/gu, '').includes('service start'))).toBe(dedicatedRetry);
     expect(JSON.stringify(events)).not.toContain(pairing.secretB64Url);
   });
 

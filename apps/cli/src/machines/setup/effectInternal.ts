@@ -177,7 +177,6 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             username: 'daemonUsername' in request ? request.daemonUsername : undefined,
             context: 'daemonExecutionContext' in request ? request.daemonExecutionContext : undefined,
             platform: io.platform ?? process.platform,
-            sudoUsername: process.env.SUDO_USER, sudoUid: process.env.SUDO_UID,
             signal: controller.signal, runNative,
         }) : undefined;
         const backend = machineSetup.createMachineSetupNativeBackend({ signal: controller.signal,

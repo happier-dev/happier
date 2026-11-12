@@ -31,6 +31,7 @@ export async function installRemoteCli(input: Readonly<{
   bootstrap?: Readonly<{
     parsed: Omit<RemoteBootstrapMachineParams, 'ssh'> & { ssh?: RemoteBootstrapMachineParams['ssh'] };
     enrolledMachineId?: string;
+    bootstrapInstalled?: true;
     context?: BootstrapContext;
     createPromptId: () => string;
     prepareManagedBootstrap?: PrepareManagedDedicatedBootstrap;
@@ -39,7 +40,7 @@ export async function installRemoteCli(input: Readonly<{
   const { transport, bootstrap } = input;
   const identity = bootstrap?.parsed.enrollmentIdentity;
   let prepare: ((binaryPath: string) => Promise<void>) | undefined;
-  if (bootstrap && identity?.kind === 'dedicatedDaemonUser' && !bootstrap.enrolledMachineId) {
+  if (bootstrap && identity?.kind === 'dedicatedDaemonUser' && !bootstrap.enrolledMachineId && bootstrap.bootstrapInstalled !== true) {
     const context = bootstrap.context;
     if (!context) throw new SystemTaskExecutionError('managed_enrollment_unavailable', 'Dedicated enrollment requires its admitted bootstrap owner.');
     const parsed = bootstrap.parsed;

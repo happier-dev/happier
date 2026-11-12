@@ -68,11 +68,15 @@ describe('installed effect process composed boundary', () => {
             status: 'applied', completedStepIds: ['first', 'second'],
         } });
     });
-    it.each(['apply', 'remove', 'carrier', 'already-satisfied-last', 'forged-user', 'forged-uid'] as const)('keeps ordered mixed package execution in one root interpreter (%s)', async scenario => {
+    it.each(['apply', 'remove', 'carrier', 'already-satisfied-last', 'ask-named-admin', 'cold-root',
+        'unknown-daemon', 'root-daemon', 'invalid-daemon-uid', 'unsafe-daemon-uid'] as const)('keeps ordered mixed package execution in one root interpreter (%s)', async scenario => {
         const prefix = await mkdtemp(join(tmpdir(), 'happier-mixed-brew-'));
         daemonPrefix.path = prefix;
         const environment = createEnvKeyScope(['SUDO_USER', 'SUDO_UID', 'HOME', 'PATH']);
-        environment.patch({ SUDO_USER: scenario === 'forged-user' ? 'other' : 'happier', SUDO_UID: scenario === 'forged-uid' ? '1002' : '1001' });
+        // Two-hop Ask authenticates the named administrator; the admitted
+        // daemon identity is selected separately and verified against the OS.
+        environment.patch({ SUDO_USER: scenario === 'cold-root' ? undefined : scenario === 'ask-named-admin' ? 'operator' : 'happier',
+            SUDO_UID: scenario === 'cold-root' ? undefined : scenario === 'ask-named-admin' ? '1002' : '1001' });
         onTestFinished(async () => { environment.restore(); daemonPrefix.path = ''; await rm(prefix, { recursive: true, force: true }); });
         const installed = new Set<string>(), effects: string[] = [], rootReads = new Set<string>();
         if (scenario === 'remove') installed.add('jq');
@@ -122,6 +126,12 @@ describe('installed effect process composed boundary', () => {
         rootReads.clear();
         if (scenario === 'already-satisfied-last') installed.add('last');
         const runNative = async (command: machineSetup.MachineSetupNativeCommand) => {
+            if (command.executable === 'id') {
+                expect(command.args).toEqual(['-u', '--', 'happier']);
+                return { code: scenario === 'unknown-daemon' ? 1 : 0, stderr: '',
+                    stdout: scenario === 'root-daemon' ? '0\n' : scenario === 'invalid-daemon-uid' ? 'not-a-uid\n'
+                        : scenario === 'unsafe-daemon-uid' ? '9007199254740992\n' : '1001\n' };
+            }
             if (command.executable !== 'runuser') {
                 expect(command.env?.HOME).toBeUndefined(); expect(command.env?.PATH).toBeUndefined();
                 return native(command.executable, command.args, true);
@@ -161,7 +171,7 @@ describe('installed effect process composed boundary', () => {
                 plans: plans.map(plan => ({ plan })) }) + '\n');
             exit = await runMachineSetupEffectInternal(args, { ...streams, readUid: () => 0, platform: 'linux', runNative });
         }
-        if (scenario === 'apply' || scenario === 'remove' || scenario === 'carrier') {
+        if (scenario === 'apply' || scenario === 'remove' || scenario === 'carrier' || scenario === 'ask-named-admin' || scenario === 'cold-root') {
             expect(exit).toBe(0); expect(effects).toEqual(['first', scenario === 'remove' ? 'remove:jq' : 'jq', 'last']);
             expect(streams.records().at(-1)).toMatchObject({ type: 'result', result: { status: 'applied', completedStepIds: ['first', 'brew', 'last'] } });
         } else if (scenario === 'already-satisfied-last') {
