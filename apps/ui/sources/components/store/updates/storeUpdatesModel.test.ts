@@ -106,6 +106,16 @@ describe('buildStoreUpdates', () => {
     const advanced = { ...rows[0]!, native: { ...rows[0]!.native, revision: '2:2' } };
     expect(buildStoreUpdates([advanced, ...rows.slice(1)], results, { ...check, basis }).freshness.checked).toBe(1);
   });
+  it('counts a Skill observation recorded by this check despite its resulting revision change', () => {
+    const before = skill('recorded');
+    const upstream = { state: 'update_available' as const, latest: registry('recorded', 'c').registry.ref };
+    const after = skill('recorded', { revision: '1:2', upstream });
+    const check = { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([before]) };
+    const result = [{ kind: 'skill' as const, key: 'recorded', upstream }];
+    expect(buildStoreUpdates([after], result, check).freshness.checked).toBe(1);
+    expect(buildStoreUpdates([after], [{ kind: 'skill', key: 'recorded', upstream: { state: 'current' } }], check).freshness.checked).toBe(0);
+  });
+
   it('lets newer native provenance and revisions supersede a finite check without disturbing unchanged items', () => {
     const before = skill('applied', { upstream: { state: 'update_available' } });
     const other = skill('other');
@@ -150,6 +160,8 @@ describe('buildStoreUpdates', () => {
       basis: new Map([[before.key, JSON.stringify([origin.provenance, before.native.updatedAt, origin.upstream])]]) };
     const update = [{ kind, key: 'docs', upstream: { state: 'update_available' as const, latest: { kind: 'version' as const, version: '2' } } }];
     expect(buildStoreUpdates([before], update, check).count).toBe(1);
+    // Recording this same finite observation must not invalidate its checked count.
+    expect(buildStoreUpdates([row('1', 2, update[0]!.upstream)], update, check).freshness.checked).toBe(1);
     expect(buildStoreUpdates([row('2', 2, { state: 'current' })], update, check).count).toBe(0);
     expect(buildStoreUpdates([row('1', 2, { state: 'update_available' })],
       [{ kind, key: 'docs', upstream: { state: 'current' } }], check).sections[0]?.entries[0]?.state).toBe('available');

@@ -5,7 +5,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentSetActionInputV1Schema,
     PluginAvailabilityIntentSetActionOutputV1Schema, PluginAvailabilityReleaseReadActionOutputV1Schema,
     PluginAvailabilityIntentReadActionOutputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
-    PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema, PluginMachineMaterializationV1Schema,
     type PackageAssetArchiveDescriptorV1 } from '@happier-dev/protocol/plugins/availability';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -223,4 +223,29 @@ describe('Account plugin administration admission through the production UI fron
             await pending;
         }
     });
+    it.each(['localPath', 'bundledFirstParty'] as const)('does not offer an immutable Account release for a %s declaration', async (sourceClass) => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected active Account');
+        const materialization = PluginMachineMaterializationV1Schema.parse({
+            serverIdentityId: 'srv_plugin_admission', machineId: 'machine-local',
+            materializationId: 'local-install', pluginId: 'store.fixtures125', version: '1.0.0',
+            sourceClass, portableRelease: false, uiArtifacts: [], enabled: true,
+            trustState: 'trusted', observedAt: 1,
+        });
+        const reader = createPluginAccountAvailabilityReader({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 2, intentReads: [], snapshots: [], materializations: [materialization],
+        } });
+        expect(reader.classifyRelease(materialization).validation).toEqual({ kind: 'rejected', reason: 'non_portable' });
+        const screen = await renderScreen(createElement(PluginAccountReleaseSelectionSection, {
+            pluginId: materialization.pluginId, version: materialization.version, reader, projection: null,
+            daemon: { serverId: null, serverIdentityId: null, machineId: null }, testID: 'plugin.release',
+        }));
+        try {
+            expect(screen.findAllByTestId('plugin.release')
+                .filter(node => typeof node.props.onPress === 'function')).toHaveLength(0);
+            expect(screen.findAllByTestId('plugin.release.machineLocal').length).toBeGreaterThan(0);
+            expect(homes.requestsFor(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.release.read'])).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
 });

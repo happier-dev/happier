@@ -18,7 +18,7 @@ const { buildStoreUpdates } = await import('@/components/store/updates/storeUpda
 const { createUiRegistryHostV1 } = await import('./registryHostDeps');
 afterEach(async () => { await standardCleanup(); await account.reset(); rpc.reset(); });
 
-it('checks PL50 installed on a later carrier and exposes its source revision through Store review', async () => {
+it.each([true, false])('keeps Account catalog checks across carriers (first unavailable: %s)', async firstUnavailable => {
     const installedMachine = 'pl50-installed';
     const otherMachine = 'first-empty-carrier';
     const pluginId = 'pl50.fixture';
@@ -52,12 +52,15 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
             ? { errorCode: 'machine_unavailable', error: 'External Action placement refused' } : null,
         execute: (input, context) => {
             const filter = REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check'].parse(input);
-            if (context.target.machineId === otherMachine) return { __placementRefusal: true, errorClass: 'PlacementRefusal', refusalBranch: 'machine_unavailable', requestId: 'd2-live-request' };
+            if (firstUnavailable && context.target.machineId === otherMachine) return { __placementRefusal: true, errorClass: 'PlacementRefusal', refusalBranch: 'machine_unavailable', requestId: 'd2-live-request' };
             calls.push({ machineId: context.target.machineId, ...(filter.kind ? { kind: filter.kind } : {}) });
             return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse({ checkedAt: 10,
-                results: context.target.machineId === installedMachine && (!filter.kind || filter.kind === 'plugin')
-                    ? [{ kind: 'plugin', key: pluginId, upstream: { state: 'update_available', latest: { kind: 'version', version: sourceVersion } } }]
-                    : [] });
+                results: [
+                    ...(context.target.machineId === installedMachine && (!filter.kind || filter.kind === 'plugin') ? [{ kind: 'plugin', key: pluginId, upstream: { state: 'update_available', latest: { kind: 'version', version: sourceVersion } } }] : []),
+                    ...(!filter.kind || filter.kind === 'mcpServer' ? [{ kind: 'mcpServer', key: 'retained-mcp', upstream: { state: 'current' } }] : []),
+                    ...(!filter.kind || filter.kind === 'agent' ? [{ kind: 'agent', key: 'retained-agent', upstream: { state: 'current' } }] : []),
+                    ...(!filter.kind || filter.kind === 'skill' ? [{ kind: 'skill', key: 'retained-skill', upstream: { state: 'current' } }] : []),
+                ] });
         },
     });
     const captured = await captureLazyActionAccountContext(scope.serverId);
@@ -73,6 +76,11 @@ it('checks PL50 installed on a later carrier and exposes its source revision thr
         const view = buildStoreUpdates(rows, result.results, check, hook.getCurrent().entries);
         expect(view.freshness.checked).toBe(1);
         expect(view.sections).toMatchObject([{ kind: 'plugin', entries: [{ state: 'available', to: sourceVersion }] }]);
-        expect(calls).toContainEqual({ machineId: installedMachine, kind: 'plugin' });
+        expect(calls.filter(call => call.kind === undefined)).toHaveLength(1);
+        expect(result.results.filter(item => item.kind !== 'plugin')).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'mcpServer', key: 'retained-mcp' }),
+            expect.objectContaining({ kind: 'agent', key: 'retained-agent' }),
+            expect.objectContaining({ kind: 'skill', key: 'retained-skill' }),
+        ]));
     } finally { captured.dispose(); }
 });

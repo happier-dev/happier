@@ -1,3 +1,4 @@
+import { registryUpstreamEqualV1 } from '@happier-dev/protocol/registries';
 import type {
   RegistryContentRefV1,
   RegistryUpdateCheckResultV1,
@@ -185,8 +186,9 @@ export function buildStoreUpdates(
       ? JSON.stringify([item.kind, row.machineId, item.key])
       : `${item.kind}:${item.key}`);
     const latest = check?.basis && check.basis.get(row.key) !== item.basis ? undefined : finite;
-    if (latest && latest.state !== 'unchecked') successful += 1;
     const recorded = item.upstream;
+    // Recording this check can advance the native revision before its reply arrives.
+    if (finite && finite.state !== 'unchecked' && (latest || registryUpstreamEqualV1(recorded, finite))) successful += 1;
     // A new item was never checked. An advanced native version may supersede
     // the checked one only when its owner has an explicit observation.
     if (!finite || finite.state === 'unchecked' || !latest && !recorded) complete = false;

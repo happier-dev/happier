@@ -184,8 +184,6 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
         updates: async filter => {
             account.assertCurrent(); context.signal?.throwIfAborted();
             const carriers = carriersForSource();
-            const machineId = carriers.next().value;
-            if (!machineId) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
             const checkOnMachine = async (target: string, selection: typeof filter) => {
                 const result = await executeOnMachine(target, 'registries.updates.check', selection ?? {});
                 account.assertCurrent(); context.signal?.throwIfAborted();
@@ -194,23 +192,33 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension'
                     ? { ...item, machineId: target } : item) };
             };
-            // Account-owned catalog kinds use one carrier; native plugins are local to each
-            // Machine and browser profiles already follow the same per-carrier path.
+            // Account-owned catalog kinds need one successful carrier. A refused
+            // first carrier must not leave only the native-only sibling replies.
+            let first: Awaited<ReturnType<typeof checkOnMachine>> | undefined;
+            let firstFailure: unknown;
+            let attempted = false;
+            for (let target = carriers.next(); !target.done; target = carriers.next()) {
+                attempted = true;
+                try {
+                    first = await checkOnMachine(target.value, filter);
+                    break;
+                } catch (error) {
+                    account.assertCurrent(); context.signal?.throwIfAborted();
+                    firstFailure ??= error;
+                }
+            }
+            if (!first) {
+                if (!attempted) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+                throw firstFailure;
+            }
+            // Native plugins and browser profiles are local to each Machine.
             const includeExtensions = filter?.kind === undefined || filter.kind === 'browserExtension';
             const includePlugins = filter?.kind === undefined || filter.kind === 'plugin';
-            const checks = await Promise.allSettled([
-                checkOnMachine(machineId, filter),
-                ...[...carriers].flatMap(target => [
-                    ...(includeExtensions ? [checkOnMachine(target, { ...filter, kind: 'browserExtension' })] : []),
-                    ...(includePlugins ? [checkOnMachine(target, { ...filter, kind: 'plugin' })] : []),
-                ]),
-            ]);
-            const successful = checks.flatMap(check => check.status === 'fulfilled' ? [check.value] : []);
-            if (!successful.length) {
-                const failed = checks.find(check => check.status === 'rejected');
-                if (failed?.status === 'rejected') throw failed.reason;
-                throw new RegistryFetchErrorV1({ state: 'unreachable' });
-            }
+            const checks = await Promise.allSettled([...carriers].flatMap(target => [
+                ...(includeExtensions ? [checkOnMachine(target, { ...filter, kind: 'browserExtension' })] : []),
+                ...(includePlugins ? [checkOnMachine(target, { ...filter, kind: 'plugin' })] : []),
+            ]));
+            const successful = [first, ...checks.flatMap(check => check.status === 'fulfilled' ? [check.value] : [])];
             return { checkedAt: successful.reduce((oldest, check) => Math.min(oldest, check.checkedAt), successful[0].checkedAt),
                 results: successful.flatMap(check => check.results) };
         },
