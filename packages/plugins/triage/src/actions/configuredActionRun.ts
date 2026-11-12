@@ -42,7 +42,7 @@ export function createTriageRunConfiguredActionHandler(): PluginAccountActionHan
             const finish = (handoff: TriageSessionHandoffResultV1) => ({ v: 1 as const, handoff,
                 ...(input.resumeStart === undefined ? {} : { recovery: input.resumeStart }) });
             if (context.signal.aborted) return finish({ kind: 'cancelled' });
-            if (input.drafts !== undefined || input.reviewChoices !== undefined || input.resumeReview !== undefined) {
+            if (input.drafts !== undefined || input.reviewChoices !== undefined || input.resumeReview !== undefined || input.singleIntent !== undefined) {
                 return finish({ kind: 'unavailable', reason: 'scopeMismatch' });
             }
             const selected = [
@@ -82,7 +82,8 @@ export function createTriageRunConfiguredActionHandler(): PluginAccountActionHan
                 ...(result.recovery === undefined ? {} : { recovery: { ...result.recovery, handoff: input.handoff } }),
             });
         if (context.signal.aborted) return finish({ v: 1, status: 'cancelled' });
-        if (input.handoff.sessionChoice.kind !== 'configured' || input.handoff.agentChoice.kind !== 'configured'
+        if (input.singleIntent !== undefined && destination !== 'single'
+            || input.handoff.sessionChoice.kind !== 'configured' || input.handoff.agentChoice.kind !== 'configured'
             || input.handoff.delivery !== 'configured' || input.handoff.evidence.some(evidence =>
                 (evidence.kind !== 'entry' && evidence.kind !== 'alertEntry') || !selectedEntries.some(entry =>
                     triageEntryRowKey(entry.entryRef) === triageEntryRowKey(evidence.entry.entryRef)
@@ -134,6 +135,7 @@ export function createTriageRunConfiguredActionHandler(): PluginAccountActionHan
         };
         const result = await runTriageConfiguredActionV1(executionHost, {
             actionId: input.handoff.configuredActionId, destination, entries, unavailableKeys,
+            ...(input.singleIntent === undefined ? {} : { singleIntent: input.singleIntent }),
             ...(continuing ? { selectedEntries } : {}),
             ...(input.reviewChoices === undefined ? {} : { reviewChoices: input.reviewChoices }),
             ...(input.resumeReview === undefined ? {} : { resumeReview: input.resumeReview }),

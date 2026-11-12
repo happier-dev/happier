@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { afterEach, expect, it } from 'vitest';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { HostPeopleDirectory, HostPeopleDirectoryRequest } from '@happier-dev/plugin-ui/hostApi';
@@ -28,6 +28,8 @@ import { checkTriageTaskWrite } from './taskWrite.js';
 import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
 import { toTriageWireObservation } from '../../projection/listWindowWire.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+
+import { createTaskActionControlTestkit as createPluginUiTestkit } from './taskActionControl.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -90,6 +92,7 @@ it('creates once from an error and repairs only its failed origin link before op
   mounted.push(fixture);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Issue' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(fixture.rawTaskWrites).toEqual([]);
   expect(created).toEqual([]);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Repair origin link' })); });
   expect(actions).toEqual(['tasks/create-v1', 'tasks/set-origin-error-v1']);
@@ -191,7 +194,7 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
   // The place the draft is going to is the checked one.
   const checkedPlaces = [...document.querySelectorAll('[role="menuitemradio"][aria-checked="true"]')].map(node => node.getAttribute('aria-label'));
   expect(checkedPlaces.length).toBeGreaterThan(0);
-  expect(checkedPlaces.filter(label => /^Issue/.test(label ?? ''))).toEqual([]);
+  expect(checkedPlaces).toEqual(expect.arrayContaining([expect.stringContaining('Happier tasks')]));
   await act(async () => { document.querySelector<HTMLElement>('[role="menuitemradio"][aria-label^="Issue"]')!.click(); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(saved[2]).toMatchObject({ source: external.instance.source, sourceInstanceId: external.instance.sourceInstanceId, kindId: 'issue' });
@@ -284,7 +287,7 @@ it.each([false, true])('submits a create through the Account aggregate without a
   await act(async () => { await fixture.press(await place()); });
   expect(document.querySelector('[aria-label="Title"]')).not.toBeNull();
   expect(document.activeElement).toBe(document.querySelector('[aria-label="Title"]'));
-  const createButton = document.querySelector<HTMLElement>('[data-testid="triage-task-draft-create"]')!;
+  const createButton = document.querySelector<HTMLElement>('[role="button"][aria-label="Create task"]')!;
   act(() => { createButton.focus(); });
   await act(async () => { setSources(previous => [...previous]); });
   expect(document.activeElement).toBe(createButton);
@@ -308,7 +311,7 @@ it.each([false, true])('submits a create through the Account aggregate without a
 it('creates with the typed properties the chosen place accepts, in one write', async () => {
   const source = createTriageSourceV1Fixture();
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-typed', mountNonce: 'typed' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -342,7 +345,7 @@ async function mountAssigneeDraft(options: Readonly<{ internal: boolean;
   directory?: (request: HostPeopleDirectoryRequest) => HostPeopleDirectory | null }>) {
   const configured = options.internal ? INTERNAL_TASK_SOURCE_RECORD_V1.value.configured : createTriageSourceV1Fixture().configuredInstance;
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-create-assignees', mountNonce: `assignees-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -395,7 +398,7 @@ it('opens the created task before a mounted aggregate reread settles and preserv
   let rejectRead!: (error: Error) => void;
   const heldRead = new Promise<never>((_resolve, reject) => { rejectRead = reject; });
   let window!: ReturnType<typeof useTriageListWindow>;
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'created-task', mountNonce: 'held-read' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -463,7 +466,7 @@ it('keeps message context and an optional Session link through create, and shows
   const saved: ReturnType<typeof TriageCreateTaskActionInputV1Schema.parse>[] = [];
   const opened: unknown[] = [];
   let confirmLink!: React.Dispatch<React.SetStateAction<readonly string[]>>;
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'message-create', mountNonce: 'link-partial' },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -539,7 +542,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   const colored: Readonly<{ action: string; input: unknown }>[] = [];
   let rereads = 0;
   let reads = 0;
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   const scope = createTriageEphemeralSharedScopeFixture();
   const lanes = Object.freeze([]);
   const initialValues = options.values ?? { title: row.content!.outcome.snapshot.title, body: 'Full body\n\nOriginal Markdown.  \n' };
@@ -861,6 +864,16 @@ it('shows each declared field as its own typed property and commits only that fi
   await act(async () => { blockerChoice!.click(); });
   expect(saved.at(-1)?.fields).toEqual({ blockedBy: [blocker.entryRef] });
   expect(saved.every(input => Object.keys(input.fields).length === 1)).toBe(true);
+  expect(fixture.rawTaskWrites).toEqual([]);
+});
+
+it('removes an existing blocker through its host control', async () => {
+  const blocker = otherTaskRow('41', 'Add the webhook replay tool');
+  const { fixture, saved } = await mountEditor({ fields: ['blockedBy'],
+    values: { blockedBy: [blocker.entryRef] }, relationRows: [blocker] });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Remove, Add the webhook replay tool' })); });
+  expect(saved.map(input => input.fields)).toEqual([{ blockedBy: [] }]);
+  expect(fixture.rawTaskWrites).toEqual([]);
 });
 
 it.each(['refused', 'uncertain'] as const)('shows a %s label colour outcome without reporting it applied', async labelOutcome => {
@@ -878,19 +891,23 @@ it('shows a personal label in its colour and changes the colour from the label e
   const { fixture, saved, colored, rereads } = await mountEditor({ fields: ['labelIds'], values: { labelIds: ['bug', 'docs'] },
     labelColors: [{ name: 'bug', colorToken: 'danger' }], viewerAccountId: 'account-me' });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Labels, bug, docs' })); });
-  // Each label in the editor carries its own colour control, named by the label and its current colour.
+  // Set and clear keep their own declared Actions and input schemas.
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Colour of bug, Red' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemradio', { name: 'No colour' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Colour of bug, Red' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('menuitemradio', { name: 'Green' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Colour of docs, No colour' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('menuitemradio', { name: 'Blue' })); });
 
   expect(colored).toEqual([
+    { action: 'tasks.internal.labels.clearColor', input: { scope: { serverId: 'fixture-home', accountId: 'account-me' }, name: 'bug' } },
     { action: 'tasks.internal.labels.setColor', input: { scope: { serverId: 'fixture-home', accountId: 'account-me' }, name: 'bug', colorToken: 'success' } },
     { action: 'tasks.internal.labels.setColor', input: { scope: { serverId: 'fixture-home', accountId: 'account-me' }, name: 'docs', colorToken: 'accent' } },
   ]);
   // A colour is the Account's label catalog, not a task edit; the window re-reads to show it.
   expect(saved).toEqual([]);
-  expect(rereads()).toBe(2);
+  expect(rereads()).toBe(3);
+  expect(fixture.rawTaskWrites).toEqual([]);
 });
 
 it('preserves an applied label colour settlement when the aggregate refresh fails', async () => {
@@ -960,6 +977,7 @@ it('offers the source transitions without a Machine and commits the chosen one t
   await act(async () => { closed!.click(); });
   expect(transitioned).toHaveLength(1);
   expect(transitioned[0]).toMatchObject({ transitionId: 'close' });
+  expect(fixture.rawTaskWrites).toEqual([]);
   expect(saved).toEqual([]);
 });
 
@@ -1015,6 +1033,7 @@ it('gathers a native transition’s required input before one write, and Cancel 
   expect(transitioned).toHaveLength(1);
   expect(transitioned[0]).toMatchObject({ transitionId: 'finish',
     fieldValues: [{ fieldId: 'resolution', value: 'Verified with the reporter' }] });
+  expect(fixture.rawTaskWrites).toEqual([]);
 });
 
 it('does not report an unsettled commit when its authoritative reread fails', async () => {
@@ -1051,7 +1070,7 @@ async function mountRowStatus(task: React.ComponentProps<typeof TriageTaskRowSta
   const selected = readTriageSelectedObservationV1(row)!;
   const transitioned: unknown[] = [];
   let rereads = 0;
-  let fixture!: PluginUiTestkit;
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-row', mountNonce: `row-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
@@ -1081,6 +1100,7 @@ it('completes a task directly when completion is the source’s only offered tra
   expect(document.querySelector('[role="menuitem"]')).toBeNull();
   expect(transitioned).toHaveLength(1);
   expect(transitioned[0]).toMatchObject({ entryRef, transitionId: 'done' });
+  expect(fixture.rawTaskWrites).toEqual([]);
 });
 
 it('opens the source workflow from the row glyph when no single completing transition exists', async () => {

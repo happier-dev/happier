@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
 } from '@happier-dev/plugin-sdk/testing';
@@ -54,6 +55,8 @@ function mountedActions(
     async resolveForExecution() {
       return { status: 'unavailable' as const };
     },
+    prepareAdminister(input: TriageAdministerActionInputV1) { administered.push(input); return { input }; },
+    async settleAdminister() { return null; },
     async administer(input: TriageAdministerActionInputV1) {
       administered.push(input);
       return null;
@@ -63,6 +66,7 @@ function mountedActions(
 }
 
 const mounted: PluginUiTestkit[] = [];
+const controls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 
 async function mountEditor(
   actions: TriageMountedActionsV1,
@@ -71,6 +75,7 @@ async function mountEditor(
   const surface = defineUiSurface(() => (
     <TriageActionsEditor actions={actions} {...(initialActionId === undefined ? {} : { initialActionId })} />
   ));
+  const host = createPluginUiActionControlTestHost(async () => ({ ok: true, result: { status: 'conflict' } }));
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -83,6 +88,7 @@ async function mountEditor(
       surfaceContext: createSurfaceContextFixture({}),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        actionControl: host.handler,
         executeAction: async () => {
           throw new Error('No daemon is reachable from this mount.');
         },
@@ -90,6 +96,7 @@ async function mountEditor(
     });
   });
   mounted.push(fixture);
+  controls.set(fixture, host);
   await act(async () => {
     await Promise.resolve();
   });
@@ -135,9 +142,7 @@ describe('the configured-action list', () => {
     );
 
     await act(async () => {
-      await editor.press(
-        await editor.getByRole('button', { name: 'Restore' }),
-      );
+      await controls.get(editor)!.press('Restore');
     });
 
     expect(administered).toEqual([
@@ -147,11 +152,8 @@ describe('the configured-action list', () => {
 
   it('has nothing to restore while the catalog is still the shipped one', async () => {
         const administered: TriageAdministerActionInputV1[] = [];
-        await mountEditor(mountedActions({ read: SEEDED }, administered));
-
-        const restore = Array.from(document.querySelectorAll<HTMLElement>('[role="button"]'))
-            .find((control) => control.textContent === 'Restore');
-        expect(restore?.getAttribute('aria-disabled')).toBe('true');
+        const editor = await mountEditor(mountedActions({ read: SEEDED }, administered));
+        expect(controls.get(editor)?.presentation('Restore')?.disabled).toBe(true);
         expect(administered).toEqual([]);
     });
 
@@ -211,7 +213,7 @@ describe('the configured-action list', () => {
     const action = TRIAGE_SEEDED_ACTIONS_V1.actions[1]!;
     const editor = await mountEditor(mountedActions({ read: CONFIGURED }, administered), action.actionId);
 
-    await expect(editor.getByRole('button', { name: 'Save' })).resolves.toBeDefined();
+    expect(controls.get(editor)?.presentation('Save')).toBeDefined();
     const values = Array.from(document.querySelectorAll<HTMLInputElement>('input')).map((input) => input.value);
     expect(values).toContain(action.label);
   });

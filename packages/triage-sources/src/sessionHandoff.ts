@@ -17,7 +17,7 @@ export type TriageSessionHandoffHostV1 = Readonly<{
   executeAction(ref: PluginContributionRef, input: JsonValue, options?: Readonly<{ signal?: AbortSignal }>): Promise<JsonValue | void>;
 }>;
 
-const configuredAction = Object.freeze({ pluginId: 'happier.triage', localId: 'sessions/run-configured-v1' });
+export const TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 = Object.freeze({ pluginId: 'happier.triage', localId: 'sessions/run-configured-v1' });
 
 export type TriageSessionHandoffChoicesReadOutcomeV1 =
   | TriageSessionHandoffChoicesV1
@@ -44,14 +44,25 @@ export async function readTriageSessionHandoffChoicesV1(
   return choices.data;
 }
 
+/** Prepares the canonical operand for a host-rendered Action control without invoking it. */
+export function prepareTriageSessionHandoffV1(input: TriageSessionHandoffInputV1): Readonly<{ input: JsonValue }> {
+  const handoff = TriageSessionHandoffInputV1Schema.parse(input);
+  return { input: projectNativeJsonValueForTransport({ v: 1, handoff }) };
+}
+
 /** Validates operands and invokes once. Approval, failure and recovery stay intact. */
 export async function requestTriageSessionHandoffV1(
   host: TriageSessionHandoffHostV1,
   input: TriageSessionHandoffInputV1,
   options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<JsonValue | void> {
-  const handoff = TriageSessionHandoffInputV1Schema.parse(input);
-  const response = await host.executeAction(configuredAction, projectNativeJsonValueForTransport({ v: 1, handoff }), options);
+  const prepared = prepareTriageSessionHandoffV1(input);
+  const response = await host.executeAction(TRIAGE_SESSION_HANDOFF_ACTION_REF_V1, prepared.input, options);
+  return settleTriageSessionHandoffV1(response);
+}
+
+/** Consumes the original host settlement; approval/failure/recovery identity is never rewritten. */
+export function settleTriageSessionHandoffV1(response: JsonValue | void): JsonValue | void {
   // The executor owns its standard outer envelope. Validate only this Action's
   // successful result, retaining its action-owned recovery rather than cloning it.
   if (response && typeof response === 'object' && !Array.isArray(response)) {

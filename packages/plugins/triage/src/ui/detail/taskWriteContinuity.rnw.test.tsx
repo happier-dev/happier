@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { afterEach, expect, it } from 'vitest';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
+import { Action, defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { testkitEntryRef, testkitObservation } from '../../corpus/testkit/observations.test-support.js';
 import { createTriageEphemeralSharedScopeOriginFixture } from '../window/ephemeralSharedScope.test-support.js';
@@ -48,7 +48,7 @@ it.each([
       }));
     });
     await act(async () => { await write.commit(action, {}); });
-    expect(write.result).toEqual({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
+    expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
     // A deliberate retry is available after a proven refusal; no automatic replay occurs.
     expect(attempts).toBe(1);
     notStarted = false;
@@ -82,7 +82,7 @@ it('permits a deliberate retry after the mounted host confirms the handler did n
     }));
   });
   await act(async () => { await write.commit('tasks/create-v1', {}); });
-  expect(write.result).toEqual({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
+  expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
   expect(attempts).toBe(1);
   await act(async () => { await write.commit('tasks/create-v1', {}); });
   expect(attempts).toBe(2);
@@ -273,4 +273,102 @@ it('shares in-flight work and lets a fresh differing read rebase a new edit with
   expect(checks).toBe(3);
   expect(mutations).toBe(2);
   expect(unrelatedRenders()).toBe(beforeReplacement);
+});
+
+
+it('settles the host control press without replaying it through raw plugin execution', async () => {
+  let write!: ReturnType<typeof useTriageTaskCommit>;
+  type HostControl = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
+  let publish: HostControl['publish'] | undefined;
+  const requests: HostControl['request'][] = [];
+  const raw = vi.fn(() => ({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' }));
+  const input = { v: 1, entryRef: testkitEntryRef(), sourceInstanceId: testkitObservation().sourceInstanceId, transitionId: 'completed' };
+  const applied = { kind: 'applied' as const, observation: { ...testkitObservation().outcome,
+    localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId } } };
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'task-host-control', mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => {
+      write = useTriageTaskCommit(async () => undefined);
+      const currentWrite = write;
+      return <Action.Control action="tasks/transition-v1" title="Completed" controller={{
+        prepare: () => currentWrite.prepare('tasks/transition-v1', input),
+        onSettled: execution => { currentWrite.settle(execution); },
+      }} />;
+    }),
+    surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    handlers: { executeAction: raw, actionControl(control) {
+      requests.push(control.request);
+      if (control.request.kind === 'bind') publish = control.publish;
+      if (control.request.kind === 'prepared') control.publish({ kind: 'settled', requestId: control.request.requestId,
+        execution: { ok: true, result: applied } });
+    } },
+  });
+  mounted.push(fixture);
+  await vi.waitFor(() => expect(publish).toBeDefined());
+  await act(async () => { publish!({ kind: 'prepare', requestId: 'present-user-press' }); });
+  await vi.waitFor(() => expect(write.result?.kind).toBe('applied'));
+  expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', preparation: { input } }));
+  expect(raw).not.toHaveBeenCalled();
+  await act(async () => { await write.commit('tasks/transition-v1', input); });
+  expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
+  expect(raw).toHaveBeenCalledOnce();
+});
+
+it('settles the prepared task after the detail switches to another task', async () => {
+  const first = testkitEntryRef();
+  const second = { ...first, entryId: 'second-task' };
+  const scope = createTriageEphemeralSharedScopeOriginFixture().forExecutionOrigin('surface');
+  let select!: React.Dispatch<React.SetStateAction<typeof first>>;
+  let current!: ReturnType<typeof useTriageTaskCommit>;
+  let original!: ReturnType<typeof useTriageTaskCommit>;
+  let publish!: Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0]['publish'];
+  let requestId = '';
+  const fixture = await createPluginUiTestkit({
+    identity: { instanceId: 'task-control-selection', mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => {
+      const [entryRef, setEntryRef] = React.useState(first);
+      select = setEntryRef;
+      current = useTriageTaskCommit(async () => undefined, { entryRef, sourceInstanceId: 'source-one' });
+      original = useTriageTaskCommit(async () => undefined, { entryRef: first, sourceInstanceId: 'source-one' });
+      const write = current;
+      return <Action.Control action="tasks/transition-v1" title="Completed" controller={{
+        prepare: () => write.prepare('tasks/transition-v1', { v: 1, entryRef, sourceInstanceId: 'source-one', transitionId: 'done' }),
+        onSettled: execution => { write.settle(execution); },
+      }} />;
+    }),
+    surfaceContext: createSurfaceContextFixture(),
+    adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+    handlers: { actionControl(control) {
+      if (control.request.kind === 'bind') publish = control.publish;
+      if (control.request.kind === 'prepared') requestId = control.request.requestId;
+    } },
+  });
+  mounted.push(fixture);
+  await act(async () => { publish({ kind: 'prepare', requestId: 'first-task-gesture' }); });
+  expect(original.busy).toBe(true);
+  await act(async () => { select(second); });
+  expect(current.busy).toBe(false);
+  await act(async () => { publish({ kind: 'settled', requestId, execution: { ok: true, result: { kind: 'refused', reason: 'denied' } } }); });
+  expect(original.result).toMatchObject({ kind: 'refused', reason: 'denied' });
+  expect(original.busy).toBe(false);
+  expect(current.result).toBeNull();
+});
+
+it.each([false, true])('retains host-control failure evidence with effectAttempted=%s', async effectAttempted => {
+  let write!: ReturnType<typeof useTriageTaskCommit>;
+  mounted.push(await createPluginUiTestkit({
+    identity: { instanceId: `control-failure-${effectAttempted}`, mountNonce: 'one' },
+    authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+    surface: defineUiSurface(() => { write = useTriageTaskCommit(async () => undefined); return <Text value={write.result?.kind ?? 'idle'} />; }),
+    surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+  }));
+  await act(async () => {
+    write.prepare('tasks/transition-v1', {});
+    write.settle({ ok: false, errorCode: 'unavailable', error: 'Provider unavailable', requestId: 'host-request', effectAttempted });
+  });
+  expect(write.result).toMatchObject(effectAttempted
+    ? { kind: 'uncertain', failure: { code: 'unavailable', requestId: 'host-request' } }
+    : { kind: 'refused', reason: 'unavailable', requestId: 'host-request' });
 });

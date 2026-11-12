@@ -66,6 +66,9 @@ export {
 } from './projection/composerReferenceResolution.js';
 export {
   requestTriageSessionHandoffV1,
+  prepareTriageSessionHandoffV1,
+  settleTriageSessionHandoffV1,
+  TRIAGE_SESSION_HANDOFF_ACTION_REF_V1,
   readTriageSessionHandoffChoicesV1,
   type TriageSessionHandoffHostV1,
   type TriageSessionHandoffChoicesReadOutcomeV1,

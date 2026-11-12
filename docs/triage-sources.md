@@ -1528,12 +1528,17 @@ reset does not fabricate the never-written revision `absent`. A stale revision
 or unreadable catalog refuses the reset. Direct App transport and daemon Actions
 use the same catalog owner.
 
-The Account-owned `happier.triage/actions/sessions/run-configured-v1` Action runs a catalog choice through the same configured action/profile/prompt and Session owners as a mounted press. Its exact input and result declarations are [`configuredActionRunProtocol.ts`](../packages/plugins/triage/src/actions/configuredActionRunProtocol.ts). Unreleased 0.3 source accepts one `{v:1,handoff}` envelope. Configured single, bulk and formal Review requests use `handoff.context.kind:'entries'` with exact `entryRef`/`sourceInstanceId` selection and destination; optional settled `drafts`, Review choices and continuation facts reuse the incumbent host admission. The retired top-level `actionId`/`entries`/`destination` envelope is rejected.
+The Account-owned `happier.triage/actions/sessions/run-configured-v1` Action runs a catalog choice through the same configured action/profile/prompt and Session owners as a mounted press. Its exact input and result declarations are [`configuredActionRunProtocol.ts`](../packages/plugins/triage/src/actions/configuredActionRunProtocol.ts). Unreleased 0.3 source accepts one `{v:1,handoff}` envelope. Configured single, bulk and formal Review requests use `handoff.context.kind:'entries'` with exact `entryRef`/`sourceInstanceId` selection and destination; optional settled `drafts`, Review choices and continuation facts reuse the incumbent host admission. Optional `singleIntent` preserves the existing split launch (`configured` with `launchMode`), human-edited issue orchestration (`orchestrate` with `prompt`), and read-only walkthrough (`comparison` with its exact SCM source). It is accepted only for the single-entry destination; omission uses the stored action. These intents use the same Session owner and do not create another executor. Matching unreleased plugin declarations and UI reload together; earlier strict development readers reject the optional field, with no epoch or predecessor adapter. The retired top-level `actionId`/`entries`/`destination` envelope is rejected.
 
 The handoff operand and summary result are defined by
 [`sessionHandoff.ts`](../packages/triage-protocol/src/v1/sessionHandoff.ts).
-`requestTriageSessionHandoffV1` on `@happier-dev/triage-sources/runtime` validates
-those operands and invokes this same Action once. Hosted CI, release-note
+`prepareTriageSessionHandoffV1` on `@happier-dev/triage-sources/runtime` validates
+those operands and returns the projected `{input}` for a host Action control,
+using `TRIAGE_SESSION_HANDOFF_ACTION_REF_V1`. `settleTriageSessionHandoffV1`
+validates successful handoffs while preserving the original approval, failure
+and recovery envelope. Imperative plugin and automation callers use
+`requestTriageSessionHandoffV1`, which composes the same preparation and settlement
+and invokes this Action once. Hosted CI, release-note
 context, selected entries or alerts, and selected local terminal output retain
 their distinct evidence shapes. Configured Session, Agent/profile and
 compose/send choices remain with the existing catalog and Session owners.
@@ -1541,8 +1546,13 @@ The helper preserves the standard approval/failure envelope and action-owned
 recovery; an uncertain send is not permission to start again.
 Entry execution results use the same envelope with a typed `entryExecution`
 phase summary and the original per-unit starts, Review outcomes and recovery
-facts. Deliberate continuation retains creation/input identities and never
-repeats a successful bulk unit merely because another reply was lost.
+facts. Optional `failure` preserves the single-start owner's public diagnostic
+codes and request id, including the existing workspace-mismatch recovery guidance;
+starts without that detail continue to omit it. Deliberate continuation retains
+creation/input identities and never repeats a successful bulk unit merely because
+another reply was lost. A lost outer response with no known recovery remains
+visible and is not automatically replayed; the reader can check their Sessions.
+Known earlier outcomes remain available alongside the unknown-outcome warning.
 
 Preparation preserves the original typed Action failure from source-context,
 native-entry and host-health reads. A denied or failed read is not relabelled
@@ -1619,7 +1629,11 @@ the existing host/controller signal path; if a dispatched request has no answer,
 the result preserves that uncertainty rather than claiming nothing happened.
 These are invocation-local facts returned to the caller, not a durable retry
 record. A lost outer Action response supplies no recovery object and must not be
-treated as permission to start again. Prepared-workspace recovery obtains a fresh
+treated as permission to start again. If the mounted owner already retained an
+exact recovery from an earlier response, the person may deliberately resume that
+same input with its original recovery; changing the input cannot reuse it. The
+unknown notice keeps prior results visible and directs the person to Sessions
+for work already created. Prepared-workspace recovery obtains a fresh
 authorization when needed; it never echoes a spent authorization carrier.
 
 Every configured continuation checks the current catalog's offerability before

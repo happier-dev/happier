@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
-import { requestTriageSessionHandoffV1 } from './sessionHandoff.js';
+import { requestTriageSessionHandoffV1, prepareTriageSessionHandoffV1, settleTriageSessionHandoffV1, TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from './sessionHandoff.js';
 import { readTriageSessionHandoffChoicesV1 } from './runtime.js';
 import { TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 
@@ -68,6 +68,16 @@ describe('public Session handoff chooser read', () => {
 });
 
 describe('public configured Session handoff client', () => {
+  it('prepares the same admitted operand for a host control without executing and settles its original envelope', () => {
+    expect(TRIAGE_SESSION_HANDOFF_ACTION_REF_V1).toEqual({ pluginId: 'happier.triage', localId: 'sessions/run-configured-v1' });
+    expect(prepareTriageSessionHandoffV1(input)).toEqual({ input: { v: 1, handoff: input } });
+    const response = { ok: true, result: { v: 1, handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } } } as const;
+    expect(settleTriageSessionHandoffV1(response)).toBe(response);
+    const failure = { ok: false, errorCode: 'unavailable', phase: 'dispatch' } as const;
+    expect(settleTriageSessionHandoffV1(failure)).toBe(failure);
+    expect(() => prepareTriageSessionHandoffV1({ ...input, evidence: [] })).toThrow();
+    expect(() => settleTriageSessionHandoffV1({ ok: true, result: {} })).toThrow('triage_handoff_result_invalid');
+  });
   it('transports an omitted optional CI attempt number as strict wire JSON without broadening admission', async () => {
     const repository = input.context.repository;
     const attempt = { run: { v: 1, repository, runId: 'run' }, attemptId: 'attempt' };

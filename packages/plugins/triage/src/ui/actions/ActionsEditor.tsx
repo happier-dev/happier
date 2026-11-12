@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { TriageActionSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import {
+  Action,
   Button,
   EmptyState,
   Item,
@@ -16,6 +17,7 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 
+import { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } from '../../actions/actionsCatalogProtocol.js';
 import { readTriageActionTitleKeyV1, type TriageActionV1 } from '../../settings/actions.js';
 import {
   triageCreateActionInputV1,
@@ -255,27 +257,26 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
     setEditor(null);
   }, []);
 
-  const submit = React.useCallback(async () => {
-    if (editor === null) return;
-    const { target, draft } = editor;
-    const applied = await actions.administer(
-      target.kind === 'create'
-        ? triageCreateActionInputV1(draft, target.baseRevision)
-        : triageUpdateActionInputV1(target.actionId, draft, target.baseRevision),
-    );
-    // The draft survives a refusal: throwing away what somebody typed because
-    // another device won the revision race is the one thing this editor must
-    // never do.
-    if (applied === null) return;
-    setEditor((current) => {
-      // Retire only the submitted draft. A newer edit or Cancel is a newer
-      // intent, as in the Views naming owner.
-      if (current === editor) return null;
-      if (current === null || current.target !== target || applied.revision === null) return current;
-      // Keep newer input usable against the revision this write actually
-      // acknowledged, rather than its now-spent base revision.
-      return { ...current, target: { ...current.target, baseRevision: applied.revision } };
-    });
+  const submit = React.useMemo(() => {
+    const input = editor === null ? null : editor.target.kind === 'create'
+      ? triageCreateActionInputV1(editor.draft, editor.target.baseRevision)
+      : triageUpdateActionInputV1(editor.target.actionId, editor.draft, editor.target.baseRevision);
+    return {
+      prepare: () => input === null ? null : actions.prepareAdminister(input),
+      async onSettled(execution: Parameters<typeof actions.settleAdminister>[1]) {
+        if (editor === null || input === null) return;
+        const { target } = editor;
+        const applied = await actions.settleAdminister(input, execution);
+        // A refusal leaves the submitted draft intact. Editing or cancelling
+        // while the write settles remains the person's newer intent.
+        if (applied === null) return;
+        setEditor((current) => {
+          if (current === editor) return null;
+          if (current === null || current.target !== target || applied.revision === null) return current;
+          return { ...current, target: { ...current.target, baseRevision: applied.revision } };
+        });
+      },
+    };
   }, [actions, editor]);
 
   const move = React.useCallback(async (actionId: string, direction: 'up' | 'down') => {
@@ -430,15 +431,19 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
               accessoryOutsidePressable
               accessoryWraps
               accessory={(
-                <Button
+                <Action.Control
+                  action={TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1}
+                  controller={{
+                    prepare: () => actions.revision === null ? null
+                      : actions.prepareAdminister(triageResetActionsInputV1(actions.revision)),
+                    onSettled: execution => { if (actions.revision !== null) {
+                      void actions.settleAdminister(triageResetActionsInputV1(actions.revision), execution);
+                    } },
+                  }}
                   titleKey="plugins.triage.surface.actions.restoreAction"
                   title="Restore"
                   variant="secondary"
                   disabled={busy || actions.read.kind === 'absent'}
-                  onPress={() => {
-                    if (actions.revision === null) return;
-                    void actions.administer(triageResetActionsInputV1(actions.revision));
-                  }}
                 />
               )}
             />
@@ -664,12 +669,13 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
             </Row>
           )}
           <Row gap="small" align="center">
-            <Button
+            <Action.Control
+              action={TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1}
+              controller={submit}
               titleKey="plugins.triage.surface.actions.save"
               title="Save"
               variant="primary"
               disabled={busy || blocker !== null || draftRevisionStale}
-              onPress={() => { void submit(); }}
             />
             <Button
               titleKey="plugins.triage.surface.actions.cancel"

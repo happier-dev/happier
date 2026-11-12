@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -32,7 +32,8 @@ import type { TriageMountedActionsV1 } from './useTriageActions.js';
  *
  * Exact geometry at 375×667 and at the largest type size is a loaded-runtime
  * gate; what is asserted here is the structural fact that gate depends on —
- * that the form and its Save control are inside the editor's own scroll owner.
+ * that author fields and Cancel stay inside the editor's own scroll owner,
+ * while Save is available through the host-owned Action control.
  */
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -50,6 +51,8 @@ function mountedActions(): TriageMountedActionsV1 {
         unavailableReason: null,
         retry() {},
         async resolveForExecution() { return { status: 'unavailable' as const }; },
+        prepareAdminister(input) { return { input }; },
+        async settleAdminister() { return null; },
         async administer() { return null; },
     });
 }
@@ -59,8 +62,10 @@ const editorSurface = defineUiSurface(() => (
 ));
 
 const mounted: PluginUiTestkit[] = [];
+const controls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 
 async function mountEditor(): Promise<PluginUiTestkit> {
+    const host = createPluginUiActionControlTestHost(async () => ({ ok: true, result: { status: 'conflict' } }));
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -70,11 +75,13 @@ async function mountEditor(): Promise<PluginUiTestkit> {
             surfaceContext: createSurfaceContextFixture({}),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
+                actionControl: host.handler,
                 executeAction: async () => { throw new Error('No daemon is reachable from this mount.'); },
             },
         });
     });
     mounted.push(fixture);
+    controls.set(fixture, host);
     await act(async () => { await Promise.resolve(); });
     return fixture;
 }
@@ -105,11 +112,9 @@ describe('the configured-action editor inside the clipped work region', () => {
         const region = editorScrollRegion();
         expect(region).not.toBeNull();
 
-        // The control that commits the draft is the one a clipped region loses
-        // first, because the form puts it last.
-        const save = controlNamed('Save');
-        expect(save).toBeDefined();
-        expect(region?.contains(save ?? null)).toBe(true);
+        // Coordination 2026-11-12: Save is owned by the host Action slot;
+        // author fields and Cancel retain their existing scrolling region.
+        expect(controls.get(editor)?.presentation('Save')).toBeDefined();
         expect(region?.contains(controlNamed('Cancel') ?? null)).toBe(true);
     });
 

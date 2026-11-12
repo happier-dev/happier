@@ -2,13 +2,12 @@ import type { TriageAdmittedOperationExecutorV1, TriageAdmittedSourceV1 } from '
 import type { TriageDataActionContext } from '../../actions/dataContext.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../../internalTasks/contribution.js';
-import { INTERNAL_TASK_SOURCE_V1, scanInternalTasks } from '../../internalTasks/source.js';
-import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
+import { INTERNAL_TASK_SOURCE_V1, scanInternalTasks, type TaskList } from '../../internalTasks/source.js';
 
 /** Host admission and Account task transport boundaries for an empty built-in
  * inventory. The real built-in scanner and descriptor remain under test. */
 export function createTestkitEmptyInternalTaskSource() {
-    const read = () => getActionSpec('tasks.internal.list').outputSchema.parse({
+    const read = (): TaskList => ({
         status: 'ok', scope: { serverId: 'home', accountId: 'account' },
         todos: [], undoneOrder: [], completedOrder: [],
     });

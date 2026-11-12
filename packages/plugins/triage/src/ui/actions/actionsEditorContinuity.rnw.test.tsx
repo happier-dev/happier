@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -23,6 +23,8 @@ import { useTriagePromptInvocations } from './usePromptInvocations.js';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mounted: PluginUiTestkit[] = [];
+const hostControls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
+const pendingPresses = new Set<Promise<void>>();
 const editorSurface = defineUiSurface(() => <TriageActionsEditor actions={useTriageActions()} />);
 
 async function mountEditor() {
@@ -31,6 +33,11 @@ async function mountEditor() {
   let release!: () => void;
   let settlement: 'apply' | 'fail' = 'apply';
   const pending = new Promise<void>((resolve) => { release = resolve; });
+  const controls = createPluginUiActionControlTestHost(async ({ input }) => {
+    await pending;
+    if (settlement === 'fail') return { ok: false, errorCode: 'unavailable', error: 'Account transport unavailable' };
+    return { ok: true, result: await administerTriageAction(TriageAdministerActionInputV1Schema.parse(input), deps) };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -40,6 +47,7 @@ async function mountEditor() {
       surfaceContext: createSurfaceContextFixture({}),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        actionControl: controls.handler,
         // Only the Action transport and Account KV boundaries are replaced;
         // the hook, command parser, catalog mutation and revision CAS stay real.
         executeAction: async ({ action, input }) => {
@@ -48,9 +56,7 @@ async function mountEditor() {
             return await readTriageActionsForSurface({ v: 1 }, deps);
           }
           if (actionId === TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1) {
-            await pending;
-            if (settlement === 'fail') throw new Error('Account transport unavailable');
-            return await administerTriageAction(TriageAdministerActionInputV1Schema.parse(input), deps);
+            throw new Error('Person writes must reach the host control, never raw executeAction');
           }
           throw new Error('Unrelated catalog is unavailable');
         },
@@ -58,13 +64,14 @@ async function mountEditor() {
     });
   });
   mounted.push(fixture);
+  hostControls.set(fixture, controls);
   await act(async () => { await Promise.resolve(); });
   return {
     fixture,
     account,
     async settle(outcome: 'apply' | 'fail' = 'apply') {
       settlement = outcome;
-      await act(async () => { release(); await pending; });
+      await act(async () => { release(); await pending; await Promise.all(pendingPresses); });
     },
     async read() { return await readTriageActionsForSurface({ v: 1 }, deps); },
   };
@@ -72,6 +79,15 @@ async function mountEditor() {
 
 async function press(fixture: PluginUiTestkit, name: string) {
   await act(async () => {
+    const host = hostControls.get(fixture);
+    if (name === 'Save' || name === 'Restore') {
+      expect(host?.presentation(name), 'A person write requires a host-rendered control').toBeDefined();
+      const pending = host!.press(name);
+      pendingPresses.add(pending);
+      void pending.finally(() => pendingPresses.delete(pending));
+      await Promise.resolve();
+      return;
+    }
     const controls = await fixture.getAllByRole('button');
     // Item includes its description in the accessible name, while standalone
     // Save/Cancel controls carry only their label.
@@ -156,7 +172,7 @@ describe('action editor draft settlement', () => {
 
     expect(nameField()?.value).toBe('Newer name');
     expect((await editor.read()).actions.find((action) => action.actionId === 'ask')?.label).toBe('Submitted name');
-    expect((await editor.fixture.getByRole('button', { name: 'Save' })).state?.disabled).not.toBe(true);
+    expect(hostControls.get(editor.fixture)?.presentation('Save')?.disabled).not.toBe(true);
     await press(editor.fixture, 'Save');
     expect((await editor.read()).actions.find((action) => action.actionId === 'ask')?.label).toBe('Newer name');
     expect(nameField()).toBeNull();
@@ -207,6 +223,6 @@ describe('action editor draft settlement', () => {
 
     expect(nameField()?.value).toBe('  Newer unsaved name  ');
     expect((await editor.read()).actions.find((action) => action.actionId === 'ask')?.label).toBe('Ask');
-    expect((await editor.fixture.getByRole('button', { name: 'Save' })).state?.disabled).toBe(true);
+    expect(hostControls.get(editor.fixture)?.presentation('Save')?.disabled).toBe(true);
   });
 });

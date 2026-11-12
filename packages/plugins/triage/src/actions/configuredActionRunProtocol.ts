@@ -4,9 +4,11 @@ import {
     type ProtocolComposableSchema, type ProtocolSchemaInput, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import { TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema, TriageSessionHandoffInputV1Schema, TriageSessionHandoffResultV1Schema, TriageConfiguredEntryExecutionStatusV1Schema } from '@happier-dev/triage-protocol/v1';
+import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 import { TriageActionIdV1Schema, TriageActionRecordV1Schema } from '../settings/actions.js';
 import { TriageStartEntrySessionInputV1Schema, TriageStartEntrySessionResultV1Schema, TriageStartEntrySessionSettledDraftV1Schema, TriagePullRequestReviewChoiceV1Schema, TriageStartPullRequestReviewResultV1Schema, TriagePullRequestReviewInstructionsV1Schema, TriageStartEntrySessionDestinationV1Schema, TriageStartEntrySessionDeliveryV1Schema, TriageStartEntrySessionResumeV1Schema } from './entrySessionProtocol.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
+import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
 
 export const TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 = 'sessions/run-configured-v1';
@@ -92,9 +94,20 @@ export const TriageConfiguredStartRecoveryV1Schema = defineProtocolUnion([Triage
 export type TriageConfiguredStartRecoveryV1 = ReturnType<typeof TriageConfiguredStartRecoveryV1Schema.parse>;
 export type TriageHandoffStartRecoveryV1 = ReturnType<typeof handoffRecovery.parse>;
 
+/** Existing single-entry gestures, consumed by the same Session owner as configured starts. */
+const singleIntent = defineProtocolUnion([
+    defineProtocolObject({ kind: defineProtocolLiteral('configured'),
+        launchMode: defineProtocolUnion([defineProtocolLiteral('start'), defineProtocolLiteral('review')]),
+        comparisonSource: ScmComparisonSourceProtocolSchema.optional(),
+    }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('orchestrate'), prompt: text }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('comparison'), comparison: ScmComparisonSourceProtocolSchema }, { policy: 'closed' }),
+]);
+
 /** One public operand; exact entry destinations delegate to the incumbent controllers. */
 export const TriageRunConfiguredActionInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffInputV1Schema,
+    singleIntent: singleIntent.optional(),
     /** Shared destination uses one draft; per-entry destinations carry drafts in entry order. */
     drafts: defineProtocolArray(TriageStartEntrySessionSettledDraftV1Schema).optional(),
     /** Explicit engines and optional canonical launch selection for formal Review. */
@@ -111,6 +124,7 @@ export type TriageRunConfiguredActionInputV1 = ReturnType<typeof TriageRunConfig
 
 const configuredEntryResultMembers = {
     reason: text.optional(),
+    failure: TriageNewSessionFailureV1Schema.optional(),
     result: TriageStartEntrySessionResultV1Schema.optional(),
     /** Formal review keeps its configured instruction beside the incumbent review context. */
     reviewInstructions: text.optional(),

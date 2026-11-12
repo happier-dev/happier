@@ -1,8 +1,8 @@
 import * as React from 'react';
-import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
-import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import { PluginError, type JsonValue, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import { pluginJsonValuesEqual, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControlExecution, PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1, type TriageEntryRefV1,
   type TriageEntryStateV1, type TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
@@ -13,12 +13,23 @@ import { TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_
 import { TriageMountedUiResultV1Schema } from '../../actions/mountedUiProtocol.js';
 import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1Schema } from '../../actions/reobserveEntryProtocol.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
-import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageSetTaskOriginErrorResultV1Schema } from '../../actions/taskOriginProtocol.js';
+import { TriageSetTaskOriginErrorResultV1Schema } from '../../actions/taskOriginProtocol.js';
 import type { TriageCreateTaskActionInputV1 } from '../../actions/tasksProtocol.js';
 import { triageTaskWriteInvocationFailureV1 } from '../../actions/taskWriteFailure.js';
 
 type TaskAction = typeof TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 | typeof TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1
   | typeof TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1;
+type TaskExecution = Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false; error: unknown }>;
+function hostTaskExecution(execution: PluginUiActionControlExecution): TaskExecution {
+  if (execution.ok) return execution;
+  return { ok: false, error: Object.assign(new PluginError({ code: execution.errorCode, message: execution.error,
+    retryable: false, details: projectNativeJsonValueForTransport({
+      ...(execution.details !== null && typeof execution.details === 'object' ? execution.details : {}),
+      ...(execution.requestId === undefined ? {} : { requestId: execution.requestId }) }),
+    ...(execution.failureCause === undefined ? {} : { failureCause: execution.failureCause }) }), {
+    ...(execution.effectAttempted === false ? { actionHandlerInvocation: 'notStarted' } : {}),
+  }) };
+}
 type TaskAddress = Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string }>;
 type TaskWriteAddress = TaskAddress | Readonly<{ draftId: string }>;
 type TaskWriteSnapshot = Readonly<{
@@ -62,14 +73,18 @@ function createTaskWriteOperation() {
         publish({ ...snapshot, sessionLink: 'linked' });
       }
     },
-    async commit(host: Pick<PluginUiHostApi, 'executeAction' | 'diagnostic'>, onApplied: () => Promise<void>,
-      action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) {
+    prepare(action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) {
       if (retired || snapshot.busy || snapshot.checking
-        || (snapshot.result?.kind === 'uncertain' && (action !== TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1 || snapshot.rebaseFields === null))) return;
+        || (snapshot.result?.kind === 'uncertain' && (action !== TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1 || snapshot.rebaseFields === null))) return null;
       const controller = new AbortController();
       active = controller;
       intent = { action, input, ...(transition?.state === undefined ? {} : { state: transition.state }) };
       publish({ ...snapshot, result: null, busy: true, checking: false, rebaseFields: null, progress: transition?.label ?? null });
+      return { input };
+    },
+    settle(host: Pick<PluginUiHostApi, 'diagnostic'>, onApplied: () => Promise<void>, execution: TaskExecution) {
+      if (retired || !snapshot.busy || intent === null) return;
+      const { action, input } = intent;
       let result: TriageTaskWriteResultV1;
       let sessionLink = snapshot.sessionLink;
       let linkSessionId = snapshot.linkSessionId;
@@ -77,7 +92,8 @@ function createTaskWriteOperation() {
       let originError = snapshot.originError;
       let createdEntryRef = snapshot.createdEntryRef;
       try {
-        const raw = await host.executeAction(action, input, { signal: controller.signal });
+        if (!execution.ok) throw execution.error;
+        const raw = execution.result;
         const created = action === TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 ? TriageCreateTaskActionResultV1Schema.parse(raw) : null;
         if (created?.kind === 'createdAndLinkAttempted') {
           result = created.creation;
@@ -89,6 +105,9 @@ function createTaskWriteOperation() {
           createdEntryRef = result.kind === 'applied' ? { source: creation.source, ...result.observation.localRef } : null;
         }
         else result = TriageTaskWriteResultV1Schema.parse(raw);
+        if (action === TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 && result.kind === 'applied') {
+          createdEntryRef = { source: TriageCreateTaskActionInputV1Schema.parse(input).source, ...result.observation.localRef };
+        }
       }
       catch (error) {
         result = triageTaskWriteInvocationFailureV1(error);
@@ -105,18 +124,29 @@ function createTaskWriteOperation() {
       });
       return result;
     },
-    async repairOrigin(host: Pick<PluginUiHostApi, 'executeAction'>) {
+    async commit(host: Pick<PluginUiHostApi, 'executeAction' | 'diagnostic'>, onApplied: () => Promise<void>,
+      action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) {
+      if (this.prepare(action, input, transition) === null) return;
+      try {
+        const result = await host.executeAction(action, input, { signal: active!.signal });
+        return this.settle(host, onApplied, { ok: true, result });
+      } catch (error) {
+        return this.settle(host, onApplied, { ok: false, error });
+      }
+    },
+    prepareOriginRepair() {
       const { result, originError, createdEntryRef } = snapshot;
-      if (retired || snapshot.busy || result?.kind !== 'applied' || originError == null || createdEntryRef === null) return false;
-      const controller = new AbortController();
-      active = controller;
+      if (retired || snapshot.busy || result?.kind !== 'applied' || originError == null || createdEntryRef === null) return null;
       publish({ ...snapshot, busy: true });
+      return { input: { v: 1, entryRef: createdEntryRef,
+        displayAtMark: { title: result.observation.snapshot.title, scopeLabel: result.observation.snapshot.scopeLabel }, originError } };
+    },
+    settleOriginRepair(execution: TaskExecution) {
+      if (retired || !snapshot.busy) return false;
       let originErrorLink: TaskWriteSnapshot['originErrorLink'];
       try {
-        const answer = TriageSetTaskOriginErrorResultV1Schema.parse(await host.executeAction(TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, {
-          v: 1, entryRef: createdEntryRef,
-          displayAtMark: { title: result.observation.snapshot.title, scopeLabel: result.observation.snapshot.scopeLabel }, originError,
-        }, { signal: controller.signal }));
+        if (!execution.ok) throw execution.error;
+        const answer = TriageSetTaskOriginErrorResultV1Schema.parse(execution.result);
         originErrorLink = answer.status === 'linked' ? 'linked' : 'failed';
       } catch (error) {
         originErrorLink = triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' : 'unknown';
@@ -224,22 +254,39 @@ export function useTriageTaskCommit(onApplied: () => Promise<void>, address?: Ta
   React.useEffect(() => {
     if (linkedSessionIds !== undefined) operation()?.observeSessionLinks(linkedSessionIds);
   }, [scope, key, snapshot.sessionLink, snapshot.linkSessionId, linkedSessionIds]);
+  const adoptCreated = (owner: TaskWriteOperation) => {
+    const created = owner.snapshot();
+    if (created.result?.kind !== 'applied' || created.createdEntryRef === null) return;
+    const lease = acquire(scope, sharedKey(created.createdEntryRef));
+    lease?.value.adoptCreated(created);
+    lease?.release();
+  };
+  // Action controls retain the controller that prepared the gesture, including its operation when selection moves.
+  let preparedOwner: TaskWriteOperation | null = null;
   return { ...snapshot,
+    prepare: (action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) => {
+      preparedOwner = operation();
+      return preparedOwner?.prepare(action, input, transition) ?? null;
+    },
+    settle: (execution: PluginUiActionControlExecution) => {
+      const owner = preparedOwner;
+      if (owner === null) return;
+      const result = owner.settle(host, onApplied, hostTaskExecution(execution));
+      adoptCreated(owner);
+      return result;
+    },
     commit: async (action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) => {
       const owner = operation();
       if (owner === null) return UNAVAILABLE;
       const result = await owner.commit(host, onApplied, action, input, transition);
-      if (action === TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 && result?.kind === 'applied') {
-        const creation = TriageCreateTaskActionInputV1Schema.safeParse(input);
-        if (creation.success) {
-          const lease = acquire(scope, sharedKey({ source: creation.data.source, ...result.observation.localRef }));
-          lease?.value.adoptCreated(owner.snapshot());
-          lease?.release();
-        }
-      }
+      if (action === TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1) adoptCreated(owner);
       return result;
     },
-    repairOrigin: async () => operation()?.repairOrigin(host) ?? false,
+    prepareOriginRepair: () => {
+      preparedOwner = operation();
+      return preparedOwner?.prepareOriginRepair() ?? null;
+    },
+    settleOriginRepair: (execution: PluginUiActionControlExecution) => preparedOwner?.settleOriginRepair(hostTaskExecution(execution)) ?? false,
     checkAgain: async () => {
       let resolved = false;
       try {
