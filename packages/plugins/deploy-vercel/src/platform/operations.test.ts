@@ -119,12 +119,13 @@ describe('Vercel internal platform producer', () => {
     expect(await provider.deployVercelCommit({ ...preparation, sourceIntent: source }, h.context))
       .toEqual({ v: 1, state: 'outcome_unknown', providerDeploymentId: 'dpl_exact', observedAtMs: 1000 });
     const denied = boundary([{ status: 403, body: { error: { message: 'private' } } }]);
-    expect(await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, denied.context))
-      .toEqual({ v: 1, code: 'deployment_access_denied', phase: 'observe', retryable: false });
+    await expect(provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, denied.context))
+      .rejects.toMatchObject({ code: 'deployment_access_denied',
+        data: { failureCause: { errorCode: null, httpStatus: 403 } } });
   });
 
-  it('keeps a server-error or missing-id write unknown without replaying it', async () => {
-    for (const response of [{ status: 503, body: { error: { message: 'private' } } }, { body: { readyState: 'QUEUED' } }]) {
+  it('keeps a missing-id write unknown without replaying it', async () => {
+    for (const response of [{ body: { readyState: 'QUEUED' } }]) {
       const h = boundary([response]);
       expect(await provider.deployVercelCommit({ ...preparation, sourceIntent: source }, h.context))
         .toEqual({ v: 1, code: 'outcome_unknown', phase: 'send', retryable: false });
@@ -188,4 +189,23 @@ describe('Vercel internal platform producer', () => {
     expect(await provider.prepareVercelProject({ ...selection, repository }, h.context))
       .toMatchObject({ code: 'unsupported_action', phase: 'link', retryable: false });
   });
+});
+
+
+it('retains an acknowledged native response when cancellation arrives with it', async () => {
+  const controller = new AbortController();
+  const response = { status: 200, headers: {}, body: new TextEncoder().encode('{"id":"prj_ack"}') };
+  const http = createPluginHttpFixture({ async request() { controller.abort(); return response; } });
+  expect(await provider.vercelRequest({ http, signal: controller.signal, now: Date.now },
+    'https://api.vercel.com/v11/projects', 'POST')).toMatchObject(response);
+});
+
+
+it.each(['service_unavailable', undefined])('keeps a readable native server refusal as known rather than unknown (%s)', async code => {
+  const http = createPluginHttpFixture({ async request() {
+    return { status: 503, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error: code ? { code } : { message: 'private' } })) };
+  } });
+  await expect(provider.vercelRequest({ http, signal: new AbortController().signal, now: Date.now },
+    'https://api.vercel.com/v11/projects', 'POST')).rejects.toMatchObject({ code: 'provider_request_failed',
+      data: { failureCause: { httpStatus: 503, errorCode: code ?? null } } });
 });

@@ -63,14 +63,22 @@ function endpoint(path: string, accountId: string) {
 }
 
 async function send(context: VercelPlatformContext, url: string, method: HttpMethod,
-  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>) {
+  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase) {
   context.signal.throwIfAborted();
   const response = await context.http.request({ url, method, redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
       headerNames: ['authorization'] },
     ...content,
   }, { signal: context.signal });
-  context.signal.throwIfAborted();
+  // A received response remains evidence even if cancellation arrives with it.
+  const value = response.status < 200 || response.status >= 300 ? body(response) : null;
+  if (record(value) && record(value.error)) {
+    throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+      : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false,
+      ...(phase === undefined ? {} : { details: { phase } }),
+      failureCause: { phase: phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`, errorClass: 'Error',
+        errorCode: text(value.error.code) ? value.error.code : null, httpStatus: response.status } });
+  }
   return response;
 }
 export { endpoint as vercelEndpoint, send as vercelRequest };
@@ -110,8 +118,8 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   try { response = await send(context, endpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`,
     input.providerIdentity.providerAccountId), 'GET'); }
   catch (error) {
-    context.signal.throwIfAborted();
     if (isPluginError(error)) throw error;
+    context.signal.throwIfAborted();
     return failure('deployment_unavailable', 'link');
   }
   const denied = rejected(response, 'link');
@@ -145,8 +153,8 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     let production: HttpResponse;
     try { production = await send(context, url.href, 'GET'); }
     catch (error) {
-      context.signal.throwIfAborted();
       if (isPluginError(error)) throw error;
+      context.signal.throwIfAborted();
       return failure('deployment_unavailable', 'link');
     }
     const deniedProduction = rejected(production, 'link');
@@ -181,8 +189,8 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     let access: HttpResponse;
     try { access = await send(context, url.href, 'GET'); }
     catch (error) {
-      context.signal.throwIfAborted();
       if (isPluginError(error)) throw error;
+      context.signal.throwIfAborted();
       return failure('deployment_unavailable', 'link');
     }
     const deniedAccess = rejected(access, 'link');
@@ -246,8 +254,8 @@ export async function observeVercelDeployment(input: ObservationInput, context: 
     return observation(await send(context, endpoint(`/v13/deployments/${encodeURIComponent(input.providerDeploymentId)}`,
       input.providerIdentity.providerAccountId), 'GET'), context, 'observe', input.providerDeploymentId);
   } catch (error) {
-    context.signal.throwIfAborted();
     if (isPluginError(error)) throw error;
+    context.signal.throwIfAborted();
     return failure('deployment_unavailable', 'observe');
   }
 }
@@ -282,8 +290,8 @@ export async function uploadVercelSourceFile(bytes: Uint8Array, sha: string,
       body: bytes,
     }), 'source');
   } catch (error) {
-    context.signal.throwIfAborted();
     if (isPluginError(error)) throw error;
+    context.signal.throwIfAborted();
     return failure('provider_request_failed', 'source');
   }
 }
@@ -329,7 +337,11 @@ export async function cancelVercelDeployment(input: ObservationInput, context: V
     response = await send(context, endpoint(`/v12/deployments/${encodeURIComponent(input.providerDeploymentId)}/cancel`,
       input.providerIdentity.providerAccountId), 'PATCH');
   } catch (error) {
-    if (isPluginError(error)) throw error;
+    if (isPluginError(error)) {
+      // Vercel's documented terminal-400 is reconciled by the existing exact read.
+      if (error.data.failureCause?.httpStatus === 400) return observeVercelDeployment(input, context);
+      throw error;
+    }
     if (context.signal.aborted) return failure('outcome_unknown', 'cancel');
     return observeVercelDeployment(input, context);
   }

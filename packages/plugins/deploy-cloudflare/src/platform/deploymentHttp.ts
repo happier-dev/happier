@@ -56,17 +56,22 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
     context.signal.throwIfAborted();
     return failure('provider_request_failed', phase);
   }
-  if (response.status === 401 || response.status === 403) throw new PluginError({ code: 'deployment_access_denied',
-    details: { phase }, failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error',
-      errorCode: null, httpStatus: response.status } });
-  if (mutation && context.signal.aborted) return failure('outcome_unknown', phase);
-  context.signal.throwIfAborted();
+  let body: unknown;
+  try { body = JSON.parse(new TextDecoder().decode(response.body)); } catch { body = undefined; }
+  const nativeError = isObject(body) && Array.isArray(body.errors) ? body.errors[0] : undefined;
+  const nativeCode = isObject(nativeError) && (typeof nativeError.code === 'number' || typeof nativeError.code === 'string')
+    ? String(nativeError.code) : null;
+  if (response.status === 401 || response.status === 403
+    || isObject(body) && body.success === false
+    || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {
+    throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+      : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false, details: { phase },
+      failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: nativeCode, httpStatus: response.status } });
+  }
+  // Preserve acknowledged results even when local cancellation races with the response.
   if (response.status === 404) return failure('deployment_unavailable', phase);
   if (response.status < 200 || response.status >= 300) return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase);
-  let body: unknown;
-  try { body = JSON.parse(new TextDecoder().decode(response.body)); }
-  catch { return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase); }
-  if (isObject(body) && body.success === false) return failure('provider_request_failed', phase);
+  if (body === undefined) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
   // Cloudflare's deletion, asset upload and hash-registration ACKs contain success/errors/messages,
   // without result. Data-bearing endpoints still require their result envelope.
   if (!isObject(body) || body.success !== true || (!acknowledgementOnly && !('result' in body))) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
