@@ -76,7 +76,7 @@ import type { RunnerTerminationEvent } from '@/agent/runtime/lifecycle/runnerTer
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { connectSessionMcpClient } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { connectSessionMcpClient } from '@/mcp/runtime/sessionMcpLocalClient';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { NativeAgentSessionRunToolBinding } from '@/agent/runtime/registry/engineRegistryTypes';
 import { readCurrentDaemonPluginCatalogSnapshot } from '@/plugins/daemon/currentCatalog';
@@ -936,16 +936,20 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
         expect(opens).toEqual(expect.arrayContaining([expect.objectContaining({ agentId: 'child', modelId: 'snapshot-provider-model', nativeCliPath: nativeCliPaths.child,
           providerConnectionId: 'snapshot-provider', materializedProviderModel: 'snapshot-provider-model' })]));
       }, { timeout: 10_000 });
-      expect(daemonRequests.some(request => request.operation.kind === 'execution_run.provider.admit_v1')).toBe(true);
-      expect(daemonRequests.some(request => request.operation.kind === 'execution_run.provider.prepare_v1')).toBe(true);
+      expect(daemonRequests.some(request => request.operation.kind === 'execution_run.provider.admit_v1')).toBe(false);
+      expect(daemonRequests.filter(request => request.operation.kind === 'execution_run.provider.prepare_v1'
+        && request.operation.runId === providerChildRunId)).toHaveLength(1);
       expect(pluginReloadController.getState().activeRegistry).toBeNull();
       installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'snapshot-provider-model', modelSelection: ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:acme.snapshot/parent',
           providerConnectionId: 'snapshot-unverified-provider', modelId: 'snapshot-provider-model' }), connectedServices: null }) });
       const unverifiedProviderChild = await start(childTarget);
-      expect(unverifiedProviderChild, JSON.stringify(unverifiedProviderChild)).toMatchObject({ ok: false,
-        errorCode: 'execution_run_child_choice_required', details: { childChoice: { parentRouteCompatibility: 'unverified' },
-          executionRunStart: { runCreation: 'noRunCreated' } } });
+      const unverifiedProviderChildRunId = ExecutionRunStartResponseSchema.parse(unverifiedProviderChild).runId;
+      await composition.manager?.waitForTerminal(unverifiedProviderChildRunId);
+      expect(composition.manager?.getPublic(unverifiedProviderChildRunId)).toMatchObject({ status: 'failed',
+        error: { code: 'provider_compatibility_unverified' } });
+      expect(daemonRequests.filter(request => request.operation.kind === 'execution_run.provider.prepare_v1'
+        && request.operation.runId === unverifiedProviderChildRunId)).toHaveLength(1);
       installRuntimeControls({ readPermissionHandler: () => permissions, readAppliedChildSelection: async () => ({ status: 'applied', backendTarget,
         modelId: 'parent-applied-model', connectedServices: null }) });
       // A public role start must use this Session's captured Account, even when

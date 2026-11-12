@@ -129,6 +129,11 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           return { ok: true as const, result: { kind: 'execution_run.provider.released' as const } };
         }
         if (provider.retired) return unavailable();
+        if (operation.kind === 'execution_run.provider.admit_v1') {
+          // Older surviving Session runners send this preflight. Acknowledge
+          // the active snapshot; only prepare_v1 authorizes the actual launch.
+          return { ok: true as const, result: { kind: 'execution_run.provider.admitted' as const, ok: true as const } };
+        }
         if (operation.kind === 'execution_run.provider.revalidate_v1') {
           if (!provider.preparation) return unavailable();
           const prepared = await provider.preparation;
@@ -149,11 +154,6 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           },
         });
         try {
-          if (operation.kind === 'execution_run.provider.admit_v1') {
-            await services.admitInheritedSelection(providerRequest);
-            context.signal?.throwIfAborted();
-            return { ok: true as const, result: { kind: 'execution_run.provider.admitted' as const, ok: true as const } };
-          }
           if (provider.request && !isDeepStrictEqual(provider.request, providerRequest)) return unavailable();
           provider.request ??= providerRequest;
           provider.preparation ??= services.prepareLaunch(providerRequest);
@@ -169,8 +169,7 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           const details = error && typeof error === 'object' && 'details' in error ? error.details : null;
           const parsed = ProviderErrorV1Schema.safeParse(details && typeof details === 'object' && 'providerError' in details ? details.providerError : null);
           if (!parsed.success) throw error;
-          return { ok: true as const, result: { kind: operation.kind === 'execution_run.provider.admit_v1'
-            ? 'execution_run.provider.admitted' as const : 'execution_run.provider.prepared' as const,
+          return { ok: true as const, result: { kind: 'execution_run.provider.prepared' as const,
             ok: false as const, providerError: parsed.data,
             childChoiceRequired: Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'execution_run_child_choice_required') } };
         }

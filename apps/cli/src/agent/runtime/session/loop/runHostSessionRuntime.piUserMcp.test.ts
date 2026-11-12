@@ -660,7 +660,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
           throw new Error('Actual native Session MCP preparation is unavailable');
         const { createAgentIsolationSessionContext } = await import('@/daemon/agentIsolation/agentIsolationSessionContext');
         const { createStablePluginExecService } = await import('@/plugins/runtime/invocation/services/exec');
-        const { connectSessionMcpClient } = await import('@/mcp/runtime/sessionMcpLocalTransport');
+        const { connectSessionMcpClient } = await import('@/mcp/runtime/sessionMcpLocalClient');
         const { resolveCliTsxTsconfigPath, resolveTsxImportHookPath } = await import('@/utils/spawnHappyCLI');
         const { projectPath } = await import('@/projectPath');
         const actualProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
@@ -742,7 +742,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
           selection: { agentTargetKey: 'agent:happier.agent.pi/pi', providerConnectionId: ProviderConnectionIdSchema.parse('fixture-connection'), modelId: 'fixture-model' },
           resolveProvidersFeatureEnabled: () => true, resolveAccountSettingsSnapshot: params.resolveAccountSettingsSnapshot,
           // The pinned daemon Provider-launch RPC is the external boundary.
-          providerLaunch: { async admitInheritedSelection() {}, async prepareLaunch(input) {
+          providerLaunch: { async prepareLaunch(input) {
             providerCalls++;
             expect(input.expectedAccountSettingsScopeKey).toBe(snapshot.scopeKey);
             return { environment: { CONFIGURED_PROVIDER: 'admitted' }, unsetEnvKeys: [], sanitizeDiagnosticText: value => value,

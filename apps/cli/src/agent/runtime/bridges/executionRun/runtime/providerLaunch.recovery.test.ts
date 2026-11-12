@@ -200,6 +200,19 @@ describe('real custom Provider Run recovery', () => {
             expect(test.nativeRequests).toHaveLength(1);
         } finally { await test.cleanup(); release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); }
     });
+    it('admits an explicit-effort Run exactly once through real start before opening its Agent', async () => {
+        const test = await createRecoveryFixture();
+        try {
+            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+                modelSelection: test.input.selection, instructions: 'Use the admitted Provider once.',
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } } },
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' });
+            await test.bridge.waitForTerminal(started.runId);
+            expect(test.nativeRequests).toHaveLength(1);
+            expect(test.requests.filter(request => request.runId === started.runId)).toHaveLength(1);
+        } finally { await test.cleanup(); }
+    });
+
     it.each([
         ['session_owned', 'execution_run_contribution_snapshot_unavailable'],
         ['detached', 'team_credential_provider_selection_not_current'],
@@ -230,17 +243,18 @@ describe('real custom Provider Run recovery', () => {
         } finally { await runtime.dispose(); await test.cleanup(); }
     });
 
-    it('applies the same typed placement refusal during explicit-effort admission before creating an attached Run', async () => {
+    it('refuses an explicit-effort Run without its pinned Session service before opening its Agent', async () => {
         const test = await createRecoveryFixture();
         test.removePinnedService();
         try {
-            await expect(test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
                 modelSelection: test.input.selection, instructions: 'Do not launch without the Session service.',
                 sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } } },
                 permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
-            })).rejects.toMatchObject({ code: 'execution_run_contribution_snapshot_unavailable',
-                details: { executionRunStart: { runCreation: 'noRunCreated' } } });
-            expect(test.bridge.listPublic()).toEqual([]);
+            });
+            await test.bridge.waitForTerminal(started.runId);
+            expect(test.bridge.getPublic(started.runId)).toMatchObject({ status: 'failed',
+                error: { code: 'execution_run_contribution_snapshot_unavailable' } });
             expect(test.nativeRequests).toHaveLength(0);
             expect(test.requests).toHaveLength(0);
         } finally { await test.cleanup(); }

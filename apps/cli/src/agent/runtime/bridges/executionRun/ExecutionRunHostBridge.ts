@@ -59,13 +59,11 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
-import { admitExecutionRunInheritedProviderSelection, type ExecutionRunProviderLaunchServices, type ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
-import { hasConnectedExecutionRunBinding } from './runtime/connectedServicesEnv';
+import type { ExecutionRunProviderLaunchServices, ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
 import type { ExecutionRunManagedProviderEndpointPreparer } from './runtime/managedProvider';
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
 import type { ExecutionRunConnectedServicesSelectionReport } from './runtime/create';
-import { assertExecutionRunProviderLaunchPlacement } from './runtime/providerPreparation';
 import { withExecutionRunHostRuntimeCleanup } from './hostRuntime/cleanup';
 import { borrowExecutionRunRuntimeTurn } from './hostRuntime/borrowedTurn';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
@@ -2409,45 +2407,6 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           lifecycle: preparedParams.sessionId === null || preparedParams.workflowRunId ? 'independent' : 'attached',
           readAppliedParentSelection: this.sessionInteractionHost?.readAppliedChildSelection,
           ...(summarySelection ? { resolvedSelection: summarySelection } : {}),
-        },
-        admitInheritedProviderSelection: async (selection, runId) => {
-          if (!selection.modelSelection) return;
-          assertExecutionRunProviderLaunchPlacement({
-            scope: preparedParams.sessionId ? 'session_owned' : 'detached',
-            selection: selection.modelSelection,
-            providerLaunch: resolution.providerLaunch,
-          });
-          const accountSettingsSnapshot = await accountSnapshotResolver?.() ?? null;
-          if (resolution.providerLaunch && (selection.modelSelection.providerConnectionId !== null
-            || selection.connectedServices && hasConnectedExecutionRunBinding(selection.connectedServices))) {
-            if (!accountSettingsSnapshot?.scopeKey) throw Object.assign(new Error('provider_connection_not_found'), { code: 'provider_connection_not_found' });
-            await resolution.providerLaunch.admitInheritedSelection({
-              selection: selection.modelSelection, backendTarget: preparedParams.backendTarget,
-              sessionConfigOptionOverrides: preparedParams.sessionConfigOptionOverrides,
-              agentId: resolveExecutionRunRuntimeBackendId(preparedParams.backendTarget), runId,
-              connectedServices: selection.connectedServices,
-              expectedAccountSettingsScopeKey: accountSettingsSnapshot.scopeKey,
-            }, params.signal);
-            return;
-          }
-          await admitExecutionRunInheritedProviderSelection({
-            signal: params.signal,
-            selection: selection.modelSelection,
-            sessionConfigOptionOverrides: preparedParams.sessionConfigOptionOverrides,
-            backendTarget: preparedParams.backendTarget,
-            agentId: resolveExecutionRunRuntimeBackendId(preparedParams.backendTarget),
-            runId,
-            ...(this.machineId ? { machineId: this.machineId } : {}),
-            connectedServices: selection.connectedServices,
-            featureEnabled: await this.resolveProvidersFeatureEnabled?.() ?? false,
-            happyHomeDir: this.happyHomeDir ?? configuration.happyHomeDir,
-            accountSettingsSnapshot,
-            savedSecretOperationContext: accountSnapshotResolver?.readOperationContext?.() ?? undefined,
-            ...(this.resolveManagedPurposeBindingIntent ? { resolveManagedPurposeBindingIntent: this.resolveManagedPurposeBindingIntent } : {}),
-            ...(this.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: this.resolveManagedPurposeBindingIntentSelection } : {}),
-            managedProviderAccountAuthority: this.managedProviderAccountAuthority,
-            ...(this.readModelProjection ? { readModelProjection: this.readModelProjection } : {}),
-          });
         },
         profileCatalog: resolution.profileCatalog,
         ...(resolution.engineRegistry

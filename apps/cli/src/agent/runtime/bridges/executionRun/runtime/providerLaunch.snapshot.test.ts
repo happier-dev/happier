@@ -15,7 +15,7 @@ import { createExecutionRunAccountSettingsSnapshotResolver } from '@/api/machine
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { accountSettingsParse, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
-import { admitExecutionRunInheritedProviderSelection, prepareExecutionRunProviderLaunch } from './providerLaunch';
+import { prepareExecutionRunProviderLaunch } from './providerLaunch';
 import { logger } from '@/ui/logger';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { createExecutionRunRuntime } from './create';
@@ -156,7 +156,7 @@ describe('execution-run pinned Provider preparation', () => {
         }
     });
 
-    it('refuses an explicitly undeclared effort before publishing a Run or acquiring an endpoint', async () => {
+    it('refuses an explicitly undeclared effort at launch before acquiring an endpoint', async () => {
         const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, supportsReasoningEffort: true });
         const catalog = splitProviderSettingsV1({ ...fixture.providerSettings,
             manualModelsByConnectionId: { [ProviderConnectionIdSchema.parse('run-gateway')]: [{ id: 'example', addedAt: 1, reasoningEffortLevels: ['low', 'high'] }] },
@@ -178,7 +178,7 @@ describe('execution-run pinned Provider preparation', () => {
                     // also be accepted by the runner's strict transport reader.
                     AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
                         context: { token: 'A'.repeat(43), sessionId: 'effort-session' },
-                        operation: { kind: 'execution_run.provider.admit_v1', ...request,
+                        operation: { kind: 'execution_run.provider.prepare_v1', ...request,
                             backendTarget: readBackendTargetRefV2(request.backendTarget) },
                     });
                     return { machineId: fixture.machineId, featureEnabled: true,
@@ -197,26 +197,15 @@ describe('execution-run pinned Provider preparation', () => {
                 resolveProvidersFeatureEnabled: () => true, resolveAccountSettingsSnapshot: async () => snapshot,
                 resolveExecutionRunProfileCatalog: async () => ({ profileCatalog, engineRegistry, providerLaunch }),
             });
-            await expect(manager.start({ sessionId: null, intent: 'agent', backendTarget: convertBackendTargetRefV2ToV1(backendTarget),
+            const started = await manager.start({ sessionId: null, intent: 'agent', backendTarget: convertBackendTargetRefV2ToV1(backendTarget),
                 modelSelection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'example' },
                 sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'ultra' } } },
                 accountSettings: fixture.snapshot.settings, instructions: 'Do not create a Run.', permissionMode: 'read_only',
                 retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
-            })).rejects.toMatchObject({ code: 'provider_model_config_option_unsupported',
-                details: { providerError: { code: 'provider_model_config_option_unsupported', retryable: false },
-                    executionRunStart: { runCreation: 'noRunCreated' } } });
-            expect(manager.listPublic()).toEqual([]);
-            expect(endpoints).toBe(0);
-            const request = { backendTarget, agentId: fixture.agentId, runId: 'admitted-effort-run',
-                selection: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('run-gateway'), modelId: 'example' },
-                expectedAccountSettingsScopeKey: snapshot.scopeKey! };
-            await expect(providerLaunch.admitInheritedSelection({ ...request,
-                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'high' } } },
-            })).resolves.toBeUndefined();
-            await expect(providerLaunch.admitInheritedSelection({ ...request,
-                sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: null } } },
-            })).resolves.toBeUndefined();
-            await expect(providerLaunch.admitInheritedSelection(request)).resolves.toBeUndefined();
+            });
+            await manager.waitForTerminal(started.runId);
+            expect(manager.getPublic(started.runId)).toMatchObject({ status: 'failed',
+                error: { code: 'provider_model_config_option_unsupported' } });
             expect(endpoints).toBe(0);
         } finally { await manager?.dispose(); await resources.release(); await fixture.cleanup(); }
     });
@@ -283,7 +272,6 @@ describe('execution-run pinned Provider preparation', () => {
                 runtimeRegistryLease: fixture.lease,
                 resolveManagedPurposeBindingIntent: fixture.gateway!.purposeBindingOwner.resolveBindingIntent,
             };
-            await expect(admitExecutionRunInheritedProviderSelection(input)).resolves.toBeUndefined();
             // The endpoint is the sole external boundary: real admitted Agent
             // preparation, Provider policy and materialization remain in process.
             const prepared = await prepareExecutionRunProviderLaunch({ ...input,
@@ -331,7 +319,6 @@ describe('execution-run pinned Provider preparation', () => {
             await expect(services.prepareLaunch({ ...request, expectedAccountSettingsScopeKey: 'foreign-account' })).rejects.toMatchObject({ code: 'provider_authorization_changed' });
             await expect(services.prepareLaunch({ ...request, agentId: 'foreign-agent' })).rejects.toMatchObject({ code: 'provider_authorization_changed' });
             expect(acquired).toBe(0);
-            await services.admitInheritedSelection(request);
             const prepared = await services.prepareLaunch(request);
             const transported = AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true,
                 result: { kind: 'execution_run.provider.prepared', ...projectRunnerExecutionRunProviderLaunch(prepared) } });

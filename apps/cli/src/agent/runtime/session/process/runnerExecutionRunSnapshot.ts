@@ -131,12 +131,6 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         throw Object.assign(createExecutionRunCodedError(code, code), { code, details: { providerError: refusal.providerError } });
       };
       const providerLaunch: ExecutionRunProviderLaunchServices = {
-        async admitInheritedSelection(request, signal) {
-          const result = await dispatch({ kind: 'execution_run.provider.admit_v1', ...request,
-            backendTarget: readBackendTargetRefV2(request.backendTarget) }, snapshot.snapshotId, signal);
-          if (result.kind !== 'execution_run.provider.admitted') return unavailable();
-          if (!result.ok) return providerRefusal(result);
-        },
         async prepareLaunch(request, signal) {
           const result = await dispatch({ kind: 'execution_run.provider.prepare_v1', ...request,
             backendTarget: readBackendTargetRefV2(request.backendTarget) }, snapshot.snapshotId, signal);

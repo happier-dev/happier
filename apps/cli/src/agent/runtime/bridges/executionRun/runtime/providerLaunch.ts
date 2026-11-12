@@ -10,7 +10,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { prepareDirectProviderLaunch, type DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
-import { prepareProviderLaunch, type PrepareProviderLaunchInput } from '@/providers/lifecycle/prepareLaunch';
+import type { PrepareProviderLaunchInput } from '@/providers/lifecycle/prepareLaunch';
 import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -19,7 +19,6 @@ import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/run
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { createExecutionRunCodedError } from '../errors';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { hasConnectedExecutionRunBinding } from './connectedServicesEnv';
 
@@ -61,23 +60,8 @@ export type ExecutionRunProviderLaunchRequest = Readonly<{
 }>;
 
 export type ExecutionRunProviderLaunchServices = Readonly<{
-    admitInheritedSelection(input: ExecutionRunProviderLaunchRequest, signal?: AbortSignal): Promise<void>;
     prepareLaunch(input: ExecutionRunProviderLaunchRequest, signal?: AbortSignal): Promise<PreparedExecutionRunProviderLaunch>;
 }>;
-
-/** Admits a child choice and explicit config without materializing credentials or launching a runtime. */
-export async function admitExecutionRunInheritedProviderSelection(input: ExecutionRunProviderSelectionInput): Promise<void> {
-    if (input.selection.providerConnectionId === null && !(input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices))) return;
-    validateExecutionRunProviderSelectionInput(input);
-    const lease = input.runtimeRegistryLease ?? await acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir });
-    try {
-        const prepared = await prepareProviderLaunch<never>(createExecutionRunProviderPreparation(input, lease));
-        if (!prepared.ok) throw inheritedProviderRefusal(prepared.error);
-        if (prepared.kind === 'provider') await prepared.attempt.cleanupOnFailure();
-    } finally {
-        if (!input.runtimeRegistryLease) await lease.release();
-    }
-}
 
 export type PreparedExecutionRunProviderLaunch = Readonly<{
     environment: Readonly<Record<string, string>>;
@@ -111,21 +95,6 @@ export type ExecutionRunTeamCredentialProviderBindingPreparer = (input: Readonly
 
 function refusal(error: ProviderErrorV1): Error & { code: string } {
     return Object.assign(new Error(error.code), { code: error.code, details: { providerError: error } });
-}
-
-function inheritedProviderRefusal(error: ProviderErrorV1): Error {
-    switch (error.code) {
-        case 'provider_incompatible_with_agent':
-        case 'provider_compatibility_unverified':
-        case 'provider_agent_runtime_unsupported':
-        case 'provider_model_not_found':
-        case 'provider_model_unloaded': {
-            const code = 'execution_run_child_choice_required';
-            return Object.assign(createExecutionRunCodedError(code,
-                'Choose a Provider and exact model supported by the child Agent.'), { code, details: { providerError: error } });
-        }
-        default: return refusal(error);
-    }
 }
 
 function validateExecutionRunProviderSelectionInput(input: ExecutionRunProviderSelectionInput): void {

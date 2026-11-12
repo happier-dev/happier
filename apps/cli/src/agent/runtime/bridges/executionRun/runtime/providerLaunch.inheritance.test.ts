@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema, ProviderSettingsV1Schema,
     buildBackendTargetKeyV2, ProviderBoundModelRefSchema,
@@ -8,12 +8,9 @@ import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../../packa
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../../packages/plugins/claude/src/agent/providerBinding/adapter';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import * as runtimeLease from '@/plugins/runtime/reload/runtimeLease';
 import { resolveProviderConnectionForMachine } from '@/providers/registry/resolve';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { admitExecutionRunInheritedProviderSelection } from './providerLaunch';
-
-afterEach(() => vi.restoreAllMocks());
+import { prepareExecutionRunProviderLaunch } from './providerLaunch';
 
 function fixture(agentId: 'codex' | 'claude', modelId = 'model-a') {
     const contributionKey = 'acme.inheritance/models';
@@ -69,21 +66,23 @@ function fixture(agentId: 'codex' | 'claude', modelId = 'model-a') {
         loadedAtMs: 1, settingsSecretsReadKeys: [],
         providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
     };
-    vi.spyOn(runtimeLease, 'acquireAuthoritativePluginRuntimeRegistryLease').mockResolvedValue(lease);
     const backendTarget = { kind: 'backend' as const, backendId: agentId, sourceKind: 'built_in' as const };
     return { release, materialize, activateContributionsOnDemand, input: {
         backendTarget, agentId, runId: 'run-child', machineId: 'machine-child', featureEnabled: true,
         happyHomeDir: '/tmp/happier-inherited-admission', accountSettingsSnapshot,
+        runtimeRegistryLease: lease,
         selection: ProviderBoundModelRefSchema.parse({ agentTargetKey: buildBackendTargetKeyV2(backendTarget), providerConnectionId: 'pc_inherited', modelId }),
     } };
 }
 
 describe('inherited child Provider admission', () => {
-    it('requires a compatible exact model before child publication and releases preparation without materializing', async () => {
+    it('launches the compatible exact model through its borrowed runtime lease', async () => {
         const { input, release, materialize } = fixture('codex');
-        await expect(admitExecutionRunInheritedProviderSelection(input)).resolves.toBeUndefined();
-        expect(materialize).not.toHaveBeenCalled();
-        expect(release).toHaveBeenCalledOnce();
+        const prepared = await prepareExecutionRunProviderLaunch(input);
+        expect(prepared.providerBinding).toMatchObject({ model: { id: 'model-a' } });
+        expect(materialize).toHaveBeenCalledOnce();
+        await prepared.cleanupOnExit?.();
+        expect(release).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -91,11 +90,11 @@ describe('inherited child Provider admission', () => {
         ['codex', 'missing-model', 'provider_model_not_found'],
     ] as const)('requires a new child choice for %s with %s rather than native/model fallback', async (agentId, modelId, providerErrorCode) => {
         const { input, release, materialize } = fixture(agentId, modelId);
-        await expect(admitExecutionRunInheritedProviderSelection(input)).rejects.toMatchObject({
-            code: 'execution_run_child_choice_required', executionRunErrorCode: 'execution_run_child_choice_required',
+        await expect(prepareExecutionRunProviderLaunch(input)).rejects.toMatchObject({
+            code: providerErrorCode,
             details: { providerError: { code: providerErrorCode } },
         });
         expect(materialize).not.toHaveBeenCalled();
-        expect(release).toHaveBeenCalledOnce();
+        expect(release).not.toHaveBeenCalled();
     });
 });

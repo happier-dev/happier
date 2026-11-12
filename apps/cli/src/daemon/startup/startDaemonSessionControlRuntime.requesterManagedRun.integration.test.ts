@@ -22,11 +22,21 @@ it('admits a cold captured Account through the Run snapshot preparer and never f
       backendTarget: { kind: 'backend', backendId: fixture.fixture.agentId } }));
     if (!acquired.ok || acquired.result.kind !== 'execution_run.snapshot') throw new Error('Expected real Run snapshot');
     snapshotId = acquired.result.snapshotId;
-    const response = await fixture.dispatchRequest({ v: 1, context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
+    const legacy = await fixture.dispatchRequest({ v: 1, context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
       operation: { kind: 'execution_run.provider.admit_v1', selection: { agentTargetKey: fixture.fixture.agentTargetKey,
         providerConnectionId: 'run-gateway', modelId: 'example' }, backendTarget: { kind: 'backend', backendId: fixture.fixture.agentId },
         agentId: fixture.fixture.agentId, runId: fixture.proof.executionRunId, expectedAccountSettingsScopeKey: fixture.proof.expectedAccountSettingsScopeKey } });
-    expect(response).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.admitted', ok: true } });
+    expect(legacy).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.admitted', ok: true } });
+    expect(requester.readAccountSettingsSnapshot().providerConnectionsCatalog).toBeUndefined();
+    await expect(access(join(fixture.directory, 'gateway-started'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const response = await fixture.dispatchRequest({ v: 1, context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
+      operation: { kind: 'execution_run.provider.prepare_v1', selection: { agentTargetKey: fixture.fixture.agentTargetKey,
+        providerConnectionId: 'run-gateway', modelId: 'example' }, backendTarget: { kind: 'backend', backendId: fixture.fixture.agentId },
+        agentId: fixture.fixture.agentId, runId: fixture.proof.executionRunId,
+        controllerOccurrenceId: fixture.proof.executionRunOccurrenceId,
+        expectedAccountSettingsScopeKey: fixture.proof.expectedAccountSettingsScopeKey } });
+    expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.prepared', ok: true } });
+    if (!response.ok || response.result.kind !== 'execution_run.provider.prepared' || !response.result.ok) throw new Error('Expected prepared Run');
     expect(requester.readAccountSettingsSnapshot().providerConnectionsCatalog?.status).toBe('ready');
     expect(getActiveAccountSettingsSnapshot()).toBe(ambient);
     expect(requester.bootstrap.credentials.token).not.toBe(fixture.credentials.token);
@@ -41,12 +51,12 @@ it('admits a cold captured Account through the Run snapshot preparer and never f
       purpose: intent.purpose, target: intent.target, serviceRefs: [intent.target.account.service],
       expectedAccountSettingsScopeKey: fixture.proof.expectedAccountSettingsScopeKey,
     })).resolves.toMatchObject({ ok: true, result: { kind: 'provider_managed.purpose', binding: intent } });
-    await expect(access(join(fixture.directory, 'gateway-started'))).rejects.toMatchObject({ code: 'ENOENT' });
-    const opened = await fixture.dispatch({ kind: 'provider_managed.binding.open', requestId: 'issued-open', ...fixture.proof });
-    expect(opened, JSON.stringify({ opened, sourceDiagnostics: fixture.sourceDiagnostics })).toMatchObject({ ok: true, result: { kind: 'provider_managed.binding' } });
-    if (!opened.ok || opened.result.kind !== 'provider_managed.binding') throw new Error('Expected genuine issued consumer');
-    const binding = opened.result;
-    const send = () => fetch(`${binding.endpointUrl}/responses`, { method: 'POST', headers: binding.headers,
+    await expect(access(join(fixture.directory, 'gateway-started'))).resolves.toBeUndefined();
+    const environment = new Map(response.result.environmentOverlay.map(entry => [entry.name, entry.value]));
+    const endpoint = environment.get('RUN_PROVIDER_URL');
+    const token = environment.get('RUN_PROVIDER_TOKEN');
+    if (!endpoint || !token) throw new Error('Expected admitted Run endpoint materialization');
+    const send = () => fetch(`${endpoint}/responses`, { method: 'POST', headers: { authorization: `Bearer ${token}` },
       body: JSON.stringify({ model: 'example', input: 'hello' }) });
     expect((await send()).ok).toBe(true);
     // A live managed parent has its own applied binding. The child already
@@ -75,8 +85,6 @@ it('admits a cold captured Account through the Run snapshot preparer and never f
     fixture.withdrawRequesterAdmission();
     expect(await requester.isCurrent()).toBe(false);
     expect(() => requester.readAccountSettingsSnapshot()).toThrow('requester_account_context_unavailable');
-    await expect(fixture.dispatch({ kind: 'provider_managed.binding.read', requestId: 'issued-read', ...fixture.proof,
-      bindingId: opened.result.bindingId })).resolves.toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
     await expect(send()).rejects.toBeDefined();
     await expect(fixture.dispatch({ kind: 'provider_managed.binding.read', requestId: 'issued-no-handle', ...fixture.proof }))
       .resolves.toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });

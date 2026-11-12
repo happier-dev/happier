@@ -58,6 +58,8 @@ export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = [
     scope: z.optional(asHostProtocolZod(ExecutionRunScmCommitMessageScopeV1Schema)),
   }),
   z.strictObject({ kind: z.literal('execution_run.scm_commit_target.capture_v1'), cwd: z.string().check(z.minLength(1)) }),
+  // Compatibility acknowledgement for surviving older Session runners; launch
+  // authorization belongs exclusively to execution_run.provider.prepare_v1.
   z.strictObject({ kind: z.literal('execution_run.provider.admit_v1'), ...ProviderLaunchRequestShape }),
   z.strictObject({ kind: z.literal('execution_run.provider.prepare_v1'), ...ProviderLaunchRequestShape }),
   z.strictObject({ kind: z.literal('execution_run.provider.revalidate_v1') }),

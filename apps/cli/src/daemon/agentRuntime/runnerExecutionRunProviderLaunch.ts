@@ -8,7 +8,6 @@ import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope'
 import type { DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { RunnerExecutionRunSnapshotV1 } from '@/agent/runtime/session/process/executionRunSnapshotProtocol';
 import {
-    admitExecutionRunInheritedProviderSelection,
     prepareExecutionRunProviderLaunch,
     type ExecutionRunProviderSelectionInput,
     type ExecutionRunProviderLaunchRequest,
@@ -50,14 +49,6 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
         return preparation;
     };
     return Object.freeze({
-        async admitInheritedSelection(request, signal) {
-            const preparation = await resolve(request);
-            if (request.selection) await admitExecutionRunInheritedProviderSelection({ ...request, ...preparation,
-                selection: request.selection,
-                signal: signal ?? preparation.signal,
-                runtimeRegistryLease: input.runtimeRegistryLease });
-            if (!isSourceCurrent(request) || !await preparation.isCurrent()) throw changed();
-        },
         async prepareLaunch(request, signal) {
             const preparation = await resolve(request);
             const prepared = await prepareExecutionRunProviderLaunch({ ...request, ...preparation,

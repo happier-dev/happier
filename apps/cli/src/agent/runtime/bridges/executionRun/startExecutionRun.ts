@@ -70,7 +70,7 @@ import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/b
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
 import { resolveExecutionRunRuntimeSettings } from './runtimeSettings';
-import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
+import { executionRunPermissionIntentV1 as permissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
@@ -271,7 +271,6 @@ type StartExecutionRunArgs = Readonly<{
     readAppliedParentSelection?: ExecutionRunAppliedParentSelectionReader;
     resolvedSelection?: ResolvedExecutionRunChildSelection;
   }>;
-  admitInheritedProviderSelection?: (selection: ResolvedExecutionRunChildSelection, runId: string) => Promise<void>;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
   contributions?: Pick<
     ResolvedContributionRegistry,
@@ -550,13 +549,6 @@ async function startAdmittedExecutionRun(
       ...(originalParams.childSelection ? { childSelection: originalParams.childSelection,
         agentDefaultSelection } : {}),
     });
-    const explicitProviderEffortRequested = originalParams.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value != null;
-    if ((childSelection.inheritedFromDifferentAgent || explicitProviderEffortRequested) && childSelection.modelSelection?.providerConnectionId) {
-      if (!args.admitInheritedProviderSelection) {
-        throw Object.assign(new Error('Choose a compatible child Agent, Provider and model.'), { code: 'execution_run_child_choice_required' });
-      }
-      await args.admitInheritedProviderSelection(childSelection, runId);
-    }
     if (voiceCommitSelectionInput) {
       voiceCommit = resolveExecutionRunChildSelection({
         ...voiceCommitSelectionInput,
@@ -566,12 +558,6 @@ async function startAdmittedExecutionRun(
         throw Object.assign(new Error('Choose a credential route supported by the Voice chat and commit roles.'), {
           code: 'execution_run_child_choice_required',
         });
-      }
-      if ((voiceCommit.inheritedFromDifferentAgent || explicitProviderEffortRequested) && voiceCommit.modelSelection?.providerConnectionId) {
-        if (!args.admitInheritedProviderSelection) {
-          throw Object.assign(new Error('Choose a compatible child Agent, Provider and model.'), { code: 'execution_run_child_choice_required' });
-        }
-        await args.admitInheritedProviderSelection(voiceCommit, runId);
       }
     }
     args = { ...args, params: {
