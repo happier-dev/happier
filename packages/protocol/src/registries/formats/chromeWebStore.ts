@@ -157,15 +157,19 @@ function summary(source: RegistrySourceV1, item: StoreResult): RegistryItemSumma
 function digest(item: StoreResult): string { return `sha256:${bytesToHex(sha256(new TextEncoder().encode(createCanonicalJsonSigningInput(normalizeStrictJsonValue(item)))))}`; }
 
 export const chromeWebStoreRegistryAdapterV1: RegistryFormatAdapterV1 = {
-  format: 'chrome-web-store', kinds: ['browserExtension'], browserFetchable: () => true, supportsQuery: true,
+  format: 'chrome-web-store', kinds: ['browserExtension'], browserFetchable: () => false, supportsQuery: true,
   async list(ctx, req): Promise<RegistryListPageV1> {
     try {
       const query = req.query?.trim();
       const listing = query ? undefined : await readDiscoveryListings(ctx, req.source);
-      const items = listing?.items ?? parseResults(await rpc(ctx, SEARCH_RPC,
-        [[null, [null, null, null, [query, [20], null, null, null, null, 1]]]], req.source));
+      // Store controller YSTWE: search page field 1 is count, field 2 is the opaque continuation.
+      const search = query ? await rpc(ctx, SEARCH_RPC,
+        [[null, [null, null, null, [query, [20, req.cursor ?? null], null, null, null, null, 1]]]], req.source) : undefined;
+      const items = listing?.items ?? parseResults(search);
+      const continuation = Array.isArray(search) && Array.isArray(search[2]) ? search[2][0] : undefined;
+      const nextCursor = typeof continuation === 'string' && continuation ? continuation : null;
       const summaries = items.map(item => summary(req.source, item));
-      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: Date.now() }, items: summaries, nextCursor: null,
+      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: Date.now() }, items: summaries, nextCursor,
         ...(listing ? { discovery: discovery(req.source, summaries, listing.groups, listing.featuredItem) } : {}) };
 
     } catch (error) { if (!(error instanceof RegistryFetchErrorV1)) throw error; return { sourceId: req.source.id, status: error.status, items: [], nextCursor: null }; }

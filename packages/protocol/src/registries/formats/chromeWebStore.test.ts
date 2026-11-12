@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { chromeWebStoreRegistryAdapterV1, parseChromeWebStoreResultV1, parseChromeWebStoreSsrListingsV1 } from './chromeWebStore.js';
+import { createRegistryHostV1 } from '../registryHostV1.js';
+import { BUILT_IN_REGISTRY_SOURCES_V1 } from '../registrySourcesV1.js';
 import type { RegistryHttpV1 } from './registryFormatAdapterV1.js';
 
 const source = { id: 'builtin:chrome-web-store', title: 'Chrome Web Store', format: 'chrome-web-store' as const,
@@ -24,6 +26,45 @@ describe('Chrome Web Store registry adapter', () => {
     expect(new Set(page.items.map(item => item.itemId)).size).toBe(20);
     expect(page.items[0]).toMatchObject({ title: 'uBlock', installs: 1000000 });
     expect(page.discovery).toBeUndefined();
+  });
+  it('reads the built-in store through its daemon carrier on web where store CORS is unavailable', async () => {
+    const builtIn = BUILT_IN_REGISTRY_SOURCES_V1.find(item => item.format === 'chrome-web-store')!;
+    const unavailable = async (): Promise<never> => { throw new TypeError('Store has no browser CORS'); };
+    const host = createRegistryHostV1({ host: 'web', readSources: async () => [builtIn],
+      http: { getJson: unavailable, getText: unavailable, getBytes: unavailable, postForm: unavailable },
+      daemonFetch: async request => {
+        if (request.op !== 'list') throw new Error('unexpected request');
+        return { op: 'list', page: await chromeWebStoreRegistryAdapterV1.list({ http: listingHttp({}) },
+          { source: builtIn, kind: 'browserExtension', query: request.query }) };
+      },
+    });
+    const result = await host.fetchRequest({ op: 'list', sourceId: builtIn.id, kind: 'browserExtension', query: 'ublock' });
+    expect(result.op).toBe('list');
+    if (result.op === 'list') {
+      expect(result.page.status.state).toBe('ok');
+      expect(result.page.items).toHaveLength(20);
+    }
+  });
+  it('continues a recorded search with the upstream cursor and returns the next distinct page', async () => {
+    const responses = ['chromeWebStoreSearchFirst.txt', 'chromeWebStoreSearchNext.txt'].map(name =>
+      readFileSync(new URL('./fixtures/' + name, import.meta.url), 'utf8'));
+    const requests: unknown[] = [];
+    const http: RegistryHttpV1 = {
+      ...listingHttp({}),
+      async postForm(_url, body) {
+        const frames = JSON.parse(new URLSearchParams(body).get('f.req')!);
+        requests.push(JSON.parse(frames[0][0][1]));
+        return { ok: true, fetchedAt: 1, value: responses[requests.length - 1]! };
+      },
+    };
+    const first = await chromeWebStoreRegistryAdapterV1.list({ http }, { source, kind: 'browserExtension', query: 'ublock' });
+    expect(first.nextCursor).toEqual(expect.any(String));
+    const second = await chromeWebStoreRegistryAdapterV1.list({ http }, { source, kind: 'browserExtension', query: 'ublock', cursor: first.nextCursor });
+    expect(second.status.state).toBe('ok');
+    expect(first.items).toHaveLength(20);
+    expect(second.items).toHaveLength(20);
+    expect(new Set([...first.items, ...second.items].map(item => item.itemId)).size).toBe(40);
+    expect(requests[1]).toEqual([[null, [null, null, null, ['ublock', [20, first.nextCursor], null, null, null, null, 1]]]]);
   });
   it('projects home, collection and category membership from recorded listing pages', async () => {
     const paths = { '/': 'home', '/collection/by_google': 'by_google', '/category/extensions': 'extensions' };
