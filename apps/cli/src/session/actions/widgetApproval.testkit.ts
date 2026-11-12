@@ -9,6 +9,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { artifactKindListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
     EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -162,7 +163,7 @@ export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee
         const row = rows.get(idOf(request.params));
         return row ? { artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [] } : reply.code(404).send({ error: 'not_found' });
     });
-    app.post('/v1/artifacts', async (request, reply) => {
+    app.post('/v1/artifacts', { bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 }, async (request, reply) => {
         const parsed = ArtifactJsonCreateHttpInputV1Schema.safeParse(request.body);
         if (!parsed.success) return reply.code(400).send({ error: 'invalid-params' });
         const create = parsed.data;
@@ -174,7 +175,7 @@ export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee
         if (create.provenanceDataEncryptionKey != null) row.provenanceDataEncryptionKey = create.provenanceDataEncryptionKey;
         return row;
     });
-    app.post('/v1/artifacts/:id', async request => {
+    app.post('/v1/artifacts/:id', { bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 }, async request => {
         const row = rows.get(idOf(request.params));
         if (!row) throw new Error('artifact_missing');
         const update = z.looseObject({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number(),

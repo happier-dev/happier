@@ -200,11 +200,12 @@ describe('installed deployment child ingress', () => {
                     || refusal === 'secret' && path.endsWith('/secret-launch-admission')) return { status: 403, data: { error: 'forbidden' } };
                 if (path.endsWith('/secret-launch-admission')) return { status: 200, data: { ok: true, grants: [] } };
                 if (path.endsWith(`/${template.environment.id}`)) return { status: 200, data: { ok: true,
-                    environment: template.environment, targetLinks: template.targetLinks.map(item => item.targetLink) } };
+                    environment: template.environment, secretScope: template.secretScope, targetLinks: template.targetLinks.map(item => item.targetLink) } };
                 return { status: 200, data: path.includes('/receipts/') ? { ok: true, deployment: path.endsWith('/retained')
                     ? { ...receipt.deployment, id: 'retained', operation: 'deploy', state: 'succeeded', rollbackOfDeploymentId: undefined }
                     : receipt.deployment }
-                    : { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+                    : { ok: true, environment: environment.environment, secretScope: environment.secretScope,
+                        targetLinks: environment.targetLinks.map(item => item.targetLink) } };
             });
             prepared = await fixture.prepare();
             if (!rollback && kind !== 'prepare') expect(await readReviewedDeploymentDeployInput({ authorization: prepared.authorization, envelope: fixture.envelope }))

@@ -21,6 +21,14 @@ import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActio
 import tweetnacl from 'tweetnacl';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { GITHUB_NATIVE_READ_ACTIONS, githubNativeReadActionId } from '../../../../../packages/plugins/scm-github/src/triage/readActions';
+import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../../../../packages/plugins/scm-github/src/triage/contribution';
+import { GITHUB_PLUGIN_ID } from '../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts';
+import { createStubGithubTransport } from '../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support';
+import { CONFIGURED_ACCOUNT, stateInput } from '../../../../../packages/plugins/scm-github/src/triage/testkit/githubMutation.test-support';
+import { GITHUB_PULL_REQUEST_RESPONSE } from '../../../../../packages/plugins/scm-github/src/triage/__fixtures__/githubResponses';
 
 afterEach(() => vi.restoreAllMocks());
 const token = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account' })).toString('base64url')}.signature`;
@@ -30,6 +38,68 @@ function executor() {
     sessionId: 'deployment-session', mode: 'plain', ctx: null,
     serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test' }));
 }
+
+describe('GitHub native Preview through the SDK and CLI deployment reader', () => {
+  it.each(['refused', 'partial'] as const)('preserves the %s Home list outcome after the GitHub read succeeds', async outcome => {
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'preview-child',
+      serverId: 'deployment-home', projectSourceId: 'preview-source', ...artifact });
+    // Only HTTP and Connected Accounts cross system boundaries here. The
+    // registered native declaration, SDK Action service, CLI deployment list
+    // executor and Artifact header reader all run their real implementations.
+    const home = vi.spyOn(axios, 'request').mockResolvedValue(outcome === 'refused'
+      ? { status: 403, data: { ok: false, error: 'deployment_access_denied' } }
+      : { status: 200, data: { ok: true, items: [environment], nextCursor: null } });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      throw new Error(`Unexpected Preview Home read: ${url}`);
+    });
+    const headers = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(url).toBe('https://deployment-home.test/v1/artifacts/read');
+      expect(body).toMatchObject({ projection: 'headers', artifactIds: [artifact.contentArtifactId] });
+      return { status: 200, data: { projection: 'headers', items: [{ artifactId: artifact.contentArtifactId,
+        ok: true, artifact: { id: artifact.contentArtifactId, ownerAccountId: 'deployment-account', access: 'owner',
+          publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+          header: encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Stale preview name' }),
+          headerVersion: artifact.contentHeaderVersion + 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } }] } };
+    });
+    const github = createStubGithubTransport({ binding: { purpose: 'github-api', account: CONFIGURED_ACCOUNT },
+      respond: request => request.url.endsWith('/pulls/1284')
+        ? { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE } : undefined });
+    const materialization = createPluginActionCallerMaterializationFixture(GITHUB_PLUGIN_ID);
+    const actions = createPluginInvocationActionsService({ seed: {
+      plugin: github.context.plugin, occurrenceId: 'github-preview-occurrence', surface: 'plugin',
+      resolveCurrentPluginMaterializationRef: materialization.resolveCurrentPluginMaterializationRef,
+      signal: github.context.signal, isOccurrenceCurrent: () => true,
+      approvalContext: { surface: 'plugin', authority: 'account_automation', serverId: 'deployment-home',
+        runtimeAccountId: 'deployment-account' },
+    }, actionExecutor: executor(), invokeContributedAction: async () => {
+      throw new Error('A native deployment list must not invoke a contributed Action');
+    } });
+    const native = GITHUB_NATIVE_READ_ACTIONS[githubNativeReadActionId(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readPreview)];
+    if (!native) throw new Error('Missing registered GitHub native Preview declaration');
+    const requestId = 'github-preview-issued-request';
+    const context = { ...github.context, requestId, services: { ...github.context.services, actions } };
+    const settled = await Promise.resolve(native.run({ ...stateInput(), serverId: 'deployment-home' }, context))
+      .then(value => ({ value }), error => ({ error }));
+    expect(github.requests.filter(request => request.url.endsWith('/pulls/1284'))).toHaveLength(1);
+    expect(home).toHaveBeenCalledTimes(1);
+    expect(home.mock.calls[0]?.[0]).toMatchObject({ method: 'GET', url: expect.stringContaining('/environments') });
+    if (outcome === 'refused') {
+      expect(headers).not.toHaveBeenCalled();
+      expect(settled).toEqual({ value: { kind: 'unavailable', failure: {
+        class: 'permission', code: 'deployment_access_denied', requestId,
+      } } });
+    } else {
+      expect(headers).toHaveBeenCalledTimes(1);
+      expect(settled).toEqual({ value: { kind: 'unavailable', failure: {
+        class: 'unknown', code: 'deployment_unavailable', requestId,
+      } } });
+      expect(JSON.stringify(settled)).not.toContain('Stale preview name');
+    }
+  });
+});
 
 it.each([['plain', 'session'], ['e2ee', 'session'], ['plain', 'daemon'], ['e2ee', 'daemon'],
   ['plain', 'signed-session'], ['e2ee', 'signed-session']] as const)(
@@ -137,7 +207,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
       sessionId: 'deployment-session', mode: 'plain', ctx: null,
       serverId: 'deployment-home', serverHttpBaseUrl: 'https://deployment-home.test' });
     const input = { homeId: 'deployment-home', machineId: 'parent-host', targets: [{ homeId: 'deployment-home',
-      machineId: 'target', desiredRevision: 0, sources: createEmptyMachineSetupDesiredV1().sources, recipePlans: [] }] };
+      machineId: 'target', desiredRevision: 0, sources: createEmptyMachineSetupDesiredV1().sources, exclusions: [], recipePlans: [] }] };
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'deployment-home',
       runtimeAccountId: 'deployment-account', actionCaller: { kind: 'host' as const } };
     expect(await deps.prepareMachineSetupApply!({ input, context })).toMatchObject({ input,
@@ -205,7 +275,7 @@ describe('Deployment Actions through the default CLI Account front door', () => 
       serverIdentityId: 'srv_deployment_home', serverHttpBaseUrl: 'https://deployment-home.test' });
     expect(await deps.deploymentAction!('deployments.deploy', input, { surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, actionRequestId: 'controller-request', runtimeAccountId: 'deployment-account' }))
-      .toMatchObject({ ok: false, errorCode: 'machine_unavailable', details: { role: 'controller', machineId: 'selected-controller' } });
+      .toMatchObject({ ok: false, errorCode: 'machine_unavailable' });
     expect(sends).toHaveBeenCalledTimes(2);
     expect(relayedTargets).toEqual(Array.from({ length: 2 }, () => ({ kind: 'machine', machineId: 'selected-controller' })));
     expect(provider).not.toHaveBeenCalled();

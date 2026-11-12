@@ -5,6 +5,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-pro
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1,
@@ -52,7 +53,14 @@ it.each(['deployments.environments.delete', 'deployments.targets.unlink', 'deplo
     const baseGet = vi.mocked(axios.get).getMockImplementation()!;
     const environment = createDeploymentEnvironmentDetailV1();
     vi.mocked(axios.get).mockImplementation(async (...args) => {
-      if (new URL(String(args[0])).pathname === `/v1/deployments/environments/${input.environmentId}`) {
+      const url = new URL(String(args[0]));
+      if (url.pathname === `/v1/deployments/environments/${input.environmentId}`) {
+        if (url.searchParams.get('projection') === 'approvalScope') {
+          return { status: 200, data: DeploymentApprovalEnvironmentResultV1Schema.parse({ ok: true, environment: {
+            id: input.environmentId, projectSourceId: environment.environment.projectSourceId,
+            purpose: environment.environment.purpose,
+          } }) };
+        }
         return { status: 200, data: { ok: true, environment: { ...environment.environment, id: input.environmentId },
           targetLinks: environment.targetLinks.map(item => item.targetLink) } };
       }
@@ -63,9 +71,9 @@ it.each(['deployments.environments.delete', 'deployments.targets.unlink', 'deplo
     if (!spec.serverTransport) throw new Error('Missing lifecycle HTTP transport');
     const mutationPath = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
       inputSchema: spec.inputSchema, input }).path;
-    const result = { ok: true, environmentId: input.environmentId, revision: 5,
+    const result = spec.outputSchema.parse({ ok: true, environmentId: input.environmentId, revision: 5,
       ...(actionId === 'deployments.environments.controller.set' ? {} : { detached: true }),
-      ...(actionId === 'deployments.targets.unlink' ? { targetLinkId: 'target-staging', targetLinkRevision: 2 } : {}) };
+      ...(actionId === 'deployments.targets.unlink' ? { targetLinkId: 'target-staging', targetLinkRevision: 2 } : {}) });
     vi.mocked(axios.post).mockImplementation(async (...args) => {
       const path = new URL(String(args[0])).pathname;
       if (path === mutationPath) {
@@ -82,8 +90,8 @@ it.each(['deployments.environments.delete', 'deployments.targets.unlink', 'deplo
     const decided = await h.run({ artifactId: created.artifactId, decision: 'approve', serverIdentityId: homeId,
       originServerId: 'srv_n2' }, 'ui', false, 'present_user', 'approval.request.decide', 'public-delete-decision');
     const settled = await h.approval();
+    expect(signedEffect, JSON.stringify(decided)).toBe(true);
     expect(settled, JSON.stringify(decided)).toMatchObject({ status: 'executed', execution: { ok: true, result } });
-    expect(signedEffect).toBe(true);
   } finally { await h.close(); }
 }, 120_000);
 

@@ -206,7 +206,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                 repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } }));
     app.get('/v1/deployments/environments/:environmentId', async () => ({ ok: true,
-        environment: environment.environment, targetLinks: [row.targetLink] }));
+        environment: environment.environment, secretScope: environment.secretScope, targetLinks: [row.targetLink] }));
     app.get('/v1/deployments/receipts/:deploymentId', async () => ({ ok: true, deployment: receipt }));
     app.get('/v1/deployments/environments/:environmentId/deployments', async request => ({ ok: true,
         items: (request.query as { inProgressOnly?: string }).inProgressOnly === 'true'
@@ -243,7 +243,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
         runtimeOptions: { connectedAccounts: purposeOwner, actionFormConnectedAccounts: purposeOwner,
             accountExecution: { credentials, serverUrl: origin, serverId, serverIdentityId, machineId: 'machine-a', isCurrent: async () => true },
             resolveCurrentMachineId: () => 'machine-a' },
-        plugins: [{ manifest: cloudflare.manifest, files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+        plugins: [{ manifest: cloudflare.manifest, files: { [cloudflare.manifest.entrypoints.daemon]: 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: cloudflare.activate }) }],
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external' })),
@@ -347,9 +347,9 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                     externalActionHomeBinding: { serverId, serverIdentityId },
                     resolveCurrentMachineId: () => 'machine-a',
                     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId: 'machine-a' }) },
-                plugins: [{ manifest: cloudflare.manifest, files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+                plugins: [{ manifest: cloudflare.manifest, files: { [cloudflare.manifest.entrypoints.daemon]: 'export function activate() {}' },
                     instantiateCommittedModule: () => ({ activate: cloudflare.activate }) },
-                { manifest: machineServices.manifest, files: { '.happier-plugin/daemon.js': 'export function activate() {}',
+                { manifest: machineServices.manifest, files: { [machineServices.manifest.entrypoints.daemon]: 'export function activate() {}',
                     ...Object.fromEntries(await Promise.all((machineServices.manifest.contributes.resources ?? [])
                         .filter(resource => resource.kind === 'asset').map(async resource => [resource.path,
                             await readFile(new URL(`../../../../packages/plugins/machine-services/${resource.path}`, import.meta.url))]))) },
