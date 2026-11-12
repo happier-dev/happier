@@ -15,7 +15,7 @@ export type Copy = Readonly<{
     notifyWhenAgentWaits: ExampleCopy; dailySummaryInSession: ExampleCopy; memoryUpkeepInSession: ExampleCopy;
     installDepsInWorktree: ExampleCopy; testAfterEveryTurn: ExampleCopy; noSessions: string;
     checkForDrift: ExampleCopy; runJobOnSchedule: ExampleCopy;
-    backupVerify: ExampleCopy; nightlyBackups: ExampleCopy; restoreDrill: ExampleCopy; dailyHealthDigest: ExampleCopy; restartWhenNeeded: ExampleCopy;
+    deploymentMove: ExampleCopy; backupVerify: ExampleCopy; nightlyBackups: ExampleCopy; restoreDrill: ExampleCopy; dailyHealthDigest: ExampleCopy; restartWhenNeeded: ExampleCopy;
     /** What a session-bound example does when it is offered inside that Session (no session to choose). */
     sessionNotifyDescription: string; sessionDailySummaryDescription: string; sessionTestDescription: string;
     /** The quiet mark beside an example the catalog added recently (lab `b-habit T`, Memory upkeep). */
@@ -35,6 +35,7 @@ export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr
         testAfterEveryTurn: { title: 'Test after every turn', description: 'Choose a session and run an editable test command after every completed, failed or cancelled turn.' },
         checkForDrift: { title: "Check for drift", description: "Compare a deployed service with its expected setup. Nothing is changed." },
         runJobOnSchedule: { title: "Run a job on a schedule", description: "Choose a service and edit the command in the draft, then turn on its schedule. No agent is involved." },
+        deploymentMove: { title: 'Move to another Machine', description: 'Move a stateless repository app without Domains. Keep the source until destination health is verified, then retire only its replaced Machine and retain its data.' },
         backupVerify: { title: "Verify a backup", description: "Check one backup snapshot at the level you choose. Nothing is restored or changed." },
         nightlyBackups: { title: "Nightly backups", description: "Back up your data, verify every new snapshot, then keep only what your retention allows. Turn on its schedule to run it each night." },
         restoreDrill: { title: 'Restore drill', description: 'Verify a snapshot, restore it into a separate saved environment, check its data, then stop its services. Keep that environment and its grants for the next drill.' },

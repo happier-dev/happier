@@ -1060,7 +1060,15 @@ export const DeploymentEnvironmentDetail = React.memo(
                   deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
                     environmentId: detail.environment.id }}
                   deploymentSourceName={projectSource.source?.source.name}
-                  controllerMachineId={detail.environment.controllerMachineId} />
+                  controllerMachineId={detail.environment.controllerMachineId}
+                  active={props.demand.mounted && props.demand.visible}
+                  pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
+                    environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                      environmentId: detail.environment.id },
+                    targetLinkId: detail.environment.runtimeTargetLinkId,
+                    project: { machineId: detail.environment.controllerMachineId, directory: '~' },
+                    protection: detail.environment.protection,
+                  } : undefined} />
               ) : null}
               {detail.environment.purpose !== 'preview' ? (
                 <ItemGroup header="none">

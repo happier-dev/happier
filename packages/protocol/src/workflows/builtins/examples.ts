@@ -3,6 +3,7 @@ import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleTriggerI
 import { agent, input, literal, result } from './definitionParts.js';
 import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '../workflowDefinitionEditV1.js';
 import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
+import { createDeploymentMoveWorkflowV1 } from './deploymentMoveV1.js';
 import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from './backupExamples.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
@@ -10,7 +11,7 @@ export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'triage-an-issue', 'morning-digest', 'deploy-on-push',
   'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
   'check-for-drift', 'run-a-job-on-a-schedule',
-  'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
+  'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed', 'deployment-move',
 ] as const;
 export type WorkflowStarterExampleKeyV1 = (typeof WORKFLOW_STARTER_EXAMPLE_KEYS_V1)[number];
 export type WorkflowStarterExampleV1 = Readonly<{
@@ -237,6 +238,7 @@ export const WORKFLOW_STARTER_EXAMPLES_V1: readonly WorkflowStarterExampleV1[] =
   example('run-a-job-on-a-schedule', 'runJobOnSchedule', runJobOnSchedule, offUntilInputsAreSet('0 3 * * *')),
   example('backup-verify', 'backupVerify', createBackupVerifyWorkflowV1),
   example('nightly-backups', 'nightlyBackups', createNightlyBackupsWorkflowV1, offUntilInputsAreSet('0 2 * * *')),
+  example('deployment-move', 'deploymentMove', createDeploymentMoveWorkflowV1),
   example('restore-drill', 'restoreDrill', createRestoreDrillWorkflowV1, offUntilInputsAreSet('0 3 * * 0')),
   example('daily-health-digest', 'dailyHealthDigest', createDailyHealthDigestWorkflowV1),
   example('restart-when-needed', 'restartWhenNeeded', restartWhenNeeded, offUntilInputsAreSet('0 3 * * *')),

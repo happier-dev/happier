@@ -34,7 +34,8 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/deployment-protocol": "0.0.0"
+    "@happier-dev/deployment-protocol": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

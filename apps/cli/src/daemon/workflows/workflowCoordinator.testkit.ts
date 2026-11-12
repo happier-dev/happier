@@ -32,7 +32,7 @@ export function createTestWorkflowCoordinator(deps: Parameters<typeof createWork
           const spec = getActionSpec(ActionIdSchema.parse(id));
           return freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(spec));
         } } });
-    if (!accepted.ok) throw new Error(`workflow_fixture_not_materialized:${accepted.error.code}`);
+    if (!accepted.ok) throw new Error(`workflow_fixture_not_materialized:${JSON.stringify(accepted.error)}`);
     return coordinator.run({ ...accepted.snapshot, ...input,
       authoredDefinition: input.authoredDefinition ?? accepted.snapshot.authoredDefinition,
       materializedLeaves: accepted.snapshot.materializedLeaves,

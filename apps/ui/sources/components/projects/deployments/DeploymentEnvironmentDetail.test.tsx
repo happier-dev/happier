@@ -65,6 +65,12 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+// Adapt Metro's synchronous loading boundary; the Action executor remains real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 
 const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
 const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
@@ -122,6 +128,20 @@ async function selectEnvironmentTab(screen: Awaited<ReturnType<typeof renderScre
   await waitForHomeGovernance(async () => {
     await act(async () => {});
     expect(screen.findHostByTestId(testID)?.props.accessibilityState?.selected).toBe(true);
+  });
+}
+
+// Temporary bounded replay diagnostics; removed after the deciding result.
+function detailPressDiagnostic(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  const deploy = screen.findByTestId('project-deployments.environment.deploy');
+  return JSON.stringify({
+    deployPresent: deploy !== null,
+    deployDisabled: deploy ? Boolean(deploy.props.disabled) : null,
+    machineOffline: screen.findByTestId('project-deployments.environment.offline') !== null,
+    noRuntimeTarget: screen.findByTestId('project-deployments.environment.unavailable.noTarget') !== null,
+    approvalPresented: screen.findByTestId('project-deployments.outcome.approval') !== null,
+    diagnosticCodes: [...new Set(screen.root.findAll(node => typeof node.props.diagnosticCode === 'string')
+      .map(node => String(node.props.diagnosticCode)))],
   });
 }
 
@@ -517,6 +537,94 @@ describe('Project deployments page', () => {
       await screen.pressByTestIdAsync('project-deployments.move.cancel');
       expect(screen.findByTestId('project-deployments.move')).toBeNull();
     } finally { await screen?.unmount(); await act(async () => { controller.retire(); }); }
+  });
+
+  it('starts Move through the saved Workflow owner and opens the admitted Run with the exact serving source', async () => {
+    const { ModalProvider } = await import('@/modal');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { Switch } = await import('@/components/ui/forms/Switch');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { createWorkflowDefinitionActions, getActionSpec } = await import('@happier-dev/protocol/actions');
+    const { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+    const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
+    const { createWorkflowAccountRunActionOwner } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+    const { createDeploymentMoveWorkflowV1 } = await import('@happier-dev/protocol/workflows/builtins/deploymentMoveV1');
+    const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+    const { WorkflowRunAdmissionPreparationResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema } = await import('@happier-dev/protocol/workflows/workflowRunKeyV1');
+    const { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } = await import('@happier-dev/protocol/workflows/workflowStoredContentV1');
+    const { resolveWorkflowRunDataKeyV1 } = await import('@happier-dev/protocol/workflows/workflowRunDataKeyV1');
+    const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+    const { resolveAbsolutePath } = await import('@/utils/path/pathUtils');
+    const { createWorkflowRunRoute } = await import('@/sync/domains/workflows/workflowRunRoute');
+    const { controller, detail } = controllerFor({});
+    const captured = await captureLazyActionAccountContext(scope.serverId);
+    const definitions = createWorkflowDefinitionActions({ artifactStore: captured.workflowArtifacts,
+      encodeListCursor: captured.encodeArtifactListCursor, assertDefinitionWriteAllowed: () => { throw new Error('Run admission does not rewrite the saved definition'); } });
+    const encryption = { kind: 'available' as const, witness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null } };
+    const census = (runId: unknown) => WorkflowRunRecipientCensusResponseV1Schema.parse({ runId,
+      ownerAccountId: scope.accountId, visibleTeamId: null, encryptionMode: 'plain', access: 'owner',
+      ownerAccountCurrentness: encryption.witness, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] });
+    const admissions: Readonly<Record<string, unknown>>[] = [];
+    const owner = createWorkflowAccountRunActionOwner({ definitions, resolveAccountId: async () => scope.accountId,
+      resolveEncryption: async () => encryption, normalizeAbsolutePath: resolveAbsolutePath,
+      randomBytes: () => { throw new Error('A plain Account does not require encryption keys'); },
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
+      storage: { execute: async operation => {
+        if (operation.operation === 'get' && operation.prepareAdmission !== undefined) return WorkflowRunAdmissionPreparationResultV1Schema.parse({ run: null, keyCensus: census(operation.runId) });
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        if (operation.operation === 'run-key.census') return census(operation.runId);
+        if (operation.operation === 'admit') { admissions.push(operation); return { kind: 'created', run: createWorkflowRunSummaryFixture({
+          id: String(operation.runId), ownerAccountId: scope.accountId, machineId: 'machine-a', state: 'queued',
+          sourceArtifactId: String(operation.sourceArtifactId), origin: { kind: 'direct' } }) }; }
+        throw new Error(`Unexpected Run storage operation: ${operation.operation}`);
+      } },
+    });
+    await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'workflow.run.start', machineId: 'machine-a', tokenEpoch: 0,
+      execute: input => owner.execute({ actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse(input),
+        context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+          externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } }) });
+    storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a' }),
+      createMachineFixture({ id: 'destination', installationId: 'destination-install' })], true,
+      { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.move');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.move');
+      await waitForContent(screen, 'project-deployments.move');
+      const picker = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.move.destination')!;
+      await act(async () => { picker.props.onSelect('destination'); });
+      const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
+      await act(async () => { choice.props.onValueChange(true); });
+      await screen.pressByTestIdAsync('project-deployments.move.confirm');
+      await waitForHomeGovernance(() => expect(admissions).toHaveLength(1));
+      const admitted = admissions[0]!;
+      const runId = String(admitted.runId);
+      const key = resolveWorkflowRunDataKeyV1({ encryption, census: census(runId) });
+      if (key.kind !== 'available') throw new Error('Admitted Move key is unavailable');
+      const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...key.encryption.runCrypto,
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId: scope.accountId, runId },
+        envelope: parseWorkflowStoredContentEnvelopeV1(String(admitted.acceptedEnvelope)) });
+      expect(opened).toMatchObject({ kind: 'available', content: {
+        source: { kind: 'saved', definitionId: admitted.sourceArtifactId },
+        authoredDefinition: createDeploymentMoveWorkflowV1(),
+        inputs: { noLocalData: true, move: { sourceIntent: { kind: 'repository', sha: 'f'.repeat(40) },
+          destinationMachineId: 'destination', destinationInstallationId: 'destination-install' } },
+      } });
+      await waitForHomeGovernance(() => expect(routerMock.spies.push).toHaveBeenLastCalledWith(createWorkflowRunRoute(runId, 'srv_environment_navigation')));
+      expect(screen.findByTestId('project-deployments.move')).toBeNull();
+    } finally { captured.dispose(); await screen?.unmount(); await act(async () => { controller.retire(); }); }
   });
 
   it('offers Duplicate from the loaded Environment without opening another editor owner', async () => {
@@ -1045,6 +1153,7 @@ describe('Project deployments page', () => {
       const notice = 'project-deployments.environment.variables.rotated';
       await waitForContent(screen, notice);
       expect(deploy).not.toHaveBeenCalled();
+      expect(screen.findByTestId(`${notice}.action`), detailPressDiagnostic(screen)).not.toBeNull();
       await screen.pressByTestIdAsync(`${notice}.action`);
       expect(deploy).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
       expect(requested).toHaveBeenCalledExactlyOnceWith('secret-approval');
@@ -1458,7 +1567,7 @@ describe('Project deployments page', () => {
       />,
     );
     await screen.pressByTestIdAsync('project-deployments.environment.deploy');
-    expect(deploy).toHaveBeenCalledWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
+    expect(deploy, detailPressDiagnostic(screen)).toHaveBeenCalledWith({ environmentId: detail.environment.id, targetLinkId: 'target-link' });
     expect(requested).toEqual(['approval-a']);
     // While that review is open, the page says so and offers it again instead of a second Deploy.
     expect(screen.findByTestId('project-deployments.outcome.approval')).not.toBeNull();

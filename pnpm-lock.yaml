@@ -795,6 +795,9 @@ importers:
       socket.io-client:
         specifier: ^4.8.1
         version: 4.8.3(supports-color@8.1.1)
+      string-width:
+        specifier: 8.1.0
+        version: 8.1.0
       tar:
         specifier: 7.5.22
         version: 7.5.22
@@ -2212,6 +2215,9 @@ importers:
       '@happier-dev/deployment-protocol':
         specifier: 0.0.0
         version: link:../deployment-protocol
+      '@happier-dev/protocol':
+        specifier: 0.0.0
+        version: link:../protocol
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -2459,7 +2465,7 @@ importers:
         version: link:../../plugin-sdk
       '@happier-dev/plugins-gemini':
         specifier: 0.0.0
-        version: link:../../plugins/gemini
+        version: link:../gemini
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -2495,6 +2501,15 @@ importers:
       vitest:
         specifier: 3.2.4
         version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  packages/plugins/asciinema:
+    dependencies:
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../../plugin-sdk
+      asciinema-player:
+        specifier: 3.18.0
+        version: 3.18.0
 
   packages/plugins/auggie:
     dependencies:
@@ -10479,6 +10494,9 @@ packages:
   asap@2.0.6:
     resolution: {integrity: sha512-BSHWgDSAiKs50o2Re8ppvp3seVHXSRM44cdSsT9FfNEUUZLOGWVCsiWaRPWM1Znn+mqZ1OfVZ3z3DWEzSp7hRA==}
 
+  asciinema-player@3.18.0:
+    resolution: {integrity: sha512-5gpt2ipFcy4NKmgkv+c/QXnJ9zMicxqWROCOuJqgwwtiYKM8Qe9hnDOvfqke5bW6M2DW/seO3uQYkQ0xeUUVtw==}
+
   asn1js@3.0.7:
     resolution: {integrity: sha512-uLvq6KJu04qoQM6gvBfKFjlh6Gl0vOKQuR5cJMDHQkmwfMOQeN3F3SHCv9SNYSL+CRoHvOGFfllDlVz03GQjvQ==}
     engines: {node: '>=12.0.0'}
@@ -15913,6 +15931,16 @@ packages:
     resolution: {integrity: sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==}
     engines: {node: '>=10'}
 
+  seroval-plugins@1.6.12:
+    resolution: {integrity: sha512-+reiwp/lYxiyctSrdvX7OQ1YLrcbWYgBiZrhSFL+V43b0/DGRLNVSDyZINbQe+tWplPOI2fw2dPrdv6hcc09kQ==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      seroval: ^1.0
+
+  seroval@1.6.12:
+    resolution: {integrity: sha512-CqbIVfk/7GL3ITwZI55lcPbpQbjHZ2DD5cUj4iH7E9YsCfHNJV1mx7yNp86Z84w5IpmkZZS/2s5vPOWmVWSdQg==}
+    engines: {node: '>=10'}
+
   serve-static@1.16.3:
     resolution: {integrity: sha512-x0RTqQel6g5SY7Lg6ZreMmsOzncHFU7nhnRWkKgWuMTu5NN0DR5oruckMqRvacAN9d5w6ARnRBXl9xhDCgfMeA==}
     engines: {node: '>= 0.8.0'}
@@ -16117,6 +16145,9 @@ packages:
   socks@2.8.10:
     resolution: {integrity: sha512-e0VyvkVTwVYViNovRkZ9aodhxVlyoMn7eJhVUPxZ+eK9P/7CBkxvvsBOHqFPEH416726W8tLXXXjKwqgTErrCQ==}
     engines: {node: '>= 10.0.0', npm: '>= 3.0.0'}
+
+  solid-js@1.9.18:
+    resolution: {integrity: sha512-CHGO5YFk6Y9m/1YSxVtKnXfrW7JD3Tmof8HmR4z6TmCPsS8efo8LnzIR8CQh3cUvffqYm6DWyBFfk8dQw1CNQQ==}
 
   sonic-boom@4.2.0:
     resolution: {integrity: sha512-INb7TM37/mAcsGmc9hyyI6+QR3rR1zVRu36B0NeGXKnOOLiZOfER5SA+N7X7k3yUYRzLWafduTDvJAfDswwEww==}
@@ -23324,6 +23355,10 @@ snapshots:
 
   asap@2.0.6: {}
 
+  asciinema-player@3.18.0:
+    dependencies:
+      solid-js: 1.9.18
+
   asn1js@3.0.7:
     dependencies:
       pvtsutils: 1.3.6
@@ -29924,6 +29959,12 @@ snapshots:
     dependencies:
       type-fest: 0.13.1
 
+  seroval-plugins@1.6.12(seroval@1.6.12):
+    dependencies:
+      seroval: 1.6.12
+
+  seroval@1.6.12: {}
+
   serve-static@1.16.3(supports-color@8.1.1):
     dependencies:
       encodeurl: 2.0.0
@@ -30302,6 +30343,12 @@ snapshots:
     dependencies:
       ip-address: 10.7.4
       smart-buffer: 4.2.0
+
+  solid-js@1.9.18:
+    dependencies:
+      csstype: 3.2.3
+      seroval: 1.6.12
+      seroval-plugins: 1.6.12(seroval@1.6.12)
 
   sonic-boom@4.2.0:
     dependencies:
