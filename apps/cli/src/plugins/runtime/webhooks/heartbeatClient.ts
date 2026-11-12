@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
   stringifyPluginInstallationManifestCanonicalJsonV1,
@@ -42,8 +43,11 @@ export type PluginWebhookHeartbeatClient = Readonly<{
   enroll(request: PluginWebhookHeartbeatEnrollRequest, signal?: AbortSignal): Promise<Readonly<{ webhookEndpointId: string }>>;
   read(request: PluginWebhookHeartbeatReadRequest, signal?: AbortSignal): Promise<PluginWebhookHeartbeatReadResultV1>;
 }>;
-function endpointUnavailable(): PluginError {
-  return new PluginError({ code: 'endpoint_unavailable', message: 'Heartbeat endpoint is unavailable' });
+function endpointUnavailable(error?: unknown, phase?: string): PluginError {
+  const inherited = isPluginError(error) ? ActionFailureCauseV1Schema.safeParse(error.data.failureCause) : undefined;
+  return new PluginError({ code: 'endpoint_unavailable', message: 'Heartbeat endpoint is unavailable',
+    ...(phase ? { failureCause: inherited?.success
+      ? inherited.data : projectActionFailureCauseV1(error, phase) } : {}) });
 }
 
 /** Finite daemon transport; the saved source retains only the returned endpoint identity. */
@@ -55,14 +59,16 @@ export function createPluginWebhookHeartbeatClient(params: Readonly<{
     signal?.throwIfAborted();
     let credentials: StoredCredentials | null;
     let publisherHeader: string | null;
+    let phase = 'heartbeat.endpoint.credentials';
     try {
       credentials = await params.readCredentials();
       if (!credentials) throw endpointUnavailable();
+      phase = 'heartbeat.endpoint.publisher';
       publisherHeader = await createDefaultPluginInstallationPublisherHeader({ method: 'POST', path, body });
       if (!publisherHeader) throw endpointUnavailable();
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
-      throw endpointUnavailable();
+      throw endpointUnavailable(error, phase);
     }
     signal?.throwIfAborted();
     const response = await axios.post(`${params.serverHttpBaseUrl.replace(/\/+$/u, '')}${path}`, body, {
@@ -112,11 +118,11 @@ export function createPluginWebhookHeartbeatClient(params: Readonly<{
           PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, { caller: request.caller, input }, signal,
         ));
         return { webhookEndpointId: result.webhookEndpointId };
-      } catch {
+      } catch (error) {
         signal?.throwIfAborted();
         // Axios errors retain request credentials and the capability URL in their
-        // response; only the existing closed error crosses the host service seam.
-        throw endpointUnavailable();
+        // response; retain only the canonical content-free cause at this seam.
+        throw endpointUnavailable(error, 'heartbeat.endpoint.enroll');
       }
     },
     async read(request, signal) {

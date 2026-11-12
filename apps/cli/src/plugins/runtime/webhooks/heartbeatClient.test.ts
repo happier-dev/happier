@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import type { HealthCheckSourceConfigV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
@@ -169,6 +170,35 @@ describe('finite heartbeat Home client', () => {
     expect(JSON.stringify(error)).not.toMatch(/secret-ping-url|synthetic-heartbeat-account/);
     reply = (_request, response) => response.end(JSON.stringify({ kind: 'ready', lastAcceptedAt: -1 }));
     await expect(client().read(readRequest)).resolves.toEqual(unavailable);
+  });
+
+  it('retains content-free enrollment failure causes across the redaction boundary', async () => {
+    reply = (_request, response) => response.writeHead(503).end('secret-ping-url');
+    const rejected: unknown = await client().enroll(enrollRequest).catch((error: unknown) => error);
+    expect(rejected).toMatchObject({ code: 'endpoint_unavailable', data: { failureCause: {
+      phase: 'heartbeat.endpoint.enroll', errorClass: 'AxiosError', errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503,
+    } } });
+    expect(JSON.stringify(rejected)).not.toMatch(/secret-ping-url|synthetic-heartbeat-account/);
+    await writeSettings({ schemaVersion: 6, onboardingCompleted: true });
+    await expect(client().enroll(enrollRequest)).rejects.toMatchObject({ code: 'endpoint_unavailable', data: { failureCause: {
+      phase: 'heartbeat.endpoint.publisher', errorCode: 'endpoint_unavailable', httpStatus: null,
+    } } });
+    expect(requests).toHaveLength(1);
+  });
+
+  it('rejects an unvalidated failure cause from the credentials boundary', async () => {
+    const error = new PluginError({ code: 'endpoint_unavailable' });
+    // Credential adapters can reject with externally reconstructed error data.
+    Reflect.set(error.data, 'failureCause', { phase: 'heartbeat.endpoint.credentials', errorClass: 'Error',
+      errorCode: null, httpStatus: null, secret: 'private-credential-value' });
+    const transport = createPluginWebhookHeartbeatClient({ serverHttpBaseUrl,
+      readCredentials: async () => { throw error; } });
+    const rejected: unknown = await transport.enroll(enrollRequest).catch((failure: unknown) => failure);
+    expect(JSON.stringify(rejected)).not.toContain('private-credential-value');
+    expect(rejected).toMatchObject({ code: 'endpoint_unavailable', data: { failureCause: {
+      phase: 'heartbeat.endpoint.credentials', errorCode: 'endpoint_unavailable', httpStatus: null,
+    } } });
+    expect(requests).toHaveLength(0);
   });
 
   it('saves only the enrolled identity and observes waiting/current/late receipts through the real adopted source host', async () => {
