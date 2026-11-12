@@ -830,6 +830,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const receiptCaption = props.presetOnly ? t('machinePresets.receiptCaption') : undefined;
     const receipt: ManagedReceiptModel = {
         ...(receiptFacts ? buildManagedConfigurationReceipt({ caption: receiptCaption, launch: receiptFacts.launch, reviewedFacts: receiptFacts, providerTitle: title, controllerName: delegatedAcquire || pooledDraft ? controllerName : knownControllerName, homeName, mark: receiptMark, localized,
+            ...(draft?.preset && presentation.descriptor ? { savedLaunchPresentation: {
+                schema: presentation.descriptor.launchSchema, inputHints: optionPresentation.hints } } : {}),
             ...(pooledDraft ? { pooledController: { sentenceName: controllerSentence } } : {}),
             ...(acquireTarget === 'account' && !receiptController ? { managedBy: 'account' as const } : {}), agentSignIn,
             credentialPresentations, keepEditedBelow: Boolean(keepPolicy && defaultPolicy),

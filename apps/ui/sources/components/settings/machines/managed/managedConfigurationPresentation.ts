@@ -1,7 +1,12 @@
 import type * as React from 'react';
 import { readManagedCredentialSelectionValueV1, type ManagedMachineEnrollmentIdentityV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { actionInputOptionValueKey, resolveEffectiveActionInputFields, type ActionInputHints } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { deriveActionInputHints } from '@happier-dev/protocol/actions/schemaInputHints';
+import type { JsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { readInputPath } from '@happier-dev/protocol/inputs';
+import { resolveActionFieldPresentationForInput, formatActionInputFieldChoice } from '@/components/sessions/actions/ActionInputFields';
+import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
 import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { describeManagedSize as describeSharedManagedSize, managedSizeDimensions as sharedManagedSizeDimensions,
     formatManagedSizeBytes, resolveManagedConfigurationCost,
@@ -50,6 +55,8 @@ export function managedCredentialPresentations(input: Readonly<{
 
 export type ManagedConfigurationReceiptInput = Readonly<{
     launch: ValidatedLaunchSnapshotV1; reviewedFacts?: ManagedConfigurationFactsV1;
+    /** Saved configuration fields come from its declaration, independently of native availability or facts. */
+    savedLaunchPresentation?: Readonly<{ schema: JsonSchemaObject; inputHints?: ActionInputHints }>;
     /** The declared service title; null when no current or bundled declaration can name it. */
     providerTitle: string | null;
     /** The managing computer's name; `null` while it is still being read (shown as a pending value, never as words). */
@@ -120,6 +127,20 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         // A place leads with its country's flag wherever the receipt names it, as in the location choices.
         const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
         rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
+    }
+    if (input.savedLaunchPresentation) {
+        const hints = deriveActionInputHints(input.savedLaunchPresentation.schema, input.savedLaunchPresentation.inputHints);
+        const options = buildSessionActionFieldOptionsResolver({});
+        for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, input.launch.choices)) {
+            const savedValue = readInputPath(input.launch.choices, field.path);
+            if (savedValue === undefined || savedValue === null) continue;
+            const presentation = resolveActionFieldPresentationForInput(field, input.launch.choices);
+            if (!presentation || presentation.kind === 'text' && presentation.secure) continue;
+            const value = presentation.kind === 'text' ? presentation.value : presentation.kind === 'toggle'
+                ? t(presentation.value ? 'common.yes' : 'common.no')
+                : formatActionInputFieldChoice(field, savedValue, options);
+            if (value) rows.push({ id: `saved:${field.path}`, label: field.title, value });
+        }
     }
     // A size titled with the machine's own name (a local VM) would repeat the receipt's heading.
     const describeSize = (fact: NativeSizeFact) => {

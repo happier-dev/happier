@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, formatManagedSizeBytes, describeLocalHeadroom } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary, formatManagedSizeBytes, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
@@ -31,6 +31,48 @@ describe('the phone summary of a configuration', () => {
     });
 });
 describe('one managed configuration receipt projection', () => {
+    it('keeps declared saved choices alongside partial native facts, with field labels and sensitive values withheld', () => {
+        const saved = { ...launch, choices: { image: 'https://images.example/saved.img', store: '/saved/virtual-machines',
+            memory: 4 * 1024 ** 3, region: 'west', token: 'private-saved-token', enabled: false } };
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Compute',
+            reviewedFacts: { ...reviewedFacts, launch: saved, nativeFacts: { image: { id: 'friendly', title: 'Friendly system' } } },
+            savedLaunchPresentation: { schema: { type: 'object', properties: { image: { type: 'string' }, store: { type: 'string' },
+                memory: { type: 'integer' }, region: { type: 'string' }, token: { type: 'string' }, missingFlag: { type: 'boolean' }, enabled: { type: 'boolean' } } }, inputHints: { fields: [
+                { path: 'memory', title: 'Memory (GiB)', widget: 'integer', unit: 'bytes' },
+                { path: 'region', title: 'Region', widget: 'select', options: [{ value: 'west', label: 'West coast' }] },
+                { path: 'token', title: 'Token', widget: 'secret' },
+            ] } } });
+        expect(receipt.spec).toBe('Friendly system');
+        expect(receipt.facts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ label: 'Image', value: saved.choices.image }),
+            expect.objectContaining({ label: 'Store', value: saved.choices.store }),
+            expect.objectContaining({ label: 'Memory (GiB)', value: '4' }),
+            expect.objectContaining({ label: 'Region', value: 'West coast' }),
+            expect.objectContaining({ label: 'Enabled', value: t('common.no') }),
+        ]));
+        expect(JSON.stringify(receipt)).not.toContain(saved.choices.token);
+        expect(receipt.facts.some(fact => fact.label === 'Token')).toBe(false);
+        expect(receipt.facts.some(fact => fact.label === 'Missing Flag')).toBe(false);
+    });
+    it('keeps saved choices with unavailable declaration labels honest instead of printing opaque selection ids', () => {
+        const saved = { ...launch, choices: { region: 'private-provider-location-id' } };
+        const receipt = buildManagedConfigurationReceipt({ launch: saved, providerTitle: 'Compute',
+            savedLaunchPresentation: { schema: { type: 'object', properties: { region: { type: 'string' } } }, inputHints: { fields: [
+                { path: 'region', title: 'Region', widget: 'select', optionsSourceId: 'live-regions' },
+            ] } } });
+        expect(receipt.facts).toContainEqual(expect.objectContaining({ label: 'Region', value: t('common.unavailable') }));
+        expect(JSON.stringify(receipt)).not.toContain(saved.choices.region);
+    });
+    it('keeps Team resource receipts out of personal Account lookups and presents an absent resource as unavailable', () => {
+        const selected = ValidatedLaunchSnapshotV1Schema.parse({ ...launch, credentials: [{
+            purpose: { consumer: launch.provider, purpose: 'provision' }, teamId: 'engineering',
+            selection: { source: 'team_resource', resourceId: 'team-compute', deliveryMode: 'brokered' },
+        }] });
+        expect(managedCredentialReceiptTargets(selected)).toEqual([]);
+        const receipt = buildManagedConfigurationReceipt({ launch: selected, providerTitle: 'Compute' });
+        expect(receipt.facts.find(fact => fact.id === 'credential:0')?.value).toBe(t('common.unavailable'));
+        expect(JSON.stringify(receipt)).not.toContain('team-compute');
+    });
     it('shares the approval cost, idle duration and readable size with the configurator receipt', () => {
         const retention = { kind: 'unused' as const, afterMs: 3_600_000, effect: 'stop' as const };
         const nativeFacts = { size: { id: '4/4/100', title: 'Custom size', cpuCores: 4,
@@ -105,7 +147,9 @@ describe('one managed configuration receipt projection', () => {
         expect(accounts).toHaveLength(2);
         expect(accounts[0]?.label).toContain('provision');
         expect(accounts[1]?.label).toContain('gateway');
-        const unavailable = presentQualifiedConnectedAccountTarget({ target: { kind: 'account', account: selected.credentials![0]!.account },
+        const personal = selected.credentials![0]!;
+        if (!('account' in personal)) throw new Error('Expected a personal credential fixture');
+        const unavailable = presentQualifiedConnectedAccountTarget({ target: { kind: 'account', account: personal.account },
             accounts: [], groups: [], labelsByKey: {}, serviceTitle: null }).primaryLabel;
         expect(accounts.map(fact => fact.value)).toEqual([unavailable, unavailable]);
         expect(receipt.facts.find(fact => fact.id === 'controller')?.value).toBe(t('common.unknown'));
