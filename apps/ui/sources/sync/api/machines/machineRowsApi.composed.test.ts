@@ -31,6 +31,20 @@ afterEach(async () => {
 });
 
 describe('Machine rows through captured Home readers', () => {
+    it('reads only selected Machines for a request-only Account', async () => {
+        const selected: string[] = [];
+        const machine = createPlainMachineRowFixture({ id: 'selected-machine', accountId: 'owner' });
+        const rows = await readMachineRows({ machineIds: [machine.id], request: async (path, init) => {
+            expect(path).toBe('/v1/machines/read-batch');
+            return createMachineReadBatchResponseFixture(init.body, id => {
+                selected.push(id);
+                return id === machine.id ? machine : null;
+            });
+        } });
+        expect(selected).toEqual([machine.id]);
+        expect(rows.get(machine.id)).toEqual(machine);
+    });
+
     it('cancels a held 185-Machine read when its Account changes without delivering the retired rows', async () => {
         const ids = Array.from({ length: 185 }, (_, index) => `retired-machine-${index}`);
         const entered = createDeferred<void>();
@@ -113,7 +127,7 @@ describe('Machine rows through captured Home readers', () => {
                 if (request.path === '/v1/machines') return Response.json([]);
                 if (request.path !== '/v1/machines/read-batch') return undefined;
                 const response = createMachineReadBatchResponseFixture(request.body, id => ids.includes(id)
-                    ? { id, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: null }
+                    ? { id, managedMachineRef: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, dataEncryptionKey: null }
                     : null);
                 batches.push((request.body as { machineIds: string[] }).machineIds);
                 entered.resolve();

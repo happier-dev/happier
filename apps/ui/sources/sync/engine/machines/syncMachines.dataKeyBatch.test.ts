@@ -4,7 +4,7 @@ import type { MachineDataKeyCacheEntry } from './syncMachines';
 import tweetnacl from 'tweetnacl';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
 import { Encryption } from '@/sync/encryption/encryption';
-import { storage } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storageStore';
 import {
     computeRunnerMachineContentKeyFingerprintV1,
     signRunnerMachineContentKeyBindingV1,
@@ -398,7 +398,7 @@ describe('fetchAndApplyMachines machine data-key unwrapping', () => {
 
 describe('fetchAndApplyMachines real selected-envelope hydration', () => {
     it.each(['use', 'manage'] as const)('keeps a shared %s Machine visible in list/detail with readable or locked E2EE content', async role => {
-        const { storage } = await import('@/sync/domains/state/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         const { fetchAndApplyMachines } = await import('./syncMachines');
         const { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } =
             await import('@/sync/store/domains/machines/resolveMachinesForActiveServerFromState');
@@ -443,7 +443,7 @@ describe('fetchAndApplyMachines real selected-envelope hydration', () => {
     ] as const)('hydrates a $initial Machine despite a presence update during $phase', async ({ phase, initial }) => {
         // This suite resets modules; the real ingress and fixture must use the
         // same current store rather than a stale statically imported instance.
-        const { storage } = await import('@/sync/domains/state/storage');
+        const { storage } = await import('@/sync/domains/state/storageStore');
         const { readMachineActivity } = await import('@/sync/domains/machines/machineActivity');
         const { fetchAndApplyMachines } = await import('./syncMachines');
         const { flushMachineActivityUpdates } = await import('@/sync/engine/socket/socket');

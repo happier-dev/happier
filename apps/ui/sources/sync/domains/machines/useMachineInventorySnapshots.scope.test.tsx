@@ -2,6 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const network = await installSessionOpsNetworkBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -26,9 +27,9 @@ it('projects each Home under its credential Account instead of the focused Accou
     await setActiveServerId(homeA.id);
     const machine = createMachineFixture({ id: 'studio', activeAt: Date.now() });
     const scopeA = { serverId: homeA.serverIdentityId, accountId: 'account-a' };
-    storage.setState({ profileScope: scopeA, machines: { [machine.id]: machine },
-        machineListByServerId: { [homeA.serverIdentityId]: [machine], [homeB.serverIdentityId]: [machine] },
-        machineListStatusByServerId: { [homeA.serverIdentityId]: 'idle', [homeB.serverIdentityId]: 'idle' } });
+    storage.setState({ profileScope: scopeA });
+    await publishMachineInventoryForTest(scopeA, [machine]);
+    await publishMachineInventoryForTest({ serverId: homeB.serverIdentityId, accountId: 'account-b' }, [machine]);
     recordMachineRequestFailed({ serverId: homeB.serverIdentityId, accountId: scopeA.accountId, machineId: machine.id });
     const hook = await renderHook(() => useAllProfileMachineInventorySnapshots());
     const snapshot = (serverIdentityId: string) => hook.getCurrent().find(row => row.kind === 'resolved' && row.serverIdentityId === serverIdentityId);

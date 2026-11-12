@@ -10,6 +10,7 @@ import {
     withdrawMachinePresenceForScope,
 } from '@/sync/domains/machines/reachability/machineReachability';
 import { resolveMachineAdministrationTargetState } from './targetSelection';
+import { publishMachineActivities } from '../machineActivity';
 
 import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
@@ -195,6 +196,7 @@ describe('snapshot Administration candidates', () => {
             machine({ id: 'replaced', replacedByMachineId: 'replacement' }),
             machine({ id: 'locked', active: true, locked: true }),
         ];
+        publishMachineActivities(machines.map(machine => ({ machine, activity: machine, projections: [] })));
         const snapshots = resolveAllProfileMachineInventorySnapshots({
             profiles: [profile], activeServerId: 'local-profile-a', activeMachines: [],
             machineListByServerId: { [profile.serverIdentityId!]: machines },
