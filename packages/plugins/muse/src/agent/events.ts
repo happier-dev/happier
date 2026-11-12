@@ -1,3 +1,5 @@
+import { questionInput, readMuseNativeJson, readMuseRecord } from './nativeInput.js';
+export { readMuseNativeJson, readMuseRecord } from './nativeInput.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { AgentExecutionRunConversationEventV1, AgentSessionCompactRequest, AgentSessionRuntimeEvent, AgentSessionSendRequest, AgentSessionSubagentObservation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX, SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
@@ -15,20 +17,6 @@ type NativeItem = { value: NativeRecord; revision: number; streamedText: string;
   presentation?: Readonly<{ toolCallId: string; toolName: string; input: JsonValue }> };
 type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: string; workflowRunId?: string };
 type ChildObservation = AgentSessionSubagentObservation;
-
-function isMuseRecord(value: JsonValue | undefined): value is NativeRecord {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/** MSP objects are decoded once at this plugin's native boundary. */
-export function readMuseRecord(value: JsonValue | undefined): NativeRecord {
-  return isMuseRecord(value) ? value : {};
-}
-
-export function readMuseNativeJson(value: JsonValue | undefined): JsonValue {
-  if (typeof value !== 'string') return value ?? null;
-  try { return JSON.parse(value); } catch { return value; }
-}
 
 export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
   onActivity?(state: 'active' | 'idle' | 'unknown'): void;
@@ -312,9 +300,11 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     if (item.kind !== 'toolCall' && item.kind !== 'userShell' && !fallback) return;
     const toolCallId = typeof item.callId === 'string' ? item.callId : itemId;
     const toolName = item.kind === 'userShell' || item.tool === 'bash' ? 'Bash'
+      : item.tool === 'request_user_input' ? 'AskUserQuestion'
       : typeof item.tool === 'string' ? item.tool : typeof item.kind === 'string' ? item.kind : 'nativeItem';
-    const input = item.kind === 'userShell' ? { command: item.commandText ?? '' }
+    const rawInput = item.kind === 'userShell' ? { command: item.commandText ?? '' }
       : fallback ? { text: item.fallbackText ?? '' } : readMuseNativeJson(item.args);
+    const input = item.tool === 'request_user_input' ? questionInput(readMuseRecord(rawInput)) : rawInput;
     state.presentation = { toolCallId, toolName, input };
     const owner = correlation(item.turnId);
     if (!previous) publish({ kind: 'tool-call', toolCallId, toolName, input, ...owner });

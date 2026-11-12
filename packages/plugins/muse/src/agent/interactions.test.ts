@@ -141,8 +141,34 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
-it('uses the canonical user-action answer for a native question and keeps the late requested notification settled', async () => {
-    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'question-single-choice' } });
+it('renders the replay-72 native request_user_input as an answerable canonical question and continues after answering', async () => {
+    // Replay-72 captured the normalized live payload; retain the recorded MSP
+    // method/order and substitute its exact question/options into native frames.
+    const scratch = await mkdtemp(join(tmpdir(), 'muse-replay72-question-'));
+    const recordingPath = join(scratch, 'recording.json');
+    const question = { id: 'approve-profile',
+        question: 'Created approval request 3520f39a-96af-815c-a079-860bba952396 for browser.profile.create AGENT-REPLAY-72-1110-extension on machine ffd72b3e-40ca-4644-9bd2-46753a01d8cb. Please approve in Happier Inbox, then choose continue. Have you approved?',
+        header: 'Approval', selection: { mode: 'single' }, options: [
+            { label: 'Approved, continue', description: 'You approved browser.profile.create in Happier Inbox, I will retry/check status.' },
+            { label: 'Not approved, stop', description: 'You rejected or want to stop the QA run.' },
+        ] };
+    const recording = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
+    if (!Array.isArray(recording.rows)) throw new Error('Missing captured native rows');
+    for (const value of recording.rows) {
+        const params = readMuseRecord(readMuseRecord(readMuseRecord(value).message).params);
+        if (Array.isArray(params.questions)) Object.assign(params, { questions: [question] });
+        if (Array.isArray(params.answers)) Object.assign(params, { answers: [{ questionId: question.id, selectedLabel: 'Approved, continue' }] });
+        const item = readMuseRecord(params.item);
+        if (item.tool === 'request_user_input') {
+            // Native 1.4.15 journal line835 omits selection in tool arguments;
+            // its presented pending occurrence resolves this to single choice.
+            const { selection: _selection, ...toolQuestion } = question;
+            Object.assign(item, { args: JSON.stringify({ questions: [toolQuestion] }) });
+        }
+    }
+    await writeFile(recordingPath, JSON.stringify(recording)
+        .replaceAll('call_01a1bf8bb96d71deb3bfccc8c3c8e273', 'call_01a1cea8662f7686bbfd32783e20f1af'));
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'question-single-choice', recordingPath } });
     const events = createAgentSessionRuntimeHarness();
     try {
         const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
@@ -151,36 +177,39 @@ it('uses the canonical user-action answer for a native question and keeps the la
             delivery: { kind: 'newTurn', turnId: 'question-turn' } });
         const before = await fixture.waitForAudit(audit => audit.nativeResponseCount > 0);
         expect(before).toMatchObject({ receiptCount: 1, decisionCount: 0, released: false });
-        const requestId = 'call_01a1bf8bb96d71deb3bfccc8c3c8e273';
+        const requestId = 'call_01a1cea8662f7686bbfd32783e20f1af';
         await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId])
             .toMatchObject({ kind: 'user_action', tool: 'AskUserQuestion', arguments: { questions: [
-                { id: 'color', question: 'Which color do you prefer?', selection: 'single',
-                    options: [{ label: 'Blue' }, { label: 'Green' }] },
+                { id: question.id, question: question.question, selection: 'single',
+                    options: question.options },
             ] } }));
+        const pending = fixture.host.getAgentStateSnapshot()?.requests?.[requestId];
+        expect(events.canonicalEvents().filter(event => event.kind === 'tool-call' && event.toolCallId === requestId))
+            .toMatchObject([{ toolName: 'AskUserQuestion', input: pending?.arguments }]);
         // Constructed from the native 500-character constraint: host accepts
         // the form, while the actual process boundary refuses its application.
         expect(await invokeHomeRpc(fixture, 'session.user_action.answer', { id: requestId, approved: true,
-            answers: { color: ['Blue'] }, answerDetails: { color: { note: 'x'.repeat(501) } },
+            answers: { 'approve-profile': ['Approved, continue'] }, answerDetails: { 'approve-profile': { note: 'x'.repeat(501) } },
         })).toMatchObject({ error: expect.any(String) });
         expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toBeDefined();
         expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[requestId]).toBeUndefined();
         expect(await fixture.waitForAudit(audit => audit.methods.filter(method => method === 'userInput/answer').length === 1))
             .toMatchObject({ decisionCount: 0, released: false });
         expect(await invokeHomeRpc(fixture, 'session.user_action.answer', { id: requestId, approved: true,
-            answers: { color: ['Blue'] },
+            answers: { 'approve-profile': ['Approved, continue'] },
         })).toBeUndefined();
         expect(await fixture.waitForAudit(audit => audit.decisionCount === 1)).toMatchObject({ released: true });
         await events.until('turn-complete');
         expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toBeUndefined();
         expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[requestId]).toMatchObject({ decision: 'approved', answeredBy: { kind: 'person', accountId: 'owner' },
-            structuredAnswersV1: { color: ['Blue'] } });
+            structuredAnswersV1: { 'approve-profile': ['Approved, continue'] } });
         events.expectExactlyOneTerminalEvent({ turnId: 'question-turn' });
         await fixture.closeSession();
         const audit = await fixture.readAudit();
         expect(audit.methods.filter(method => method === 'userInput/answer')).toHaveLength(2);
         expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(0);
         expect(audit.methods.filter(method => method === 'turn/start')).toHaveLength(1);
-    } finally { events.dispose(); await fixture.dispose(); }
+    } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
 it.each([
@@ -204,6 +233,7 @@ it.each([
         await fixture.waitForAudit(audit => audit.receiptCount === 1);
         await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId])
             .toMatchObject({ kind: 'user_action', lifetime: 'occurrence' }));
+        const questionArguments = fixture.host.getAgentStateSnapshot()?.requests?.[requestId]?.arguments;
         const recording = JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8'));
         const observed = recording.rows[61].message;
         const notification = { ...observed, params: { ...observed.params, ...settlement,
@@ -224,8 +254,8 @@ it.each([
         })).toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
         await vi.waitFor(() => expect(events.canonicalEvents()).toContainEqual(expect.objectContaining({
             kind: 'tool-progress', toolCallId,
-            progress: expect.objectContaining({ toolName: 'request_user_input',
-                rawInput: JSON.parse(recording.rows[53].message.params.item.args),
+            progress: expect.objectContaining({ toolName: 'AskUserQuestion',
+                rawInput: questionArguments,
                 content: [{ type: 'text', text: JSON.stringify({ nativeQuestionSettlement: {
                     ...settlement, reason: notification.params.reason,
                 } }) }],

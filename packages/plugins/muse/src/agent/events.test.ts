@@ -16,6 +16,34 @@ const recording = JSON.parse(readFileSync(new URL('./testkit/fixtures/login-smok
 const nativeTurnId = '01a1bf87-e037-7cc3-ad73-d6ffffa47b13';
 
 describe('Muse event projection', () => {
+  it.each(['live', 'snapshot', 'history'] as const)('projects native questions through the canonical answer controls on %s', async source => {
+    const capture = readMuseRecord(JSON.parse(readFileSync(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
+    if (!Array.isArray(capture.rows)) throw new Error('Missing recorded native question');
+    const message = capture.rows.map(row => readMuseRecord(readMuseRecord(row).message))
+      .find(message => message.method === 'item/started' && readMuseRecord(readMuseRecord(message.params).item).tool === 'request_user_input');
+    if (!message) throw new Error('Missing recorded request_user_input item');
+    const projection = createMuseEventProjection({ sessionId: 'host-question' });
+    const events: AgentSessionRuntimeEvent[] = [];
+    projection.watch(event => events.push(event));
+    const item = readMuseRecord(readMuseRecord(message.params).item);
+    try {
+      if (source === 'snapshot') await projection.replayItems([item]);
+      else if (source === 'history') await projection.replayHistoryEvent({ method: 'item/started', params: message.params });
+      else {
+        await projection.observe({ method: 'item/started', params: message.params });
+        await projection.observe({ method: 'item/updated', params: { item: { ...item, revision: 2,
+          args: JSON.stringify({ questions: [{ id: 'updated', question: 'Continue?', selection: { mode: 'single' },
+            options: [{ label: 'Continue' }, { label: 'Stop' }] }] }) } } });
+      }
+      expect(events.filter(event => event.kind === 'tool-call')).toMatchObject([{ toolName: 'AskUserQuestion',
+        toolCallId: item.callId, input: { questions: [{ id: 'color', selection: 'single', required: true,
+          allowCustom: true, allowNote: true, options: [{ id: 'Blue', label: 'Blue' }, { id: 'Green', label: 'Green' }] }] } }]);
+      if (source === 'live') expect(events.filter(event => event.kind === 'tool-progress')).toMatchObject([
+        { toolCallId: item.callId, progress: { toolName: 'AskUserQuestion', rawInput: { questions: [{ id: 'updated', selection: 'single' }] } } },
+      ]);
+    } finally { projection.dispose(); }
+  });
+
   it('reconciles native user echo with host input while retaining unowned native messages', () => {
     const user = recording.rows.find(row => row.direction === 'recv' && row.message.method === 'item/completed')?.message;
     if (!user?.method) throw new Error('The native recording must contain its user message');
@@ -316,19 +344,21 @@ it('retains the native workflow continuation and late child after its parent ter
   });
 });
 
-// Constructed native tool timeout using MSP's exported Item failure fields.
+// Captured Muse 1.4.15 session/read timeout from cmwdaoglq04idmc752x6gcglh.
+// Identifiers/input are normalized; the native status and output are unchanged.
+// Muse emitted neither failureKind nor failureReason for this timeout.
 it('retains the native timeout cause alongside its visible output', () => {
   const projection = createMuseEventProjection({ sessionId: 'host-timeout' });
   const events = createAgentSessionRuntimeHarness();
   projection.watch(events.recordRuntimeEvent);
   projection.observe({ method: 'item/completed', params: { item: {
     itemId: 'native-timeout', kind: 'toolCall', callId: 'native-timeout-call',
-    tool: 'mcp__happier__action_execute', args: {}, status: 'failed',
-    visibleOutput: 'tool timed out', failureKind: 'timeout', failureReason: 'tool timed out',
+    tool: 'mcp__happier__action_execute', args: {}, status: 'timedOut',
+    visibleOutput: 'tool timed out',
   } } });
   expect(events.canonicalEvents()).toContainEqual(expect.objectContaining({
     kind: 'tool-result', toolCallId: 'native-timeout-call', isError: true,
-    output: { text: 'tool timed out', status: 'failed', failureKind: 'timeout', failureReason: 'tool timed out' },
+    output: { text: 'tool timed out', status: 'timedOut' },
   }));
   events.expectAllEventsValidated();
   events.dispose();

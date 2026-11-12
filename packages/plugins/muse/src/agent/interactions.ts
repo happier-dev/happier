@@ -4,7 +4,7 @@ import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime
 import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/plugin-sdk/sessions';
 import type { NativePermissionChoicesV1, SessionPermissionDecision, SessionPermissionDecisionResult, SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions';
-import { readMuseNativeJson, readMuseRecord } from './events.js';
+import { protocolError, questionInput, readMuseNativeJson, readMuseRecord, requiredString } from './nativeInput.js';
 import type { MuseMsp, MuseMspOpenOptions } from './msp.js';
 
 type NativeRecord = ReturnType<typeof readMuseRecord>;
@@ -12,14 +12,6 @@ type Occurrence = { params: NativeRecord; signature: string; controller: AbortCo
 type NativeMessage = Readonly<{ method: string; params?: JsonValue }>;
 const QUESTION_SOURCE = 'muse.userInput';
 
-function protocolError(message: string): PluginError {
-    return new PluginError({ code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR', message });
-}
-function requiredString(record: NativeRecord, key: string): string {
-    const value = record[key];
-    if (typeof value !== 'string' || !value) throw protocolError(`Muse omitted ${key} from an interaction`);
-    return value;
-}
 function mapDecision(value: JsonValue | undefined): SessionPermissionDecision | undefined {
     switch (value) {
         case 'approved': return 'approved';
@@ -60,23 +52,6 @@ function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagent
         source: 'muse', choices,
         ...(typeof origin.childSessionId === 'string' ? { origin: { ...observedOrigin, sessionId: origin.childSessionId,
             ...(typeof origin.subagentId === 'string' ? { subagentId: origin.subagentId } : {}) } } : {}) };
-}
-function questionInput(params: NativeRecord): Record<string, JsonValue> {
-    if (!Array.isArray(params.questions)) throw protocolError('Muse omitted structured questions');
-    return { questions: params.questions.map(readMuseRecord).map(question => {
-        const selection = readMuseRecord(question.selection);
-        const mode = selection.mode;
-        if (mode !== 'single' && mode !== 'multiple') throw new PluginError({ code: 'unsupported', message: 'Muse offered an unsupported question selection.' });
-        if (!Array.isArray(question.options)) throw protocolError('Muse omitted question options');
-        const options = question.options.map(readMuseRecord).map(option => ({ id: requiredString(option, 'label'),
-            label: requiredString(option, 'label'), ...(typeof option.description === 'string' ? { description: option.description } : {}) }));
-        const min = typeof selection.minSelections === 'number' ? selection.minSelections : 1;
-        const max = typeof selection.maxSelections === 'number' ? selection.maxSelections : options.length;
-        return { id: requiredString(question, 'id'), question: requiredString(question, 'question'),
-            ...(typeof question.header === 'string' ? { header: question.header } : {}),
-            selection: mode, required: mode === 'single' || min > 0, allowCustom: true, allowNote: true, options,
-            ...(mode === 'multiple' ? { minSelections: min, maxSelections: max } : {}) };
-    }) };
 }
 function nativeAnswers(params: NativeRecord, decision: SessionPermissionDecisionResult): JsonValue[] {
     if (!Array.isArray(params.questions)) throw protocolError('Muse omitted structured questions');
