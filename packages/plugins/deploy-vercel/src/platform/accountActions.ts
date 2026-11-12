@@ -1,9 +1,11 @@
 import type { DefinePluginInput } from '@happier-dev/plugin-sdk';
 import type { PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { projectPrepareAction, projectLinkAction } from './prepare.js';
+import { projectCreateAction } from './create.js';
 import { lifecycleActions } from './actions.js';
 import { targetOptionsAction } from './options.js';
 import { buildLogsAction } from './logs.js';
+import { runtimeLogsAction } from './runtimeLogs.js';
 import { variableActions } from './variables.js';
 import { domainActions } from './domains.js';
 
@@ -14,8 +16,10 @@ export const accountActions: NonNullable<DefinePluginInput<Readonly<Record<
 >>>['actions']> = {
   'targets-inspect-v1': projectPrepareAction,
   'project-link': projectLinkAction,
+  'project-create': projectCreateAction,
   'target-options-read': targetOptionsAction,
   'build-logs-read': buildLogsAction,
+  'runtime-logs-read': runtimeLogsAction,
   ...lifecycleActions,
   ...variableActions,
   ...domainActions,

@@ -156,6 +156,28 @@ describe('activated Supabase managed data target', () => {
     expect(requests[0]).toMatchObject({ method: 'POST', url: 'https://api.supabase.com/v1/projects' });
   });
 
+  it('retains an acknowledged project creation through Action invocation after cancellation', async () => {
+    const controller = new AbortController();
+    const h = await host(request => {
+      if (request.method === 'POST') {
+        controller.abort();
+        return { ...project, status: 'COMING_UP' };
+      }
+      return request.url.includes('available-regions')
+        ? { recommendations: [], all: [{ name: 'Europe', code: 'eu-central-1', type: 'specific', provider: 'AWS' }] }
+        : request.url.includes('entitlements') ? { entitlements: [] } : [{ id: 'org-id', slug: 'org-example', name: 'Example' }];
+    });
+    try {
+      const result = await h.kit.invokeAction('projects-provision', { ...preparation('projects-provision'),
+        providerEnvironment: { kind: 'production' }, name: 'Example', password: pair.password,
+        regionSelection: { type: 'specific', code: 'eu-central-1' } }, { signal: controller.signal });
+      expect(result).toMatchObject({ state: 'provisioned', ready: false,
+        providerIdentity: { providerAccountId: 'org-example', providerResourceId: 'parent-ref', providerEnvironment: 'parent-ref' } });
+      expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+      expect(JSON.stringify(result)).not.toMatch(/private|db_pass/u);
+    } finally { await h.kit.dispose(); }
+  });
+
   it('retains a partial pair and retries only the missing name for the same exact resource', async () => {
     const poolers = [{ db_host: 'pool.example', db_port: 6543, db_user: 'postgres.parent-ref', db_name: 'postgres', pool_mode: 'transaction' },
       { db_host: 'session.example', db_port: 5432, db_user: 'postgres.parent-ref', db_name: 'postgres', pool_mode: 'session' }];
