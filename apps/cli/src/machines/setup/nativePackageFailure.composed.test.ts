@@ -86,14 +86,14 @@ describe('Software Apply native package failure retention', () => {
         expect(installed).toBe(true);
         return;
       }
-      const failure = phase === 'daemon' ? { kind: 'native_check_unsupported', reason: 'required_fact_unavailable', requiredFact: 'software' }
+      const failure = phase === 'daemon' ? { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'command' }
         : phase === 'availability' ? { kind: 'native_check_unsupported', reason: 'required_fact_unavailable',
         requiredFact: 'packageAvailability', remedy: 'Check the selected packages and enabled apt repositories, then review and retry.' }
         : { kind: phase === 'check' ? 'native_check_unavailable' : 'native_effect_failed',
         reason: 'package_manager_busy', requiredFact: 'packageManagerLocks', remedy: 'Retry after first-boot or other package-manager updates finish.',
         ...(phase === 'install' ? { nativeCommand: { command: 'apt-get', phase: 'install', exitCode: 100, category: 'package_manager_busy' } } : {}) };
       if (phase === 'daemon') expect(result).toMatchObject({ ok: false,
-        errorCode: 'native_check_unsupported', error: 'native_check_unsupported', details: { kind: 'machineSetup', failure } });
+        errorCode: 'native_check_unavailable', error: 'native_check_unavailable', details: { kind: 'machineSetup', failure } });
       if (phase === 'install') expect(result).toMatchObject({ ok: false, errorCode: 'native_effect_failed',
         details: { kind: 'machineSetup', failure: { stepId: 'software', nativeCommand: { exitCode: 100 } } } });
       expect(result).toMatchObject({ ok: false, details: { kind: 'machineSetup', failure } });
