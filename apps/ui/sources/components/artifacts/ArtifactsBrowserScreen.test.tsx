@@ -1,10 +1,9 @@
 import * as React from 'react';
 import * as ReactNative from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { chooseDropdownMenuItem } from '@/dev/testkit/harness/dropdownMenuHarness';
 import { createArtifactListHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -19,7 +18,6 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { Modal } from '@/modal';
 import { router } from 'expo-router';
 import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
-import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
@@ -444,7 +442,7 @@ describe('Artifacts browser row operations', () => {
         } }));
     });
 
-    it('retains the same explicit-Ask delete approval inline without navigating or claiming deletion', async () => {
+    it('keeps explicit-Ask UI deletion behind native confirmation without creating an approval Artifact', async () => {
         const artifact = artifactFixture('approval-document');
         const persisted = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         // The full inventory and exact read must describe the same persisted document.
@@ -464,35 +462,43 @@ describe('Artifacts browser row operations', () => {
         served.replaceAccountSettings('owner', { settings: { actionsSettingsV1 }, version: 1 });
         getStorage().getState().applySettings({ ...getStorage().getState().settings, actionsSettingsV1 }, 1);
         const onDeleted = vi.fn();
-        onTestFailed(() => console.error('Artifact delete boundaries', {
-            requests: served.requests.map(request => [request.method, request.path]),
-            alerts: vi.mocked(Modal.alert).mock.calls,
-        }));
         const hook = await renderHook(() => useArtifactOperations(artifact, onDeleted));
-        vi.mocked(Modal.confirm).mockClear().mockResolvedValueOnce(true);
+        const confirmation = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockClear().mockResolvedValueOnce(false).mockReturnValueOnce(confirmation.promise);
         vi.mocked(router.push).mockClear();
         let removal: Promise<void> | undefined;
-        await act(async () => { removal = hook.getCurrent().remove(); });
         try {
-        await waitForHomeGovernance(() => expect(persisted.list().find(row => row.id !== artifact.id)).toBeDefined());
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
-        const approval = persisted.list().find(row => row.id !== artifact.id);
-        expect(approval).toBeDefined();
-        expect(ApprovalRequestSchema.parse(JSON.parse(persisted.readPlainBody(approval!.id)!)))
-            .toMatchObject({ actionId: 'artifact.delete', status: 'open' });
-        expect(served.requests.filter(request => request.method === 'DELETE')).toEqual([]);
-        expect(getStorage().getState().artifacts[artifact.id]).toBeDefined();
-        expect(router.push).not.toHaveBeenCalled();
-        await waitForHomeGovernance(() => expect(hook.getCurrent().approval.approvalId).toBe(approval!.id));
-        expect(hook.getCurrent()).toMatchObject({ approval: {
-            approvalId: approval!.id, approvalPending: true, openApproval: expect.any(Function),
-        } });
-        expect(onDeleted).not.toHaveBeenCalled();
+            // docs/actions.md: the person's own UI press answers Ask; the native destructive review remains.
+            // Contract introduced by 02102e614e1, not a durable approval Artifact for the same person.
+            await act(async () => { await hook.getCurrent().remove(); });
+            expect(served.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+            expect(persisted.list().map(row => row.id)).toEqual([artifact.id]);
+            expect(getStorage().getState().artifacts[artifact.id]).toBeDefined();
+            expect(onDeleted).not.toHaveBeenCalled();
+
+            await act(async () => { removal = hook.getCurrent().remove(); });
+            expect(Modal.confirm).toHaveBeenCalledTimes(2);
+            expect(served.requests.filter(request => request.method === 'DELETE')).toEqual([]);
+            expect(persisted.list().map(row => row.id)).toEqual([artifact.id]);
+            expect(getStorage().getState().artifacts[artifact.id]).toBeDefined();
+            expect(hook.getCurrent().approval.approvalPending).toBe(false);
+            expect(onDeleted).not.toHaveBeenCalled();
+            expect(router.push).not.toHaveBeenCalled();
+
+            await act(async () => { confirmation.resolve(true); await removal; });
+            expect(served.requests.filter(request => request.method === 'DELETE').map(request => request.path))
+                .toEqual([`/v1/artifacts/${artifact.id}/revision/1/2`]);
+            expect(persisted.list()).toEqual([]);
+            expect(getStorage().getState().artifacts[artifact.id]).toBeUndefined();
+            expect(hook.getCurrent().approval.approvalPending).toBe(false);
+            expect(onDeleted).toHaveBeenCalledOnce();
+            expect(router.push).not.toHaveBeenCalled();
+            expect(Modal.alert).not.toHaveBeenCalled();
         } finally {
-            await hook.unmount();
+            confirmation.resolve(false);
             await removal;
+            await hook.unmount();
         }
-        expect(Modal.alert).not.toHaveBeenCalled();
     });
 
 });

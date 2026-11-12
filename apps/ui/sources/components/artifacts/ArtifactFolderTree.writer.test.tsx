@@ -72,6 +72,7 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
     const boundary = createPromptLibraryCatalogBoundary({ records: [{ key: 'folders', value: { v: 1, folders: [...initial] } }], revision: 4 });
     let outcome: 'updated' | 'conflict' | 'failed' = 'updated';
     let holdReads: Promise<void> | null = null;
+    let holdWrites: Promise<void> | null = null;
     let catalogReads = 0;
     let releaseFirstRead: () => void = () => {};
     if (holdFirstRead) holdReads = new Promise<void>(resolve => { releaseFirstRead = () => { holdReads = null; resolve(); }; });
@@ -86,6 +87,7 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
             return response;
         }
         if (path === '/v1/account/entity-rows/prompt-library/folders' && init?.method === 'POST') {
+            if (holdWrites) await holdWrites;
             if (outcome === 'conflict') return Response.json({ status: 'conflict', revision: 4 });
             if (outcome === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
         }
@@ -118,6 +120,11 @@ async function setup(kind: 'all' | 'prompt', initial: readonly { id: string; nam
     };
     return { screen, read, boundary, changeName, select, releaseFirstRead, readCount: () => catalogReads,
         setOutcome: (next: typeof outcome) => { outcome = next; },
+        holdCatalogWrites: () => {
+            let release!: () => void;
+            holdWrites = new Promise<void>(resolve => { release = resolve; });
+            return () => { holdWrites = null; release(); };
+        },
         holdCatalogReads: () => {
             let release!: () => void;
             holdReads = new Promise<void>(resolve => { release = resolve; });
@@ -225,22 +232,44 @@ it('keeps a draft while stale and refuses submission until the canonical refresh
     await vi.waitFor(() => expect(state.read().folders[0]?.name).toBe('Reviewed after refresh'));
 });
 
-it('keeps the create draft visibly pending on its durable approval without claiming a folder exists', async () => {
+it('keeps the explicit-Ask UI create draft pending until persistence acknowledges it without an approval Artifact', async () => {
     const state = await setup('all', [], false, true);
-    await state.screen.pressByTestIdAsync('folders:create');
-    await state.changeName('Approval folder');
-    await state.screen.pressByTestIdAsync('folders:edit:save');
-    await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:approval')).toBeTruthy());
-    expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('Approval folder');
-    expect(state.screen.findByTestId('folders:edit:save')!.props.disabled).toBe(true);
-    expect(state.screen.findByTestId('folders:edit:name.error')).toBeNull();
-    expect(state.read().folders).toEqual([]);
-    expect(fixture!.boundary.list()).toHaveLength(1);
-    const approval = fixture!.boundary.list()[0]!;
-    await state.screen.pressByTestIdAsync('folders:edit:approval-action');
-    expect(navigation.push).toHaveBeenLastCalledWith(
-        `/inbox/approvals/${encodeURIComponent(approval.id)}?serverId=${encodeURIComponent(fixture!.home.id)}`,
-    );
+    const release = state.holdCatalogWrites();
+    try {
+        await state.screen.pressByTestIdAsync('folders:create');
+        await state.changeName('Approval folder');
+        expect(state.read().folders).toEqual([]);
+        expect(state.boundary.requests).toEqual([]);
+        // a4a360ea3cc retains saved Ask through native confirmation; 02102e614e1 removed self-approval Artifacts.
+        await state.screen.pressByTestIdAsync('folders:edit:save');
+        await vi.waitFor(() => expect(state.screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(fixture!.requests.filter(request =>
+            request.method === 'POST' && request.path === '/v1/account/entity-rows/prompt-library/folders')).toEqual([]);
+        expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('Approval folder');
+        expect(state.read().folders).toEqual([]);
+        expect(fixture!.boundary.list()).toEqual([]);
+        expect(navigation.push).not.toHaveBeenCalled();
+
+        await state.screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await vi.waitFor(() => expect(fixture!.requests.filter(request =>
+            request.method === 'POST' && request.path === '/v1/account/entity-rows/prompt-library/folders')).toHaveLength(1));
+        expect(state.screen.findByTestId('folders:edit:name')!.props.editable).toBe(false);
+        expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('Approval folder');
+        expect(state.screen.findHostByTestId('folders:edit:save')!.props.accessibilityState)
+            .toMatchObject({ busy: true, disabled: true });
+        expect(state.screen.findByTestId('folders:edit:name.error')).toBeNull();
+        expect(state.screen.findByTestId('folders:edit:approval')).toBeNull();
+        expect(state.read().folders).toEqual([]);
+        expect(fixture!.boundary.list()).toEqual([]);
+        expect(navigation.push).not.toHaveBeenCalled();
+
+        await act(async () => { release(); });
+        await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:name')).toBeNull());
+        expect(state.read().folders).toEqual([expect.objectContaining({ name: 'Approval folder', parentId: null })]);
+        expect(state.boundary.requests).toHaveLength(1);
+        expect(fixture!.boundary.list()).toEqual([]);
+        expect(navigation.push).not.toHaveBeenCalled();
+    } finally { await act(async () => { release(); }); }
 });
 
 describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', kind => {
