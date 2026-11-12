@@ -521,8 +521,8 @@ describe('Environment → Database → Read-only query', () => {
     const { DeploymentDataQuerySuccessV1ProtocolSchema } = await import('@happier-dev/deployment-protocol');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
-    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
     const pluginId = 'com.example.query-database';
+    const calls: unknown[] = [];
     const execution = { target: 'account', account: { artifactId: 'query-runtime', exportName: 'activate' } } as const;
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
     const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed SQL', actions: {
@@ -530,7 +530,12 @@ describe('Environment → Database → Read-only query', () => {
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['query.readOnly'].jsonSchema,
         resultSchema: DeploymentDataQuerySuccessV1ProtocolSchema.jsonSchema,
         inputHints: { fields: [{ path: 'sql', title: 'SQL', widget: 'textarea', description: 'Bind values with $1 and parameter key 1.' }] },
-        run: async () => ({ ok: true, columns: [], rows: [], complete: true }) },
+        // Safe Account Actions execute in the installed Account runtime, before any Machine transport.
+        run: async input => {
+          calls.push(input);
+          return { ok: true, columns: [{ name: 'value' }], rows: [[null]], complete: false,
+            diagnostic: { code: 'provider_completeness_unknown' } };
+        } },
     }, deploymentTargets: { database: { role: 'data', title: 'Managed SQL', targetKind: 'database', icon: 'server-outline',
       targetSchema: closed, linkSchema: closed, dataV1: { query: { readOnly: 'query' } } } } });
     const serverId = await homes.addHome({ name: 'Managed query', serverUrl: 'https://managed-query.test',
@@ -547,17 +552,8 @@ describe('Environment → Database → Read-only query', () => {
       targetLinks: [{ targetLink, content: { credentialPrincipal: principal,
         providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'main' },
         providerEnvironment: { kind: 'custom', id: 'main' } } }] });
-    const calls: unknown[] = [];
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
       environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
-    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
-      actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
-        const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
-        expect(invocation.action).toEqual({ pluginId, localId: 'query' });
-        calls.push(invocation.input);
-        return { ok: true, columns: [{ name: 'value' }], rows: [[null]], complete: false,
-          diagnostic: { code: 'provider_completeness_unknown' } };
-      } });
     const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
       transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
         readEnvironment: async () => ({ ok: true, value: detail }),
@@ -711,9 +707,9 @@ describe('Environment → Database → Move', () => {
       const copy = view.effects.find(effect => effect.actionId === 'deployments.backups.restore');
       expect(copy?.input).toMatchObject({ environmentId: 'database-dedicated', expectedRevision: 3,
         targetLinkId: 'target-database-dedicated', deploymentId: 'deployment-a',
-        backupOperationId: 'manual-backup', restoreBackupId: 'e'.repeat(64),
-        copy: { source: { environmentId: view.environmentId, targetLinkId: 'target-link' },
-          destination: { service: 'postgres', database: 'shop' } } });
+        source: { kind: 'repository', backupOperationId: 'manual-backup', snapshotId: 'e'.repeat(64),
+          origin: { environmentId: view.environmentId, targetLinkId: 'target-link' } },
+        destination: { kind: 'database', service: 'postgres', database: 'shop' } });
       expect(view.screen.findByTestId('project-deployments.restore.continue')).toBeNull();
       expect(view.effects.some(effect => effect.actionId === 'deployments.environments.update')).toBe(false);
     } finally { await view.dispose(); }
@@ -1075,6 +1071,9 @@ describe('Environment → Data → Add (P10)', () => {
   });
 
   it('chooses from the Store catalog as an embedded picker, filtered to databases, not a Store page inside the sheet', async () => {
+    const serverId = await homes.addHome({ name: 'Database picker', serverUrl: 'https://database-picker.test',
+      serverIdentityId: 'srv_database_picker', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const base = createDeploymentEnvironmentDetailV1();
@@ -1086,14 +1085,14 @@ describe('Environment → Data → Add (P10)', () => {
       await act(async () => {
         showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
           catalogFilters: { category: { include: ['database'], exclude: [] } },
-          lifetime: { scope: { serverId: 'home', accountId: 'account-owner' }, isCurrent: () => true } as never });
+          lifetime: account.accountLifetime });
       });
       const { StoreRegistryItemPicker } = await import('@/components/store/StoreKindPage');
       const picker = screen.root.findAllByType(StoreRegistryItemPicker)[0];
       expect(picker?.props.initialFilters).toEqual({ category: { include: ['database'], exclude: [] } });
       // No second page frame (header, project scope chip, page ⋯) inside the sheet.
       expect(screen.findByTestId('store.kind.app')).toBeNull();
-    } finally { await screen.unmount(); }
+    } finally { await screen.unmount(); account.dispose(); }
   });
 
   it('opens managed database preparation even when this Environment keeps its services in its repository', async () => {
@@ -1117,7 +1116,10 @@ describe('Environment → Data → Add (P10)', () => {
     } finally { await screen.unmount(); account.dispose(); }
   });
 
-  it('gives an Environment defined in its repository one real next step: the Store catalog picker on its Machine', async () => {
+  it('asks for an admitted workspace before adding a template to an Environment defined in its repository', async () => {
+    const serverId = await homes.addHome({ name: 'Repository Add', serverUrl: 'https://repository-add.test',
+      serverIdentityId: 'srv_repository_add', accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
     const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, runtimeTargetLink: null, memberVersions: {},
@@ -1127,18 +1129,16 @@ describe('Environment → Data → Add (P10)', () => {
       await act(async () => {
         showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
           catalogFilters: { category: { include: ['database'], exclude: [] } },
-          lifetime: { scope: { serverId: 'home', accountId: 'account-owner' }, isCurrent: () => true } as never });
+          lifetime: account.accountLifetime });
       });
-      expect(screen.findByTestId('project-deployments.add.blocked')).not.toBeNull();
-      routerMock.spies.push.mockClear();
-      await screen.pressByTestIdAsync('project-deployments.add.openStore');
-      const pushed = String(routerMock.spies.push.mock.calls[0]?.[0] ?? '');
-      // The canonical Store app catalog picker (the list Add embeds), not a text search for "database".
-      expect(pushed).toContain('kind=app');
-      expect(pushed).not.toMatch(/[?&]q=/);
-      // Filtered to the catalog's database category through the Store's own filter condition.
-      expect(JSON.parse(decodeURIComponent(/[?&]filters=([^&]+)/.exec(pushed)?.[1] ?? 'null'))).toEqual({ category: { include: ['database'], exclude: [] } });
-    } finally { await screen.unmount(); }
+      // Repository Add authors a pull request in the person's selected checkout.
+      // Without that checkout (or a Compose path), it must expose the workspace
+      // choice rather than offering an inline template mutation it cannot apply.
+      expect(screen.findByTestId('project-deployments.add.repository')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.add.workspace')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.add.picker')).toBeNull();
+      expect(screen.findByTestId('project-deployments.add.confirm')).toBeNull();
+    } finally { await screen.unmount(); account.dispose(); }
   });
 });
 
