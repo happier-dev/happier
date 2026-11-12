@@ -15,6 +15,8 @@ import { mkdir, mkdtemp } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
 import { checkDaemonStatePingAware, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from './stack/identity_daemon_reload.mjs';
+import { resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
 import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
@@ -947,7 +949,16 @@ async function main() {
     forceRestart = restart && (!reuseSourceRuntime || preparedSourceReload) && !serviceMode,
     preserveExistingRunning = reuseSourceRuntime && !preparedSourceReload && daemonAlreadyRunning,
   } = {}) => {
-    const startResult = await startLocalDaemonWithAuth({
+    const sourceRuntime = sourceSnapshot && localDaemonRequested
+      ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+    const sourceLaunch = sourceRuntime?.sourceRuntimeLaunch;
+    const identities = sourceLaunch
+      ? await readRunningStackIdentityDaemons({
+        runtimeState: sourceRuntime, cliHomeDir,
+        stackName, serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv,
+        excludeRuntimeEntrypoint: sourceLaunch.entrypoint,
+      }) : [];
+    const launchOptions = {
       cliBin,
       cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
       cliNodeEntrypoint,
@@ -962,10 +973,11 @@ async function main() {
       preserveExistingRunning,
       allowSignInRequired: true,
       env: daemonScopeEnv,
-              stackName,
-              cliIdentity: 'default',
-              ...cliRuntimeProvenance,
-    });
+      stackName,
+      cliIdentity: 'default',
+      ...cliRuntimeProvenance,
+    };
+    const startResult = await startLocalDaemonWithAuth(launchOptions);
     if (startResult?.ok === false && startResult.reason === 'sign-in-required') {
       process.stdout.write(formatDaemonReadinessLine({ state: 'sign-in-required' }));
     }
@@ -982,6 +994,21 @@ async function main() {
       env: daemonEnvForState,
     });
     ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
+    if (daemonState?.status === 'running') {
+      await restartStackIdentityDaemons({ stackName, identities }, {
+        startIdentityDaemonImpl: identity => startLocalDaemonWithAuth({
+          ...launchOptions,
+          cliHomeDir: resolveCliHomeDirForIdentity({ cliHomeDir, identity }),
+          cliIdentity: identity,
+          env: { ...daemonScopeEnv, HAPPIER_STACK_CLI_IDENTITY: identity },
+          forceRestart: true, preserveExistingRunning: false, preserveSessionsOnRestart: true,
+          sourceRuntimeLaunchUpdate: {
+            launch: sourceLaunch,
+            identity: sourceRuntime.sourceRuntimeIdentities.daemon.selected,
+          },
+        }),
+      });
+    }
   };
 
   if (startupDecision.startDaemon) {

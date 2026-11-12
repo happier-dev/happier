@@ -70,7 +70,13 @@ test('source runner recovery adopts a healthy daemon from its frozen selection w
     ${buildStubHappierServerSetSource()}
     if(args[0]==='daemon' && args[1]==='stop') writeFileSync(${JSON.stringify(stopMarker)},'stopped');
   `);
-  await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({identity:'frozen-identity', entrypoint, runtimeDir:cliDir, cliDir, env:{}, args:[]}));
+  const markerPath = fixture.path('dependency-marker.json');
+  const generationPath = fixture.path('dependency-generation.json');
+  await writeFile(markerPath, JSON.stringify({identity:'fixture-dependencies'}));
+  await writeFile(generationPath, JSON.stringify({generation:1,completedGeneration:1}));
+  await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({identity:'frozen-identity', entrypoint,
+    runtimeDir:cliDir, cliDir, env:{}, args:[],
+    dependencyPublication:{markerPath,generationPath,identity:'fixture-dependencies',writerActive:false}}));
   await writeFile(join(baseDir, 'source-runtime/selected-daemon.json'), JSON.stringify({entrypoint}));
   await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n');
   const health = await spawnStackOwnedHealthServer({stackName, envPath:join(baseDir, 'env')});

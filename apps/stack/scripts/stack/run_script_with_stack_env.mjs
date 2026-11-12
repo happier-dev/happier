@@ -913,7 +913,13 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             await preflightRestartDevTargets({ rootDir, stackName, baseDir, scriptPath, args, env,
               runtimeMode: runtimeLaunchContext.runtimeMode }, { runCaptureResult: capture, runProcess });
             const identityEndpoint = await resolveStackServerEndpoint({ env, stackName, runtimeState });
-            restartIdentityDaemons = await readRunningStackIdentityDaemons({
+            // The source run owner refreshes preserved identities with its exact
+            // selected launch, including retained-runtime adoption. Other paths
+            // still capture before retirement and restore after readiness here.
+            const runnerRefreshesIdentities = scriptPath === 'run.mjs'
+              && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
+              && preserveDaemonForRestart;
+            restartIdentityDaemons = runnerRefreshesIdentities ? [] : await readRunningStackIdentityDaemons({
               runtimeState,
               cliHomeDir: getCliHomeDirFromEnvOrDefault({ stackBaseDir: baseDir, env }),
               stackName,

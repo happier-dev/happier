@@ -157,12 +157,15 @@ dependency publications still require recovery through the dependency owner.
 replacing it through the daemon lifecycle owner. Ordinary startup and recovery
 continue to use the retained source generation.
 
-In 0.3 development, full reloads and dev source-generation swaps refresh running
-named identity daemons after the default daemon. Discovery uses the daemon host's
-identity homes as well as recorded lifecycle intent, so a stale runtime file does
-not hide a running fixture identity. Full reloads capture participants before
-retirement; dev swaps reuse the prepared daemon launch and preserve Session runners.
-Stopped identities remain stopped, and an identity already on the prepared dev
+In 0.3 development, full reloads, retained source-capture adoption and dev
+source-generation swaps refresh running named identity daemons after the default
+daemon. Discovery uses the daemon host's identity homes as well as recorded
+lifecycle intent, so a stale runtime file does not hide a running fixture identity.
+The source run owner refreshes preserved identities using the selected daemon
+launch, including when the healthy default daemon is adopted. Other full reloads
+capture participants before retirement; dev swaps reuse the prepared daemon
+launch. Source activation preserves named identity Session runners. Stopped
+identities remain stopped, and an identity already on the selected source
 entrypoint is reused. An identity restart failure is reported with a typed reason
 and does not fail or retry the stack reload.
 
