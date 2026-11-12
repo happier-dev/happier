@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import type { DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { StoreAppCreateFailure } from './useStoreAppListing';
+import type { DeploymentTemplateChoicesValue } from '@/components/projects/deployments/DeploymentTemplateChoices';
 
 type StoreAppPreparationState = Readonly<{
     machineId: string | null;
@@ -8,6 +9,7 @@ type StoreAppPreparationState = Readonly<{
     environmentName: string;
     domainHostnames: Readonly<Record<string, string>>;
     production: boolean;
+    templateChoices: DeploymentTemplateChoicesValue;
     pending: boolean;
     prepared: DeploymentPublishPrepareResultV1 | null;
     creating: boolean;
@@ -17,7 +19,7 @@ type StoreAppPreparationState = Readonly<{
 /** The open install owns its answers and outcome, including while responsive chrome remounts its content. */
 export function createStoreAppPreparationState(machineId: string | null) {
     return createStore<StoreAppPreparationState>(() => ({
-        machineId, controllerId: null, environmentName: '', domainHostnames: {}, production: false,
+        machineId, controllerId: null, environmentName: '', domainHostnames: {}, production: false, templateChoices: {},
         pending: false, prepared: null, creating: false, refusal: null,
     }));
 }

@@ -10,7 +10,7 @@ import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/proto
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { DeploymentTemplateInstantiationPartialV1Schema, DeploymentTemplateInstantiateResultV1Schema,
     type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { RegistryItemV1, RegistryItemPayloadV1, DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
+import type { RegistryItemV1, RegistryItemPayloadV1, DeploymentTemplateV1, RegistryAppMappingV1 } from '@happier-dev/protocol/registries';
 import { useRegistryItem } from '@/registries/useRegistryItem';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useCatalogAppPreparation } from '@/components/projects/deployments/useCatalogAppPreparation';
@@ -33,7 +33,7 @@ export type StoreAppPreparationInput = Omit<DeploymentPublishPrepareInputV1, 'se
 export type StoreAppPreparationOutcome = Awaited<ReturnType<ReturnType<typeof useCatalogAppPreparation>>>;
 type StoreAppCreateEnvironment = Extract<DeploymentTemplateInstantiateInputV1['environment'], { kind: 'create' }>;
 export type StoreAppCreateChoices = Readonly<Pick<StoreAppCreateEnvironment, 'name' | 'protection' | 'deployerMode'>
-    & Pick<DeploymentTemplateInstantiateInputV1, 'domainBindings'>>;
+    & Partial<Pick<DeploymentTemplateInstantiateInputV1, 'bindings' | 'domainBindings' | 'volumeBindings' | 'companions'>>>;
 export type StoreAppCreatedIdentity = Readonly<{ projectSourceId: string; environmentId: string; tab?: DeploymentEnvironmentTabV1 }>;
 type StoreAppApplied = Extract<ReturnType<typeof DeploymentTemplateInstantiateResultV1Schema.parse>, { kind: 'applied' }>;
 export type StoreAppCreateFailure = ActionExecuteFailure & Readonly<{ progress?: DeploymentPartialResult; recovery?: DeploymentEnvironmentTabV1 | 'deploy'; created?: StoreAppApplied }>;
@@ -45,9 +45,11 @@ type ReviewPayload = Extract<RegistryItemPayloadV1, { kind: 'app'; state: 'needs
 export type StoreAppListingState = ReadFacts & (
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'unavailable' }>
-    | Readonly<{ kind: 'needs_review'; item: RegistryItemV1; diagnostics: ReviewPayload['diagnostics'] }>
+    | Readonly<{ kind: 'needs_review'; item: RegistryItemV1; diagnostics: ReviewPayload['diagnostics'];
+        reviewSource?: RegistryAppMappingV1; correctMappings: (correction: RegistryAppMappingV1) => void }>
     | Readonly<{
         kind: 'ready'; item: RegistryItemV1; app: DeploymentTemplateV1; templateRef: DeploymentTemplateRefV1;
+        appMappingCorrection?: RegistryAppMappingV1;
         prepare: (input: StoreAppPreparationInput, signal?: AbortSignal) => Promise<StoreAppPreparationOutcome>;
         create: (prepared: DeploymentPublishPrepareResultV1, choices: StoreAppCreateChoices, signal?: AbortSignal) => Promise<StoreAppCreateOutcome>;
         environmentHref: (input: StoreAppCreatedIdentity) => string;
@@ -60,9 +62,14 @@ export function useStoreAppListing(input: Readonly<{
     /** The active Registry Account's existing lifetime; the listing host supplies it. */
     lifetime: ServerAccountScopeLifetime;
     demand: StoreDemand;
+    installMachineId?: string | null;
 }>): StoreAppListingState {
+    const selectionKey = JSON.stringify([input.lifetime.scope.serverId, input.lifetime.scope.accountId,
+        input.selection.sourceId, input.selection.itemId, input.selection.version]);
+    const [correction, setCorrection] = React.useState<{ selectionKey: string; value: RegistryAppMappingV1; version: string } | null>(null);
+    const appMappingCorrection = correction?.selectionKey === selectionKey ? correction.value : undefined;
     const read = useRegistryItem({ kind: 'app', sourceId: input.selection.sourceId,
-        itemId: input.selection.itemId, version: input.selection.version }, input.demand.presented);
+        itemId: input.selection.itemId, version: appMappingCorrection ? correction?.version : input.selection.version, ...(appMappingCorrection ? { appMappingCorrection } : {}) }, input.demand.presented, { installMachineId: input.installMachineId });
     const prepareCatalogApp = useCatalogAppPreparation(input.lifetime);
     // Equal choices on the same prepared review retry the latest attempt, including after a read refresh.
     // A new preparation or changed choices starts another attempt; nothing is persisted.
@@ -72,10 +79,15 @@ export function useStoreAppListing(input: Readonly<{
         applied?: StoreAppApplied } | undefined>(undefined);
     // The native reader marks an old selection stale while the next exact read is pending.
     const item = read.stale ? null : read.item;
+    const version = item?.summary.version;
+    const correctMappings = React.useCallback((value: RegistryAppMappingV1) => {
+        if (version) setCorrection({ selectionKey, value, version });
+    }, [selectionKey, version]);
     const entry = React.useMemo(() => {
         if (!item || item.payload.kind !== 'app') return null;
         if (item.payload.state === 'needs_review') return {
             kind: 'needs_review' as const, item, diagnostics: item.payload.diagnostics,
+            reviewSource: item.payload.reviewSource, correctMappings,
         };
         const templateRef: DeploymentTemplateRefV1 = {
             sourceId: item.summary.sourceId, itemId: item.summary.itemId,
@@ -84,9 +96,9 @@ export function useStoreAppListing(input: Readonly<{
         };
         const execute = createFrontDoorActionExecute();
         return {
-            kind: 'ready' as const, item, app: item.payload.app, templateRef,
+            kind: 'ready' as const, item, app: item.payload.app, templateRef, appMappingCorrection,
             prepare: (operand: StoreAppPreparationInput, signal?: AbortSignal) => prepareCatalogApp({
-                ...operand, serverId: input.lifetime.scope.serverId, templateRef,
+                ...operand, serverId: input.lifetime.scope.serverId, templateRef, ...(appMappingCorrection ? { appMappingCorrection } : {}),
             }, signal),
             create: async (prepared: DeploymentPublishPrepareResultV1, choices: StoreAppCreateChoices,
                 signal?: AbortSignal): Promise<StoreAppCreateOutcome> => {
@@ -102,16 +114,21 @@ export function useStoreAppListing(input: Readonly<{
                 let currentAttempt = attempt.current;
                 if (!currentAttempt || currentAttempt.prepared !== prepared || currentAttempt.input.environment.name !== choices.name
                     || currentAttempt.input.environment.protection !== choices.protection || currentAttempt.input.environment.deployerMode !== choices.deployerMode
-                    || !sameStrictJsonValue(currentAttempt.input.domainBindings, choices.domainBindings)) {
+                    || !sameStrictJsonValue(currentAttempt.input.domainBindings, choices.domainBindings)
+                    || !sameStrictJsonValue(currentAttempt.input.volumeBindings, choices.volumeBindings)
+                    || !sameStrictJsonValue(currentAttempt.input.companions, choices.companions?.length ? choices.companions : undefined)
+                    || !sameStrictJsonValue(currentAttempt.input.bindings, buildCatalogAppTemplateBindings(prepared.template, choices.bindings).bindings)) {
                     currentAttempt = { prepared, input: {
                         mode: 'apply', serverId: input.lifetime.scope.serverId, ...project, machineId: prepared.machine.machineId,
-                        templateRef: prepared.templateRef,
+                        templateRef: prepared.templateRef, ...(appMappingCorrection ? { appMappingCorrection } : {}),
                         environment: { kind: 'create', requestKey: randomUUID(), name: choices.name,
                             protection: choices.protection, deployerMode: choices.deployerMode, purpose: 'standard',
                             ...prepared.creationDefaults.values, controllerMachineId },
                         ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
+                        ...(choices.volumeBindings ? { volumeBindings: choices.volumeBindings } : {}),
+                        ...(choices.companions?.length ? { companions: choices.companions } : {}),
                         target: { kind: 'new', installationId: prepared.machine.installationId },
-                        destination: { kind: 'stored' }, ...buildCatalogAppTemplateBindings(prepared.template),
+                        destination: { kind: 'stored' }, ...buildCatalogAppTemplateBindings(prepared.template, choices.bindings),
                     } };
                     attempt.current = currentAttempt;
                 }
@@ -184,11 +201,13 @@ export function useStoreAppListing(input: Readonly<{
                     installedProjectSourceId = detail.environment.projectSourceId;
                     installInput = {
                         mode: 'apply', serverId: input.lifetime.scope.serverId, machineId: prepared.machine.machineId,
-                        projectSourceId: detail.environment.projectSourceId, templateRef: prepared.templateRef,
+                        projectSourceId: detail.environment.projectSourceId, templateRef: prepared.templateRef, ...(appMappingCorrection ? { appMappingCorrection } : {}),
                         environment: { kind: 'existing', environmentId: partial.environmentId, expectedRevision: detail.environment.revision },
                         target: { kind: 'existing', targetLinkId: target.id, expectedRevision: target.revision,
                             installationId: prepared.machine.installationId }, destination: partial.definition,
                         bindings: [], ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
+                        ...(choices.volumeBindings ? { volumeBindings: choices.volumeBindings } : {}),
+                        ...(choices.companions?.length ? { companions: choices.companions } : {}),
                         deploy: { requestKey: randomUUID() },
                     };
                 }
@@ -212,7 +231,7 @@ export function useStoreAppListing(input: Readonly<{
             environmentHref: (identity: StoreAppCreatedIdentity) =>
                 buildDeploymentEnvironmentHref({ ...identity, serverId: input.lifetime.scope.serverId }),
         };
-    }, [item, prepareCatalogApp, input.lifetime]);
+    }, [item, prepareCatalogApp, input.lifetime, appMappingCorrection, correctMappings]);
     const facts: ReadFacts = { loading: read.loading, stale: read.stale, error: read.error, status: read.status, refresh: read.refresh };
     return entry ? { ...facts, ...entry } : { ...facts, kind: read.loading ? 'loading' : 'unavailable' };
 }

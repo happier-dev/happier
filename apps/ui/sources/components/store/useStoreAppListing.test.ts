@@ -18,7 +18,7 @@ import type { StoreAppListingState, StoreAppCreateChoices } from './useStoreAppL
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { readDeploymentTemplateCreationOperationRequestIdV1, readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 
@@ -38,7 +38,7 @@ afterEach(standardCleanup);
 
 let fixtureSequence = 0;
 async function createFixture(requiredDomain = false, withOtherSource = false, domainFailure = false,
-    selectedApp?: ReturnType<typeof DeploymentTemplateV1Schema.parse>) {
+    selectedApp?: ReturnType<typeof DeploymentTemplateV1Schema.parse>, reviewApp?: unknown) {
     const serverUrl = `https://store-app-listing-${++fixtureSequence}.test`;
     const catalogUrl = `${serverUrl}/apps.json`;
     const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -79,6 +79,7 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
                 return { body: { schemaVersion: 1, apps: [
                     { itemId: 'uptime-kuma', app },
                     { itemId: 'needs-review', app, unsupported: true },
+                    ...(reviewApp ? [{ itemId: 'mapping-review', app: reviewApp }] : []),
                     ...Array.from({ length: 100 }, (_, index) => ({ itemId: `other-${index}`, app })),
                 ] } };
     } });
@@ -131,6 +132,7 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
             }
         }
         const creating = input.environment.kind === 'create';
+        const deployIntent = readDeploymentTemplateDeployIntentV1(input);
         if (input.mode === 'apply') (creating ? creations : retries).push(input);
         const creationDefaults = { values: { controllerMachineId: 'controller', buildMachineId: 'builder', retainPreviousDeployments: 1 },
             sources: { controllerMachineId: 'account', buildMachineId: 'account', retainPreviousDeployments: 'builtin' } };
@@ -138,8 +140,7 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
         return input.mode === 'preview'
                 ? { kind: 'preview', review: { templateRef: input.templateRef,
                     profiles: app.compose.profiles, services: app.compose.services, bindings: [], generatedSecrets: [],
-                    domains: [], ...(input.deploy ? { deploy: input.deploy } : creating && requiredDomain
-                        ? { deploy: { requestKey: input.environment.kind === 'create' ? input.environment.requestKey : 'unreachable' } } : {}),
+                    domains: [], ...(deployIntent ? { deploy: deployIntent } : {}),
                     ...(creating ? { creationDefaults, ...(input.projectSourceId ? { creationDefaultsBasis } : {}) } : {}) } }
                 : creating && createMode.value === 'refused'
                     ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable', details: { machineId: 'target' } }
@@ -351,7 +352,8 @@ it('keeps the open App across unrelated source edits with zero reloads or blank 
 it('reads only the selected native App, prepares its exact pin explicitly and retains native refusal/approval and Environment identity', async () => {
     const fixture = await createFixture();
     const selection = { sourceId: fixture.sourceId, itemId: 'uptime-kuma' };
-    const hook = await renderHook((presented: boolean) => useStoreAppListing({ selection,
+    const pickerSelection = { ...selection, title: 'Uptime Kuma', description: 'A selected catalog summary' };
+    const hook = await renderHook((presented: boolean) => useStoreAppListing({ selection: pickerSelection,
         lifetime: fixture.account.accountLifetime, demand: { presented } }), { initialProps: false });
     try {
         expect(fixture.catalogReads).toEqual([]);
@@ -412,8 +414,9 @@ it.each(['created', 'refused', 'approval'] as const)('creates only on explicit i
             expect(href.searchParams.get('deploymentEnvironment')).toBe('environment/created');
             expect(href.searchParams.get('serverId')).toBe(fixture.account.accountLifetime.scope.serverId);
         } else if (outcome === 'refused') {
+            // The boundary supplied no optional failure requestId; preserve its authored failure exactly.
             expect(result).toEqual({ ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable',
-                details: { machineId: 'target' }, requestId: expect.any(String) });
+                details: { machineId: 'target' } });
         } else {
             expect(result).toEqual({ kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' });
         }
@@ -425,6 +428,64 @@ it.each(['created', 'refused', 'approval'] as const)('creates only on explicit i
                 purpose: 'standard', requestKey: expect.any(String) } });
         expect(fixture.preparations).toHaveLength(1);
         expect(fixture.boundary.list()).toEqual([]);
+    } finally { await hook.unmount(); await fixture.dispose(); }
+});
+
+it('rechecks corrected source mappings and carries the same pin through preparation and installation', async () => {
+    const app = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'Database',
+        compose: { document: 'services:\n  db:\n    image: postgres:17\n', profiles: [], services: ['db'] },
+        variables: [{ key: 'DB_PASSWORD', label: 'Password', required: true, valueKind: 'string', secret: true, sites: [] }],
+        generatedSecrets: [{ key: 'DB_PASSWORD', purpose: 'database', label: 'Password', profile: { kind: 'base64url-32-bytes' } }],
+        domains: [], volumes: [] });
+    const original = { ...app, generatedSecrets: [{ ...app.generatedSecrets[0], profile: { kind: 'author-code' } }] };
+    const fixture = await createFixture(false, false, false, app, original);
+    const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'mapping-review' },
+        lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('needs_review'));
+        const unresolved = hook.getCurrent();
+        if (unresolved.kind !== 'needs_review') throw new Error('Expected source mappings to require review');
+        expect(unresolved.reviewSource?.document).toContain('author-code');
+        expect(fixture.preparations).toHaveLength(0);
+        const correction = { document: JSON.stringify(app) };
+        await act(() => unresolved.correctMappings(correction));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('ready'));
+        const ready = hook.getCurrent();
+        if (ready.kind !== 'ready') throw new Error('Expected corrected source mappings');
+        expect(ready.templateRef.version).toBe(unresolved.item.summary.version);
+        const prepared = await ready.prepare({ machineId: 'target', installationId: 'installed', projectSourceId: 'source/with space', sourceRevision: 1 });
+        if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared App');
+        expect(fixture.preparations[0]?.appMappingCorrection).toEqual(correction);
+        expect(await ready.create(prepared, { name: 'Database', protection: 'nonProduction', deployerMode: 'managers' }))
+            .toMatchObject({ environmentId: 'environment/created' });
+        expect(fixture.creations[0]).toMatchObject({ templateRef: ready.templateRef, appMappingCorrection: correction,
+            bindings: [{ name: 'DB_PASSWORD', source: { kind: 'generated', key: 'DB_PASSWORD' } }] });
+    } finally { await hook.unmount(); await fixture.dispose(); }
+});
+
+it('installs reviewed public values and Saved Secret choices instead of replacing them with catalog generation defaults', async () => {
+    const app = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'Database',
+        compose: { document: 'services:\n  db:\n    image: postgres:17\n', profiles: [], services: ['db'] },
+        variables: [{ key: 'DB_USER', label: 'User', required: true, valueKind: 'string', secret: false, sites: [] },
+            { key: 'DB_PASSWORD', label: 'Password', required: true, valueKind: 'string', secret: true, sites: [] }],
+        generatedSecrets: [{ key: 'DB_PASSWORD', purpose: 'database', label: 'Password', profile: { kind: 'base64url-32-bytes' } }],
+        domains: [], volumes: [] });
+    const fixture = await createFixture(false, false, false, app);
+    const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
+        lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().kind).toBe('ready'));
+        const ready = hook.getCurrent();
+        if (ready.kind !== 'ready') throw new Error('Expected ready App');
+        const prepared = await ready.prepare({ machineId: 'target', installationId: 'installed', projectSourceId: 'source/with space', sourceRevision: 1 });
+        if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared App');
+        const bindings = [{ purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_USER', source: { kind: 'value' as const, value: 'alice' } },
+            { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DB_PASSWORD', source: { kind: 'secret' as const,
+                ref: 'happier:shared-secret:v1:chosen-password', resourceRevision: 1 } }];
+        const result = await ready.create(prepared, { name: 'Database', protection: 'nonProduction', deployerMode: 'managers', bindings });
+        expect(result).toMatchObject({ projectSourceId: 'source/with space', environmentId: 'environment/created' });
+        expect(fixture.creations[0]?.bindings).toEqual(bindings);
+        expect(fixture.creations[0]?.generatedSecretAudience).toBeUndefined();
     } finally { await hook.unmount(); await fixture.dispose(); }
 });
 
@@ -530,8 +591,11 @@ it('uses one template Action and review shape for first install and retained ret
             targetLinks: [createDeploymentTargetLinkHeaderV1({ id: 'target-link', environmentId: fixture.partial.environmentId,
                 revision: 2, machines: ['target'], members: [{ machineId: 'target', installationId: 'installed', state: 'active' }] })] } });
         expect(await current.create(prepared, choices)).toMatchObject({ ok: false, errorCode: 'deployment_failed' });
-        expect(fixture.creations[0]).toMatchObject({ environment: { kind: 'create' },
-            deploy: { requestKey: fixture.creations[0]?.environment.kind === 'create' ? fixture.creations[0].environment.requestKey : undefined } });
+        const initialCreate = fixture.creations[0]!;
+        expect(initialCreate.environment.kind).toBe('create');
+        expect(readDeploymentTemplateDeployIntentV1(initialCreate)).toEqual({
+            requestKey: initialCreate.environment.kind === 'create' ? initialCreate.environment.requestKey : undefined,
+        });
         expect(fixture.retries[0]).toMatchObject({ environment: { kind: 'existing', environmentId: fixture.partial.environmentId, expectedRevision: 5 },
             target: { kind: 'existing', targetLinkId: 'target-link', expectedRevision: 2, installationId: 'installed' },
             destination: fixture.partial.definition, templateRef: prepared.templateRef, domainBindings: choices.domainBindings,

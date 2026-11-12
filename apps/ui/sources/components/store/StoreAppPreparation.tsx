@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useStore } from 'zustand';
+import { DeploymentTemplateChoices } from '@/components/projects/deployments/DeploymentTemplateChoices';
 import { DeploymentPartialProgress } from '@/components/projects/deployments/DeploymentPartialProgress';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -40,7 +41,6 @@ import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { StoreMachineScopeContext } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 import type {
   StoreAppListingState,
@@ -88,20 +88,15 @@ function StoreAppPreparationModal(
   props: ReviewProps & CustomModalInjectedProps,
 ) {
   const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
-  const machineId = useStore(reviewState, state => state.machineId);
-  const machine = React.useMemo(() => machineId ? {
-    serverId: props.lifetime.scope.serverId, machineId,
-  } : undefined, [machineId, props.lifetime.scope.serverId]);
-  return <StoreMachineScopeContext.Provider value={machine}>
-    <StoreAppPreparationTargeted {...props} reviewState={reviewState} />
-  </StoreMachineScopeContext.Provider>;
+  return <StoreAppPreparationTargeted {...props} reviewState={reviewState} />;
 }
 
-function StoreAppPreparationTargeted(props: ReviewProps & CustomModalInjectedProps) {
+function StoreAppPreparationTargeted(props: ReviewProps & CustomModalInjectedProps & Readonly<{ reviewState: StoreAppPreparationStore }>) {
   const { ready: initialReady, lifetime, reviewState } = props;
   const selection = { sourceId: initialReady.item.summary.sourceId, itemId: initialReady.item.summary.itemId,
     ...(initialReady.item.summary.version ? { version: initialReady.item.summary.version } : {}) };
-  const listing = useStoreAppListing({ selection, lifetime, demand: { presented: true } });
+  const installMachineId = useStore(reviewState, state => state.machineId);
+  const listing = useStoreAppListing({ selection, lifetime, demand: { presented: true }, installMachineId });
   const ready = listing.kind === 'ready' ? listing : null;
   return ready ? <StoreAppPreparationReview {...props} ready={ready} reviewState={reviewState} /> : null;
 }
@@ -127,7 +122,7 @@ export function StoreAppPreparationReview(
   const projectChoice = useDeploymentProjectChoice({ lifetime });
   const sources = projectChoice.sources;
   const [reviewState] = React.useState(() => props.reviewState ?? createReviewState(props));
-  const { machineId, controllerId, pending, prepared, refusal, environmentName, domainHostnames, production, creating } = useStore(reviewState);
+  const { machineId, controllerId, pending, prepared, refusal, environmentName, domainHostnames, production, creating, templateChoices } = useStore(reviewState);
   const [controllerMenuOpen, setControllerMenuOpen] = React.useState(false);
   const [optionsOpen, setOptionsOpen] = React.useState(false);
   const [deployDefaultsOpen, setDeployDefaultsOpen] = React.useState(false);
@@ -242,6 +237,7 @@ export function StoreAppPreparationReview(
     if (!prepared || reviewState.getState().creating) return;
     reviewState.setState({ creating: true, ...(!partialFailure && !created ? { refusal: null } : {}) });
     const outcome = await ready.create(prepared, {
+      ...templateChoices,
       name: environmentName.trim(),
       protection: production ? 'production' : 'nonProduction',
       deployerMode: 'managers',
@@ -262,7 +258,7 @@ export function StoreAppPreparationReview(
     }
     if ('ok' in outcome) reviewState.setState({ creating: false,
       refusal: { code: outcome.errorCode, step: 'create', failure: outcome } });
-  }, [approval, created, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, reviewState, router]);
+  }, [approval, created, domainChoices, environmentName, onClose, partialFailure, prepared, production, ready, reviewState, router, templateChoices]);
 
   const footer = created ? (
     <MachineSetupReviewFooter onCancel={onClose} cancelTestID="store.app.prepare.cancel"
@@ -523,6 +519,8 @@ export function StoreAppPreparationReview(
           );
         })}
       </ItemGroup>
+      <DeploymentTemplateChoices template={ready.app} lifetime={lifetime} value={templateChoices}
+        onChange={templateChoices => reviewState.setState({ templateChoices })} testID="store.app.prepare.choices" />
       <DeploymentProjectChoiceGroups
         model={projectChoice}
         testIDPrefix="store.app.prepare.project"
