@@ -78,12 +78,13 @@ describe('plugin admission through startup projection and cleanup reconcile', ()
         const bundled = loadBundledPluginLocatorResult([{ ...bad, manifest: { schemaVersion: 99 } }], [], [{
             identity: { pluginId: bad.pluginId, localId: 'codex' }, implementationOwnerId: 'codex', registrationFamily: 'agents',
         }]);
+        expect(bundled.admittedGraph.unavailablePlugins).toEqual([{ pluginId: bad.pluginId, code: 'plugin_manifest_invalid' }]);
         expect(projectBundledPluginCatalogEntries(bundled)).toMatchObject([{
             pluginId: bad.pluginId, enabled: false, compatibility: { status: 'load_error' },
             diagnostics: [{ code: 'plugin_manifest_invalid' }],
         }]);
     });
-    it('skips an installed contribution with an unresolved reference before activation', () => {
+    it('retains an installed Agent and withdraws only its unresolved optional reference before activation', () => {
         const candidate = consumer();
         if (!('manifest' in candidate)) throw new Error('Expected inline fixture');
         const plugin: LoadedPlugin = {
@@ -95,14 +96,14 @@ describe('plugin admission through startup projection and cleanup reconcile', ()
         const inputs = projectLoadedPluginContributes({
             loadResult: { loadedPlugins: [plugin], diagnosticsByPluginId: {} }, provenance: 'external',
         });
-        expect(inputs.agents).toEqual([]);
+        expect(inputs.agents?.map(agent => agent.pluginId)).toEqual([plugin.pluginId]);
         expect(inputs.pluginDeclarations).toMatchObject([{ pluginId: plugin.pluginId }]);
-        expect(inputs.activationTargets).toMatchObject([{ pluginId: plugin.pluginId, manifest: { contributes: { agents: [] } } }]);
+        expect(inputs.activationTargets).toMatchObject([{ pluginId: plugin.pluginId, manifest: { contributes: { agents: [{ id: 'consumer', connectedAccounts: [] }] } } }]);
         expect(inputs.pluginDiagnosticsByPluginId?.[plugin.pluginId]).toEqual([expect.objectContaining({
-            code: 'plugin_contribution_skipped',
+            code: 'plugin_optional_reference_unavailable',
         })]);
     });
-    it('isolates a bundled dangling descriptor and keeps the healthy graph usable', async () => {
+    it('retains a bundled Agent with an optional dangling descriptor and keeps the healthy graph usable', async () => {
         const provenance = 'first_party';
         const bundled = loadBundledPluginLocatorResult([
             consumer(), locator('happier.fixture.healthy', {}), locator('happier.fixture.accounts', {}),
@@ -113,12 +114,12 @@ describe('plugin admission through startup projection and cleanup reconcile', ()
             ) }, provenance,
         });
         const registry = createResolvedContributionRegistry(inputs);
-        expect(registry.agents).toEqual([]);
-        expect(inputs.activationTargets?.find(target => target.pluginId === 'happier.fixture.consumer')?.manifest.contributes.agents).toEqual([]);
+        expect(registry.agents.map(agent => agent.pluginId)).toEqual(['happier.fixture.consumer']);
+        expect(inputs.activationTargets?.find(target => target.pluginId === 'happier.fixture.consumer')?.manifest.contributes.agents).toMatchObject([{ id: 'consumer', connectedAccounts: [] }]);
         expect(projectBundledPluginCatalogEntries(bundled)).toEqual(expect.arrayContaining([
             expect.objectContaining({ pluginId: 'happier.fixture.consumer', enabled: true,
                 compatibility: expect.objectContaining({ status: 'compatible' }),
-                diagnostics: [expect.objectContaining({ code: 'plugin_contribution_skipped' })] }),
+                diagnostics: [expect.objectContaining({ code: 'plugin_optional_reference_unavailable' })] }),
             expect.objectContaining({ pluginId: 'happier.fixture.healthy', enabled: true }),
         ]));
         const runtime = await createAdmittedPluginRuntimeFixture({
@@ -129,7 +130,7 @@ describe('plugin admission through startup projection and cleanup reconcile', ()
             const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
                 baseDir: join(runtime.happyHomeDir, 'homes'), nowMs: () => 0, getLiveMaterializationKeys: () => [],
                 getRetainedMaterializationKeys: () => {
-                    expect(runtime.registry.contributes.agents).toEqual([]);
+                    expect(runtime.registry.contributes.agents.map(agent => agent.pluginId)).toEqual(['happier.fixture.consumer']);
                     return [];
                 },
             });

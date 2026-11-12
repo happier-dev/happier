@@ -27,14 +27,17 @@ export function projectPluginManifestCompatibilityDiagnostic(
   diagnostic: CanonicalPluginManifestIngestionDiagnostic,
 ): PluginCompatibilityDiagnostic {
   const attributed = diagnostic.pluginId && diagnostic.contributionId;
-  if (diagnostic.code === 'plugin_contribution_skipped') {
+  if (diagnostic.code === 'plugin_contribution_skipped' || diagnostic.code === 'plugin_optional_reference_unavailable') {
     return {
       code: diagnostic.code,
       stage: 'normalization',
-      message: 'A plugin contribution was skipped because its declaration is unknown, invalid, or references an unavailable contribution.',
+      message: diagnostic.code === 'plugin_optional_reference_unavailable'
+        ? 'An optional connected-account reference is unavailable. The owning contribution remains available.'
+        : 'A plugin contribution was skipped because its declaration is unknown, invalid, or references an unavailable contribution.',
       ...(attributed ? { contribution: { pluginId: diagnostic.pluginId!, localId: diagnostic.contributionId! } } : {}),
       details: { ...(diagnostic.path ? { path: [...diagnostic.path] } : {}),
-        ...(diagnostic.reason ? { reason: diagnostic.reason } : {}) },
+        ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
+        ...(diagnostic.unavailableSource ? { unavailableSource: diagnostic.unavailableSource } : {}) },
     };
   }
   return {

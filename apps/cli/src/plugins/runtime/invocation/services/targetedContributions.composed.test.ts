@@ -41,7 +41,9 @@ import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import type {
     AdmittedTargetedContributionSnapshot,
     ResolvedContributionRegistry,
+    ResolvedPluginEnablement,
 } from '@/plugins/projection/registry/types';
+import { projectAdmittedTargetedContributionSnapshot } from '@happier-dev/cli-common/plugins/registration';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createPluginReloadController } from '../../reload/controller';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -202,6 +204,8 @@ function readBundledChannelsProviderPlugin(
 
 function resolveRealChannelsProviderRegistry(params: Readonly<{
     providerPlugins?: readonly BundledChannelsPluginFixture[];
+    diagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
 }> = {}): ResolvedContributionRegistry {
     const declarations = [
         BUNDLED_CHANNELS_TARGET,
@@ -214,8 +218,9 @@ function resolveRealChannelsProviderRegistry(params: Readonly<{
     const projected = projectLoadedPluginContributes({
         loadResult: {
             loadedPlugins,
-            diagnosticsByPluginId: {},
+            diagnosticsByPluginId: params.diagnosticsByPluginId ?? {},
         },
+        pluginEnablementById: params.pluginEnablementById,
         provenance: 'first_party',
     });
     return createResolvedContributionRegistry({
@@ -425,6 +430,31 @@ function emptyTriageDataContext(
 }
 
 describe('targeted contribution observation service', () => {
+    it('carries upstream excluded-plugin causes through the admitted and public snapshots', () => {
+        const excluded = 'happier.channel.invalid';
+        const disabled = TELEGRAM_PLUGIN_MANIFEST.id;
+        const registry = resolveRealChannelsProviderRegistry({
+            providerPlugins: [BUNDLED_TELEGRAM_PROVIDER],
+            diagnosticsByPluginId: { [excluded]: [{ code: 'plugin_manifest_invalid', stage: 'normalization', message: 'Invalid manifest' }] },
+            pluginEnablementById: { [disabled]: { enabled: false, machineEnabled: false } },
+        });
+        const snapshot = registry.readAdmittedTargetedContributions?.({
+            targetPluginId: CHANNELS_PROVIDER_POINT_REF.targetPluginId,
+            pointId: CHANNELS_PROVIDER_POINT_REF.id,
+            protocol: CHANNELS_PROVIDER_POINT_REF.protocol,
+        });
+        expect(snapshot).not.toBeNull();
+        if (!snapshot) throw new Error('Expected admitted target');
+        expect(snapshot.contributions).toEqual([]);
+        const causes = [
+            { pluginId: excluded, code: 'plugin_manifest_invalid' },
+            { pluginId: disabled, code: 'plugin_disabled' },
+        ];
+        expect(snapshot.unavailablePlugins).toEqual(expect.arrayContaining(causes));
+        const projected = projectAdmittedTargetedContributionSnapshot(CHANNELS_PROVIDER_POINT_REF, snapshot, sourceCustody);
+        expect(projected.unavailablePlugins).toEqual(snapshot.unavailablePlugins);
+        expect(projected.contributions).toEqual([]);
+    });
     it.each(['allConfigured', 'selected'] as const)(
         'handles a fenced contributor during durable uninstall while the %s list storage read is pending',
         async (selection) => {
@@ -473,7 +503,7 @@ describe('targeted contribution observation service', () => {
                     v: 1,
                     sources: selection === 'allConfigured'
                         ? { kind: 'allConfigured' }
-                        : { kind: 'selected', sourceInstanceIds: ['11111111-1111-4111-8111-111111111111'] },
+                        : { kind: 'selected', sourceInstances: [{ sourceInstanceId: '11111111-1111-4111-8111-111111111111', configurationRowId: 'source-row-a' }] },
                     order: 'newest', limit: 10,
                 }, context)).catch((error: unknown) => { failure = error; });
                 try {

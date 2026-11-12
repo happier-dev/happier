@@ -2,6 +2,7 @@ import type { PluginWorkItemsContributionV1 } from '@happier-dev/protocol/plugin
 import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 import { resolvePluginLocalizedStringV2Text as displayText } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { projectTargetedContributionActionDefinition } from '@happier-dev/cli-common/plugins/registration';
+import { spreadPreservingDeferredFields } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
 import { projectPluginActionInputDefinition, projectPluginActionLocalizedPresentation } from './actionInput';
 import { admitPluginContributionGraph, type AdmittedPluginContributionGraph } from './admission';
 import { readPluginSemanticContributions, type PluginContributionCanonicalizer } from './semantic';
@@ -23,7 +24,7 @@ import type {
   PluginSkillContributionV1,
   PluginDragSourceContributionV1,
   PluginDropTargetContributionV1,
-  PluginEventContributionV1,
+  ParsedPluginEventContributionV1,
   PluginHookContributionV2,
   PluginMcpDiscoverySourceContributionV1,
   PluginMcpServerContributionV1,
@@ -190,6 +191,7 @@ export type PluginContributionRegistry = Readonly<{
   atmospherePictures: readonly PluginOwnedContribution<PluginAtmospherePictureContributionV1>[];
   registrySources: readonly PluginOwnedContribution<PluginRegistrySourceContributionV1>[];
   backupDestinations: readonly PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[];
+  machineRoles: readonly PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[];
   deploymentTargets: readonly PluginOwnedContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>[];
   healthCheckKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>[];
   storeKinds: readonly PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[];
@@ -267,9 +269,13 @@ function normalizeVoiceProviderDefinition(
 function toActionDefinition(definition: PluginActionContributionV2): ResolvedActionDefinition {
   const kindVersion: ActionDefinitionV1['kindVersion'] = 1;
   const safety: ActionDefinitionV1['safety'] = definition.dangerLevel === 'safe' ? 'safe' : 'danger';
-  const normalized = {
-    ...projectTargetedContributionActionDefinition(definition),
-    ...projectPluginActionInputDefinition(definition),
+  // Deferred bundled schemas stay deferred through this projection.
+  const normalized = spreadPreservingDeferredFields<ReturnType<typeof projectTargetedContributionActionDefinition>
+    & ReturnType<typeof projectPluginActionInputDefinition>>(
+    projectTargetedContributionActionDefinition(definition),
+    projectPluginActionInputDefinition(definition),
+  );
+  const presented = {
     kindVersion,
     id: definition.id,
     title: displayText(definition.title),
@@ -309,7 +315,7 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     availability: definition.availability,
     hostAccess: definition.hostAccess,
     priority: definition.priority,
-  } satisfies Omit<ActionDefinitionV1, 'execution' | 'inputSchema'> & Readonly<{
+  } satisfies Omit<ActionDefinitionV1, 'execution' | 'inputSchema' | 'inputHints' | 'outputSchema'> & Readonly<{
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
     approvalScope?: PluginActionContributionV2['approvalScope'];
     readOnly?: PluginActionContributionV2['readOnly'];
@@ -317,17 +323,17 @@ function toActionDefinition(definition: PluginActionContributionV2): ResolvedAct
     execution: PluginActionContributionV2['execution'];
   }>;
   if (definition.dangerLevel === 'safe') {
-    return Object.freeze({ ...normalized, safety: 'safe', dangerLevel: 'safe' });
+    return Object.freeze(spreadPreservingDeferredFields<ResolvedActionDefinition>(normalized, presented,
+      { safety: 'safe', dangerLevel: 'safe' }));
   }
   if (pluginActionRequiresConfirmationPresentation(definition.surfaces, definition.dangerLevel) && !definition.confirmation) {
     throw new Error(`Non-safe plugin action '${definition.id}' has no confirmation metadata after manifest normalization`);
   }
-  return Object.freeze({
-    ...normalized,
+  return Object.freeze(spreadPreservingDeferredFields<ResolvedActionDefinition>(normalized, presented, {
     safety: 'danger',
     dangerLevel: definition.dangerLevel,
     ...(definition.confirmation ? { confirmation: definition.confirmation } : {}),
-  });
+  }));
 }
 
 function toResourceDefinition(definition: PluginResourceContributionV2): ResolvedResourceDefinition {
@@ -358,7 +364,7 @@ function toResourceDefinition(definition: PluginResourceContributionV2): Resolve
   });
 }
 
-function toEventDefinition(pluginId: string, definition: PluginEventContributionV1): ResolvedEventDefinition {
+function toEventDefinition(pluginId: string, definition: ParsedPluginEventContributionV1): ResolvedEventDefinition {
   return Object.freeze({
     ...definition,
     id: qualifyPluginEventIdV1(pluginId, definition.id),
@@ -372,6 +378,8 @@ export function projectPluginContributionRegistry(params: Readonly<{
   referencePlugins?: readonly LoadedPlugin[];
   referenceGraph?: AdmittedPluginContributionGraph;
   admittedGraph?: AdmittedPluginContributionGraph;
+  pluginEnablementById?: Parameters<typeof admitPluginContributionGraph>[0]['pluginEnablementById'];
+  loadDiagnosticsByPluginId?: Parameters<typeof admitPluginContributionGraph>[0]['loadDiagnosticsByPluginId'];
   providerContributionKeys?: readonly string[];
   agentIdentity?: PluginContributionIdentityV1;
 }>): PluginContributionRegistry {
@@ -412,6 +420,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
   const atmospherePictures: PluginOwnedContribution<PluginAtmospherePictureContributionV1>[] = [];
   const registrySources: PluginOwnedContribution<PluginRegistrySourceContributionV1>[] = [];
   const backupDestinations: PluginOwnedContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>[] = [];
+  const machineRoles: PluginOwnedContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>[] = [];
   const deploymentTargets: PluginOwnedContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>[] = [];
   const healthCheckKinds: PluginOwnedContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>[] = [];
   const storeKinds: PluginOwnedContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>[] = [];
@@ -704,7 +713,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
         ...(plugin.generatedUiArtifactsManifest
           ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest }
           : {}),
-        localizedPresentation: projectPluginActionLocalizedPresentation(definition, actionDefinition.inputHints),
+        localizedPresentation: projectPluginActionLocalizedPresentation(definition, actionDefinition),
         admittedTarget: Object.freeze({
           declaration: definition,
           ...(deploymentRolesByAction.has(definition.id)
@@ -908,7 +917,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readSemanticDefinitions<PluginEventContributionV1>('events')) {
+    for (const definition of readSemanticDefinitions<ParsedPluginEventContributionV1>('events')) {
       events.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -1139,6 +1148,15 @@ export function projectPluginContributionRegistry(params: Readonly<{
         sourceSpec: plugin.sourceSpec, definition,
       });
     }
+    for (const definition of readSemanticDefinitions<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>('machineRoles')) {
+      machineRoles.push({
+        pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath, manifestPath: plugin.manifestPath,
+        daemonEntryPath: plugin.daemonEntryPath, devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec, definition,
+      });
+    }
     for (const definition of readSemanticDefinitions<PluginRegistrySourceContributionV1>('registrySources')) {
       registrySources.push({
         pluginId: plugin.pluginId, pluginVersion: plugin.manifest.version,
@@ -1299,6 +1317,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     atmospherePictures: Object.freeze(atmospherePictures),
     registrySources: Object.freeze(registrySources),
     backupDestinations: Object.freeze(backupDestinations),
+    machineRoles: Object.freeze(machineRoles),
     deploymentTargets: Object.freeze(deploymentTargets),
     healthCheckKinds: Object.freeze(healthCheckKinds),
     storeKinds: Object.freeze(storeKinds),

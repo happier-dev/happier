@@ -865,6 +865,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         createAvailable({ seed, params }): TargetedContributionsService | null {
             const owner = seed.readCurrentTargetedDeclarations ? createManifestTargetedContributionsService({
                 readCurrentDeclarations: seed.readCurrentTargetedDeclarations,
+                readUnavailablePlugins: seed.readUnavailableTargetedPlugins,
                 subscribeToCatalogChanges: () => () => {},
             }) : params.targetedContributions;
             return owner?.bind({
@@ -1017,6 +1018,7 @@ export function createPluginInvocationServicesFromDescriptors(
             retirementSignal: seed.retirementSignal,
             isOccurrenceCurrent: seed.isOccurrenceCurrent,
             ...(binding.execOutputObserver ? { observeProcessOutput: binding.execOutputObserver } : {}),
+            ...(binding.execChannelInput ? { bindProcessInput: binding.execChannelInput } : {}),
             ...(binding.execInvocationTimeoutMs === undefined ? {} : { invocationTimeoutMs: binding.execInvocationTimeoutMs }),
             async resolveExecutable(executable) {
                 return await resolvePluginInvocationExecutable(

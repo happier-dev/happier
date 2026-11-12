@@ -244,6 +244,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const botTemplates = freezeQualifiedContributions(inputs.botTemplates ?? []);
     const registrySources = freezeQualifiedContributions(inputs.registrySources ?? []);
     const backupDestinations = freezeQualifiedContributions(inputs.backupDestinations ?? []);
+    const machineRoles = freezeQualifiedContributions(inputs.machineRoles ?? []);
     const deploymentTargets = freezeQualifiedContributions(inputs.deploymentTargets ?? []);
     const healthCheckKinds = freezeQualifiedContributions(inputs.healthCheckKinds ?? []);
     const storeKinds = freezeQualifiedContributions(inputs.storeKinds ?? []);
@@ -276,6 +277,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         ...(inputs.targetedPluginContributions ?? []),
     ]);
     const targetedAdmission = resolveAdmittedTargetedContributions({
+        unavailablePlugins: inputs.unavailablePlugins,
         pluginContributionPoints,
         targetedPluginContributions,
         actions,
@@ -527,6 +529,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         atmospherePictures,
         registrySources,
         backupDestinations,
+        machineRoles,
         deploymentTargets,
         healthCheckKinds,
         storeKinds,
@@ -545,6 +548,7 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         accountCollections,
         pluginContributionPoints,
         targetedPluginContributions,
+        unavailablePlugins: inputs.unavailablePlugins,
         readAdmittedTargetedContributions(request) {
             return targetedAdmission.read(request);
         },
@@ -1072,6 +1076,7 @@ export function createMergedContributionRegistry(
         atmospherePictures: Object.freeze([...(builtIn.atmospherePictures ?? []), ...(plugin.atmospherePictures ?? [])]),
         registrySources: Object.freeze([...(builtIn.registrySources ?? []), ...(plugin.registrySources ?? [])]),
         backupDestinations: Object.freeze([...(builtIn.backupDestinations ?? []), ...(plugin.backupDestinations ?? [])]),
+        machineRoles: Object.freeze([...(builtIn.machineRoles ?? []), ...(plugin.machineRoles ?? [])]),
         deploymentTargets: Object.freeze([...(builtIn.deploymentTargets ?? []), ...(plugin.deploymentTargets ?? [])]),
         healthCheckKinds: Object.freeze([...(builtIn.healthCheckKinds ?? []), ...(plugin.healthCheckKinds ?? [])]),
         storeKinds: Object.freeze([...(builtIn.storeKinds ?? []), ...(plugin.storeKinds ?? [])]),
@@ -1096,6 +1101,7 @@ export function createMergedContributionRegistry(
         ]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
         pluginDeclarations: Object.freeze([...(builtIn.pluginDeclarations ?? []), ...(plugin.pluginDeclarations ?? [])]),
+        unavailablePlugins: Object.freeze([...(builtIn.unavailablePlugins ?? []), ...(plugin.unavailablePlugins ?? [])]),
         pluginEnablementById: Object.freeze({ ...(fallback.pluginEnablementById ?? {}), ...(plugin.pluginEnablementById ?? {}) }),
         unavailableAgentPluginsByBackendId: Object.freeze({ ...(fallback.unavailableAgentPluginsByBackendId ?? {}), ...(plugin.unavailableAgentPluginsByBackendId ?? {}) }),
         materializationIdsByPluginId: Object.freeze({

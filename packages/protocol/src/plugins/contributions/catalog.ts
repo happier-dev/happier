@@ -63,6 +63,8 @@ export type PluginContributionReferenceCandidateV2 = Readonly<{
    * than the catalog's ordinary same-plugin local-id spelling.
    */
   allowQualifiedSamePlugin?: boolean;
+  /** Explicitly optional account entry withdrawn when its service is unavailable. */
+  optionalEntryPath?: readonly (string | number)[];
   reference: unknown;
   path: readonly (string | number)[];
 }>;
@@ -263,6 +265,7 @@ const FAMILY_POLICIES = {
   composerRegions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'composerRegions', allowedRuntimeRegistration: null, consumer: 'composer-region-host', platforms: ALL_PLATFORMS },
   openableContentViewers: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'pluginUi', allowedRuntimeRegistration: null, consumer: 'openable-content-host', platforms: ALL_PLATFORMS },
   accountCollections: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: 'accountCollections', allowedRuntimeRegistration: null, consumer: 'account-collection-service', platforms: ALL_PLATFORMS },
+  machineRoles: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'machine-role-catalog', platforms: ALL_PLATFORMS },
   webhooks: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'webhook-ingress', platforms: ALL_PLATFORMS },
   pluginContributionPoints: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
   targetedPluginContributions: { identityField: 'id', disposition: 'reshaped', activationDemand: 'none', projectionFamily: null, allowedRuntimeRegistration: null, consumer: 'targeted-contribution-admission', platforms: ALL_PLATFORMS },
@@ -610,6 +613,8 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
             targetFamily: 'connectedAccountDescriptors',
             reference: (account as Readonly<Record<string, unknown>>).service,
             path: ['managedRuntime', 'connectedAccounts', index, 'service'],
+            ...((account as Readonly<Record<string, unknown>>).required === false
+              ? { optionalEntryPath: ['managedRuntime', 'connectedAccounts', index] } : {}),
           }]
         : []),
     ];
@@ -635,7 +640,9 @@ function extractNestedReferences(family: string, value: Readonly<Record<string, 
   if (family === 'agents') {
     const accounts = Array.isArray(value.connectedAccounts) ? value.connectedAccounts : [];
     const accountReferences = accounts.flatMap((account, index) => account && typeof account === 'object'
-      ? [{ targetFamily: 'connectedAccountDescriptors', reference: (account as Record<string, unknown>).service, path: ['connectedAccounts', index, 'service'] }]
+      ? [{ targetFamily: 'connectedAccountDescriptors', reference: (account as Record<string, unknown>).service, path: ['connectedAccounts', index, 'service'],
+          ...((account as Readonly<Record<string, unknown>>).required === false
+            ? { optionalEntryPath: ['connectedAccounts', index] } : {}) }]
       : []);
     const runtime = value.runtime && typeof value.runtime === 'object' ? value.runtime as Record<string, unknown> : null;
     const transport = runtime?.transport && typeof runtime.transport === 'object' ? runtime.transport as Record<string, unknown> : null;

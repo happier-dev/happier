@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginCompatibilityDiagnosticSchema } from '@/plugins/validation/diagnostics/types';
 import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginProjectedActionInputHintsV2Schema } from '@happier-dev/protocol';
 
@@ -46,6 +47,7 @@ function bundledAgentWithConnectedAccounts(
   pluginId: string,
   connectedAccounts: readonly Readonly<{
     purpose: string;
+    required?: boolean;
     service: Readonly<{ pluginId: string; localId: string }>;
   }>[],
 ): LoadedPlugin {
@@ -78,6 +80,28 @@ function bundledAgentWithConnectedAccounts(
 }
 
 describe('target package contribution projection', () => {
+  it.each([false, true])('uses supplied enablement for fallback account references (enabled=%s)', (enabled) => {
+    const account = loaded('com.acme.accounts', { connectedAccountDescriptors: [{
+      id: 'github', title: 'GitHub', authentication: {
+        defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+          fields: [{ id: 'token', title: 'Token', schema: { type: 'string', minLength: 1 }, secret: true }] }],
+      },
+    }] });
+    const service = { pluginId: account.pluginId, localId: 'github' };
+    const agent = bundledAgentWithConnectedAccounts('com.acme.consumer', [{ purpose: 'api', required: false, service }]);
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [agent],
+      referenceGraph: admitPluginContributionGraph({ loadedPlugins: [account] }),
+      pluginEnablementById: { [account.pluginId]: { enabled, machineEnabled: enabled } },
+    });
+    expect(registry.agents).toHaveLength(1);
+    expect(registry.agents[0]?.definition.connectedAccounts).toEqual(enabled
+      ? [expect.objectContaining({ service })] : []);
+    if (!enabled) expect(registry.admittedGraph.diagnosticsByPluginId[agent.pluginId]).toMatchObject([{
+      code: 'plugin_optional_reference_unavailable', details: {
+        unavailableSource: { pluginId: account.pluginId, code: 'plugin_disabled' },
+      },
+    }]);
+  });
   it.each(['full', 'selected'] as const)('reuses admitted Provider definitions during %s projection', (mode) => {
     const plugin = loaded('com.acme.provider', { providers: [DEEPSEEK_PROVIDER_CONTRIBUTION] });
     const admittedGraph = admitPluginContributionGraph({ loadedPlugins: [plugin] });
@@ -537,6 +561,20 @@ describe('target package contribution projection', () => {
     expect(registry.browserTargets).toMatchObject([{ definition: { id: 'page' } }]);
     expect(registry.admittedGraph.diagnosticsByPluginId['com.acme.consumer']).toMatchObject([{
       code: 'plugin_contribution_skipped', details: { reason: 'plugin_manifest_dangling_reference' },
+    }]);
+  });
+
+  it('retains an Agent with an unavailable optional account in the real catalog projection', () => {
+    const plugin = bundledAgentWithConnectedAccounts('happier.agent.consumer', [{
+      purpose: 'optional-account', service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false,
+    }]);
+    const registry = buildPluginContributionRegistry({ loadedPlugins: [plugin] });
+    expect(registry.agents).toMatchObject([{ definition: { id: 'consumer', connectedAccounts: [] } }]);
+    const diagnostics = registry.admittedGraph.diagnosticsByPluginId[plugin.pluginId];
+    expect(diagnostics?.map(diagnostic => PluginCompatibilityDiagnosticSchema.parse(diagnostic))).toEqual(diagnostics);
+    expect(diagnostics).toMatchObject([{
+      code: 'plugin_optional_reference_unavailable', contribution: { pluginId: plugin.pluginId, localId: 'consumer' },
+      details: { reason: 'plugin_manifest_dangling_reference', path: ['contributes', 'agents', 0, 'connectedAccounts', 0, 'service'] },
     }]);
   });
 

@@ -12,6 +12,7 @@ import { normalizePluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/ru
 export function createManifestTargetedContributionsService(host: Readonly<{
     readCurrentDeclarations(signal?: AbortSignal): readonly TargetedContributionManifestDeclaration[] | Promise<readonly TargetedContributionManifestDeclaration[]>;
     subscribeToCatalogChanges(listener: () => void): () => void;
+    readUnavailablePlugins?(): readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }>): StableTargetedContributionsOwner {
     return createTargetedContributionsService({
         subscribeToCatalogChanges(listener) {
@@ -19,7 +20,7 @@ export function createManifestTargetedContributionsService(host: Readonly<{
         },
         async readAdmittedSnapshot({ pluginId, point, signal }) {
             const declarations = await host.readCurrentDeclarations(signal);
-            const admitted = resolveManifestTargetedContributions(declarations).read({
+            const admitted = resolveManifestTargetedContributions(declarations, host.readUnavailablePlugins?.()).read({
                 targetPluginId: pluginId,
                 pointId: point.id,
                 protocol: point.protocol,
@@ -162,6 +163,7 @@ export function projectAdmittedTargetedContributionSnapshot(
         occurrenceId: snapshot.target.occurrenceId,
         sourceCustody: targetSourceCustody,
         contributions: Object.freeze(contributions),
+        ...(snapshot.unavailablePlugins?.length ? { unavailablePlugins: snapshot.unavailablePlugins } : {}),
     });
 }
 

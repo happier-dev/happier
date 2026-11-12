@@ -17,6 +17,7 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_manifest_duplicate_id',
   'plugin_manifest_semantic_invalid',
   'plugin_contribution_skipped',
+  'plugin_optional_reference_unavailable',
   'plugin_manifest_engine_incompatible',
   'plugin_trust_approval_required',
   'plugin_untrusted',

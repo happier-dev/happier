@@ -79,4 +79,5 @@ export type AdmittedTargetedContributionSnapshot<TRenderer extends TargetedContr
         occurrenceId: TOccurrence;
     }>;
     contributions: readonly AdmittedTargetedContribution<TRenderer, TOccurrence>[];
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }>;

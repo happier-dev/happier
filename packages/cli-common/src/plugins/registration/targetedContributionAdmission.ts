@@ -10,6 +10,7 @@ import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protoc
 import type { JsonValue, PluginActionSurfaceV2, PreparedPluginJsonSchema, RehydratedPluginContributionPointOperationV1, RehydratedPluginContributionPointSemanticsV1, RehydratedPluginContributionPointSurfaceV1 } from '@happier-dev/protocol';
 import { PLUGIN_UI_TARGETED_CONTRIBUTIONS_MAX_V1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { forwardDeclarationField } from '@happier-dev/protocol/plugins/contributions/deferredDeclarationFields';
 
 type TargetedOperationSource = Readonly<{ occurrenceId: string; localId: string; unavailable?: true }>;
 
@@ -186,22 +187,27 @@ export function projectTargetedContributionActionDefinition(definition: PluginAc
         contributionSurfaces: PluginActionContributionV2['surfaces'];
     }
 > {
-    return {
-        id: definition.id,
-        ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
-        ...(definition.resultSchema === undefined ? {} : { outputSchema: definition.resultSchema }),
+    const projected: Record<string, unknown> = { id: definition.id };
+    // Schemas may be deferred bundled declaration values; forward them unread.
+    forwardDeclarationField(projected, 'inputSchema', definition);
+    forwardDeclarationField(projected, 'outputSchema', definition, 'resultSchema');
+    return Object.assign(projected, {
         ...(definition.inputHints === undefined ? {} : { inputHints: definition.inputHints }),
         ...(definition.connectedAccountPurposeBindings === undefined ? {} : {
             connectedAccountPurposeBindings: definition.connectedAccountPurposeBindings,
         }),
         contributionSurfaces: definition.surfaces,
         dangerLevel: definition.dangerLevel,
-    };
+    }) as ReturnType<typeof projectTargetedContributionActionDefinition>;
 }
 
 /** Projects already-admitted manifests into the existing cold admission owner without retaining a catalog. */
-export function resolveManifestTargetedContributions(declarations: readonly TargetedContributionManifestDeclaration[]): TargetedContributionAdmissionResult {
+export function resolveManifestTargetedContributions(
+    declarations: readonly TargetedContributionManifestDeclaration[],
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[],
+): TargetedContributionAdmissionResult {
     return resolveAdmittedTargetedContributions({
+        unavailablePlugins,
         pluginContributionPoints: declarations.flatMap(({ manifest, occurrenceId }) => (
             manifest.contributes.pluginContributionPoints.map((definition) => ({ pluginId: manifest.id, definition, occurrenceId }))
         )),
@@ -592,6 +598,7 @@ export function resolveAdmittedTargetedContributions<TRenderer extends TargetedC
     actions: readonly TargetedContributionActionDeclaration[];
     uiRenderersV2: readonly TRenderer[];
     occurrenceIdsByPluginId: Readonly<Record<string, string>>;
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }>): TargetedContributionAdmissionResult<TRenderer> {
     const diagnostics: TargetedContributionAdmissionDiagnostic[] = [];
     const pointsByKey = new Map<string, TargetPoint>();
@@ -1002,6 +1009,7 @@ export function resolveAdmittedTargetedContributions<TRenderer extends TargetedC
                     pointId: point.declaration.definition.id,
                     occurrenceId: point.occurrenceId,
                 }),
+                ...(params.unavailablePlugins?.length ? { unavailablePlugins: params.unavailablePlugins } : {}),
                 contributions: Object.freeze(retained.filter((contribution) => (
                     contribution.protocol.id === protocol.id
                     && contribution.protocol.version === protocol.version

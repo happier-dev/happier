@@ -8,6 +8,8 @@ export function projectLoadedPluginContributes(
 ): ResolvedContributionInputs {
     const pluginRegistry = buildPluginContributionRegistry({
         loadedPlugins: params.loadResult.loadedPlugins,
+        loadDiagnosticsByPluginId: params.loadResult.diagnosticsByPluginId,
+        pluginEnablementById: params.pluginEnablementById,
         admittedGraph: params.admittedGraph,
         providerContributionKeys: params.providerContributionKeys,
         agentIdentity: params.agentIdentity,

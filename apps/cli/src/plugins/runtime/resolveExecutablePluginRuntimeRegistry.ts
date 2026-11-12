@@ -3406,6 +3406,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? createCliActionExecutorFromCredentials({
             credentials: sessionCredentials,
             readCredentials: readSessionCredentials,
+            ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
             serverId: configuration.activeServerId,
             serverApiUrl: resolveServerHttpBaseUrl(),
             ...(pluginActionMachineId ? { machineId: pluginActionMachineId } : {}),
@@ -3498,6 +3499,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const accountTargetedContributions: StableTargetedContributionsOwner | undefined = params?.accountExecution
         ? { bind(binding) { return createManifestTargetedContributionsService({
             readCurrentDeclarations: () => readCurrentAccountTargetedDeclarations(binding.pluginId, binding.signal),
+            readUnavailablePlugins: () => authoritativeContributes.unavailablePlugins ?? [],
             // A finite CLI invocation does not replace its admitted source set;
             // release/Account retirement is enforced by the captured binding.
             subscribeToCatalogChanges: () => () => {},
@@ -4443,6 +4445,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return Object.freeze({ serverId: authority.serverId, accountId });
         },
         ...(params?.accountExecution ? { readCurrentTargetedDeclarations: readCurrentAccountTargetedDeclarations,
+            readUnavailableTargetedPlugins: () => authoritativeContributes.unavailablePlugins ?? [],
             createAccountSourceMachineResolver } : {}),
         ...(accountActivationSources ? { executionRealm: 'account' as const } : {}),
         contributes: authoritativeContributes,

@@ -11,6 +11,7 @@ export function resolveAdmittedTargetedContributions(params: Readonly<{
     actions: readonly ResolvedActionContribution[];
     uiRenderersV2: readonly ResolvedUiRendererV2Contribution[];
     occurrenceIdsByPluginId: Readonly<Record<string, PluginRuntimeOccurrenceId>>;
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
 }>): Readonly<{
     diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     read(request: Readonly<{ targetPluginId: string; pointId: string; protocol: Readonly<{ id: string; version: number }> }>): AdmittedTargetedContributionSnapshot | null;

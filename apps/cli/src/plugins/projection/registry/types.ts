@@ -132,6 +132,8 @@ export type ResolvedRegistrySourceContribution = ResolvedTargetUiContribution<im
     pluginRootPath: string;
 }>;
 export type ResolvedBackupDestinationContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').BackupDestinationContributionV1>;
+/** Machine roles a plugin adds or (`partOf`) joins; the daemon roles runtime resolves them with core roles. */
+export type ResolvedMachineRoleContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol/machines/roles/machineRolesV1').MachineRoleDeclarationV1>;
 export type ResolvedDeploymentTargetContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').DeploymentTargetContributionV1>;
 export type ResolvedHealthCheckKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').HealthCheckKindContributionV1>;
 export type ResolvedStoreKindContribution = ResolvedTargetUiContribution<import('@happier-dev/protocol').PluginStoreKindContributionV1>;
@@ -810,6 +812,7 @@ export type UnavailableAgentPlugin = ResolvedPluginEnablement & Readonly<{
 }>;
 
 export type ResolvedContributionInputs = Readonly<{
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
     /** One bundled admission result shared by runtime, catalog and recovery. */
     pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
     unavailableAgentPluginsByBackendId?: Readonly<Record<string, UnavailableAgentPlugin>>;
@@ -852,6 +855,7 @@ export type ResolvedContributionInputs = Readonly<{
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
     backupDestinations?: readonly ResolvedBackupDestinationContribution[];
+    machineRoles?: readonly ResolvedMachineRoleContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
     storeKinds?: readonly ResolvedStoreKindContribution[];
@@ -888,6 +892,7 @@ export type ResolvedContributionInputs = Readonly<{
 }>;
 
 export type ResolvedContributionRegistry = Readonly<{
+    unavailablePlugins?: readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
     pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>;
     unavailableAgentPluginsByBackendId?: Readonly<Record<string, UnavailableAgentPlugin>>;
     introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
@@ -928,6 +933,7 @@ export type ResolvedContributionRegistry = Readonly<{
     atmospherePictures?: readonly ResolvedAtmospherePictureContribution[];
     registrySources?: readonly ResolvedRegistrySourceContribution[];
     backupDestinations: readonly ResolvedBackupDestinationContribution[];
+    machineRoles?: readonly ResolvedMachineRoleContribution[];
     deploymentTargets?: readonly ResolvedDeploymentTargetContribution[];
     healthCheckKinds?: readonly ResolvedHealthCheckKindContribution[];
     storeKinds?: readonly ResolvedStoreKindContribution[];

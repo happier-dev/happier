@@ -44,6 +44,71 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
+describe('optional connected-account reference admission', () => {
+  it('reports optional missing services without refusing the manifest reference set', () => {
+    const declaration = ingestPluginManifestV2(manifest({ contributes: { agents: [{
+      id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      connectedAccounts: [{ purpose: 'missing', service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false }],
+    }] } }));
+    expect(declaration.ok).toBe(true);
+    if (!declaration.ok) throw new Error('Invalid fixture');
+    expect(resolvePluginManifestSetReferencesV2([declaration.manifest])).toMatchObject({
+      ok: true, unavailableReferences: [{ code: 'plugin_optional_reference_unavailable',
+        reason: 'plugin_manifest_dangling_reference', pluginId: 'com.acme.fixture', contributionId: 'consumer' }],
+    });
+  });
+  it('preserves a known excluded source cause when withdrawing an optional reference', () => {
+    const input = manifest({ contributes: { agents: [{
+      id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      connectedAccounts: [{ purpose: 'missing', service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false }],
+    }] } });
+    const declaration = ingestPluginManifestV2(input);
+    if (!declaration.ok) throw new Error('Invalid fixture');
+    const cause = { pluginId: 'com.acme.absent', code: 'plugin_manifest_invalid' };
+    const resolution = resolvePluginManifestSetReferencesV2([declaration.manifest], undefined, { unavailablePlugins: [cause] });
+    expect(resolution).toMatchObject({ ok: true, unavailablePlugins: [cause], unavailableReferences: [{ unavailableSource: cause }] });
+    const loaded = ingestPluginManifestV2(input, { mode: 'load', referenceManifests: [], unavailablePlugins: [cause] });
+    expect(loaded).toMatchObject({ ok: true, manifest: { contributes: { agents: [{ id: 'consumer', connectedAccounts: [] }] } },
+      diagnostics: [{ code: 'plugin_optional_reference_unavailable', unavailableSource: cause }] });
+    expect(resolvePluginManifestSetReferencesV2([declaration.manifest])).toMatchObject({
+      ok: true, unavailablePlugins: [{ pluginId: 'com.acme.absent', code: 'plugin_source_missing' }],
+    });
+  });
+  it.each(['local', 'foreign'] as const)('withdraws only absent optional %s accounts and retains the Agent', (target) => {
+    const service = (localId: string) => target === 'local' ? localId : { pluginId: 'com.acme.absent', localId };
+    const input = manifest({ contributes: {
+      connectedAccountDescriptors: [connectedAccountDescriptor('present')],
+      agents: [{ id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        connectedAccounts: [
+          { purpose: 'missing-one', service: service('missing-one'), required: false },
+          { purpose: 'present', service: 'present', required: true },
+          { purpose: 'missing-two', service: service('missing-two'), required: false },
+        ] }],
+    } });
+    const result = ingestPluginManifestV2(input, { mode: 'load', referenceManifests: [] });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { agents: [{ id: 'consumer',
+      connectedAccounts: [{ purpose: 'present', service: 'present', required: true }] }] } },
+      diagnostics: [
+        { code: 'plugin_optional_reference_unavailable', contributionId: 'consumer', reason: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'agents', 0, 'connectedAccounts', 2, 'service'] },
+        { code: 'plugin_optional_reference_unavailable', contributionId: 'consumer', reason: 'plugin_manifest_dangling_reference',
+          path: ['contributes', 'agents', 0, 'connectedAccounts', 0, 'service'] },
+      ] });
+    expect(input).toMatchObject({ contributes: { agents: [{ connectedAccounts: [{ purpose: 'missing-one' }, { purpose: 'present' }, { purpose: 'missing-two' }] }] } });
+  });
+
+  it.each([true, undefined])('withdraws the Agent for an absent required account (%s)', (required) => {
+    const result = ingestPluginManifestV2(manifest({ contributes: { agents: [{
+      id: 'consumer', title: 'Consumer', runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { surfaces: ['terminal'], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+      connectedAccounts: [{ purpose: 'missing', service: { pluginId: 'com.acme.absent', localId: 'account' }, ...(required === undefined ? {} : { required }) }],
+    }] } }), { mode: 'load', referenceManifests: [] });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { agents: [] } },
+      diagnostics: [{ code: 'plugin_contribution_skipped', reason: 'plugin_manifest_dangling_reference' }] });
+  });
+});
+
 describe('strict author, tolerant load', () => {
   const good = { id: 'healthy', title: 'Healthy', scopes: ['session'], surfaces: ['cli'],
     execution: { target: 'daemon' }, placementBindings: ['primary'], dangerLevel: 'safe' };
@@ -1918,6 +1983,7 @@ describe('canonical plugin manifest ingestion', () => {
     expect(resolvePluginManifestSetReferencesV2([provider.manifest, caller.manifest])).toEqual({ ok: true });
     expect(resolvePluginManifestSetReferencesV2([caller.manifest])).toEqual({
       ok: false,
+      unavailablePlugins: [{ pluginId: 'com.acme.provider', code: 'plugin_source_missing' }],
       diagnostics: expect.arrayContaining([
         expect.objectContaining({
           code: 'plugin_manifest_dangling_reference',
@@ -2424,6 +2490,7 @@ describe('canonical plugin manifest ingestion', () => {
     expect(resolvePluginManifestSetReferencesV2([owner.manifest, consumer.manifest])).toEqual({ ok: true });
     expect(resolvePluginManifestSetReferencesV2([consumer.manifest])).toEqual({
       ok: false,
+      unavailablePlugins: [{ pluginId: 'com.acme.actions', code: 'plugin_source_missing' }],
       diagnostics: [expect.objectContaining({ code: 'plugin_manifest_dangling_reference' })],
     });
 
@@ -2571,6 +2638,17 @@ describe('canonical plugin manifest ingestion', () => {
       connectedAccountDescriptors: [connectedAccountDescriptor('account')],
     };
     expect(ingestPluginManifestV2(manifest({ contributes })).ok).toBe(true);
+    const optional = ingestPluginManifestV2(manifest({ contributes: {
+      ...contributes, providers: [{ ...provider, managedRuntime: { ...provider.managedRuntime,
+        connectedAccounts: [{ ...provider.managedRuntime.connectedAccounts[0],
+          service: { pluginId: 'com.acme.absent', localId: 'account' }, required: false }],
+      } }],
+    } }), { mode: 'load', referenceManifests: [] });
+    expect(optional).toMatchObject({ ok: true, manifest: { contributes: { providers: [{ id: 'gateway',
+      managedRuntime: { connectedAccounts: [] } }] } }, diagnostics: [{
+        code: 'plugin_optional_reference_unavailable', contributionId: 'gateway', reason: 'plugin_manifest_dangling_reference',
+        path: ['contributes', 'providers', 0, 'managedRuntime', 'connectedAccounts', 0, 'service'],
+      }] });
     expect(ingestPluginManifestV2(manifest({
       contributes: {
         ...contributes,

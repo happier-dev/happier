@@ -29,11 +29,15 @@ import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js'
 import type { core } from '../../zodRuntimePolicy.js';
 import { dropEmptyRetiredContributionFamilies, skipInvalidPluginContributions } from './contributionAdmission.js';
 
+/** An upstream source exclusion, safe to project without authored values or credentials. */
+export type PluginUnavailableSourceDiagnostic = Readonly<{ pluginId: string; code: string }>;
+
 export type PluginManifestIngestionDiagnostic = Readonly<{
   code:
     | 'plugin_manifest_invalid_json'
     | 'plugin_manifest_invalid'
     | 'plugin_contribution_skipped'
+    | 'plugin_optional_reference_unavailable'
     | 'plugin_manifest_duplicate_contribution_id'
     | 'plugin_manifest_invalid_contribution_id'
     | 'plugin_manifest_dangling_reference'
@@ -45,6 +49,7 @@ export type PluginManifestIngestionDiagnostic = Readonly<{
   pluginId?: string;
   contributionId?: string;
   reason?: PluginManifestIngestionDiagnostic['code'];
+  unavailableSource?: PluginUnavailableSourceDiagnostic;
 }>;
 
 export type PluginManifestIngestionResult =
@@ -71,9 +76,14 @@ export function formatPluginManifestIngestionDiagnostics(
   return diagnostics.map(formatPluginManifestIngestionDiagnostic).join('; ');
 }
 
-export type PluginManifestSetReferenceResolutionResult =
+type PluginManifestSetReferenceDiagnostic = PluginManifestIngestionDiagnostic & Readonly<{ pluginId: string }>;
+export type PluginManifestSetReferenceResolutionResult = (
   | Readonly<{ ok: true }>
-  | Readonly<{ ok: false; diagnostics: readonly (PluginManifestIngestionDiagnostic & Readonly<{ pluginId: string }>)[] }>;
+  | Readonly<{ ok: false; diagnostics: readonly PluginManifestSetReferenceDiagnostic[] }>
+) & Readonly<{
+  unavailableReferences?: readonly PluginManifestSetReferenceDiagnostic[];
+  unavailablePlugins?: readonly PluginUnavailableSourceDiagnostic[];
+}>;
 
 // Private parser-recursion fail-safe, not an author-visible manifest quota.
 const PLUGIN_MANIFEST_SCHEMA_STACK_SAFETY_DEPTH = 1_024;
@@ -1122,6 +1132,7 @@ type PluginManifestIngestionOptions = Readonly<{
   /** Authoring stays strict. Host load withdraws failed contributions as units. */
   mode?: 'author' | 'load';
   referenceManifests?: readonly ParsedPluginManifestV2[];
+  unavailablePlugins?: readonly PluginUnavailableSourceDiagnostic[];
 }>;
 
 export function ingestPluginManifestV2(input: unknown, options: PluginManifestIngestionOptions = {}): PluginManifestIngestionResult {
@@ -1204,8 +1215,9 @@ export function admitDecodedPluginManifestV2(input: unknown, options: PluginMani
     ...(options.referenceManifests ? (() => {
       const resolution = resolvePluginManifestSetReferencesV2([
         ...options.referenceManifests.filter(reference => reference.id !== manifest.id), manifest,
-      ], new Set([manifest.id]));
-      return resolution.ok ? [] : resolution.diagnostics.filter(diagnostic => diagnostic.pluginId === manifest.id);
+      ], new Set([manifest.id]), { unavailablePlugins: options.unavailablePlugins });
+      return [...(resolution.ok ? [] : resolution.diagnostics), ...(resolution.unavailableReferences ?? [])]
+        .filter(diagnostic => diagnostic.pluginId === manifest.id);
     })() : []),
   ];
   if (semanticDiagnostics.length > 0 && options.mode === 'load') {
@@ -1222,10 +1234,43 @@ export function admitDecodedPluginManifestV2(input: unknown, options: PluginMani
   }
 }
 
+/**
+ * Plugin ids a manifest's qualified contribution references target, read from the
+ * same candidates the set resolver validates. A narrow admission uses it to load the
+ * exact reference closure instead of every bundled manifest.
+ */
+export function readPluginManifestReferencedPluginIdsV2(manifest: ParsedPluginManifestV2): ReadonlySet<string> {
+  const pluginIds = new Set<string>();
+  const add = (reference: unknown) => {
+    if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return;
+    const pluginId = (reference as Readonly<{ pluginId?: unknown }>).pluginId;
+    if (typeof pluginId === 'string' && pluginId !== manifest.id) pluginIds.add(pluginId);
+  };
+  for (const entry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
+    for (const value of entry.readEntries(manifest.contributes as Readonly<Record<string, unknown>>)) {
+      if (!value || typeof value !== 'object') continue;
+      for (const candidate of entry.extractReferences(value as Readonly<Record<string, unknown>>)) add(candidate.reference);
+    }
+  }
+  for (const candidate of readHostAccessReferenceCandidates(manifest)) add(candidate.reference);
+  return pluginIds;
+}
+
 export function resolvePluginManifestSetReferencesV2(
   manifests: readonly ParsedPluginManifestV2[],
   affectedPluginIds?: ReadonlySet<string>,
+  options?: Readonly<{
+    /**
+     * Declarations whose single-manifest semantics the build publisher already
+     * admitted (bundled `admission: 'build'`). Their intra-manifest checks are
+     * deterministic in the manifest alone, so only set-level references are
+     * resolved for them here; their deferred Action schemas stay unread.
+     */
+    declarationAdmittedPluginIds?: ReadonlySet<string>;
+    unavailablePlugins?: readonly PluginUnavailableSourceDiagnostic[];
+  }>,
 ): PluginManifestSetReferenceResolutionResult {
+  const unavailablePlugins = new Map((options?.unavailablePlugins ?? []).map(source => [source.pluginId, source]));
   const index = new Map<string, Map<string, Map<string, Readonly<Record<string, unknown>>>>>();
   for (const manifest of manifests) {
     const families = new Map<string, Map<string, Readonly<Record<string, unknown>>>>();
@@ -1241,7 +1286,8 @@ export function resolvePluginManifestSetReferencesV2(
     index.set(manifest.id, families);
   }
 
-  const affectedManifests = affectedPluginIds ? manifests.filter(manifest => affectedPluginIds.has(manifest.id)) : manifests;
+  const affectedManifests = (affectedPluginIds ? manifests.filter(manifest => affectedPluginIds.has(manifest.id)) : manifests)
+    .filter(manifest => options?.declarationAdmittedPluginIds?.has(manifest.id) !== true);
   const diagnostics: (PluginManifestIngestionDiagnostic & Readonly<{ pluginId: string }>)[] = affectedManifests.flatMap(
     manifest => [
       ...readOpenableContentViewerDestinationDiagnostics(manifest),
@@ -1250,6 +1296,7 @@ export function resolvePluginManifestSetReferencesV2(
       ...readEventAutomationHistoryGapResetActionDiagnostics(manifest),
     ].map(diagnostic => ({ ...diagnostic, pluginId: manifest.id })),
   );
+  const unavailableReferences: PluginManifestSetReferenceDiagnostic[] = [];
   for (const manifest of manifests) {
     for (const entry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
       entry.readEntries(manifest.contributes as Readonly<Record<string, unknown>>).forEach((value, contributionIndex) => {
@@ -1272,6 +1319,9 @@ export function resolvePluginManifestSetReferencesV2(
           }
           const targetFamilyIndex = index.get(targetPluginId);
           const targetFamilies = candidate.targetFamilies ?? [candidate.targetFamily];
+          if (!targetFamilyIndex && !unavailablePlugins.has(targetPluginId)) {
+            unavailablePlugins.set(targetPluginId, { pluginId: targetPluginId, code: 'plugin_source_missing' });
+          }
           const foundInTarget = targetFamilies.some((targetFamily) => (
             targetFamilyIndex?.get(targetFamily)?.has(targetLocalId) === true
               && (candidate.revision === undefined || targetFamilyIndex?.get(targetFamily)?.get(targetLocalId)?.revision === candidate.revision)
@@ -1280,10 +1330,14 @@ export function resolvePluginManifestSetReferencesV2(
           const foundElsewhere = targetFamilyIndex
             ? [...targetFamilyIndex.values()].some((ids) => ids.has(targetLocalId))
             : false;
-          diagnostics.push({
+          const reason = foundElsewhere && !targetFamilies.some(family => targetFamilyIndex?.get(family)?.has(targetLocalId))
+            ? 'plugin_manifest_wrong_family_reference' as const : 'plugin_manifest_dangling_reference' as const;
+          const contributionId = entry.identityField ? (value as Readonly<Record<string, unknown>>)[entry.identityField] : undefined;
+          (candidate.optionalEntryPath ? unavailableReferences : diagnostics).push({
             pluginId: manifest.id,
-            code: foundElsewhere && !targetFamilies.some(family => targetFamilyIndex?.get(family)?.has(targetLocalId))
-              ? 'plugin_manifest_wrong_family_reference' : 'plugin_manifest_dangling_reference',
+            code: candidate.optionalEntryPath ? 'plugin_optional_reference_unavailable' : reason,
+            ...(candidate.optionalEntryPath ? { reason, ...(typeof contributionId === 'string' ? { contributionId } : {}) } : {}),
+            ...(!targetFamilyIndex ? { unavailableSource: unavailablePlugins.get(targetPluginId)! } : {}),
             path: ['contributes', ...entry.manifestKey.split('.'), contributionIndex, ...candidate.path],
             message: `${manifest.id} references missing ${targetFamilies.join(' or ')} contribution ${targetPluginId}/${targetLocalId}.`,
           });
@@ -1311,5 +1365,9 @@ export function resolvePluginManifestSetReferencesV2(
       });
     }
   }
-  return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true };
+  const optional = {
+    ...(unavailableReferences.length ? { unavailableReferences } : {}),
+    ...(unavailablePlugins.size ? { unavailablePlugins: [...unavailablePlugins.values()] } : {}),
+  };
+  return diagnostics.length > 0 ? { ok: false, diagnostics, ...optional } : { ok: true, ...optional };
 }

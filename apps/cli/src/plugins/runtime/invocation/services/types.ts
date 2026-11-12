@@ -156,6 +156,7 @@ export type PluginInvocationServicesSeed = Readonly<{
     /** Re-read that mounted caller at the final provider-effect boundary. */
     isMountedCallerCurrent?: () => boolean | Promise<boolean>;
     /** Host-only exact current targeted declarations, never an SDK capability. */
+    readUnavailableTargetedPlugins?(): readonly import('@happier-dev/protocol/plugins/manifest/ingest').PluginUnavailableSourceDiagnostic[];
     readCurrentTargetedDeclarations?(signal?: AbortSignal): Promise<readonly import('@happier-dev/cli-common/plugins/registration').TargetedContributionManifestDeclaration[]>;
     session?: Readonly<{ id: string }>;
     currentSession?: HostCurrentSessionUiServices;
@@ -226,6 +227,8 @@ export type PluginInvocationServiceBinding = Readonly<{
     connectedAccountsOwner?: import('./connectedAccounts').StablePluginConnectedAccountsOwner;
     /** Host-private managed bootstrap output observer; not an SDK capability. */
     execOutputObserver?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    /** Host-private input of an admitted managed `stream` channel; not an SDK capability. */
+    execChannelInput?: (process: Pick<import('@happier-dev/plugin-sdk/exec').PluginProcessHandle, 'write' | 'closeStdin'>) => () => void;
     /** Containing task's budget; only an explicitly selected invocation process consumes it. */
     execInvocationTimeoutMs?: number | null;
 }>;

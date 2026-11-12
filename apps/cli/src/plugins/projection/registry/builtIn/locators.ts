@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
-import { formatPluginManifestIngestionDiagnostics } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { formatPluginManifestIngestionDiagnostics, readPluginManifestReferencedPluginIdsV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { assertHostCanExcludeBundledPlugin } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
@@ -145,14 +145,19 @@ export function loadBundledPluginLocatorResult(
     publicationFailures: readonly BundledPluginPublicationFailure[] = [],
     registrationBindings: readonly BundledAgentRegistrationBinding[] = [],
     selectedPluginIds?: ReadonlySet<string>,
+    /** Enabled locators a read declaration may reference; their exact closure is read once each. */
+    referencePool?: ReadonlyMap<string, BundledPluginLocator>,
+    pluginEnablementById?: Readonly<Record<string, ResolvedPluginEnablement>>,
 ): Readonly<{
     loadedPlugins: readonly LoadedPlugin[];
     pluginFailures: readonly BundledPluginAdmissionFailure[];
     admittedGraph: AdmittedPluginContributionGraph;
 }> {
     const seenPluginIds = new Set<string>();
+    const queue = [...locators];
+    const inScope = (pluginId: string) => !selectedPluginIds || selectedPluginIds.has(pluginId) || referencePool?.has(pluginId) === true;
     const unavailableProviderKeys = new Set([...readUnavailableManagedProviderKeys()]
-        .filter(key => !selectedPluginIds || selectedPluginIds.has(key.slice(0, key.indexOf('\u0000')))));
+        .filter(key => inScope(key.slice(0, key.indexOf('\u0000')))));
     const unmatchedProviderKeys = new Set(unavailableProviderKeys);
     const loadedPlugins: LoadedPlugin[] = [];
     const pluginFailures: BundledPluginAdmissionFailure[] = [...publicationFailures];
@@ -160,7 +165,8 @@ export function loadBundledPluginLocatorResult(
     const agentPluginIds = new Set(registrationBindings
         .filter(binding => binding.registrationFamily === 'agents')
         .map(binding => binding.identity.pluginId));
-    for (const locator of locators) {
+    for (let index = 0; index < queue.length; index += 1) {
+        const locator = queue[index]!;
         if (seenPluginIds.has(locator.pluginId)) {
             throw new Error(`Duplicate bundled plugin locator '${locator.pluginId}'`);
         }
@@ -180,6 +186,10 @@ export function loadBundledPluginLocatorResult(
             throw new Error(
                 `Bundled plugin manifest id '${ingestion.manifest.id}' does not match '${locator.pluginId}'`,
             );
+        }
+        for (const pluginId of referencePool ? readPluginManifestReferencedPluginIdsV2(ingestion.manifest) : []) {
+            const referenced = referencePool?.get(pluginId);
+            if (referenced && !queue.includes(referenced)) queue.push(referenced);
         }
         const declaredDaemon = ingestion.manifest.entrypoints?.daemon;
         if ((declaredDaemon !== undefined) !== (locator.daemonEntryPath !== null)) {
@@ -226,6 +236,10 @@ export function loadBundledPluginLocatorResult(
             }));
         }
     }
+    if (referencePool) {
+        // Keys and bindings of pool plugins outside the read closure are not this read's facts.
+        for (const key of [...unmatchedProviderKeys]) if (!seenPluginIds.has(key.slice(0, key.indexOf('\u0000')))) unmatchedProviderKeys.delete(key);
+    }
     if (unmatchedProviderKeys.size > 0) {
         throw new Error(
             `CLI managed runtime publication references unknown provider facets: ${[...unmatchedProviderKeys].map((key) => key.replace('\u0000', ':')).join(', ')}`,
@@ -233,6 +247,7 @@ export function loadBundledPluginLocatorResult(
     }
     for (const binding of registrationBindings) {
         if (binding.registrationFamily !== 'agents' || failedPluginIds.has(binding.identity.pluginId)) continue;
+        if (referencePool && !seenPluginIds.has(binding.identity.pluginId)) continue;
         const plugin = loadedPlugins.find(candidate => candidate.pluginId === binding.identity.pluginId);
         // A host binding is a locator, not a registration. An unavailable Agent
         // contribution must not withdraw this plugin's healthy siblings; the
@@ -251,6 +266,10 @@ export function loadBundledPluginLocatorResult(
     }
     const admittedGraph = admitPluginContributionGraph({
         loadedPlugins: loadedPlugins.filter(plugin => !failedPluginIds.has(plugin.pluginId)),
+        pluginEnablementById,
+        loadDiagnosticsByPluginId: Object.fromEntries(pluginFailures.map(failure => [failure.pluginId, [failure.diagnostic]])),
+        // File declarations were admitted by the bundled publisher (`ingestBundledPluginManifest`).
+        declarationAdmittedPluginIds: new Set(queue.filter(locator => 'manifestRelativePath' in locator).map(locator => locator.pluginId)),
     });
     for (const [pluginId, diagnostics] of Object.entries(admittedGraph.diagnosticsByPluginId)) {
         const fatal = diagnostics.find(isPluginAdmissionExclusion);
@@ -282,6 +301,8 @@ let admittedBundledPlugins: Readonly<{
     enabledPluginIdsKey: string;
     result: ReturnType<typeof loadBundledPluginLocatorResult>;
 }> | null = null;
+/** Exact selections admitted for one enabled set; bundled declarations are immutable per runtime. */
+let admittedBundledSelections: { enabledPluginIdsKey: string; bySelection: Map<string, ReturnType<typeof loadBundledPluginLocatorResult>> } | null = null;
 
 /** Consume the admitted scope decision before acquiring declarations. */
 export function loadEnabledBundledPluginLocatorResult(params?: Readonly<{
@@ -300,36 +321,52 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
         ? generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(locator =>
             params?.pluginEnablementById?.[locator.pluginId]?.enabled !== false)
         : generatedBundledPluginManifests.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS;
-    const enabledPluginIdsKey = JSON.stringify(enabledLocators.map(locator => locator.pluginId));
+    const enabledPluginIdsKey = JSON.stringify([
+        enabledLocators.map(locator => locator.pluginId),
+        Object.entries(params?.pluginEnablementById ?? {}).filter(([, fact]) => !fact.enabled)
+            .map(([pluginId, fact]) => [pluginId, fact.unavailableCode ?? 'plugin_disabled']),
+    ]);
     const admitted = admittedBundledPlugins?.enabledPluginIdsKey === enabledPluginIdsKey
         ? admittedBundledPlugins.result : null;
     if (params?.pluginIds) {
         const requested = new Set(params.pluginIds);
         const selected = new Set(enabledLocators.filter(locator => requested.has(locator.pluginId))
             .map(locator => locator.pluginId));
-        if (!admitted) {
-            const result = loadBundledPluginLocatorResult(
-                enabledLocators.filter(locator => selected.has(locator.pluginId)),
-                defaultCanImportFirstPartyPluginSource()
-                    ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => selected.has(failure.pluginId)),
-                BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => selected.has(binding.identity.pluginId)),
-                selected,
-            );
-            // A real cross-plugin reference demands the enabled admission
-            // graph. Never withdraw a valid selected declaration just because
-            // a narrow read omitted its dependency, or bypass graph validation.
-            if (Object.keys(result.admittedGraph.diagnosticsByPluginId).length === 0) return result;
+        const fromAdmitted = (full: ReturnType<typeof loadBundledPluginLocatorResult>) => {
+            const loadedPlugins = Object.freeze(full.loadedPlugins.filter(plugin => selected.has(plugin.pluginId)));
+            return Object.freeze({
+                loadedPlugins,
+                pluginFailures: Object.freeze(full.pluginFailures.filter(failure => selected.has(failure.pluginId))),
+                admittedGraph: Object.freeze({ loadedPlugins,
+                    unavailablePlugins: full.admittedGraph.unavailablePlugins,
+                    diagnosticsByPluginId: Object.freeze(Object.fromEntries(Object.entries(full.admittedGraph.diagnosticsByPluginId)
+                        .filter(([pluginId]) => selected.has(pluginId)))),
+                }),
+            });
+        };
+        if (admitted) return fromAdmitted(admitted);
+        // A declaration is admitted against the plugins its qualified references
+        // target, never against unrelated ones. Load that exact enabled closure: a
+        // cross-plugin reference (for example a Connected service owned by another
+        // plugin) must not widen a narrow read to every bundled manifest.
+        const selectionKey = JSON.stringify([...selected].sort());
+        if (admittedBundledSelections?.enabledPluginIdsKey !== enabledPluginIdsKey) {
+            admittedBundledSelections = { enabledPluginIdsKey, bySelection: new Map() };
         }
-        const full = loadCurrentBundledPluginLocatorResult({ pluginEnablementById: params.pluginEnablementById });
-        const loadedPlugins = Object.freeze(full.loadedPlugins.filter(plugin => selected.has(plugin.pluginId)));
-        return Object.freeze({
-            loadedPlugins,
-            pluginFailures: Object.freeze(full.pluginFailures.filter(failure => selected.has(failure.pluginId))),
-            admittedGraph: Object.freeze({ loadedPlugins,
-                diagnosticsByPluginId: Object.freeze(Object.fromEntries(Object.entries(full.admittedGraph.diagnosticsByPluginId)
-                    .filter(([pluginId]) => selected.has(pluginId)))),
-            }),
-        });
+        const retained = admittedBundledSelections.bySelection.get(selectionKey);
+        if (retained) return retained;
+        const enabledById = new Map(enabledLocators.map(locator => [locator.pluginId, locator]));
+        const result = fromAdmitted(loadBundledPluginLocatorResult(
+            enabledLocators.filter(locator => selected.has(locator.pluginId)),
+            defaultCanImportFirstPartyPluginSource()
+                ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => enabledById.has(failure.pluginId)),
+            BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => enabledById.has(binding.identity.pluginId)),
+            selected,
+            enabledById,
+            params?.pluginEnablementById,
+        ));
+        admittedBundledSelections.bySelection.set(selectionKey, result);
+        return result;
     }
     // Retain one admission for the current enabled set. Repeated catalog reads
     // reuse it even when a bundled plugin has been withdrawn; a changed set
@@ -345,6 +382,8 @@ export function loadCurrentBundledPluginLocatorResult(params?: Readonly<{
             ? [] : readCurrentBundledPluginPublicationFailures().filter(failure => enabledPluginIds.has(failure.pluginId)),
         BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => enabledPluginIds.has(binding.identity.pluginId)),
         enabledPluginIds,
+        undefined,
+        params?.pluginEnablementById,
     );
     admittedBundledPlugins = { enabledPluginIdsKey, result };
     return result;

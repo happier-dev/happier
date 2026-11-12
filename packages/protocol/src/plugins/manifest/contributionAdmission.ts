@@ -69,6 +69,26 @@ function contributionPath(path: Path): Path | null {
   return path.slice(0, familyDepth);
 }
 
+/** Only the catalog can identify a safely withdrawable optional reference entry. */
+function withdrawalPath(input: unknown, diagnostic: PluginManifestIngestionDiagnostic): Path | null {
+  const path = diagnostic.path && contributionPath(diagnostic.path);
+  if (!path) return null;
+  if (diagnostic.code !== 'plugin_manifest_dangling_reference'
+    && diagnostic.code !== 'plugin_manifest_wrong_family_reference'
+    && diagnostic.code !== 'plugin_optional_reference_unavailable') return path;
+  const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => (
+    ['contributes', ...entry.manifestKey.split('.')].every((key, index) => path[index] === key)
+  ));
+  const value = readAtPath(input, path);
+  if (!family || !value || typeof value !== 'object' || Array.isArray(value)) return path;
+  const candidate = family.extractReferences(value as Readonly<Record<string, unknown>>).find(candidate => {
+    const referencePath = [...path, ...candidate.path];
+    return candidate.optionalEntryPath && referencePath.length === diagnostic.path?.length
+      && referencePath.every((key, index) => diagnostic.path?.[index] === key);
+  });
+  return candidate?.optionalEntryPath ? [...path, ...candidate.optionalEntryPath] : path;
+}
+
 /**
  * Schema and semantic checks remain at their existing owners; this only
  * withdraws failed declarations without mutating the caller's value.
@@ -80,7 +100,7 @@ export function skipInvalidPluginContributions(
 ): Readonly<{ input: unknown; diagnostics: readonly PluginManifestIngestionDiagnostic[] }> | null {
   const removals = new Map<string, Path>();
   for (const diagnostic of diagnostics) {
-    const path = diagnostic.path && contributionPath(diagnostic.path);
+    const path = withdrawalPath(input, diagnostic);
     if (!path || readAtPath(input, path) === undefined) return null;
     removals.set(JSON.stringify(path), path);
   }
@@ -99,17 +119,22 @@ export function skipInvalidPluginContributions(
     const family = PLUGIN_CONTRIBUTION_CATALOG_V2.find(entry => (
       ['contributes', ...entry.manifestKey.split('.')].every((key, index) => path[index] === key)
     ));
-    const localId = family?.identityField
-      ? PluginContributionLocalIdSchema.safeParse(readAtPath(input, [...path, family.identityField]))
+    const declarationPath = contributionPath(path);
+    const optionalReference = declarationPath !== null && declarationPath.length < path.length;
+    const localId = family?.identityField && declarationPath
+      ? PluginContributionLocalIdSchema.safeParse(readAtPath(input, [...declarationPath, family.identityField]))
       : undefined;
     const failure = diagnostics.find(diagnostic => path.every((key, index) => diagnostic.path?.[index] === key));
     return {
-      code: 'plugin_contribution_skipped' as const,
+      code: optionalReference ? 'plugin_optional_reference_unavailable' as const : 'plugin_contribution_skipped' as const,
       path: failure?.path ?? path,
       ...(pluginId.success ? { pluginId: pluginId.data } : {}),
       ...(localId?.success ? { contributionId: localId.data } : {}),
-      ...(failure ? { reason: failure.code } : {}),
-      message: 'Contribution skipped because its declaration is unknown, invalid, or references an unavailable contribution.',
+      ...(failure ? { reason: failure.reason ?? failure.code } : {}),
+      ...(failure?.unavailableSource ? { unavailableSource: failure.unavailableSource } : {}),
+      message: optionalReference
+        ? 'Optional connected-account reference is unavailable; the owning contribution remains admitted.'
+        : 'Contribution skipped because its declaration is unknown, invalid, or references an unavailable contribution.',
     };
   });
   return { input: paths.reduce(withoutAtPath, input), diagnostics: skipped };
