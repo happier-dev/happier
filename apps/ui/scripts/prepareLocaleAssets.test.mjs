@@ -1,15 +1,18 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { runInNewContext } from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
 import { prepareLocaleAssets } from './prepareLocaleAssets.mjs';
 import { publishSourceUiAssets } from './prepareSourceUiAssets.mjs';
 
 test('locale preparation reuses identical content and defers publication until admission', async t => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-locale-publication-'));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    const { root } = await createTempFixture(t, { prefix: 'happier-locale-publication-' });
     const uiPackageDir = join(root, 'apps/ui');
     const put = async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents); };
     await put(join(root, 'package.json'), '{"private":true,"type":"module"}');
@@ -31,14 +34,62 @@ test('locale preparation reuses identical content and defers publication until a
     await put(translation, "export const fr = { greeting: 'coucou' };");
     const beforeCandidate = await readFile(b.outputPath, 'utf8');
     const candidate = join(root, 'candidate.js');
-    const c = await prepareLocaleAssets({ uiPackageDir, outputPath: candidate, publicationPath: b.outputPath });
+    await prepareLocaleAssets({ uiPackageDir, outputPath: candidate, publicationPath: b.outputPath });
     assert.equal(await readFile(b.outputPath, 'utf8'), beforeCandidate, 'preparation does not publish before admission');
     const recordPath = join(root, 'prepared.json');
     await put(recordPath, JSON.stringify({ publications: [{ candidatePath: candidate, outputPath: b.outputPath }] }));
     await publishSourceUiAssets({ recordPath });
     assert.equal(await readFile(b.outputPath, 'utf8'), await readFile(candidate, 'utf8'));
-    await readFile(b.assetPaths[0]);
-    await readFile(c.assetPaths[0]);
-    await prepareLocaleAssets({ uiPackageDir });
-    await readFile(b.assetPaths[0]);
+    const publishedBytes = await readFile(b.outputPath, 'utf8');
+    const publishedAt = await stat(recordPath);
+    await rm(candidate);
+    await publishSourceUiAssets({ recordPath });
+    assert.equal(await readFile(b.outputPath, 'utf8'), publishedBytes,
+        'republication reads the published record without replaying retired candidates');
+    assert.equal((await stat(recordPath)).mtimeMs, publishedAt.mtimeMs,
+        'republication of settled references makes no new publication');
+});
+
+
+test('independent locale producers replace pre-existing references and preserve loaded translations after restart', async t => {
+    const fixture = await createTempFixture(t, { prefix: 'happier-locale-producers-' });
+    const uiPackageDir = fixture.path('apps/ui');
+    const put = async (path, contents) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents); };
+    await put(fixture.path('package.json'), '{"private":true,"type":"module"}');
+    await put(join(uiPackageDir, 'package.json'), '{"name":"@fixture/ui","type":"module"}');
+    await put(join(uiPackageDir, 'sources/text/_all.ts'), "export const SUPPORTED_LANGUAGE_CODES = ['en', 'fr'];");
+    await put(join(uiPackageDir, 'sources/text/translations/fr.ts'), "export const fr = { greeting: 'bonjour' };");
+    const pluginTranslations = join(uiPackageDir, 'sources/text/bundledPluginTranslations/fr.generated.ts');
+    await put(pluginTranslations, "export const BUNDLED_PLUGIN_TRANSLATIONS = { 'happier.alpha': { greeting: 'plugin-before' } };");
+    const outputPath = join(uiPackageDir, 'sources/text/localeAssets.generated.js');
+    await put(outputPath, 'stale references from an interrupted preparation');
+    const owner = new URL('./prepareLocaleAssets.mjs', import.meta.url).href;
+    const runProducer = () => promisify(execFile)(process.execPath, ['--input-type=module', '-e',
+        `import { prepareLocaleAssets } from ${JSON.stringify(owner)}; await prepareLocaleAssets(${JSON.stringify({ uiPackageDir })});`],
+        { cwd: fileURLToPath(new URL('../../../', import.meta.url)) });
+    // Finite validation preparation and live Expo can produce these shared
+    // content-addressed locale files from separate processes.
+    await Promise.all([runProducer(), runProducer()]);
+    const loadPublished = async () => {
+        const references = await readFile(outputPath, 'utf8');
+        const specifier = /"fr": require\(("(?:[^"\\]|\\.)*")\)/u.exec(references);
+        assert.ok(specifier, 'the public locale inventory contains the compiled French asset');
+        const assetPath = join(dirname(outputPath), JSON.parse(specifier[1]));
+        const module = { exports: {} };
+        runInNewContext(await readFile(assetPath, 'utf8'), { module, exports: module.exports });
+        return { assetPath, bundle: module.exports.bundle };
+    };
+    const before = await loadPublished();
+    assert.equal(before.bundle.host.greeting, 'bonjour');
+    assert.equal(before.bundle.plugins['happier.alpha']?.greeting, 'plugin-before');
+    await put(pluginTranslations, "export const BUNDLED_PLUGIN_TRANSLATIONS = { 'happier.alpha': { greeting: 'plugin-after' } };");
+    await runProducer();
+    const after = await loadPublished();
+    assert.equal(after.bundle.host.greeting, 'bonjour');
+    assert.equal(after.bundle.plugins['happier.alpha'].greeting, 'plugin-after');
+    assert.notEqual(after.assetPath, before.assetPath, 'changed plugin copy selects new content-addressed bytes');
+    const delayed = { exports: {} };
+    runInNewContext(await readFile(before.assetPath, 'utf8'), { module: delayed, exports: delayed.exports });
+    assert.equal(delayed.exports.bundle.plugins['happier.alpha'].greeting, 'plugin-before',
+        'an already-loaded graph can still fetch its old locale asset after producer restart');
 });
