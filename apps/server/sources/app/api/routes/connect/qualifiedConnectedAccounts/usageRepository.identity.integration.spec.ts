@@ -100,9 +100,11 @@ describe("qualified Connected Account usage stored identity", () => {
         return { credential, ref };
     }
 
-    it('returns no_usage_observed for a connected account before its first sample, preserving missing-account refusal', async () => {
-        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const { ref, credential } = await createCredential(account.id);
+    it.each([false, true])('accepts Refresh after source registration without a provider sample (encrypted=%s)', async encrypted => {
+        const account = await db.account.create({ data: encrypted
+            ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
+            : { publicKey: null, encryptionMode: 'plain' } });
+        const { ref, credential } = await createCredential(account.id, encrypted);
         expect(await readQualifiedConnectedAccountQuota({ accountId: account.id, ref })).toEqual({ status: 'no_usage_observed' });
         expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref })).toBe('no_usage_observed');
         expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id,
@@ -114,9 +116,23 @@ describe("qualified Connected Account usage stored identity", () => {
             expect(response.json()).toEqual({ error: 'no_usage_observed' });
         });
         const write = buildUsageWrite(account.id, { credentialRevision: credential.credentialRevision,
-            source: { ref, bindingKind: 'account' }, fetchedAt: Date.now(), planLabel: 'observed' });
-        await writeQualifiedProviderAccountUsageRecord(write);
-        expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref })).toBe('written');
+            source: { ref, bindingKind: 'account' }, fetchedAt: 0, planLabel: 'unobserved' });
+        const snapshot = { ...write.snapshot, state: 'not_loaded' as const,
+            observedAtMs: 0, fetchedAtMs: 0, confidence: 'unknown' as const, meters: [] };
+        const { snapshot: _snapshot, ...base } = write;
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        expect(await writeQualifiedProviderAccountUsageRecord({ ...base, status: 'unavailable',
+            ...(encrypted ? { payloadMode: 'sealed_account_scoped_v1' as const,
+                sealedPayload: sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: length => new Uint8Array(length).fill(3) }) }
+                : { snapshot }),
+        })).toMatchObject({ record: { fetchedAt: 0, status: 'unavailable' }, sourceOutcome: { status: 'linked' } });
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const response = await app.inject({ method: 'POST', url: '/v4/connect/qualified/quotas/refresh',
+                headers: { 'x-test-user-id': account.id }, payload: { ref } });
+            expect(response.statusCode, response.body).toBe(200);
+        });
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref }))
+            .toMatchObject({ fetchedAt: 0, status: 'unavailable', refreshRequestedAt: expect.any(Number) });
     });
 
     function buildUsageWrite(

@@ -2219,7 +2219,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     let now = 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
@@ -2229,9 +2229,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const serviceKey = `${service.pluginId}/${service.localId}` as ConnectedAccountServiceKey;
     const ingressServiceId = recoveryMode === 'manual_codex_alias' ? 'openai-codex'
       : recoveryMode === 'manual_claude_alias' ? 'claude-subscription' : serviceKey;
+    const unconfiguredRegistration = recoveryMode.includes('init_unconfigured');
+    const inventoryRegistration = recoveryMode === 'inventory_init_unconfigured';
     const completionObservationMode = recoveryMode.startsWith('completion_observation_');
     const settlementInitialization = recoveryMode.startsWith('settlement_init_') || completionObservationMode;
-    const accountMode = recoveryMode === 'enumerated' || recoveryMode === 'completion_observation_e2ee' || recoveryMode === 'settlement_init_e2ee' || recoveryMode === 'discovery_inventory_e2ee' || recoveryMode === 'persistence_unchanged_e2ee' || recoveryMode === 'quota_data_key' || recoveryMode === 'quota_error_deferred_request_e2ee' ? 'e2ee' as const : 'plain' as const;
+    const accountMode = recoveryMode === 'settlement_init_unconfigured_e2ee' || recoveryMode === 'enumerated' || recoveryMode === 'completion_observation_e2ee' || recoveryMode === 'settlement_init_e2ee' || recoveryMode === 'discovery_inventory_e2ee' || recoveryMode === 'persistence_unchanged_e2ee' || recoveryMode === 'quota_data_key' || recoveryMode === 'quota_error_deferred_request_e2ee' ? 'e2ee' as const : 'plain' as const;
     const manual = recoveryMode.startsWith('manual_');
     const expectedProviderCreditId = recoveryMode.startsWith('enumerated') || recoveryMode === 'manual_next'
       ? 'earliest'
@@ -2261,12 +2263,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         accountId: recoveryMode === 'quota_profile_separator' ? 'account:a' : 'account-a',
       },
       status: 'connected',
-      authenticationModeId: 'manual',
+      authenticationModeId: unconfiguredRegistration ? 'native-import' : 'manual',
       revisionSemantics: 'revisioned',
       credentialRevision: 'csr_abcdefghijklmnopqrstuv',
-      configurationReady: true,
+      configurationReady: !unconfiguredRegistration,
       configurationRevision: null,
-      ...(recoveryMode === 'quota_no_provider_identity' ? {} : { providerIdentity: { accountId: 'provider-account-a' } }),
+      ...(unconfiguredRegistration ? { kind: 'oauth' as const, expiresAt: null, providerIdentity: { email: 'account@example.test' } } : recoveryMode === 'quota_no_provider_identity' ? {} : { providerIdentity: { accountId: 'provider-account-a' } }),
       displayName: 'Novel Work',
       scopes: [],
     };
@@ -2284,12 +2286,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         connectedAccountDescriptors: [{
           id: profile.ref.service.localId,
           title: 'Novel account',
+          ...(unconfiguredRegistration ? { usageIdentity: { providerId: 'meta' } } : {}),
           recoveryCredits: recoveryMode === 'discovery_no_facet' ? undefined : { supported: true },
           authentication: {
-            defaultModeId: 'manual',
+            defaultModeId: profile.authenticationModeId!,
             modes: [{
-              id: 'manual',
+              id: profile.authenticationModeId!,
               kind: 'manual',
+              ...(unconfiguredRegistration ? { credentialOrigin: 'native_import' } : {}),
               outcomeReconciliation: 'none',
               fields: [{
                 id: 'token',
@@ -2310,7 +2314,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       let quotaReadCount = 0;
       let automaticRefusalPending = false;
       api.connectedAccounts.register('${service.localId}', {
-        authentication: { modes: { manual: { kind: 'manual', async complete() {
+        authentication: { modes: { '${profile.authenticationModeId}': { kind: 'manual', async complete() {
           return { status: 'connected', accountId: 'account-a', scopes: [] };
         } } } },
         async refresh() { return { status: 'unavailable' }; },
@@ -2360,6 +2364,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           }
         },
         ${recoveryMode === 'settlement_init_no_quota' || recoveryMode === 'completion_observation_no_quota' || recoveryMode.startsWith('deadline_no_quota') ? '' : `async quota(context, options) {
+          ${inventoryRegistration ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');` : ''}
           ${settlementInitialization ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');
           throw new Error('Connection settlement must not invoke provider quota');` : ''}
           const token = await context.credentials.get('token');
@@ -2519,13 +2524,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       return [profile];
     });
     const recordKey: ProviderAccountUsageRecordKeyV1 = {
-      providerId: serviceKey, accountSubjectId: 'provider-account-a',
-      subjectKind: 'account', quotaScope: 'account',
+      providerId: unconfiguredRegistration ? 'meta' : serviceKey, accountSubjectId: unconfiguredRegistration ? profile.ref.accountId : 'provider-account-a',
+      subjectKind: unconfiguredRegistration ? 'unknown' : 'account', quotaScope: 'account',
     };
     const previous: ProviderAccountUsageSnapshotV1 = {
       v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: recordKey.providerId,
-      accountSubject: { kind: 'providerSubject', id: recordKey.accountSubjectId },
+      accountSubject: unconfiguredRegistration
+        ? { kind: 'provisionalLocalSubject', id: recordKey.accountSubjectId, mergeKey: JSON.stringify([service.pluginId, service.localId, profile.ref.accountId]) }
+        : { kind: 'providerSubject', id: recordKey.accountSubjectId },
       observedAtMs: now - 70_000, fetchedAtMs: now - 70_000, staleAfterMs: 60_000,
       source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [], subscription,
     };
@@ -2566,7 +2573,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         if (readQuota.mock.calls.length === 1) throw new Error('Quota source transport unavailable');
         return null;
       }
-      const committed = recoveryMode.startsWith('persistence_unchanged_') || recoveryMode.startsWith('quota_error_deferred_request') ? committedSourceWrite : null;
+      const committed = inventoryRegistration || recoveryMode.startsWith('persistence_unchanged_') || recoveryMode.startsWith('quota_error_deferred_request') ? committedSourceWrite : null;
       let snapshot = committed?.snapshot ?? previous;
       if (committed?.sealedPayload) {
         if (!credentials.encryption) throw new Error('Expected fixture opening material');
@@ -2575,7 +2582,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         snapshot = opened;
       }
       const sealed = committed?.sealedPayload ?? previousSealed;
-      return recoveryMode === 'quota_error_cold' || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
+      return inventoryRegistration && !committed || recoveryMode === 'quota_error_cold' || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
       ref: profile.ref,
       sourceResolution: {
         source: { ref: profile.ref, bindingKind: 'account' as const },
@@ -2610,7 +2617,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       generation: 4, runtimeStateRevision: 0, policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       state: {}, members: [{ v: 1, connectedAccountId: profile.ref.accountId, priority: 0, enabled: true,
         state: {}, createdAt: now, updatedAt: now }], createdAt: now, updatedAt: now });
-    const groupTargetController = recoveryMode === 'deadline_active' ? createPluginReloadController({ happyHomeDir }) : null;
+    // Production shares the admitted registry between group targeting and quota acquisition.
+    const groupTargetController = recoveryMode === 'deadline_active' ? createPluginReloadController({
+      happyHomeDir, resolveRuntimeRegistry: async () => runtimeRegistry,
+    }) : null;
     const groupTargets = groupTargetController ? createDaemonConnectedAccountPurposeBindingRuntime({
       establishedRuntimeOwner, reloadController: groupTargetController, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       // The canonical group-target owner consumes its HTTP response ports; no
@@ -2619,10 +2629,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         listAccounts: async () => ({ service, accounts: [profile] }),
         listGroups: async () => ({ groups: [activeGroup] }), readGroup: async () => activeGroup },
     }) : null;
+    let quotaPollingAdmitted = !inventoryRegistration;
     const qualifiedConnectedAccountRuntime = {
       resolvePeerClass: () => 'advertised_v4' as const,
       establishedRuntimeOwner,
       listScheduledAccounts,
+      ...(inventoryRegistration ? { resolveOperationTransport: (input: { operation: string }) => {
+        if (input.operation === 'quota_poll' && !quotaPollingAdmitted) throw new Error('Provider acquisition is not admitted');
+        return { kind: 'v4' as const };
+      } } : {}),
       listAccounts: async () => [profile],
       listGroupQuotaTargets: groupTargets?.listGroupQuotaTargets ?? (async () => [
         { profile, groupGeneration: 4 },
@@ -2632,6 +2647,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       ]),
       readQuota,
       writeProviderAccountUsage,
+      ...(unconfiguredRegistration ? { resolveUsageIdentity: async () => ({ providerId: 'meta' }) } : {}),
     } as unknown as QualifiedConnectedAccountQuotaRuntime;
     const accountUsageStore = createProviderAccountUsageStore();
     const api = {
@@ -2766,7 +2782,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
                   noticeFailures.push(error instanceof Error ? error.message : 'unknown_notice_failure');
                 }
               }, info: () => {}, warn: () => {} },
-              processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0' }, pidToTrackedSession: new Map(),
+              processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0' }, trackedSessionsByKey: new Map(),
               connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
               connectedServiceAuthGroupPreTurnSwitchCoordinator: host!.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
               providerAccountUsageStore: accountUsageStore, connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
@@ -2803,6 +2819,26 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           get.mockRestore(); post.mockRestore(); features.mockRestore(); push.mockRestore(); vi.useRealTimers();
           resetServerFeaturesClientForTests();
         }
+        return;
+      }
+      if (inventoryRegistration) {
+        // r1112u has a saved OAuth import, no configuration sidecar/expiry and no usage row.
+        // Source registration must not depend on acquiring a provider sample.
+        await coordinator.tickOnce();
+        expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+        expect(committedSourceWrite).toMatchObject({ source: { ref: profile.ref, bindingKind: 'account' },
+          expectedCredentialRevision: profile.credentialRevision, expectedConfigurationRevision: null,
+          recordKey, fetchedAt: 0, snapshot: { state: 'not_loaded', meters: [] } });
+        await expect(readFile(quotaInvocationMarker)).rejects.toMatchObject({ code: 'ENOENT' });
+        await coordinator.tickOnce();
+        expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+        // A person's existing Home Refresh can now address this source and wake acquisition.
+        manualRefreshRequested = true;
+        quotaPollingAdmitted = true;
+        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+        await coordinator.tickOnce();
+        expect(committedSourceWrite).toMatchObject({ recordKey,
+          snapshot: { state: 'loaded_data', meters: [expect.objectContaining({ used: 25, remaining: 75 })] } });
         return;
       }
       if (settlementInitialization) {
@@ -5231,7 +5267,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }]),
       },
     });
-    coordinator.updateSpawnTargetSessionId({ pid: 123, sessionId: 'canonical-session-1' });
+    coordinator.updateSpawnTargetSessionId({ pid: 123, sessionId: 'canonical-session-1', soleSessionOfProcess: true });
     const sessionId = runtimeRegistry.getByPid(123)?.sessionId;
     expect(sessionId).toBe('canonical-session-1');
     if (!sessionId) throw new Error('Expected the adopted canonical session');

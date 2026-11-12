@@ -52,15 +52,30 @@ does not select a coding Agent.
 
 ## Local Voice Agent functions (0.3 development)
 
-The dedicated Local Voice conversation Agent declares `capabilities.sessions.functionTools: true`
-and can create Sessions. The shared `supportsAgentVoiceFunctions` reader owns this
-eligibility decision. The picker, capture admission and daemon Run admission consume
-that descriptor; ordinary MCP or coding tool support alone does not qualify an Agent.
-Codex currently implements native function delivery. OpenCode (server and ACP),
-Claude, Pi, Muse and configured ACP do not declare it. Unsupported selections use
-the existing setup-required repair before listening. The runtime's
-`functionToolsDelivered` acknowledgment verifies actual delivery, independently of
-this admission fact.
+Legacy Voice Chat imports use the shared resolved Agent catalog for selection.
+The existing Provider model picker admission decides whether both imported
+models can be used with that exact Agent target. Voice preserves the selected
+catalog identity and never substitutes a particular Agent for the import.
+
+Local Voice uses the same Happier Action catalog and admitted Session tool surface
+as coding Agents. OpenCode (server and ACP), Claude, Pi, Muse and configured ACP
+reach Actions through their existing MCP, native-extension or shell tool delivery.
+Action discovery and execution preserve the Run's active-turn permission authority
+and return canonical results; Voice does not need a separate ACP bridge.
+
+An Agent may additionally declare `capabilities.sessions.functionTools: true` for
+native host-function delivery on fresh Session creation. Codex uses that transport
+to queue Actions for the connected Voice UI. The descriptor selects transport,
+never Voice eligibility. Cold retained Sessions use the shared Action surface.
+The runtime's `functionToolsDelivered` acknowledgment verifies delivery only when
+native functions were requested.
+
+Voice invocation authority belongs to the Account Action front door. Local Voice
+Start captures that existing invocation once through the signed requester path;
+the Run's tool binding and native UI transport consume the same admission.
+Shared MCP calls retain the Voice surface, including mounted-client Actions,
+without granting authority from the `voice_agent` intent. Ordinary Session MCP
+calls retain Agent automation authority.
 
 ## Kimi background continuations (0.3 development)
 
@@ -3086,6 +3101,13 @@ retains these reasons and proactive switch results without credential payloads.
 Fresh authoritative V4 quota observations hydrate canonical profile and group
 usage sources through the response's validated provider-account identity; they
 do not require a legacy quota lease or another provider request.
+
+The same quota coordinator registers a `not_loaded` Home usage source for newly
+connected and already-saved Accounts whose runtime supports quotas. Registration
+does not acquire provider usage; it makes the existing manual Refresh addressable
+before the first sample. The established runtime admits the selected authentication
+mode and its configuration. A missing configuration sidecar does not disqualify a
+mode that declares no configuration.
 
 ## Node-safe imports (tests)
 

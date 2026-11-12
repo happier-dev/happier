@@ -1,5 +1,6 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
+import { persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
 import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
@@ -1073,6 +1074,7 @@ export class ConnectedServiceQuotasCoordinator {
   public registerSpawnTarget(params: Readonly<{
     pid: number;
     sessionId?: string;
+    spawnTrackingKey?: string;
     agentId?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsV1Like;
     connectedServiceSelectionsEnv?: Readonly<Record<string, string | undefined>>;
@@ -1087,6 +1089,7 @@ export class ConnectedServiceQuotasCoordinator {
     this.runtimeRegistry.registerTarget({
       pid,
       ...(sessionId ? { sessionId } : {}),
+      ...(params.spawnTrackingKey ? { spawnTrackingKey: params.spawnTrackingKey } : {}),
       ...(agentId ? { agentId } : {}),
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw ?? {},
       ...(params.connectedServiceSelectionsEnv ? { connectedServiceSelectionsEnv: params.connectedServiceSelectionsEnv } : {}),
@@ -1096,19 +1099,27 @@ export class ConnectedServiceQuotasCoordinator {
   public updateSpawnTargetSessionId(params: Readonly<{
     pid: number;
     sessionId?: string;
+    /** The spawn's SessionTrackingKey: its own sessionless bootstrap is the one adopted. */
+    spawnTrackingKey?: string;
+    /** Tracked custody proves the process hosts only this Session (every runner but a session host). */
+    soleSessionOfProcess?: boolean;
   }>): void {
     const pid = Math.trunc(Number(params.pid));
     if (!Number.isFinite(pid) || pid <= 0) return;
-    const target = this.runtimeRegistry.getByPid(pid);
-    if (!target) return;
     const sessionId = typeof params.sessionId === 'string' ? params.sessionId.trim() : '';
     if (!sessionId) return;
-    if (target.sessionId === sessionId) return;
-    if (target.sessionId) {
-      this.runtimeAccountIdentities.invalidateSession(target.sessionId);
+    const previousSessionId = params.soleSessionOfProcess === true ? this.runtimeRegistry.getByPid(pid)?.sessionId : undefined;
+    const adopted = this.runtimeRegistry.adoptSessionId({
+      pid,
+      sessionId,
+      ...(params.spawnTrackingKey ? { spawnTrackingKey: params.spawnTrackingKey } : {}),
+      ...(params.soleSessionOfProcess === true ? { soleSessionOfProcess: true } : {}),
+    });
+    if (!adopted) return;
+    if (previousSessionId && previousSessionId !== sessionId) {
+      this.runtimeAccountIdentities.invalidateSession(previousSessionId);
     }
     this.runtimeAccountIdentities.invalidateSession(sessionId);
-    this.runtimeRegistry.adoptSessionId({ pid, sessionId });
   }
 
   public unregisterPid(pidRaw: number): void {
@@ -3354,7 +3365,9 @@ export class ConnectedServiceQuotasCoordinator {
         const writeProviderAccountUsage =
           this.qualifiedConnectedAccountRuntime?.writeProviderAccountUsage
           ?? writeQualifiedProviderAccountUsageV4;
-        await writeProviderAccountUsage({
+        await persistProviderAccountUsageWithDaySummaries({
+          writer: writeProviderAccountUsage,
+          nowMs: this.now(), randomBytes: this.randomBytes,
           token: this.credentials.token,
           write: payload,
           ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
@@ -3732,7 +3745,9 @@ export class ConnectedServiceQuotasCoordinator {
             'Qualified Connected Account quota basis is no longer current',
           );
         }
-        await writeProviderAccountUsage({
+        await persistProviderAccountUsageWithDaySummaries({
+          writer: writeProviderAccountUsage,
+          nowMs: this.now(), randomBytes: this.randomBytes,
           signal: input.signal,
           token: this.credentials.token,
           write: payload,
@@ -3797,15 +3812,37 @@ export class ConnectedServiceQuotasCoordinator {
       && candidate.ref.accountId === input.account.accountId
       && candidate.credentialRevision === input.credentialRevision
       && candidate.configurationRevision === input.configurationRevision
-      && candidate.status === 'connected' && candidate.configurationReady
+      && candidate.status === 'connected'
     ));
-    if (!profile || !this.shouldRunQualifiedQuotaOperation(profile, 'quota_read')
-      || !this.shouldRunQualifiedQuotaOperation(profile, 'provider_account_usage_write')) return;
-    const basis = await runtime.establishedRuntimeOwner.readQuotaSourceSnapshot({ ...input,
-      operation: input.completionObservation ? 'completionPublication' : 'quotaFetch' });
-    if (!basis || !await basis.isCurrent()) return;
+    if (!profile) return;
+    if (!input.completionObservation) {
+      const existing = await this.readQualifiedAccountQuota(profile);
+      if (existing.response && existing.snapshot) return;
+    }
+    await this.initializeQualifiedAccountQuotaSourceForProfile({ ...input, profile });
+  }
+
+  private async initializeQualifiedAccountQuotaSourceForProfile(input: Readonly<{
+    profile: QualifiedConnectedAccountProfileV4;
+    accountMode: 'plain' | 'e2ee';
+    completionObservation?: ConnectedAccountCompletionObservation;
+    signal?: AbortSignal;
+  }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
+    const runtime = this.qualifiedConnectedAccountRuntime;
+    const { profile } = input;
+    if (!runtime || !profile.credentialRevision
+      || !this.shouldRunQualifiedQuotaOperation(profile, 'quota_read')
+      || !this.shouldRunQualifiedQuotaOperation(profile, 'provider_account_usage_write')) return null;
+    // Home's configurationReady only reports sidecar presence. The established
+    // owner admits the selected mode, including modes with no configuration.
+    const basis = await runtime.establishedRuntimeOwner.readQuotaSourceSnapshot({
+      account: profile.ref, credentialRevision: profile.credentialRevision,
+      configurationRevision: profile.configurationRevision, accountMode: input.accountMode,
+      operation: input.completionObservation ? 'completionPublication' : 'quotaFetch', signal: input.signal,
+    });
+    if (!basis || !await basis.isCurrent()) return null;
     if (input.completionObservation) {
-      const usageIdentity = await runtime.resolveUsageIdentity?.(profile.ref.service);
+      const usageIdentity = await runtime.resolveUsageIdentity?.(profile.ref.service, input.signal);
       const owned = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
         profile, quota: { observedAtMs: input.completionObservation.observedAtMs, limits: [],
           ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
@@ -3815,21 +3852,20 @@ export class ConnectedServiceQuotasCoordinator {
       const snapshot: ProviderAccountUsageSnapshotV1 = { ...owned, ...input.completionObservation,
         providerId: owned.providerId, recordId: owned.recordId, recordKey: owned.recordKey,
         accountSubject: owned.accountSubject, staleAfterMs: owned.staleAfterMs };
-      if (!await this.persistQualifiedConnectedAccountQuota({ accountMode: input.accountMode, profile, snapshot, basis })) {
+      if (!await this.persistQualifiedConnectedAccountQuota({ accountMode: input.accountMode, profile, snapshot, basis, signal: input.signal })) {
         throw new Error('Qualified completion observation could not be published');
       }
       await this.recordQualifiedPolledAccountUsageLocally({ profile, snapshot,
         sourceProviderAccountId: profile.providerIdentity?.accountId?.trim() ?? '',
         groupContexts: [], qualifiedGroupTargets: [], switchEvaluationTargets: [], emitLiveLifecycle: true });
-      return;
+      return snapshot;
     }
-    const existing = await this.readQualifiedAccountQuota(profile);
-    if (existing.response && existing.snapshot) return;
+    const snapshot = this.buildUnloadedQualifiedAccountQuotaSnapshot(profile,
+      await runtime.resolveUsageIdentity?.(profile.ref.service, input.signal) ?? undefined);
     if (!await this.persistQualifiedConnectedAccountQuota({
-      accountMode: input.accountMode, profile,
-      snapshot: this.buildUnloadedQualifiedAccountQuotaSnapshot(profile,
-        await runtime.resolveUsageIdentity?.(profile.ref.service) ?? undefined), basis,
+      accountMode: input.accountMode, profile, snapshot, basis, signal: input.signal,
     })) throw new Error('Qualified quota source could not be initialized');
+    return snapshot;
   }
 
   private qualifiedProfileOrganizationContext(profile: QualifiedConnectedAccountProfileV4) {
@@ -4383,6 +4419,11 @@ export class ConnectedServiceQuotasCoordinator {
         }
         const canProbe = this.shouldRunQualifiedQuotaOperation(profile, 'quota_poll');
         const { response: existing, snapshot: existingSnapshot, localSnapshot } = await this.readQualifiedAccountQuota(profile, input.signal);
+        // Register saved Accounts as well as newly settled ones. Home Refresh is
+        // source-addressed, so this must not depend on provider acquisition succeeding.
+        const initializedSource = !existingSnapshot
+          ? await this.initializeQualifiedAccountQuotaSourceForProfile({ profile, accountMode: input.accountMode, signal: input.signal })
+          : null;
         recordId = existing?.sourceResolution.recordId ?? recordId;
         const refreshRequestedAt = existing?.metadata.refreshRequestedAt;
         const pendingRefresh = refreshRequestedAt !== undefined && refreshRequestedAt > (existing?.metadata.fetchedAt ?? 0);
@@ -4460,7 +4501,7 @@ export class ConnectedServiceQuotasCoordinator {
             ...(health?.due ? { scheduledHealth: { work: health, dispatched: () => { healthDispatched = true; } } } : {}),
             previousSnapshot: existingSnapshot ? buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({
               ref: profile.ref, quota: existingSnapshot,
-            }) : null,
+            }) : initializedSource,
           });
         if (invocation && invocation.basis.isCurrent() && invocation.result === null) {
           // The trusted invoker returns null only when the optional quota leaf is absent.
