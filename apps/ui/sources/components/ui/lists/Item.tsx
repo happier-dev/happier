@@ -79,7 +79,8 @@ export interface ItemProps {
     subtitleAccessory?: React.ReactNode;
     /** Override the primitive title line allowance; defaults to one with a subtitle, two otherwise. */
     titleLines?: number;
-    subtitleLines?: number; // set 0 or undefined for auto/multiline
+    /** Override the subtitle line allowance; Settings descriptions always wrap, except transient menus. */
+    subtitleLines?: number;
     detail?: string;
     detailTestID?: string;
     icon?: React.ReactNode;
