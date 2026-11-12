@@ -59,14 +59,14 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
       await flushHookEffects();
       expect(readLatest().preflightModes).not.toBeNull();
     });
-    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['plan']);
 
     cwd = '/repo-2';
     await screen.update(React.createElement(Harness));
 
     const refreshed = readLatest();
     expect(refreshed.probe.phase).toBe('refreshing');
-    expect(refreshed.modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+    expect(refreshed.modeOptions.map((option) => option.id)).toEqual(['plan']);
 
     await waitForHomeGovernance(async () => {
       await flushHookEffects();
@@ -182,7 +182,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
       method: 'probeModes',
       params: expect.objectContaining({ cwd: '/repo' }),
     });
-    expect((latest?.modeOptions ?? []).map((option: any) => option.id)).toEqual(['default', 'plan']);
+    expect((latest?.modeOptions ?? []).map((option: any) => option.id)).toEqual(['plan']);
   });
 
   it('does not expose the synthetic Default mode when preflight mode discovery is unavailable', async () => {
@@ -320,7 +320,7 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
       await flushHookEffects();
       expect(readLatest().preflightModes).not.toBeNull();
     });
-    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['plan']);
 
     await act(async () => {
       readLatest().probe.onRefresh?.();

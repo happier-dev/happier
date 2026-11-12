@@ -171,6 +171,35 @@ describe('AcpBackend session modes', () => {
   });
 });
 
+describe('AcpBackend advertised mode selection', () => {
+  it.each(['new', 'load', 'fork'] as const)('retains the native default on %s and sends only advertised choices', async operation => {
+    await withTempDir('happier-acp-advertised-modes-', async dir => {
+      const recordedRequestsPath = join(dir, 'requests.jsonl');
+      // Managed OpenCode incident shape: Build/Plan, with Build current; no default id.
+      const backend = new AcpBackend({
+        agentName: 'custom-acp', cwd: dir, command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir, modeIds: ['build', 'plan'], currentModeId: 'build', recordedRequestsPath })],
+      });
+      const readModes = async () => (await readFile(recordedRequestsPath, 'utf8')).trim().split('\n')
+        .map(line => JSON.parse(line)).filter(request => request.method === 'session/set_mode');
+      try {
+        const opened = operation === 'new' ? await backend.startSession()
+          : operation === 'load' ? await backend.loadSession('test-session')
+          : await backend.forkSession({ sessionId: 'original-session' });
+        expect(backend.getSessionModeState()?.availableModes.map(mode => mode.id)).toEqual(['build', 'plan']);
+        await backend.setSessionMode(opened.sessionId, 'default');
+        expect(await readModes()).toEqual([]);
+        expect(backend.getSessionModeState()?.currentModeId).toBe('build');
+        await backend.setSessionMode(opened.sessionId, 'plan');
+        await backend.setSessionMode(opened.sessionId, 'build');
+        expect((await readModes()).map(request => request.params.modeId)).toEqual(['plan', 'build']);
+        await expect(backend.setSessionMode(opened.sessionId, 'unadvertised')).rejects.toThrow(/unavailable/);
+        expect((await readModes()).map(request => request.params.modeId)).toEqual(['plan', 'build']);
+      } finally { await backend.dispose(); }
+    });
+  });
+});
+
 describe('AcpBackend required initial mode', () => {
   it.each(['new', 'load', 'fork'] as const)('publishes the acknowledged initial mode after %s with controls enabled', async operation => {
     await withTempDir('happier-acp-initial-mode-visible-', async dir => {

@@ -22,13 +22,8 @@ export function getSessionModeOptionsForPreflightModeList(list: PreflightSession
             ...(typeof m.description === 'string' ? { description: m.description } : {}),
         }));
 
-    const withDefault: SessionModeOption[] = [
-        { id: 'default', name: 'Default' },
-        ...dynamic.filter((m) => m.id !== 'default'),
-    ];
-
     const seen = new Set<string>();
-    return withDefault.filter((opt) => {
+    return dynamic.filter((opt) => {
         if (seen.has(opt.id)) return false;
         seen.add(opt.id);
         return true;

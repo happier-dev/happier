@@ -13,14 +13,18 @@
  */
 
 import type { AcpProviderJournalFollower } from '@/plugins/runtime/context/transcripts/acpProviderJournal';
+import { parseBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { AcpProviderTurns, type AcpProviderTurnLifecycle } from './turn/providerTurns';
 import type { AgentAcpProviderTurnSourceFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
-import spawn from 'cross-spawn';
+import { spawnSupervisedPluginProcess, type SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { observeProcessLaunch } from '@/processes/launchNotification';
+import { resolveAgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
+import { createSessionHolderAdoption, JSON_RPC_FRAME_CODEC, type SessionHolderAdoption, type SessionHolderHandshake }
+  from '@/subprocess/supervision/sessionHolderAdoption';
 import { SpawnFailureError } from '@/processes/spawnFailure/classifySpawnFailure';
 import {
   RequestError,
@@ -81,7 +85,6 @@ import { createAcpRequestFailureLogRecord, withRetry } from './withRetry';
 import { recoverMcpSessionStart } from './connection/recoverMcpSessionStart';
 import { nodeToWebStreams } from './nodeToWebStreams';
 import { buildAcpSpawnSpec } from './acpSpawn';
-import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import { AcpReplayCapture, type AcpReplayEvent } from './history/acpReplayCapture';
 import { createAcpFilteredStdoutReadable, type DroppedStdoutLine } from './createAcpFilteredStdoutReadable';
@@ -205,6 +208,25 @@ class AcpStartupTimeoutError extends Error {
   }
 }
 
+/**
+ * ACP's startup handshake for a held Agent: `initialize` and the Session it
+ * opened or loaded. A respawned runner that adopts the Agent gets these answers
+ * locally (the live Agent is not asked to load its own open Session again), and
+ * the Agent's held output waits until the backend knows that Session again.
+ */
+const ACP_SESSION_HOLDER_HANDSHAKE: SessionHolderHandshake = Object.freeze({
+  codec: JSON_RPC_FRAME_CODEC,
+  requests: Object.freeze({ initialize: 'initialize', 'session/new': 'session', 'session/load': 'session' }),
+  record: (method, params, result) => {
+    const sessionId = method === 'session/load' ? asRecord(params)?.sessionId : asRecord(result)?.sessionId;
+    return { ...asRecord(result), ...(typeof sessionId === 'string' ? { sessionId } : {}) };
+  },
+  // Only a load of the same Session is answered locally; anything else reaches the Agent.
+  answer: (method, params, stored) => method === 'initialize' ? stored
+    : method === 'session/load' && asRecord(stored)?.sessionId === asRecord(params)?.sessionId ? stored : undefined,
+  readyAfter: Object.freeze([]),
+});
+
 const MAX_RECENT_STDERR_DIAGNOSTICS = 3;
 const MAX_STARTUP_DIAGNOSTIC_CHARS = 1_200;
 
@@ -251,10 +273,6 @@ function getString(obj: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-function isTruthyEnv(value: string | undefined): boolean {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-}
 
 function truncateStartupDiagnostic(value: string): string {
   const trimmed = redactBugReportSensitiveText(String(value ?? '').trim());
@@ -306,6 +324,9 @@ export interface AcpBackendOptions {
 
   /** The host Exec owner supplied the complete process tuple. */
   hostFinalizedLaunch?: true;
+
+  /** `primary`: the Session's own Agent, adopted by a respawned runner after a crash. */
+  sessionHolderRole?: 'primary';
 
   /** Opaque host launch frame, not ACP data and never included in IO capture. */
   stdinPreamble?: Uint8Array;
@@ -428,6 +449,8 @@ export class AcpBackend implements CatalogAcpBackend {
   private listeners: AgentMessageHandler[] = [];
   private dispatchedPromptTurnGeneration: number | null = null;
   private process: ChildProcess | null = null;
+  /** The one process supervisor's handle for `process`; Stop goes through it. */
+  private supervised: SupervisedPluginProcess | null = null;
   private stderrArtifactPath: string | null = null;
   private recentStderrDiagnostics: string[] = [];
   private lastProcessExitDetail: string | null = null;
@@ -767,14 +790,17 @@ export class AcpBackend implements CatalogAcpBackend {
   /** Detach native resources before killing the child, while revoked observer cleanup proceeds independently. */
   private async cleanupInitializedProcessConnection(params: { graceMs: number }): Promise<void> {
     const sourceStopped = this.stopProviderTurnSource();
-    const proc = this.process;
+    const supervised = this.supervised;
     const connection = this.connection;
     const closeNetworkTransport = this.closeNetworkTransport;
     this.process = null;
+    this.supervised = null;
     this.providerTurnSourceEnv = {};
     this.connection = null;
     this.closeNetworkTransport = null;
     this.acpSessionId = null;
+    this.sessionHolderAdoption = null;
+    this.adoptingHeldAgent = false;
     this.acceptsImageInput = false;
     this.negotiatedSessionCapabilities = Object.freeze({
       loadSession: false,
@@ -787,11 +813,11 @@ export class AcpBackend implements CatalogAcpBackend {
     connection?.close(undefined, { timeoutMs: params.graceMs });
     closeNetworkTransport?.();
 
-    if (proc) {
+    if (supervised) {
       try {
-        await terminateProcessTree(proc, { graceMs: params.graceMs });
+        await supervised.dispose('runtimeRecovery');
       } catch {
-        // best-effort cleanup
+        // best-effort cleanup; the supervisor reports uncertain settlement
       }
     }
 
@@ -826,8 +852,8 @@ export class AcpBackend implements CatalogAcpBackend {
         if (!command) {
           throw new Error('ACP backend requires a command or network transport');
         }
-      // Spawn the ACP agent process.
-      // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
+      // Spawn the ACP agent process through the one process supervisor (Windows
+      // .cmd resolution is already applied by the spawn spec / host finalizer).
       const spawnEnv = this.buildSpawnEnv();
       const spec = buildAcpSpawnSpec({
         command,
@@ -842,8 +868,27 @@ export class AcpBackend implements CatalogAcpBackend {
       this.lastProcessExitDetail = null;
       this.stderrArtifactPath = null;
 
+      // Host-finalized Agent launches are held exactly like Exec Agent launches. A
+      // missing holder is the typed `session_holder_unavailable` refusal, not a spawn failure.
+      const holder = this.options.hostFinalizedLaunch
+        ? resolveAgentSessionHolderLaunch({ role: this.options.sessionHolderRole ?? 'auxiliary' }) : null;
       try {
-        this.process = spawn(spec.command, spec.args, spec.options);
+        this.adoptingHeldAgent = holder?.kind === 'adopt';
+        this.supervised = spawnSupervisedPluginProcess({
+          command: spec.command,
+          args: spec.args,
+          ...(spec.options.cwd ? { cwd: String(spec.options.cwd) } : {}),
+          ...(spec.options.env ? { env: spec.options.env } : {}),
+          // ACP reads its own stdout/stderr streams; the supervisor retains neither.
+          pipeStdout: true,
+          maxStderrBytes: 0,
+          ...(holder ? { sessionHolder: holder } : {}),
+          spawnOptions: {
+            detached: process.platform !== 'win32',
+            ...(spec.options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: spec.options.windowsVerbatimArguments }),
+          },
+        });
+        this.process = this.supervised.child;
         const spawnedProcess = this.process;
         // Install lifecycle observers before stderr artifact setup yields to I/O.
         // Failed spawns emit `error` on the next tick, even with valid stdio pipes.
@@ -954,7 +999,7 @@ export class AcpBackend implements CatalogAcpBackend {
     const writable = streams.writable;
     const readable = streams.readable;
 
-    if (this.options.stdinPreamble !== undefined) {
+    if (this.options.stdinPreamble !== undefined && !this.adoptingHeldAgent) {
       // The existing bridge already observes stdin errors. Write directly so
       // selected launch material never enters its ACP raw-IO capture, and join
       // the write before installing the peer that can send initialize.
@@ -967,7 +1012,7 @@ export class AcpBackend implements CatalogAcpBackend {
     const transport = this.transport;
 
     const droppedStdoutCapture = (() => {
-      if (!isTruthyEnv(process.env.HAPPIER_ACP_CAPTURE_IO)) return null;
+      if (!parseBooleanEnv(process.env.HAPPIER_ACP_CAPTURE_IO, false)) return null;
       const traceFile = (process.env.HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
       const baseDir = traceFile ? dirname(traceFile) : null;
       if (!baseDir) return null;
@@ -1090,11 +1135,16 @@ export class AcpBackend implements CatalogAcpBackend {
     });
 
     // Create ndJSON stream for ACP
-    stream = createAcpNdJsonStream(writable, filteredReadable, {
+    const ndJsonStream = createAcpNdJsonStream(writable, filteredReadable, {
       onMessageWritten: (message) => {
         this.observeAcpTransportMessageWritten(message);
       },
+      sessionHolderAdoption: deliver => createSessionHolderAdoption({
+        child: spawnedProcess, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver,
+      }),
     });
+    this.sessionHolderAdoption = ndJsonStream.sessionHolderAdoption;
+    stream = ndJsonStream;
       }
 
     const clientHandlers = createAcpClientHandlers({
@@ -1394,6 +1444,7 @@ export class AcpBackend implements CatalogAcpBackend {
         throw new Error('New session response did not include a session id');
       }
       this.acpSessionId = sessionId;
+      this.sessionHolderAdoption?.release();
       logger.debug(`[AcpBackend] Session created: ${sessionId}`);
 
       const initialSessionResponse = await this.applyInitialSessionMode(sessionResponse);
@@ -1451,7 +1502,9 @@ export class AcpBackend implements CatalogAcpBackend {
       this.seedSessionConfigOptionsFromSessionResponse(initialSessionResponse);
       await this.providerTurns?.start();
 
-      this.emitIdleStatus();
+      if (!this.resumeHeldPrompt()) this.emitIdleStatus();
+      // The backend knows its Session again: the Agent's held output may flow.
+      this.sessionHolderAdoption?.release();
       return { sessionId: normalized };
     } catch (error) {
       logger.debug(
@@ -1534,6 +1587,7 @@ export class AcpBackend implements CatalogAcpBackend {
       }
 
       this.acpSessionId = forkedSessionId;
+      this.sessionHolderAdoption?.release();
       const initialSessionResponse = await this.applyInitialSessionMode(response);
       this.seedSessionModesFromSessionResponse(initialSessionResponse);
       await this.seedSessionModelsFromSessionResponse(initialSessionResponse);
@@ -2095,6 +2149,9 @@ export class AcpBackend implements CatalogAcpBackend {
   private idleResolver: ((outcome?: AcpTurnOutcome) => void) | null = null;
   private idleRejecter: ((error: Error) => void) | null = null;
   private waitingForResponse = false;
+  /** This launch attached to an Agent a previous runner started. */
+  private adoptingHeldAgent = false;
+  private sessionHolderAdoption: SessionHolderAdoption | null = null;
   private providerTurns: AcpProviderTurns | null = null;
   private providerCancellation: Promise<void> | null = null;
   private responseCompletionError: Error | null = null;
@@ -2283,6 +2340,42 @@ export class AcpBackend implements CatalogAcpBackend {
       this.pendingTurnOutcome = null;
       resolve(outcome);
     }
+  }
+
+  /**
+   * An adopted Agent may still be answering the previous runner's prompt. That
+   * prompt becomes this backend's current turn: its replayed updates stream as
+   * usual and the Agent's answer settles it. True when a prompt was resumed.
+   */
+  private resumeHeldPrompt(): boolean {
+    const held = this.sessionHolderAdoption?.heldRequests().find(request => request.method === 'session/prompt');
+    if (!held) return false;
+    const turnGeneration = this.turnGeneration + 1;
+    this.turnGeneration = turnGeneration;
+    this.closedTurnGeneration = null;
+    this.prePromptResponseUpdateGuard = 'none';
+    this.dropPromptTurnUpdatesUntilPromptResponse = false;
+    this.pendingTurnOutcome = null;
+    this.lastTurnOutcome = null;
+    this.pendingPromptResponseTurnGeneration = turnGeneration;
+    this.idleStatusDeferredUntilPromptResponse = false;
+    this.waitingForResponse = true;
+    this.responseCompletionError = null;
+    this.emit({ type: 'status', status: 'running' });
+    void held.response.then((answer) => {
+      if ('error' in answer) {
+        const error = asRecord(answer.error);
+        this.failPendingResponseWait(new RequestError(Number(error?.code ?? -32603), String(error?.message ?? 'ACP prompt failed'), error?.data));
+        return;
+      }
+      this.handlePromptResponseForTurn(answer.result, turnGeneration, () => undefined);
+    });
+    return true;
+  }
+
+  /** After adopt: the Agent is still answering the previous runner's prompt (resumed as this backend's turn). */
+  hasResumedHeldPrompt(): boolean {
+    return this.adoptingHeldAgent && this.pendingPromptResponseTurnGeneration !== null;
   }
 
   private handlePromptResponseForTurn(
@@ -2841,6 +2934,13 @@ export class AcpBackend implements CatalogAcpBackend {
       throw new Error('Mode ID is required');
     }
 
+    const advertised = this.sessionModeState?.availableModes.some(mode => mode.id === normalizedModeId);
+    // Default means no explicit override unless the backend advertises that id.
+    if (normalizedModeId === 'default' && !advertised) return;
+    if (this.sessionModeState && !advertised) {
+      throw new Error('ACP session mode is unavailable');
+    }
+
     const request: SetSessionModeRequest = { sessionId: normalizedSessionId, modeId: normalizedModeId };
     await this.connection.peer.setSessionMode(request);
 
@@ -3386,13 +3486,14 @@ export class AcpBackend implements CatalogAcpBackend {
     closeNetworkTransport?.();
 
     // Kill the whole process tree (some ACP CLIs spawn child processes).
-    if (this.process) {
+    if (this.supervised) {
       try {
-        await terminateProcessTree(this.process, { graceMs: processConnectionGraceMs });
+        await this.supervised.dispose('caller');
       } catch (error) {
         logger.debug('[AcpBackend] Failed to kill process tree (non-fatal):', error);
       } finally {
         this.process = null;
+        this.supervised = null;
       }
     }
     await connection?.closed.catch(() => undefined);
