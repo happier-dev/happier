@@ -39,9 +39,10 @@ export type SidecarCdpDiagnosticsEventSourceInput = Readonly<{
     onError?: (error: unknown) => void;
 }>;
 
-// The CDP domains required for the network/console/pageError/pageInfo diagnostics families.
+// Domains share the bound page transport; DOMStorage supplies change notifications.
 const DIAGNOSTICS_CDP_DOMAINS: Readonly<Record<string, readonly BrowserDiagnosticFamilyV1[]>> = {
     'Network.enable': ['network'], 'Runtime.enable': ['console', 'pageError'], 'Page.enable': ['pageInfo'],
+    'DOMStorage.enable': ['storage'],
 };
 export const SIDECAR_CDP_DIAGNOSTIC_FAMILIES = Object.values(DIAGNOSTICS_CDP_DOMAINS).flat();
 export const SIDECAR_CDP_DIAGNOSTICS_FIDELITY = Object.fromEntries(
@@ -286,7 +287,39 @@ export function createSidecarCdpDiagnosticsEventSource(
         sourceId: input.sourceId,
         start(subscriber: SidecarDiagnosticsEventSourceSubscriber): SidecarDiagnosticsEventSourceSubscription {
             let stopped = false;
+            let storageEnabled = false;
             const active = () => !stopped && (!input.isEnabled || input.isEnabled());
+            const publishStorage = async () => {
+                if (!active() || !storageEnabled) return;
+                try {
+                    // Read names only. Values and cookies never enter this metadata collector.
+                    const result = record(await input.transport.dispatchPageCommand({ ...pageTarget(), method: 'Runtime.evaluate',
+                        params: { expression: `['localStorage','sessionStorage'].map(storageType => {
+                            try { const storage = window[storageType];
+                                return { storageType, keys: Array.from({ length: storage.length }, (_, i) => storage.key(i)) }; }
+                            catch { return { storageType, unavailable: true }; }
+                        })`, returnByValue: true } }));
+                    if (!active()) return;
+                    const inventories = record(result?.result)?.value;
+                    let reported = false;
+                    if (Array.isArray(inventories)) for (const raw of inventories) {
+                        const inventory = record(raw);
+                        if (!inventory || (inventory.storageType !== 'localStorage' && inventory.storageType !== 'sessionStorage')
+                            || !Array.isArray(inventory.keys)) continue;
+                        const keys = inventory.keys.filter((key): key is string => typeof key === 'string');
+                        subscriber.onCdpEvent({ capturedAtMs: now(), event: {
+                            kind: 'storage.keyInventory', storageType: inventory.storageType, keys,
+                        } });
+                        reported = true;
+                    }
+                    if (!reported) subscriber.onUnavailable({ capturedAtMs: now(), family: 'storage', reason: 'collector_unavailable' });
+                } catch (error) {
+                    if (active()) {
+                        input.onError?.(error);
+                        subscriber.onUnavailable({ capturedAtMs: now(), family: 'storage', reason: 'collector_unavailable' });
+                    }
+                }
+            };
             const publishTitle = async () => {
                 if (!active()) return;
                 try {
@@ -303,7 +336,8 @@ export function createSidecarCdpDiagnosticsEventSource(
                 if (!isForBoundSession(notification)) return;
                 // Per-event fail-closed: honour a live gate flip without tearing down the binding.
                 if (!active()) return;
-                if (notification.method === 'Page.domContentEventFired') { void publishTitle(); return; }
+                if (notification.method === 'Page.domContentEventFired') { void publishTitle(); void publishStorage(); return; }
+                if (notification.method.startsWith('DOMStorage.')) { void publishStorage(); return; }
                 const event = translateSidecarCdpNotification(notification);
                 if (!event) return;
                 subscriber.onCdpEvent({ capturedAtMs: now(), event, privateRequest: capturePrivateNetworkRequest(notification) });
@@ -314,7 +348,10 @@ export function createSidecarCdpDiagnosticsEventSource(
                     if (stopped) return;
                     try {
                         await input.transport.dispatchPageCommand({ ...pageTarget(), method });
-                        if (active()) for (const family of families) subscriber.onCdpEvent({ capturedAtMs: now(), event: { kind: 'diagnostics.available', family } });
+                        if (method === 'DOMStorage.enable') storageEnabled = true;
+                        if (active()) for (const family of families) {
+                            if (family !== 'storage') subscriber.onCdpEvent({ capturedAtMs: now(), event: { kind: 'diagnostics.available', family } });
+                        }
                     } catch (error) {
                         if (active()) {
                             input.onError?.(error);
@@ -323,6 +360,7 @@ export function createSidecarCdpDiagnosticsEventSource(
                     }
                 }
                 await publishTitle();
+                await publishStorage();
             })();
             return {
                 stop() {

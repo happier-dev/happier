@@ -127,6 +127,29 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
         runtime.dispose();
     });
 
+    it('delivers managed storage inventories to the diagnostics snapshot and clears them on view retirement', async () => {
+        const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
+        const surface = fakeContextCapture();
+        surface.contextCapture.transport.dispatchPageCommand.mockImplementation(async () => ({ result: { value: [
+            { storageType: 'localStorage', keys: ['owned-marker'] },
+            { storageType: 'sessionStorage', keys: [] },
+        ] } }));
+        const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: OWNER, store,
+            contextCapture: surface.contextCapture, isEnabled: () => true });
+        try {
+            surface.bindView();
+            await vi.waitFor(() => expect(store.getSnapshot().events).toContainEqual(expect.objectContaining({
+                family: 'storage', kind: 'storage.keyInventory', data: {
+                    storageType: 'localStorage', keyCount: 1, keys: ['owned-marker'], keysTruncated: false,
+                },
+            })));
+            surface.unbindView();
+            expect(store.getSnapshot().events).toEqual([]);
+        } finally {
+            runtime.dispose();
+        }
+    });
+
     it('feeds the diagnostics store from the live CDP stream once a view is bound, redacting raw payloads', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1', now: () => 9_000 });
         const surface = fakeContextCapture();

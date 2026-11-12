@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserSidecarCdpEventSubscriber } from '../controlAdapter';
 import type { SidecarDiagnosticsEventSourceSubscriber } from './eventSource';
+import { mapSidecarCdpDiagnosticEvent } from './mapEvents';
 import {
     createSidecarCdpDiagnosticsEventSource,
     translateSidecarCdpNotification,
@@ -106,6 +107,42 @@ describe('translateSidecarCdpNotification', () => {
 });
 
 describe('createSidecarCdpDiagnosticsEventSource', () => {
+    it('publishes storage key inventories through the mapper and refreshes them on page storage changes', async () => {
+        const transport = fakeEventTransport();
+        let keys = ['owned-marker'];
+        transport.dispatchPageCommand.mockImplementation(async input => {
+            if (input.method !== 'Runtime.evaluate') return {};
+            return input.params?.expression === 'document.title'
+                ? { result: { value: 'Owned fixture' } }
+                : { result: { value: [
+                    { storageType: 'localStorage', keys },
+                    { storageType: 'sessionStorage', keys: [] },
+                ] } };
+        });
+        const mapped: ReturnType<typeof mapSidecarCdpDiagnosticEvent>[] = [];
+        const subscription = createSidecarCdpDiagnosticsEventSource({ sourceId: 'storage', pageHandle, transport }).start({
+            onCdpEvent: input => mapped.push(mapSidecarCdpDiagnosticEvent({ ...input,
+                browserSessionId: 'owned-session', viewId: 'owned-view', navigationGeneration: 0,
+                capturedAtMs: input.capturedAtMs ?? 1, eventOrdinal: mapped.length,
+            })),
+            onUnavailable: vi.fn(),
+        });
+        await vi.waitFor(() => expect(mapped).toContainEqual(expect.objectContaining({ family: 'storage', kind: 'storage.keyInventory',
+            data: { storageType: 'localStorage', keyCount: 1, keys: ['owned-marker'], keysTruncated: false } })));
+        expect(mapped).toContainEqual(expect.objectContaining({ family: 'storage', data: {
+            storageType: 'sessionStorage', keyCount: 0, keys: [], keysTruncated: false,
+        } }));
+        keys = [];
+        transport.emit({ method: 'DOMStorage.domStorageItemRemoved', sessionId: pageHandle.sessionId, params: {} });
+        await vi.waitFor(() => expect(mapped).toContainEqual(expect.objectContaining({ family: 'storage', data: {
+            storageType: 'localStorage', keyCount: 0, keys: [], keysTruncated: false,
+        } })));
+        subscription.stop();
+        const settled = mapped.length;
+        transport.emit({ method: 'DOMStorage.domStorageItemsCleared', sessionId: pageHandle.sessionId, params: {} });
+        expect(mapped).toHaveLength(settled);
+    });
+
     it('pushes actual domain readiness and failure even when the console has no messages, and supplies the title', async () => {
         const transport = fakeEventTransport();
         transport.dispatchPageCommand.mockImplementation(async input => {

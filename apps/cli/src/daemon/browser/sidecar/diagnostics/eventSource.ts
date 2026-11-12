@@ -116,6 +116,8 @@ function familyForCdpEvent(event: SidecarCdpDiagnosticEventInput['event']): Brow
             return 'pageError';
         case 'page.info':
             return 'pageInfo';
+        case 'storage.keyInventory':
+            return 'storage';
         case 'diagnostics.available':
             return event.family;
     }

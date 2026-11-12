@@ -121,6 +121,7 @@ export type SidecarCdpDiagnosticEventInput = SidecarDiagnosticBaseInput & Readon
         | SidecarConsoleEvent
         | SidecarPageErrorEvent
         | SidecarPageInfoEvent
+        | Readonly<{ kind: 'storage.keyInventory'; storageType: 'localStorage' | 'sessionStorage'; keys: readonly string[] }>
         | Readonly<{ kind: 'diagnostics.available'; family: BrowserDiagnosticFamilyV1 }>;
 }>;
 export type SidecarNetworkEvent = Extract<SidecarCdpDiagnosticEventInput['event'], { requestId: string }>;
@@ -168,6 +169,12 @@ export function mapSidecarCdpDiagnosticEvent(input: SidecarCdpDiagnosticEventInp
     const common = baseEvent(input);
 
     switch (input.event.kind) {
+        case 'storage.keyInventory':
+            return BrowserDiagnosticEventV1Schema.parse({
+                ...common, family: 'storage', kind: input.event.kind,
+                data: { storageType: input.event.storageType, keyCount: input.event.keys.length,
+                    keys: input.event.keys, keysTruncated: false },
+            });
         case 'network.requestWillBeSent':
         case 'network.responseReceived':
         case 'network.loadingFailed':
