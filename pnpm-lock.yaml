@@ -609,6 +609,9 @@ importers:
       '@happier-dev/plugins-openrouter':
         specifier: 0.0.0
         version: link:../../packages/plugins/openrouter
+      '@happier-dev/plugins-outbound-notify':
+        specifier: 0.0.0
+        version: link:../../packages/plugins/outbound-notify
       '@happier-dev/plugins-pi':
         specifier: 0.0.0
         version: link:../../packages/plugins/pi
@@ -3982,6 +3985,19 @@ importers:
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+      vitest:
+        specifier: 3.2.4
+        version: 3.2.4(patch_hash=1445b1fbc0b609bd64853b082185b076a773bfdafe83a75f30c99d60a252fcd5)(@types/debug@4.1.12)(@types/node@25.1.0)(jiti@2.7.0(patch_hash=f482083d3e7992457b4e4ccbc3299aacad91124063456e4403af46c5ba8f3214))(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.31.1)(supports-color@8.1.1)(terser@5.46.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  packages/plugins/outbound-notify:
+    dependencies:
+      '@happier-dev/plugin-sdk':
+        specifier: 0.0.0
+        version: link:../../plugin-sdk
+    devDependencies:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

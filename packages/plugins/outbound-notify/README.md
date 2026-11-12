@@ -1,0 +1,15 @@
+# Outbound notifications
+
+Unreleased 0.3 development plugin. Sends host-admitted notification title/body to ntfy, Teams Workflows, Mattermost, Gotify and Pushover through the existing `notificationChannels` contribution. Enable the plugin on the sending Machine and select its channel through the existing notification destination controls. One destination per service is configured through Account plugin settings; notification policy and admission remain host-owned.
+
+Configure the service's fields in the plugin settings. Link credentials through Saved Secrets; webhook URLs contain credentials too. Existing plugin settings and secret-binding Actions support agent configuration. Do not put credentials in notification text or destination metadata.
+
+- **ntfy:** supply the server's root URL and a topic. Optionally link an access token for a protected topic. The sender uses the [JSON publishing endpoint](https://docs.ntfy.sh/publish/#publish-as-json) and Bearer authentication, preserving Unicode title/body in JSON.
+- **Teams:** create a [Workflow webhook](https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook) using “When a Teams webhook request is received”, with **Anyone** authentication. Link the webhook URL as a Saved Secret. The adapter sends the [Teams connector's Adaptive Card envelope](https://learn.microsoft.com/en-us/connectors/teams/#when-a-teams-webhook-request-is-received). Tenant-authenticated workflows require an OAuth integration and are not supported by this adapter. Retired legacy Office connectors are not the setup path.
+- **Mattermost:** create an [Incoming Webhook](https://docs.mattermost.com/developers/integrate/webhooks/incoming) and link its URL as a Saved Secret. The adapter sends Slack-compatible `text`. Happier's core webhook sends a fixed Happier envelope and optional HMAC, so it cannot serve this endpoint as a preset.
+- **Gotify:** supply the server base URL and link an application token. The adapter posts JSON to `/message` beneath that base, with [X-Gotify-Key authentication](https://gotify.net/docs/pushmsg).
+- **Pushover:** link an application token and a user or group key. The adapter uses the [Message API](https://pushover.net/api), including its application-level success status.
+
+Only title/body leave these adapters; raw host notification data is not forwarded. Provider HTTP acceptance does not prove device display. Missing configuration fails before sending; HTTP refusals retain the status code without returning provider response text. A lost response or cancellation after dispatch produces `outcomeUnknown`. Inspect the destination before manually resending. The plugin does not retry, truncate messages or add its own timeouts; provider limits and refusal responses apply. Credential-bearing requests refuse redirects.
+
+The focused suite covers provider payloads/authentication, secret custody, configuration failure, cancellation and uncertain delivery, plus a real local HTTP receiver. Live service tenants and the composed loaded daemon journey require integration/release validation.
