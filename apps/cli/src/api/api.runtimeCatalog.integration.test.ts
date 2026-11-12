@@ -4,12 +4,19 @@ import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol';
 import { ApiClient } from './api';
+import { encodeBase64 } from './encryption';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
 import { AccountEncryptionModeResponseSchema, AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import type { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+
+function createSessionFromCreationFields(body: ReturnType<typeof buildSessionMetadataEnvelopeCreateFields>) {
+    const { sharedMetadata, ...fields } = body;
+    return { id: 's1', ...fields, metadata: sharedMetadata.ciphertext };
+}
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
 const {
@@ -39,6 +46,7 @@ const {
 
 vi.mock('axios', () => ({
     default: {
+        defaults: {},
         get: mockGet,
         post: mockPost,
         isAxiosError: mockIsAxiosError
@@ -56,15 +64,6 @@ vi.mock('@/ui/logger', () => ({
 
 vi.mock('@/features/serverFeaturesClient', () => ({
     fetchServerFeaturesSnapshot: mockFetchServerFeaturesSnapshot,
-}));
-
-// Mock encryption utilities
-vi.mock('./encryption', () => ({
-    decodeBase64: vi.fn((data: string) => data),
-    encodeBase64: vi.fn((data: any) => data),
-    decrypt: vi.fn((data: any) => data),
-    encrypt: vi.fn((data: any) => data),
-    getRandomBytes: vi.fn((len: number) => new Uint8Array(len)),
 }));
 
 // Mock configuration
@@ -215,10 +214,10 @@ describe('Api server error handling', () => {
                         updatedAt: 1,
                     },
                 });
-            mockPost.mockImplementation(async (url: string) => {
+            mockPost.mockImplementation(async (url: string, body: ReturnType<typeof buildSessionMetadataEnvelopeCreateFields>) => {
                 if (url.endsWith('/v1/sessions')) {
                     requests.push('session');
-                    return { status: 201, data: { session: { id: 's1' }, created: true } };
+                    return { status: 201, data: { session: createSessionFromCreationFields(body), created: true } };
                 }
                 if (url.includes('/v1/access-keys/s1/target-machine')) {
                     requests.push('access-key');
@@ -252,7 +251,9 @@ describe('Api server error handling', () => {
             envScope.patch({ HAPPIER_E2E_DELAY_CREATE_SESSION_MS: '1000' });
 
             try {
-                mockPost.mockResolvedValue({ status: 201, data: { session: { id: 's1' } } });
+                mockPost.mockImplementation(async (_url: string, body: ReturnType<typeof buildSessionMetadataEnvelopeCreateFields>) => ({
+                    status: 201, data: { session: createSessionFromCreationFields(body) },
+                }));
 
                 const promise = api.getOrCreateSession({ tag: 'test-tag', metadata: testMetadata as any, state: null });
 
@@ -472,6 +473,19 @@ describe('Api server error handling', () => {
             expect(connectionState.isOffline()).toBe(false);
         });
 
+        it.each([
+            { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' },
+            { error: 'database_transaction_conflict_exhausted', statusCode: 503 },
+        ])('preserves the creation transport\'s confirmed $error through API settlement', async body => {
+            // HTTP is the boundary; the real creation transport classifies the receipt.
+            mockGet.mockImplementation(readApiGetFixture);
+            mockPost.mockResolvedValue({ status: 503, data: body });
+            await expect(api.getOrCreateSession({
+                tag: 'test-tag', metadata: testMetadata, state: null,
+            })).rejects.toMatchObject({ code: body.error, response: { status: 503 } });
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
         it('preserves the server\'s exact organization-placement refusal as a bounded creation error', async () => {
             mockPost.mockRejectedValue({
                 response: {
@@ -678,7 +692,7 @@ describe('Api server error handling', () => {
             } as any);
 
             const body = mockPost.mock.calls[0]?.[1];
-            expect(body?.contentPublicKey).toEqual(dataKeyCredential.encryption.publicKey);
+            expect(body?.contentPublicKey).toBe(encodeBase64(dataKeyCredential.encryption.publicKey));
         });
 
         it('includes explicit installation identity fields when registering a machine', async () => {

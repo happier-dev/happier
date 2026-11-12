@@ -568,6 +568,8 @@ export class ApiClient {
       }
 
       if (terminalAuthStatus !== null && terminalAuthStatus >= 500) {
+        // The creation transport has already classified and sanitized this error.
+        if (error instanceof HttpStatusError) throw error;
         const rollback = axios.isAxiosError(error)
           ? readHomeDomainConfirmedRollbackV1(terminalAuthStatus, error.response?.data)
           : null;
