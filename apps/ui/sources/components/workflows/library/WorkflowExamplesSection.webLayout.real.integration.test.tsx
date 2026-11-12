@@ -35,7 +35,7 @@ afterEach(async () => {
 describe('example tiles, as a browser lays them out', () => {
     it('offers the full Session starter catalog and retains the trigger and exact target when selected', async () => {
         const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
-        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
+        const { WORKFLOW_STARTER_EXAMPLES_V1, workflowStarterRequiresSession } = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { readDeviceTimeZone } = await import('../triggers/sessionTriggerForm');
         const onUse = vi.fn();
         const session = { sessionId: 'current-session', machineId: 'current-machine' };
@@ -45,7 +45,9 @@ describe('example tiles, as a browser lays them out', () => {
         await act(async () => root!.render(<WorkflowExamplesSection session={session} presentation="list" onUse={onUse} />));
         const buttons = Array.from(host.querySelectorAll('[data-testid$=":use"]'));
         expect(buttons.map(button => button.getAttribute('data-testid'))).toEqual(
-            WORKFLOW_STARTER_EXAMPLES_V1.map(example => `workflow-examples:${example.key}:use`),
+            [...WORKFLOW_STARTER_EXAMPLES_V1.filter(workflowStarterRequiresSession),
+                ...WORKFLOW_STARTER_EXAMPLES_V1.filter(example => !workflowStarterRequiresSession(example))]
+                .map(example => `workflow-examples:${example.key}:use`),
         );
         expect(onUse).not.toHaveBeenCalled();
         const seeded = WORKFLOW_STARTER_EXAMPLES_V1.find(example => example.triggerSeed?.kind === 'schedule')!;
@@ -85,7 +87,7 @@ describe('example tiles, as a browser lays them out', () => {
         getTempData(seedId);
         await act(async () => root!.render(<WorkflowExamplesSection session={session} opensDraft={false} presentation="list" onUse={onUse} />));
         expect(Array.from(host.querySelectorAll('[data-testid$=":use"]')).map(button => button.getAttribute('data-testid'))).toEqual(
-            WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.triggerSeed === undefined).map(example => `workflow-examples:${example.key}:use`),
+            WORKFLOW_STARTER_EXAMPLES_V1.filter(example => !workflowStarterRequiresSession(example)).map(example => `workflow-examples:${example.key}:use`),
         );
     });
     it('draws every example through the one Collection card, with no footer band and its Use control in the right slot', async () => {
@@ -112,15 +114,20 @@ describe('example tiles, as a browser lays them out', () => {
         await act(async () => {
             root!.render(React.createElement(View, { style: { width: 900 } }, React.createElement(WorkflowExamplesSection, { onUse: () => {} })));
         });
+        // Collection mounts previews after its browser layout is known. Settle that boundary before
+        // inventorying the text whose geometry and typography this case must actually inspect.
+        await measureWebLayout(host, { viewport: { width: 900, height: 2400 }, settle: replay => act(replay) });
         // Every text a map draws, and the face it should be drawn in: a step's name and a fork's lane count
         // are regular words, a structure's own title (Side by side, For each file) stays bold (lab
         // `.wm.sm .wm-c .t`, `.wm-forkhd .tx b`, `.wm-loophd .tx b`).
         const { projectWorkflowFlow } = await import('../flow/workflowFlowProjection');
         const CARD_KINDS = new Set(['step', 'action', 'wait', 'evaluator', 'observedAgent']);
         const expectedFace = new Map<string, 'regular' | 'bold'>();
+        const cardLabels = new Map<string, string>();
         for (const example of WORKFLOW_STARTER_EXAMPLES_V1) {
             const projection = projectWorkflowFlow(example.definition);
             for (const node of projection.nodes) {
+                if (CARD_KINDS.has(node.kind)) cardLabels.set(`workflow-examples:${example.key}:flow-node-${node.nodeId}`, node.label);
                 const element = host.querySelector(`[data-testid="workflow-examples:${example.key}:flow-node-${node.nodeId}"]`);
                 // Lane captions keep their own quiet role; this asserts names and structure titles.
                 if (element === null || node.kind === 'branch' || node.kind === 'thenBranch' || node.kind === 'otherwiseBranch') continue;
@@ -147,14 +154,20 @@ describe('example tiles, as a browser lays them out', () => {
             // The map stands on the card's own paper, never a filled band of its own.
             expect(['', 'rgba(0, 0, 0, 0)', 'transparent']).toContain(getComputedStyle(band).backgroundColor);
             for (const [id, rects] of layout.rects) {
-                if (!id.startsWith(`workflow-examples:${example.key}:flow-node-`)) continue;
+                // The one-line rule is a card's (lab `.wm.sm .wm-node`); a structure heading (a condition and
+                // what it tests) wraps its whole label instead of cutting it.
+                const label = cardLabels.get(id);
+                if (!id.startsWith(`workflow-examples:${example.key}:flow-node-`) || label === undefined) continue;
                 const node = rects[0]!;
                 // Side-by-side lanes split the map's width; a card in one is the narrow kind.
                 const inLane = node.width < layout.rect(`workflow-examples:${example.key}:preview`).width * 0.6;
                 cards += 1;
                 // A small-map card is one line (lab `.wm.sm .wm-node`: 34 px); a narrow lane card may take
-                // two lines rather than cut its name (lab `@container (max-width: 200px)`).
-                expect(node.height, id).toBeLessThanOrEqual(inLane ? 44 : 36);
+                // two lines rather than cut its name (lab `@container (max-width: 200px)`). A name longer than
+                // its card wraps too: the card adds nothing beyond the lines its name needs.
+                const name = layout.textRects(label).find(rect => rect.top >= node.top && rect.bottom <= node.bottom);
+                expect(name, id).toBeDefined();
+                expect(node.height - name!.height + (name!.lineHeight ?? name!.height), id).toBeLessThanOrEqual(inLane ? 44 : 36);
             }
         }
         expect(cards).toBeGreaterThan(4);
@@ -167,7 +180,7 @@ describe('example tiles, as a browser lays them out', () => {
             expect(mapTextRects.length, text).toBeGreaterThan(0);
             for (const rect of mapTextRects) {
                 // A label is read whole: never cut to "Review tests and ed…" (DESIGN-9 P5).
-                expect(rect.clipped, text).toBe(false);
+                expect(rect.clipped, `${text}: ${JSON.stringify(rect)}`).toBe(false);
                 // Node labels and a fork's lane count are regular-weight words; only a fork's own title is bold
                 // (lab `.wm.sm .wm-c .t`, `.wm-forkhd .tx b`).
                 // Happier's weight is its face (`Inter-SemiBold`); the fallback after `var()` names it.

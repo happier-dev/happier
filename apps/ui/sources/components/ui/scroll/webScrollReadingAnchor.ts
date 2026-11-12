@@ -33,8 +33,13 @@ type AnchorWindow = Readonly<{
   removeEventListener: (type: 'resize', listener: () => void) => void;
   document: Readonly<{
     activeElement: unknown;
-    elementFromPoint: (x: number, y: number) => unknown;
+    /** Absent in a DOM without layout hit-testing (jsdom): the anchor then holds the focus or selection only. */
+    elementFromPoint?: (x: number, y: number) => unknown;
   }>;
+  getSelection?: () => Readonly<{
+    rangeCount: number;
+    getRangeAt: (index: number) => Readonly<{ startContainer: unknown; getBoundingClientRect: () => Rect }>;
+  }> | null;
   ResizeObserver?: new (callback: () => void) => {
     observe: (target: never) => void;
     disconnect: () => void;
@@ -45,6 +50,31 @@ type AnchorWindow = Readonly<{
 // below it (then the top row's own containers) are the fallbacks, in reading order.
 const PROBE_FRACTIONS = [0, 0.25, 0.5] as const;
 
+
+/**
+ * The selection (or caret) inside the focused element, as an anchor. A focused editor can be taller than its
+ * scroller (a long prompt), and its text reflows with the width: the words the person is at, not the editor's
+ * top, are then the reading position. The range is live, so its box follows the reflowed text.
+ */
+function readSelectionAnchor(win: AnchorWindow, focused: unknown): AnchorNode | null {
+  const holder = focused as { contains?: (node: unknown) => boolean } | null;
+  if (typeof holder?.contains !== 'function') return null;
+  // The selection as it is when measured: a caret moved after sampling is still the person's place.
+  const currentRange = () => {
+    const selection = win.getSelection?.();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    return range.startContainer !== null && holder.contains!(range.startContainer) ? range : null;
+  };
+  if (currentRange() === null) return null;
+  return {
+    get isConnected() {
+      const container = currentRange()?.startContainer as { isConnected?: boolean } | undefined;
+      return container?.isConnected === true;
+    },
+    getBoundingClientRect: () => currentRange()?.getBoundingClientRect() ?? { top: 0, height: 0, width: 0 },
+  };
+}
 
 function isAnchorNode(value: unknown): value is AnchorNode {
   return (
@@ -100,9 +130,15 @@ export function attachWebScrollReadingAnchor(
     const add = (node: unknown) => {
       if (inside(node) && !nodes.includes(node)) nodes.push(node);
     };
-    add(win.document.activeElement);
-    const hits = PROBE_FRACTIONS.map((fraction) =>
-      win.document.elementFromPoint(
+    const active = win.document.activeElement;
+    if (inside(active)) {
+      const selectionAnchor = readSelectionAnchor(win, active);
+      if (selectionAnchor !== null) nodes.push(selectionAnchor);
+    }
+    add(active);
+    const elementFromPoint = win.document.elementFromPoint;
+    const hits = typeof elementFromPoint !== 'function' ? [] : PROBE_FRACTIONS.map((fraction) =>
+      elementFromPoint.call(win.document,
         viewport.left + viewport.width / 2,
         viewport.top + 1 + fraction * viewport.height,
       ),

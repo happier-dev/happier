@@ -18,6 +18,7 @@ import { ensureReferenceChipStyles } from '@/components/ui/referenceChip/referen
 import { isUnrenderedLayoutBox } from '@/components/ui/presentation/retainedPresentationGeometry';
 import { COMPOSER_EDITOR_CONTENT_STYLE, resolveComposerEditorHostStyle } from './composerEditor/composerEditorHostStyle.web';
 import type { ComposerEditorCaretRect, ComposerEditorDecoration, ComposerEditorReference } from './composerEditor/composerEditorTypes';
+import { attachWebScrollReadingAnchor } from '@/components/ui/scroll/webScrollReadingAnchor';
 
 export type { SupportedKey } from '@/keyboard/events';
 export interface TextInputState { text: string; selection: { start: number; end: number } }
@@ -248,10 +249,19 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         }) : null;
         for (let node: Element | null = host; node && observer; node = node.parentElement) observer.observe(node);
         Object.assign(dom.style, COMPOSER_EDITOR_CONTENT_STYLE);
+        // A long prompt scrolls in this host. A width change (phone ↔ wide) reflows its lines; the one
+        // reading-anchor owner keeps the words the person is at in place instead of the raw offset.
+        type AnchorInput = Parameters<typeof attachWebScrollReadingAnchor>[0];
+        const detachReadingAnchor = attachWebScrollReadingAnchor({
+            scroller: host as unknown as AnchorInput['scroller'],
+            content: dom,
+            win: window as unknown as AnchorInput['win'],
+        });
         if (currentProps.current.autoFocus) dom.focus();
         measure();
         return () => {
             clearTimer(); pending.current = null; host.removeEventListener('scroll', onScroll);
+            detachReadingAnchor();
             observer?.disconnect(); controller.destroy(); controllerRef.current = null;
         };
     }, []);

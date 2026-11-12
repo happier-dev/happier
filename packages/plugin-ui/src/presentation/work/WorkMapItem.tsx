@@ -134,10 +134,9 @@ function WorkMapItemView<TNode extends HappierWorkMapNode>(props: Omit<WorkMapIt
         <Text
           role={role}
           strong={selected}
-          // A card's name is read in full: the card grows rather than ellipsizing a short name in a
-          // narrow lane or nested frame. Only a compact full-width map keeps each node to one line
-          // (lab `.wm.sm`); its lane cards wrap like any other.
-          numberOfLines={compact && !(appearance === 'card' && inLane) ? 1 : undefined}
+          // A name is read in full (DESIGN-9 P5): the node grows rather than ellipsizing it. A compact map's
+          // card is one line while its name fits (lab `.wm.sm .wm-node`); a longer name, or a heading with
+          // what it tests, wraps instead of being cut.
           style={{ color: appearance === 'lane' ? theme.colors.secondaryText : theme.colors.text, overflow: 'hidden', ...WRAP_BY_WORD }}
         >
           {node.label}

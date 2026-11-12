@@ -139,3 +139,45 @@ it.each([1440, 390])('keeps a nested Managed size table on its enclosing page-sh
         host.remove();
     }
 });
+
+// An authored name is read whole on a page list and on its title, even when a phone at 200% text leaves
+// 195 CSS px (FIN-QA-LARGETEXT T1): the row and the title grow instead of cutting the name.
+const longItems = [{ key: 'long', group: 'first', title: 'FIN-QA-VARIANTS-B-1112 dispose of the retired staging Machine and its volumes' }];
+function LongNameList() {
+    const model = useHappierCollection({ items: longItems, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
+    return <CoreCollectionScope renderPageScroller={renderPageScroller}>
+        <Collection model={model} anatomy={longAnatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            minListWidth={PLUGIN_CARD_MIN_WIDTH_PX} minDetailWidth={PLUGIN_CARD_MIN_WIDTH_PX} preferredListRatio={0.5} />
+    </CoreCollectionScope>;
+}
+// A Library row: its name, then where it runs (lab two-line resting row).
+const longAnatomy: CollectionAnatomy<Entry> = { ...anatomy, where: () => '3 steps · On a schedule' };
+
+it('keeps a long authored row name and the collection title whole at 195 px', async () => {
+    const { CollectionTitleButton } = await import('./CollectionTitleButton');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<View style={{ width: 195 }}>
+            <View style={{ flexDirection: 'row', paddingHorizontal: 16 }}>
+                <CollectionTitleButton testID="space-title" label="All workflows" accessibilityLabel="All workflows"
+                    expanded={false} hasPopup="menu" onPress={() => {}} scale="page" />
+            </View>
+            <LongNameList />
+        </View>));
+        const texts = [longItems[0]!.title, 'All workflows'];
+        const layout = await measureWebLayout(host, { viewport: { width: 195, height: 1600 }, texts, settle: (replay) => act(replay) });
+        for (const text of texts) {
+            const rects = layout.textRects(text);
+            expect(rects.length, text).toBeGreaterThan(0);
+            for (const rect of rects) {
+                expect(rect.clipped, `${text}: ${JSON.stringify(rect)}`).toBe(false);
+                expect(rect.right, text).toBeLessThanOrEqual(195);
+            }
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});

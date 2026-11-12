@@ -301,6 +301,51 @@ describe('attachWebScrollReadingAnchor', () => {
     detach();
   });
 
+  it('keeps the selection inside a tall focused editor where it was read, not the editor top', () => {
+    // A long prompt: the editor is taller than the scroller, and its text reflows when the width changes,
+    // so the selected words move within it while the editor's own top stays put.
+    const page = createLayout({ rowsAbove: 0, scrollTop: 600, width: 1440 });
+    let selectionInEditor = 660;
+    const selection = {
+      isConnected: true,
+      getBoundingClientRect: () => ({
+        top: page.layout.viewportTop + page.layout.rowsAbove + selectionInEditor - page.layout.scrollTop,
+        height: 18,
+        width: 120,
+      }),
+    };
+    const range = { startContainer: selection, getBoundingClientRect: selection.getBoundingClientRect };
+    const win = { ...page.win, getSelection: () => ({ rangeCount: 1, getRangeAt: () => range }) };
+    const scroller = { ...page.scroller, contains: (node: unknown) => node === page.focused || node === selection };
+    Object.defineProperty(scroller, 'scrollTop', Object.getOwnPropertyDescriptor(page.scroller, 'scrollTop')!);
+    Object.defineProperties(scroller, {
+      clientWidth: Object.getOwnPropertyDescriptor(page.scroller, 'clientWidth')!,
+      clientHeight: Object.getOwnPropertyDescriptor(page.scroller, 'clientHeight')!,
+      scrollHeight: Object.getOwnPropertyDescriptor(page.scroller, 'scrollHeight')!,
+    });
+    const focused = page.focused as typeof page.focused & { contains?: (node: unknown) => boolean };
+    focused.contains = (node: unknown) => node === selection;
+    const detach = attachWebScrollReadingAnchor({ scroller, content: page.content, win });
+    const selectionOffset = () => selection.getBoundingClientRect().top - page.layout.viewportTop;
+    const before = selectionOffset();
+
+    // Phone: the editor's lines wrap, so the selected words sit three times further down the editor.
+    page.layout.width = 390;
+    page.layout.contentHeight = 4000;
+    selectionInEditor = 1980;
+    page.relayout();
+    expect(selectionOffset()).toBe(before);
+
+    page.emit('scroll');
+    page.layout.width = 1440;
+    page.layout.contentHeight = 2000;
+    selectionInEditor = 660;
+    page.relayout();
+    expect(selectionOffset()).toBe(before);
+    expect(page.layout.scrollTop).toBe(600);
+    detach();
+  });
+
   it('takes a scroll made after a recomposition as the new reading position', () => {
     const page = createLayout({ rowsAbove: 400, scrollTop: 180, width: 1440 });
     attachWebScrollReadingAnchor({ scroller: page.scroller, content: page.content, win: page.win });

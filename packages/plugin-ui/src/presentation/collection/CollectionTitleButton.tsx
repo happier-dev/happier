@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 
 import { HAPPIER_COLLECTION_LIST_METRICS } from './CollectionList.js';
 import { useHappierHitArea } from '../interaction/hitArea.js';
-import type { HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
 
 /** Optical inset of the press fill; the title itself stays on the collection's text edge. */
 const OPTICAL_INSET_PX = 6;
@@ -37,6 +37,7 @@ export function resolveHappierCollectionTitleStyles<Label extends HappierPortabl
     labelRow: { flexDirection: 'row' as const, alignItems: 'baseline' as const, gap: 6, minWidth: 0, flexShrink: 1 },
     triggerPressed: { backgroundColor: ink.pressed },
     triggerLabel: { ...ink.label, minWidth: 0, flexShrink: 1, color: ink.text },
+    labelBox: { minWidth: 0, flexShrink: 1 },
     phoneTriggerLabel: ink.phoneLabel,
     naturalClip: { position: 'absolute' as const, left: 0, top: 0, width: 0, height: 0, overflow: 'hidden' as const },
     naturalRow: { position: 'absolute' as const, left: 0, top: 0, width: 4096, flexDirection: 'row' as const, alignItems: 'flex-start' as const },
@@ -62,7 +63,7 @@ export type HappierCollectionTitleButtonProps = Readonly<{
   scale?: 'page' | 'section';
   phone: boolean;
   styles: HappierCollectionTitleStyles;
-  Text: React.ComponentType<Readonly<{ children: React.ReactNode; numberOfLines: number; style: HappierStyleProp }>>;
+  Text: React.ComponentType<Readonly<{ children: React.ReactNode; numberOfLines?: number; style: HappierStyleProp }>>;
   chevron: React.ReactNode;
   /** A quiet state after the chevron (a saved view that now differs: "Filtered"); the caller names it in the label. */
   trailing?: React.ReactNode;
@@ -73,20 +74,56 @@ export const HappierCollectionTitleButton = React.memo(function HappierCollectio
   const { styles, Text } = props;
   const hitArea = useHappierCollectionTitleTriggerHitArea(styles);
   const reportNaturalWidth = React.useContext(CollectionTitleNaturalWidthContext);
-  const labelStyle = [styles.triggerLabel, props.phone && props.scale !== 'section' ? styles.phoneTriggerLabel : null];
+  // A phone's hero title stands on one line. A name too long for that at this width (a long Space, a phone at
+  // large text) takes the heading step and wraps there by words, until the title has more room again.
+  const [heroWrappedAtWidth, setHeroWrappedAtWidth] = React.useState<number | null>(null);
+  const triggerWidthRef = React.useRef(0);
+  const heroStep = props.phone && props.scale !== 'section';
+  const hero = heroStep && heroWrappedAtWidth === null;
+  const labelWidths = React.useRef({ box: 0, natural: 0 });
+  const labelStyle = [styles.triggerLabel, hero ? styles.phoneTriggerLabel : null];
+  const handleTriggerLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+    hitArea.onLayout?.(event);
+    const width = event.nativeEvent.layout.width;
+    triggerWidthRef.current = width;
+    setHeroWrappedAtWidth((wrappedAt) => (wrappedAt !== null && width > wrappedAt + 1 ? null : wrappedAt));
+  }, [hitArea]);
+  // The hero label's one-line width against the width its box gets: wider means it would wrap.
+  const checkHeroFits = React.useCallback(() => {
+    const { box, natural } = labelWidths.current;
+    if (hero && box > 0 && natural > box + 1) setHeroWrappedAtWidth(triggerWidthRef.current);
+  }, [hero]);
+  const handleLabelLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+    labelWidths.current.box = event.nativeEvent.layout.width;
+    checkHeroFits();
+  }, [checkHeroFits]);
+  const handleNaturalLabelLayout = React.useCallback((event: HappierLayoutChangeEvent) => {
+    labelWidths.current.natural = event.nativeEvent.layout.width;
+    checkHeroFits();
+  }, [checkHeroFits]);
   const handleNaturalLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
     reportNaturalWidth?.(event.nativeEvent.layout.width - OPTICAL_INSET_PX);
   }, [reportNaturalWidth]);
   return <Pressable testID={props.testID} accessibilityRole="button" accessibilityLabel={props.accessibilityLabel}
     accessibilityState={{ expanded: props.expanded }} aria-expanded={props.expanded} aria-haspopup={props.hasPopup}
-    onPress={props.onPress} hitSlop={hitArea.hitSlop} onLayout={hitArea.onLayout}
+    onPress={props.onPress} hitSlop={hitArea.hitSlop} onLayout={handleTriggerLayout}
     style={({ pressed }) => [styles.trigger, pressed ? styles.triggerPressed : null]}>
     {hitArea.frame}
     <View style={styles.labelRow}>
-      <Text numberOfLines={1} style={labelStyle}>{props.label}</Text>
+      {/* A Space's name is authored: it wraps under a large title rather than being cut (FIN-QA-LARGETEXT T1).
+          The measuring copy below keeps one line, so the row still yields its controls first. */}
+      <View style={styles.labelBox} onLayout={heroStep ? handleLabelLayout : undefined}>
+        <Text style={labelStyle}>{props.label}</Text>
+      </View>
       {props.chevron}
       {props.trailing ?? null}
     </View>
+    {hero ? <View style={styles.naturalClip} pointerEvents="none" aria-hidden
+      accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <View style={styles.naturalRow}>
+        <View onLayout={handleNaturalLabelLayout}><Text numberOfLines={1} style={labelStyle}>{props.label}</Text></View>
+      </View>
+    </View> : null}
     {reportNaturalWidth ? <View style={styles.naturalClip} pointerEvents="none" aria-hidden
       accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
       <View style={styles.naturalRow}>

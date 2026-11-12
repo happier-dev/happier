@@ -3368,7 +3368,7 @@ describe('board loading', () => {
 });
 
 describe('a phone list', () => {
-  it('lets a long title take a second line instead of truncating it on the first (lab phone list)', () => {
+  it('lets a long authored title wrap whole instead of truncating it (lab phone list, FIN-QA-LARGETEXT T1)', () => {
     const view = mount();
     view.measure(360);
     const row = view.query('row:a')!;
@@ -3376,9 +3376,8 @@ describe('a phone list', () => {
       (node) => node.textContent === 'Retry idempotent payment intents',
     )!;
     expect(title).toBeDefined();
-    expect(
-      getComputedStyle(title).webkitLineClamp ?? title.style.webkitLineClamp,
-    ).toBe('2');
+    // Never clamped: the row grows with the name (ST-5), as a catalog name does.
+    expect(['', 'none']).toContain(getComputedStyle(title).webkitLineClamp ?? title.style.webkitLineClamp ?? '');
     view.unmount();
   });
 });
@@ -5412,6 +5411,7 @@ describe('named table orders', () => {
     });
     view.measure(1440);
     expect(view.query('collection:sort:age:arrow')?.textContent).toBe('↓');
+    expect(view.query('collection:sort:title:arrow')).toBeNull();
     expect(view.query('collection:sort:age')!.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('descending');
     act(() => { view.query('collection:sort:age')!.click(); });
     const options = [...view.container.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
@@ -5536,6 +5536,7 @@ describe('named table orders', () => {
     });
     view.measure(1440);
 
+    expect(view.query('collection:sort:title:arrow')).toBeNull();
     const trigger = view.query('collection:sort:age')!;
     expect(trigger).not.toBeNull();
     expect(trigger.closest('[aria-sort]')!.getAttribute('aria-sort')).toBe('descending');

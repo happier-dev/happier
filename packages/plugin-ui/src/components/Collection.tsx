@@ -1508,8 +1508,9 @@ function ListCells<Item>(props: Readonly<{
           </View>
         ) : null}
         {singleLine ? null : <View pointerEvents={layer?.leaf} style={catalog ? catalogTitleLineStyle : props.wrapTitle ? wrappedTitleLineStyle : lineStyle}>
-          {/* A catalog name is never ellipsized: it wraps and the row grows above its floor (ST-5). */}
-          <HappierText variant="label" tone="neutral" {...(catalog ? {} : { numberOfLines: props.wrapTitle ? 2 : 1 })}
+          {/* A catalog name, and an authored name on the resting page list, is never ellipsized: it wraps and the
+              row grows above its floor (ST-5; a phone at large text, FIN-QA-LARGETEXT T1). A dense index row keeps one line. */}
+          <HappierText variant="label" tone="neutral" {...(catalog || props.wrapTitle ? {} : { numberOfLines: 1 })}
             style={[titleTextStyle, catalog ? null : flexCellStyle, page ? resolveHappierPageTextStyle('rowTitle', typography) : resolveHappierTextStepStyle(HAPPIER_COLLECTION_LIST_TEXT.listRowTitle, typography)]}>
             {anatomy.title(item)}
             {kindWord}
