@@ -1,18 +1,41 @@
-import { describe, expect, it } from 'vitest';
+import axios from 'axios';
+import { describe, expect, it, vi } from 'vitest';
 import { exercisePublicPackagePlanApply, withNativeConfirmation } from '@/testkit/machines/nativeSoftwareInstallFlow';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { MachineSetupApplyInputV1Schema, MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
 
 describe('Machine setup Apply settlement', () => {
   it.skipIf(process.platform === 'win32').each(['plain', 'e2ee'] as const)('settles a %s reviewed Apply through the installed daemon and native package effect', async mode => {
     await exercisePublicPackagePlanApply('native-confirm', true, undefined, undefined, undefined, mode);
   });
 
-  it.skipIf(process.platform === 'win32').each([0, 23])('observes the signed Workflow child until its Setup script exits %i', async exitCode => {
-    await exercisePublicPackagePlanApply('native-confirm', false, async fixture => {
+  it.skipIf(process.platform === 'win32').each([
+    { exitCode: 0, disconnectAfterWait: false },
+    { exitCode: 23, disconnectAfterWait: false },
+    { exitCode: 0, disconnectAfterWait: true },
+  ])('observes the signed Workflow child through exit $exitCode with observation disconnect=$disconnectAfterWait', async ({ exitCode, disconnectAfterWait }) => {
+    await exercisePublicPackagePlanApply('native-confirm', false, async (fixture, _admitRoot, accountChannel) => {
+      let disconnected = false;
+      if (disconnectAfterWait) {
+        const homePost = vi.mocked(axios.post).getMockImplementation();
+        if (!homePost) throw new Error('Native Home HTTP boundary required');
+        vi.mocked(axios.post).mockImplementation(async (...args) => {
+          const response = await homePost(...args);
+          const [url, body] = args;
+          if (!disconnected && String(url).endsWith(WORKFLOW_RUN_STORAGE_HTTP_PATH)
+            && body && typeof body === 'object' && 'operation' in body && body.operation === 'wait') {
+            // Lose only the observation transport after Home authorized the
+            // starter's read. No permission or encryption material changed.
+            disconnected = true;
+            await accountChannel.disconnect();
+          }
+          return response;
+        });
+      }
       const context: RpcActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
         runtimeAccountId: 'alice', serverIdentityId: 'srv_home', actionRequestId: 'reviewed-script-apply',
         externalActionTarget: { kind: 'machine', machineId: fixture.machine.id }, signal: new AbortController().signal };
@@ -52,11 +75,17 @@ describe('Machine setup Apply settlement', () => {
         })] : [])]);
         expect(fixture.workflowDiagnostic()).toMatchObject({ coordinatePhase: 'run_coordinator' });
         nativeTerminal.exit?.(exitCode);
-        const settled = ActionOperationGetV1ResponseSchema.parse(await callExactMachineRpc({ credentials: fixture.credentials,
-          serverUrl: 'https://native-software.invalid', machineId: fixture.machine.id,
-          method: ACTION_OPERATION_RPC_METHODS_V2.get, request: { operationId: receipt.operationId, waitForTerminal: true },
-          timeoutMs: null, signal: context.signal }));
+        const observationRequest = { operationId: receipt.operationId, waitForTerminal: true };
+        const settled = ActionOperationGetV1ResponseSchema.parse(disconnectAfterWait
+          // The deliberate observation outage must not also cancel the test's
+          // separate Operation RPC; inspect the same receiver handler locally.
+          ? await fixture.operations.handlers.getV2(observationRequest, fixture.context('machines.setup.apply'))
+          : await callExactMachineRpc({ credentials: fixture.credentials,
+            serverUrl: 'https://native-software.invalid', machineId: fixture.machine.id,
+            method: ACTION_OPERATION_RPC_METHODS_V2.get, request: observationRequest,
+            timeoutMs: null, signal: context.signal }));
         await fixture.waitForWorkflowCoordinator();
+        expect(disconnected).toBe(disconnectAfterWait);
         expect(settled, JSON.stringify({ settled, workflow: fixture.workflowDiagnostic() })).toMatchObject({
           kind: 'found', operation: { state: exitCode === 0 ? 'succeeded' : 'failed',
             ...(exitCode === 0 ? {} : { error: { errorCode: 'machine_setup_setup_failed',

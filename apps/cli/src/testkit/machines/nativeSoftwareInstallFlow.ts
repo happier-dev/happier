@@ -12,7 +12,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { MachineSetupPlanResultV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, projectExternalActionApprovalDecisionEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, projectExternalActionApprovalDecisionEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionOperationGetV1ResponseSchema, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
@@ -60,7 +60,8 @@ export function withNativeConfirmation(actionId: 'machines.setup.plan' | 'machin
 }
 export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareScenario, askAndDecideValue = false,
   exerciseInstalled?: (fixture: Awaited<ReturnType<typeof createNativeSoftwareInstallFixture>>,
-    admitRoot: (authorization: ExternalActionExecutionAuthorizationV1) => void) => Promise<void>,
+    admitRoot: (authorization: ExternalActionExecutionAuthorizationV1) => void,
+    accountChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>) => Promise<void>,
   runtimeOptions?: Parameters<typeof createNativeSoftwareInstallFixture>[0]['runtimeOptions'],
   sessionStartup?: Parameters<typeof createNativeSoftwareInstallFixture>[0]['sessionStartup'],
   accountEncryptionMode?: 'plain' | 'e2ee') {
@@ -71,21 +72,29 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
   if (nativeConfirmed) onTestFailed(async () => {
     logger.flushSync();
     const log = await readFile(logger.getLogPath(), 'utf8').catch(() => '');
-    const refusals = log.split('\n').flatMap(line => {
-      const marker = '[RPC] Request completed';
+    const refusals = log.split('\n').flatMap<Readonly<{ phase: string; refusalBranch?: string }>
+      | Readonly<{ method: string; outcomeCode: string; admissionPredicate?: string }>>(line => {
+      const marker = ['[RPC] Request completed', '[external-action-phase]'].find(value => line.includes(value));
+      if (!marker) return [];
       const offset = line.indexOf(marker);
-      if (offset === -1) return [];
       const start = line.indexOf('{', offset + marker.length);
       if (start === -1) return [];
       let row: unknown;
       try { row = JSON.parse(line.slice(start)); } catch { return []; }
       if (!row || typeof row !== 'object') return [];
+      if (marker === '[external-action-phase]') {
+        const phase = 'phase' in row ? row.phase : undefined;
+        const refusalBranch = 'refusalBranch' in row ? row.refusalBranch : undefined;
+        return typeof phase === 'string' ? [{ phase,
+          ...(typeof refusalBranch === 'string' ? { refusalBranch } : {}) }] : [];
+      }
       const method = 'method' in row ? row.method : undefined;
       const outcomeCode = 'outcomeCode' in row ? row.outcomeCode : undefined;
       if (typeof method !== 'string' || typeof outcomeCode !== 'string' || outcomeCode === 'ok') return [];
-      return [{ method, outcomeCode }];
+      const admissionPredicate = 'admissionPredicate' in row ? row.admissionPredicate : undefined;
+      return [{ method, outcomeCode, ...(typeof admissionPredicate === 'string' ? { admissionPredicate } : {}) }];
     });
-    console.error('Native RPC refusals:', refusals);
+    console.error('Native receiving refusals:', refusals);
   });
   const manager = scenario === 'brew' ? 'brew' : 'apt';
   const removing = scenario.startsWith('remove-');
@@ -115,6 +124,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
   };
   const approvalArtifacts: unknown[] = [];
   const workflowRequesterCustody: Array<{ codecOpened: boolean; requesterCredentialsAbsent: boolean; parentAuthentication: boolean }> = [];
+  if (nativeConfirmed) onTestFailed(() => { console.error('Native Workflow requester custody:', workflowRequesterCustody); });
   const artifacts = new Map<string, Readonly<Record<string, unknown>> & Readonly<{ id: string }>>();
   let explicitAsk = askAndDecide;
   let operationIndex = 0;
@@ -247,14 +257,16 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
       if (pluginAvailability) return { status: 200, data: pluginAvailability };
       if (path === ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) return { status: 200, data: { tokens: [] } };
       if (path === `/v1/machines/${machine.id}/admission/verify`) {
-        if (!body || typeof body !== 'object' || !('context' in body) || !('proof' in body) || !('method' in body))
+        if (!body || typeof body !== 'object' || !('v' in body) || body.v !== 1
+          || !('context' in body) || !('proof' in body) || !('method' in body))
           throw new Error('Machine admission verification requires its canonical signed request');
-        const admission = SocketRpcMachineAdmissionContextV1Schema.parse(body.context);
-        const proof = MachineInstallationProofV1Schema.parse(body.proof);
+        const { v: _version, proof: proofInput, ...rpcAdmission } = body;
+        const admission = SocketRpcMachineAdmissionContextV1Schema.parse(rpcAdmission.context);
+        const proof = MachineInstallationProofV1Schema.parse(proofInput);
         const ok = admission.actorAccountId === 'alice' && admission.custodianAccountId === 'alice'
           && verifyMachineInstallationProof({ publicKey: fixture.pair.publicKey, proof, payload: {
             version: 1, accountId: 'alice', machineId: machine.id, installationId: installation.installationId,
-            rpcAdmission: { context: admission, method: String(body.method) },
+            rpcAdmission,
           } });
         return { status: ok ? 200 : 403, data: ok ? { v: 1, ok: true } : { error: 'access_denied' } };
       }
@@ -329,6 +341,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         if (parent) expect(roots.get(parent.token)?.binding).toEqual(parent.binding);
         workflowParent = parent;
       }
+      const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope });
       const authorization = (proposal.success && !workflowProposal ? proposal.data.executionAuthorization : undefined) ?? ExternalActionExecutionAuthorizationV1Schema.parse({
         // Home tokens bind the complete envelope. Repeated Ask keeps its request
         // identity while E2EE reseals it, so those roots must remain distinct.
@@ -338,6 +351,9 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
           admittedMachineRole: 'manage',
           accountEncryptionMode: fixture.accountEncryptionMode, actionId, requestId: envelope.requestId, target: envelope.target,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          ...(envelope.v === 2 && envelope.machineRuntimeDemand !== undefined
+            ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+          ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
           ...(proposal.success && proposal.data.workflowActionOrigin ? { workflowActionOrigin: proposal.data.workflowActionOrigin } : {}),
           ...(actionId === 'approval.request.decide'
             ? { approvalDecisionAdmission: projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId, envelope }) } : {}),
@@ -393,7 +409,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
     phase = 'start_installed_native_runtime';
     await fixture.startInstalledRuntime();
     if (exerciseInstalled) {
-      try { await exerciseInstalled(fixture, authorization => roots.set(authorization.token, authorization)); }
+      try { await exerciseInstalled(fixture, authorization => roots.set(authorization.token, authorization), accountChannel); }
       finally { await fixture.dispose(); }
       return;
     }
@@ -456,7 +472,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
       execute: owned => executor.execute('machines.setup.apply', input,
         withNativeConfirmation('machines.setup.apply', input, { ...installContext, ...owned })),
     });
-    if (askAndDecide) {
+    if (askAndDecide && !nativeConfirmed) {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: expect.any(String) } });
       if (!result.ok || !result.result || typeof result.result !== 'object'
         || !('artifactId' in result.result) || typeof result.result.artifactId !== 'string')
@@ -491,7 +507,12 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
       const store = createCliApprovalsArtifactStore({ credentials: osStore.credentials!, serverId: configuration.activeServerId });
       expect(await store.approvalsGet({ artifactId, serverId: configuration.activeServerId })).toMatchObject({ status: 'executed' });
     }
-    if (nativeConfirmed) expect(approvalArtifacts).toHaveLength(askAndDecide ? 1 : 0);
+    if (nativeConfirmed) {
+      // The exact native UI review answers saved Require at the receiving owner.
+      // Non-native callers above retain their persisted Ask/decision journey.
+      expect(approvalArtifacts).toHaveLength(0);
+      expect(artifacts.size).toBe(0);
+    }
     if (nativeConfirmed && result.ok) {
       phase = 'wait_for_admitted_native_operation';
       const receipt = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].parse(result.result);
@@ -562,7 +583,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
         expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({ installed: true, version: '1.0', effects: ['apt-get'] });
         expectNativeMetadataPublications();
-        expect(approvalArtifacts).toHaveLength(askAndDecide ? 1 : 0);
+        expect(approvalArtifacts).toHaveLength(0);
       }
     } else {
       expect(result).toMatchObject({ ok: false, errorCode: 'mode_none' });

@@ -121,8 +121,8 @@ describe('combined parent Run storage authority', () => {
       expect(post).toHaveBeenCalledTimes(1);
     } finally { await observation.dispose(); }
     live = false;
-    await expect(storage.execute({ operation: 'get', runId: 'setup-run' })).rejects.toMatchObject({ code: 'run_access_denied' });
-    expect(post).toHaveBeenCalledTimes(1);
+    await expect(storage.execute({ operation: 'get', runId: 'setup-run' })).resolves.toEqual({ accepted: true });
+    expect(post).toHaveBeenCalledTimes(2);
   });
 
   it('uses retained requester Run access and the unchanged installed publisher instead of the Publish proof or ambient Account', async () => {
@@ -144,7 +144,7 @@ describe('combined parent Run storage authority', () => {
     expect(original?.binding.actionId).toBe(parent.actionId);
   });
 
-  it('refuses missing or revoked signed requester custody before any Run HTTP request, and rechecks after disclosure', async () => {
+  it('requires the requester projection and lets Home authorize each read without repeating admission', async () => {
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: { private: 'run' } });
     const missing = factory().createWorkflowRunStorage({ parent, context: { surface: 'cli', externalActionExecutionAuthorization: authorization } });
     await expect(missing.execute({ operation: 'get', runId: 'reviewed-run' })).rejects.toMatchObject({ code: 'run_access_denied' });
@@ -153,12 +153,14 @@ describe('combined parent Run storage authority', () => {
     const context = await admittedContext(async () => live);
     const storage = factory().createWorkflowRunStorage({ parent, context });
     live = false;
-    await expect(storage.execute({ operation: 'get', runId: 'reviewed-run' })).rejects.toMatchObject({ code: 'run_access_denied' });
-    expect(post).not.toHaveBeenCalled();
+    await expect(storage.execute({ operation: 'get', runId: 'reviewed-run' })).resolves.toEqual({ private: 'run' });
     live = true;
     post.mockImplementation(async () => { live = false; return { data: { private: 'run' } }; });
-    await expect(storage.execute({ operation: 'get', runId: 'reviewed-run' })).rejects.toMatchObject({ code: 'run_access_denied' });
-    expect(post).toHaveBeenCalledTimes(1);
+    await expect(storage.execute({ operation: 'get', runId: 'reviewed-run' })).resolves.toEqual({ private: 'run' });
+    expect(post).toHaveBeenCalledTimes(2);
+    const refusal = Object.assign(new Error('run_access_denied'), { response: { status: 403 } });
+    post.mockRejectedValue(refusal);
+    await expect(storage.execute({ operation: 'get', runId: 'another-persons-run' })).rejects.toBe(refusal);
   });
 
   it('keeps ordinary signed Workflow Actions on their original exact-purpose headers', async () => {
@@ -172,14 +174,13 @@ describe('combined parent Run storage authority', () => {
     expect(post.mock.calls[0]?.[2]?.headers).not.toHaveProperty('Authorization');
   });
 
-  it('observes only the same requester Home and Account while custody is current, and retires the wait on revocation', async () => {
+  it('keeps content-free requester wakes independent of admission currentness and rejects missing custody', async () => {
     let live = true;
     const context = await admittedContext(async () => live);
     const changed = vi.fn();
     let connected!: () => void;
     const initialWake = new Promise<void>(resolve => { connected = resolve; });
-    let failed!: (error: unknown) => void;
-    const revoked = new Promise<unknown>(resolve => { failed = resolve; });
+    const failed = vi.fn();
     const observation = factory().createWorkflowRunStorage({ parent, context }).observeChanges!('reviewed-run',
       () => { changed(); connected(); }, failed);
     try {
@@ -190,8 +191,8 @@ describe('combined parent Run storage authority', () => {
       const wakeCount = changed.mock.calls.length;
       live = false;
       await channel.hintAccountChange();
-      await expect(revoked).resolves.toMatchObject({ code: 'run_access_denied' });
-      expect(changed).toHaveBeenCalledTimes(wakeCount);
+      expect(changed.mock.calls.length).toBeGreaterThan(wakeCount);
+      expect(failed).not.toHaveBeenCalled();
     } finally { await observation.dispose(); }
     const clients = channel.clients.length;
     const missing = factory().createWorkflowRunStorage({ parent, context: { surface: 'cli', externalActionExecutionAuthorization: authorization } });
@@ -223,7 +224,7 @@ describe('approved Account proposal HTTP custody', () => {
       { ...context, presentUserApproval: undefined },
       { ...context, presentUserApproval: { ...context.presentUserApproval!, decidingAccountId: 'another-person' } },
       { ...context, externalActionExecutionAuthorization: root },
-    ]) expect(resolveExternalActionServerRequestHeaders({ ...request, context: changed })).toEqual({ ok: false });
-    expect(resolveExternalActionServerRequestHeaders({ ...request, effectActionId: 'projects.sources.create' })).toEqual({ ok: false });
+    ]) expect(resolveExternalActionServerRequestHeaders({ ...request, context: changed })).toMatchObject({ ok: false });
+    expect(resolveExternalActionServerRequestHeaders({ ...request, effectActionId: 'projects.sources.create' })).toMatchObject({ ok: false });
   });
 });

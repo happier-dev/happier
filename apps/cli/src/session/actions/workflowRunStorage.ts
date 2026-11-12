@@ -35,9 +35,12 @@ export function createCliWorkflowRunStorage(
     // signed request below retains its original requester effect authority.
     const token = requester?.credentials.token ?? params.token;
     const serverHttpBaseUrl = requester?.serverHttpBaseUrl ?? requesterHttp?.serverHttpBaseUrl ?? workflowRunServerHttpBaseUrl;
-    const assertCombinedCurrent = async () => {
-      if (combined && ((combined.context.externalActionExecutionAuthorization || combined.context.externalActionCredential) && !requester && !requesterHttp
-        || requester && !await requester.isCurrent() || requesterHttp && !await requesterHttp.isCurrent())) {
+    // Select the admitted requester here; Home authorizes each storage request.
+    // An observation gap cannot revoke the starter's already-admitted Run.
+    // Content mode and keys remain the encryption owner's decision.
+    const assertCombinedRequester = () => {
+      if (combined && (combined.context.externalActionExecutionAuthorization || combined.context.externalActionCredential)
+        && !requester && !requesterHttp) {
         throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
       }
     };
@@ -53,16 +56,16 @@ export function createCliWorkflowRunStorage(
         onError(error);
       };
       const started = (async () => {
-        await assertCombinedCurrent();
+        assertCombinedRequester();
         if (disposed) return;
         observation = createWorkflowRunStorageClient({ token, serverHttpBaseUrl }).observeChanges(runId, () => {
-          void assertCombinedCurrent().then(() => { if (!disposed) onChange(); }).catch(failed);
+          if (!disposed) onChange();
         }, failed);
       })().catch(failed);
       return { dispose: async () => { disposed = true; await started; await observation?.dispose(); } };
     },
     execute: async (operation, options) => {
-      await assertCombinedCurrent();
+      assertCombinedRequester();
       let machineId: string | undefined;
       const authorizationMachineId = caller?.context.externalActionExecutionAuthorization?.binding.machineId;
       if (isWorkflowRunExecutorStorageOperationV1(operation.operation) || authorizationMachineId) {
@@ -81,7 +84,7 @@ export function createCliWorkflowRunStorage(
           details: { code: 'target_unavailable', reason: 'publisher_machine_unavailable' } });
         machineId = resolvedMachineId;
       }
-      const result = await createWorkflowRunStorageClient({
+      return await createWorkflowRunStorageClient({
         token,
         ...(machineId ? { machineId } : {}),
         serverHttpBaseUrl,
@@ -92,8 +95,6 @@ export function createCliWorkflowRunStorage(
         { ...(options?.signal ? { signal: options.signal } : {}),
           ...(authorizationMachineId ? { publisherMachineId: machineId } : {}) },
       );
-      await assertCombinedCurrent();
-      return result;
     },
     };
     return storage;
