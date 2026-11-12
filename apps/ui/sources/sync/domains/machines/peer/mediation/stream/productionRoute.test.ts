@@ -189,8 +189,7 @@ async function importProductionRoute() {
     return await import('./productionRoute');
 }
 
-describe('production peer mediation live-stream route adapter', () => {
-    beforeEach(() => {
+function resetRouteBoundary() {
         getReadyServerFeaturesSpy.mockReset();
         getCredentialsForServerUrlSpy.mockReset();
         getActiveServerSnapshotSpy.mockReset();
@@ -214,7 +213,14 @@ describe('production peer mediation live-stream route adapter', () => {
             request: activeRequest,
             release: async () => {},
         }));
-    });
+}
+
+// Install the existing Home boundary before collecting the real route graph.
+resetRouteBoundary();
+await importProductionRoute();
+
+describe('production peer mediation live-stream route adapter', () => {
+    beforeEach(resetRouteBoundary);
 
     it('applies the canonical stream gate before minting an otherwise enabled relay', async () => {
         const features = createFeaturePayload();

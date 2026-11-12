@@ -36,6 +36,9 @@ vi.mock('@/text', async () => {
     });
 });
 
+// Collect the real component graph outside the timed rendering contracts.
+await import('./MachineDoctorRuntimeInventorySection');
+
 describe('MachineDoctorRuntimeInventorySection', () => {
     it('renders a summary plus installations, services, and warnings', async () => {
         const { MachineDoctorRuntimeInventorySection } = await import('./MachineDoctorRuntimeInventorySection');

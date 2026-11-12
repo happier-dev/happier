@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installMachinesSettingsCommonModuleMocks } from '../machinesSettingsTestHelpers';
@@ -19,7 +20,6 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 });
 
 const { MachineCollectionRail, MachineCollectionList } = await import('./MachineCollectionList');
-const { storage } = await import('@/sync/domains/state/storage');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 
 afterEach(() => standardCleanup());
@@ -41,11 +41,7 @@ it.each([false, true])('gives the machine its identity glyph and whole name row 
         id: 'studio-machine', active: false, activeAt: 0,
         metadata: { ...createMachineFixture().metadata!, displayName: 'Studio', host: 'studio.internal', platform: 'linux' },
     });
-    storage.setState({
-        machines: { [machine.id]: machine },
-        machineListByServerId: { [profileId]: [machine] },
-        machineListStatusByServerId: { [profileId]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [machine]);
     const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
     const { publishLocalDaemonStatus } = await import('../localControl/localDaemonSharedState');
     publishLocalDaemonStatus(getSystemTasksRunner(), { machineId: isThisComputer ? machine.id : null });
@@ -60,7 +56,7 @@ it.each([false, true])('gives the machine its identity glyph and whole name row 
     expect(row.props.rightElement).toBeUndefined();
     expect(screen.findByTestId(`settings.machines.row.${profileId}.studio-machine.summary`)).not.toBeNull();
     // The word the summary says for an offline machine; the glyph already says what kind of machine it is.
-    expect(screen.getTextContent()).toContain('machineDetailPage.offline');
+    expect(screen.getTextContent()).toContain('settingsOverview.machineOffline');
     expect(screen.getTextContent()).not.toContain('Linux');
     expect(screen.getTextContent()).toContain('managedRetention.pageDescriptionShort');
     expect(screen.getTextContent()).toContain('settings.overview');

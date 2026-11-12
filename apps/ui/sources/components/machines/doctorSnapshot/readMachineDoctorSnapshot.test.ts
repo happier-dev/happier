@@ -7,6 +7,7 @@ import {
 } from './machineDoctorSnapshotCache';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createMachineDiagnosticsFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const machineCollectBugReportDiagnosticsMock = vi.hoisted(() => vi.fn());
 
@@ -176,7 +177,7 @@ describe('machine doctor snapshot helpers', () => {
     it('fetches a doctor snapshot, sanitizes it, and stores it in cache', async () => {
         const { fetchMachineDoctorSnapshot } = await import('./readMachineDoctorSnapshot');
 
-        machineCollectBugReportDiagnosticsMock.mockResolvedValue({
+        machineCollectBugReportDiagnosticsMock.mockResolvedValue(createMachineDiagnosticsFixture({
             doctorSnapshot: {
                 capturedAt: '2026-02-23T00:00:00.000Z',
                 server: {
@@ -202,7 +203,7 @@ describe('machine doctor snapshot helpers', () => {
                     knownAccountIds: ['acct_1'],
                 },
             },
-        });
+        }));
 
         const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(456);
         const result = await fetchMachineDoctorSnapshot({ machineId: 'machine_1', serverId: 'srv_1', timeoutMs: 4_000 });
@@ -214,6 +215,7 @@ describe('machine doctor snapshot helpers', () => {
             payload: {},
             timeoutMs: 4_000,
             serverId: 'srv_1',
+            accountId: null,
         });
         expect(result).toEqual({
             status: 'ready',
@@ -231,10 +233,11 @@ describe('machine doctor snapshot helpers', () => {
         expect(cached?.snapshot.server.serverUrl).toBe('https://api.happier.dev');
     });
 
-    it('returns an error and leaves cache empty for invalid doctor snapshots', async () => {
+    it('rejects invalid doctor snapshots at the diagnostics boundary and leaves cache empty', async () => {
         const { fetchMachineDoctorSnapshot } = await import('./readMachineDoctorSnapshot');
 
         machineCollectBugReportDiagnosticsMock.mockResolvedValue({
+            ...createMachineDiagnosticsFixture(),
             doctorSnapshot: { invalid: true },
         });
 
@@ -242,7 +245,7 @@ describe('machine doctor snapshot helpers', () => {
 
         expect(result).toEqual({
             status: 'error',
-            detail: 'systemStatus.machine.fetchDoctorSnapshot.invalid',
+            detail: 'common.unavailable',
         });
         expect(readCachedMachineDoctorSnapshot({ serverId: 'srv_1', machineId: 'machine_1' })).toBeNull();
     });
