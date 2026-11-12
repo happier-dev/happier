@@ -1,3 +1,7 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type { PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import type { ScmComparisonSource } from '@happier-dev/plugin-sdk/scm';
@@ -52,6 +56,7 @@ import {
     type TriageProjectRegistryHostV1,
 } from '../sessions/projectCandidates.js';
 import {
+    readTriageActionLaunchModeV1,
     hasTriageActionInstructionSourceV1,
     isTriageActionConfigurationCoherentV1,
     requiresTriageActionInstructionV1,
@@ -75,7 +80,7 @@ import {
     type TriageSessionStartHostV1,
 } from '../ui/header/startEntrySessionCommand.js';
 import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionResultV1Schema,
-    type TriageConfiguredStartRecoveryV1, type TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
+    TriageRunConfiguredActionInputV1Schema, type TriageRunConfiguredActionInputV1, type TriageConfiguredStartRecoveryV1, type TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 
 type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'single' }>;
 
@@ -118,6 +123,7 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
      * the agent and machine is the prefilled composer's job (Add instructions…), not a destination.
      */
     destinationChoice?: 'existingSession';
+    launchMode?: 'start' | 'review';
     /** The pressed action, whole. Every member of it decides something below. */
     action: TriageActionV1;
     /** Final human-edited ORC prompt, not a configured Prompt Library or shipped fallback. */
@@ -281,12 +287,16 @@ export type TriageEntrySessionStartPhaseV1 =
 export type TriageEntrySessionStartControllerV1 = Readonly<{
     phase: TriageEntrySessionStartPhaseV1;
     authoringResult?: 'seeded' | 'cancelled';
+    /** Last settled canonical result, retained even when a later outer response is lost. */
+    configuredResult: TriageRunConfiguredActionResultV1 | null;
     /** The canonical custody's prompt, immutable while this orchestration can only resume. */
     pendingOrchestrationPrompt: string | null;
     /** A linked selected-PR Session awaiting the reader's explicit engine choice. */
     review: TriagePendingPullRequestReviewV1 | null;
     /** Ignored while a press is in flight; otherwise starts exactly one. */
     start: (request: TriageEntrySessionStartRequestV1) => void;
+    prepareAction: (request: TriageEntrySessionStartRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0], session?: ActionSessionAddressV1) => ReturnType<PluginUiActionControlController['prepare']>;
+    settleAction: (execution: PluginActionExecution) => void;
     startInSession: (request: TriageEntrySessionStartRequestV1, session: ActionSessionAddressV1) => Promise<TriageRunConfiguredActionResultV1 | null>;
     /** Returns to `idle` — for dismissing a settled outcome, never for retrying one. */
     reset: () => void;
@@ -678,6 +688,7 @@ export function createTriageEntrySessionStartController(
                     const pending: TriageStartEntrySessionResultV1 = {
                         v: 1, type: 'openPending', sessionId: result.sessionId,
                         disposition: result.disposition, delivery: 'none',
+                        ...(opened.failure === undefined ? {} : { failure: opened.failure }),
                     };
                     setPhase(Object.freeze({ kind: 'settled',
                         result: pending, delivery }));
@@ -710,6 +721,12 @@ export function createTriageEntrySessionStartController(
     const start = (initialRequest: TriageEntrySessionStartRequestV1, existingSession?: ActionSessionAddressV1) => {
         let request = initialRequest;
         if (inFlight.current || retired.current) return;
+        releasePreparation?.();
+        releasePreparation = undefined;
+        preparedAction = null;
+        preparedComparison = undefined;
+        configuredResult = null;
+        configuredOutcomeUnknown = false;
         authoringResult = undefined;
         // A Walk requests placement for reading. The reference-only mode is the incumbent
         // no-materialization path; its normal New Session picker still owns machine/Agent choices.
@@ -888,7 +905,7 @@ export function createTriageEntrySessionStartController(
                             execute: host.executeAction.bind(host), ...linked, destination: request.comparisonDestination,
                         });
                         if (retired.current) return;
-                        setPhase(opened.status === 'opened' ? IDLE : unavailable('dispatch'));
+                        setPhase(opened.status === 'opened' ? IDLE : unavailable('dispatch', opened.failure));
                         return;
                     }
                 }
@@ -1163,10 +1180,104 @@ export function createTriageEntrySessionStartController(
         return settled.phase.kind === 'handoffSettled' ? settled.phase.result : null;
     };
 
+    let preparedAction: TriageRunConfiguredActionInputV1 | null = null;
+    let preparedComparison: ScmComparisonSource | undefined;
+    let configuredResult: TriageRunConfiguredActionResultV1 | null = null;
+    let configuredOutcomeUnknown = false;
+    let releasePreparation: (() => void) | undefined;
+    const prepareAction: TriageEntrySessionStartControllerV1['prepareAction'] = async (request, options, selectedSession) => {
+        if (inFlight.current || retired.current || options.signal.aborted || configuredOutcomeUnknown && configuredResult?.recovery === undefined) return null;
+        const previous = configuredResult?.recovery;
+        inFlight.current = true;
+        authoringResult = undefined;
+        setReview(null);
+        setPhase(RESOLVING);
+        let prepared = false;
+        const cancel = () => {
+            inFlight.current = false;
+            if (prepared) configuredOutcomeUnknown = true;
+            if (!retired.current) setPhase(prepared ? unavailable('handoffOutcomeUnknown') : IDLE);
+        };
+        options.signal.addEventListener('abort', cancel, { once: true });
+        releasePreparation = () => options.signal.removeEventListener('abort', cancel);
+        try {
+            let session = selectedSession;
+            if (session === undefined && request.destinationChoice === 'existingSession') {
+                setPhase(CHOOSING);
+                const choice = await host.selectActionInput({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } }, options);
+                if (options.signal.aborted || retired.current) { cancel(); return null; }
+                if (choice.kind === 'cancelled') { cancel(); return null; }
+                if (choice.kind !== 'sessionAddress') { inFlight.current = false; setPhase(unavailable('dispatch')); return null; }
+                session = choice.session;
+            }
+            const entry = { entryRef: request.entryRef, sourceInstanceId: request.sourceInstance.sourceInstanceId };
+            const handoff: TriageSessionHandoffInputV1 = {
+                task: request.requestedTask ?? (request.action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1 ? 'fix' : 'investigate'),
+                configuredActionId: request.action.actionId,
+                context: session === undefined ? { kind: 'entries', entries: [entry], destination: 'single' } : { kind: 'entry', entry },
+                evidence: [{ kind: 'entry', entry }],
+                sessionChoice: session === undefined ? { kind: 'configured' } : { kind: 'existing', session },
+                agentChoice: { kind: 'configured' }, delivery: 'configured',
+            };
+            const singleIntent: TriageRunConfiguredActionInputV1['singleIntent'] = session !== undefined ? undefined
+                : request.orchestrationPrompt !== undefined ? { kind: 'orchestrate', prompt: request.orchestrationPrompt }
+                : request.comparisonDestination?.kind === 'scmReview' ? { kind: 'comparison', comparison: request.comparisonDestination.comparison }
+                : request.launchMode !== undefined || request.comparisonSource !== undefined ? {
+                    kind: 'configured', launchMode: request.launchMode ?? readTriageActionLaunchModeV1(request.action),
+                    ...(request.comparisonSource === undefined ? {} : { comparisonSource: request.comparisonSource }),
+                } : undefined;
+            const sameRequest = preparedAction !== null && JSON.stringify(preparedAction.handoff) === JSON.stringify(handoff)
+                && JSON.stringify(preparedAction.singleIntent) === JSON.stringify(singleIntent);
+            if (configuredOutcomeUnknown && !sameRequest) {
+                inFlight.current = false;
+                setPhase(unavailable('handoffOutcomeUnknown'));
+                return null;
+            }
+            const resumeStart = sameRequest ? previous : undefined;
+            if (!sameRequest) configuredResult = null;
+            preparedAction = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff,
+                ...(singleIntent === undefined ? {} : { singleIntent }), ...(resumeStart === undefined ? {} : { resumeStart }) });
+            preparedComparison = request.comparisonSource;
+            prepared = true;
+            setPhase(STARTING);
+            return { input: projectNativeJsonValueForTransport(preparedAction) };
+        } catch (error) {
+            inFlight.current = false;
+            if (!retired.current) setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(error)));
+            return null;
+        } finally { if (!inFlight.current) { releasePreparation?.(); releasePreparation = undefined; } }
+    };
+    const settleAction: TriageEntrySessionStartControllerV1['settleAction'] = execution => {
+        releasePreparation?.(); releasePreparation = undefined;
+        inFlight.current = false;
+        if (retired.current) return;
+        if (execution.status === 'idle' || execution.status === 'pending') return;
+        if (execution.status === 'error') {
+            setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(new PluginError({ code: execution.code,
+                message: execution.message, ...(execution.diagnostics === undefined ? {} : { diagnostics: [...execution.diagnostics] }),
+                ...(execution.requestId === undefined ? {} : { details: { requestId: execution.requestId } }) }))));
+            return;
+        }
+        if (execution.status === 'outcomeUnknown') { configuredOutcomeUnknown = true; setPhase(unavailable('handoffOutcomeUnknown')); return; }
+        const parsed = TriageRunConfiguredActionResultV1Schema.safeParse(execution.result);
+        if (!parsed.success) { configuredOutcomeUnknown = true; setPhase(unavailable('handoffOutcomeUnknown')); return; }
+        const result = parsed.data;
+        configuredResult = result;
+        configuredOutcomeUnknown = false;
+        if (result.status === 'seeded' || result.status === 'cancelled') authoringResult = result.status;
+        if (result.status === 'awaitingReview' && result.result?.type === 'linked' && result.result.review && result.reviewInstructions && preparedAction) {
+            review = { actionId: preparedAction.handoff.configuredActionId, sessionId: result.result.sessionId,
+                review: result.result.review, instructions: result.reviewInstructions,
+                ...(preparedComparison === undefined ? {} : { comparisonSource: preparedComparison }) };
+        }
+        setPhase({ kind: 'handoffSettled', result });
+    };
+
     const readSnapshot = (): TriageEntrySessionStartControllerV1 => Object.freeze({
-        phase, review, start, startInSession, reset, ...(authoringResult === undefined ? {} : { authoringResult }),
-        pendingOrchestrationPrompt: custody.current?.input.orchestrate === true
-            ? custody.current.input.delivery?.text ?? null : null,
+        phase, review, start, startInSession, prepareAction, settleAction, configuredResult, reset, ...(authoringResult === undefined ? {} : { authoringResult }),
+        pendingOrchestrationPrompt: preparedAction?.singleIntent?.kind === 'orchestrate' && (configuredResult?.recovery !== undefined || configuredOutcomeUnknown)
+            ? preparedAction.singleIntent.prompt : custody.current?.input.orchestrate === true
+                ? custody.current.input.delivery?.text ?? null : null,
     });
     snapshot = readSnapshot();
     return Object.freeze({

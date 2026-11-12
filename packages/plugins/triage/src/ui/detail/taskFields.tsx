@@ -2,7 +2,7 @@ import * as React from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
-  Avatar, Banner, Button, DetailsPaneFooter, EmptyState, ErrorState, Form, Icon, IconButton, Item, ItemGroup, LoadingState, MarkdownEditor, Menu, Popover, PropertyList, RelationList, Row,
+  Action, Avatar, Banner, Button, DetailsPaneFooter, EmptyState, ErrorState, Form, Icon, IconButton, Item, ItemGroup, LoadingState, MarkdownEditor, Menu, Popover, PropertyList, RelationList, Row,
   ReplyQuote, ScrollArea, Stack, TaskStatusGlyph, Text, Toggle,
   useAccountActorName, usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiFocusTarget, useSurfaceContext,
   type ActionFormFieldHint, type PropertyChoice, type PropertyChoiceDirectory, type PropertyNameTones,
@@ -25,11 +25,12 @@ import { projectTriageTaskBlockersV1, projectTriageTaskPropertiesV1, triageTaskF
 import { projectTriageTaskDraftStatusV1 } from './taskDraftStatus.js';
 import { TriageSourceMark } from '../list/sourceMark.js';
 import { TriageTaskOriginLink } from './taskOrigin.js';
-import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
+import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 import { taskWriteMessage, taskSourceLinkLabel } from '../taskWriteMessage.js';
 import { TaskWriteNotice } from './TaskWriteNotice.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
+import { TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1 } from '../../actions/taskOriginProtocol.js';
 
 export const TRIAGE_TASK_PROPERTIES_TEST_ID_V1 = 'triage-task-properties';
 export const TRIAGE_TASK_BLOCKERS_TEST_ID_V1 = 'triage-task-blockers';
@@ -256,6 +257,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   const [draft, setDraft] = React.useState<Record<string, unknown>>({ title: '', ...props.draft });
   const [linkSession, setLinkSession] = React.useState(props.draft?.linkSession !== undefined);
   const write = useTriageTaskCommit(props.onApplied, props.draftId === undefined ? undefined : { draftId: props.draftId });
+  const linkedSession = useLinkedSessionOpen();
   const origin = props.draft?.origin;
   const sessionTarget = props.draft?.linkSession ?? origin?.sessionId;
   const originContext = <Stack gap="small">
@@ -268,8 +270,7 @@ export function TriageCreateTaskFields(props: Readonly<{
       : <ReplyQuote kind="message" source={{
         state: 'available', label: origin.sessionTitle ?? text('plugins.triage.surface.actions.untitledSession', 'Untitled Session'),
         text: origin.quote,
-        onPress: () => { void openLinkedSession({ execute: async (actionId, input, options) => await host.executeAction(actionId, input, options),
-          sessionId: origin.sessionId, ...(origin.serverId === undefined ? {} : { serverId: origin.serverId }) }); },
+        onPress: () => { void linkedSession.open(origin.sessionId, origin.serverId); },
       }} />}
     {origin.repository === undefined ? null : <Text variant="meta" tone="secondary"
       value={text('plugins.triage.tasks.draft.repository', 'Session repository: {repository}', { repository: origin.repository.repository })} />}
@@ -394,23 +395,27 @@ export function TriageCreateTaskFields(props: Readonly<{
   const blockers = fields.includes('blockedBy')
     ? projectTriageTaskBlockersV1({ blockedBy: draftValues.blockedBy ?? [], candidates, text, commit: setDraftFields }) : null;
   const title = typeof draft.title === 'string' ? draft.title : '';
-  const create = async () => {
+  const prepareCreate = () => {
     const trimmed = title.trim();
-    if (trimmed.length === 0 || held || !sourcesReady) return;
+    if (trimmed.length === 0 || held || !sourcesReady) return null;
     const chosenFields = Object.fromEntries(Object.entries(draftValues).filter(([field, value]) => fields.includes(field as TriageTaskFieldV1)
       && value !== null && value !== undefined && !(Array.isArray(value) && value.length === 0)));
-    const result = await write.commit(TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, { v: 1,
+    return write.prepare(TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, { v: 1,
       source: chosen.source.configured.instance.source, sourceInstanceId: chosen.source.sourceInstanceId,
       kindId: chosen.kind.id, fields: { ...chosenFields, title: trimmed,
         ...(fields.includes('body') && typeof draft.body === 'string' && draft.body.length > 0 ? { body: draft.body } : {}),
       }, ...(initialStatus.initialStatusId === undefined ? {} : { initialStatusId: initialStatus.initialStatusId }),
       ...(sessionTarget !== undefined && linkSession ? { linkSession: sessionTarget } : {}),
       ...(props.draft?.originError === undefined ? {} : { originError: props.draft.originError }) });
+  };
+  const settleCreate: typeof write.settle = execution => {
+    const result = write.settle(execution);
     // A partial origin link stays here with its created identity; repair never resubmits Create.
     if (result?.kind === 'applied' && props.draft?.originError === undefined) props.onCreated?.({
       entryRef: { source: chosen.source.configured.instance.source, ...result.observation.localRef },
       sourceInstanceId: chosen.source.configured.instance.sourceInstanceId,
     });
+    return result;
   };
   const placeName = chosen.family === chosen.source.displayLabel ? chosen.family : `${chosen.family} \u00b7 ${chosen.source.displayLabel}`;
   const placeLocked = write.busy || write.result?.kind === 'uncertain' || write.result?.kind === 'applied';
@@ -423,8 +428,9 @@ export function TriageCreateTaskFields(props: Readonly<{
         {originContext}
         {write.originErrorLink !== 'failed' && write.originErrorLink !== 'unknown' ? null : <Stack gap="small">
           <Banner tone="warning" title={text('plugins.triage.tasks.origin.partial', 'The task was created, but its origin link is not confirmed. Repair the link without creating another task.')} />
-          <Button variant="secondary" size="small" title={text('plugins.triage.tasks.origin.repair', 'Repair origin link')}
-            busy={write.busy} disabled={write.busy} onPress={() => { void write.repairOrigin(); }} />
+          <Action.Control action={TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1} variant="secondary"
+            title={text('plugins.triage.tasks.origin.repair', 'Repair origin link')} disabled={write.busy}
+            controller={{ prepare: write.prepareOriginRepair, onSettled: execution => { write.settleOriginRepair(execution); } }} />
         </Stack>}
         <Stack gap="small">
           <Row>
@@ -476,8 +482,8 @@ export function TriageCreateTaskFields(props: Readonly<{
             value={text('plugins.triage.tasks.draft.consequence', 'Nothing is sent to {place} until you create it', { place: chosen.source.displayLabel })} />
         </Stack>
         <Button title={text('plugins.triage.tasks.cancel', 'Cancel')} variant="plain" size="small" disabled={write.busy} onPress={props.onClose} />
-        <Button title={text('plugins.triage.tasks.create', 'Create task')} size="small" busy={write.busy} disabled={held || title.trim().length === 0}
-          onPress={create} testID={TRIAGE_TASK_DRAFT_CREATE_TEST_ID_V1} />
+        <Action.Control action={TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1} title={text('plugins.triage.tasks.create', 'Create task')}
+          disabled={held || title.trim().length === 0} controller={{ prepare: prepareCreate, onSettled: settleCreate }} />
       </Row>
     </DetailsPaneFooter>
   </Stack>;
@@ -662,19 +668,18 @@ export function TriageEditTaskScope(props: Readonly<{
           { count: subTasks.total - childEntries.length }) } : {})} />,
     },
   };
-  const saveText = async () => {
-    if (!canEdit || disabled || values === null) return;
+  const prepareSaveText = () => {
+    if (!canEdit || disabled || values === null) return null;
     const changed = Object.fromEntries(textFields.filter(field => !pluginJsonValuesEqual(draft[field], values[field]))
       .map(field => [field, draft[field]]));
     const fields = TriageTaskFieldsV1Schema.safeParse(changed);
     if (!fields.success) {
       setIssues(Object.fromEntries(fields.error.issues.map(issue => [String(issue.path[0]),
         text('plugins.triage.tasks.invalidField', 'Check this value before saving.')])));
-      return;
+      return null;
     }
-    if (Object.keys(fields.data).length === 0) { setEditing(false); return; }
-    const result = await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: fields.data });
-    if (result?.kind === 'applied') setEditing(false);
+    if (Object.keys(fields.data).length === 0) { setEditing(false); return null; }
+    return write.prepare(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: fields.data });
   };
   const editText = (field: (typeof TASK_TEXT_FIELDS)[number], value: string) => { setDraft(previous => ({ ...previous, [field]: value })); setIssues({}); };
   const textHeld = disabled || !canEdit || write.busy;
@@ -691,8 +696,11 @@ export function TriageEditTaskScope(props: Readonly<{
         value={typeof draft.body === 'string' ? draft.body : ''} onChange={value => editText('body', value)} />
     </Form.Field>}
     <Form.Actions>
-      <Button title={text('plugins.triage.tasks.save', 'Save changes')} busy={write.busy}
-        disabled={textHeld || (textFields.includes('title') && draftTitle.trim().length === 0)} onPress={saveText} />
+      <Action.Control action={TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1} title={text('plugins.triage.tasks.save', 'Save changes')}
+        disabled={textHeld || (textFields.includes('title') && draftTitle.trim().length === 0)}
+        controller={{ prepare: prepareSaveText, onSettled: execution => {
+          if (write.settle(execution)?.kind === 'applied') setEditing(false);
+        } }} />
       <Button title={text('plugins.triage.tasks.cancel', 'Cancel')} variant="secondary" disabled={write.busy} onPress={() => setEditing(false)} />
     </Form.Actions>
     <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} checking={write.checking} onCheckAgain={checkAgain}

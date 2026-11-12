@@ -7,6 +7,7 @@ import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePlug
 import type { TriageListLoadMoreV1 } from '../../projection/listWindowStore.js';
 import type { TriageListDisplayRowV1 } from './pinnedRows.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
+import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import {
   createActionTriageMarksTransport,
   createDirectTriageMarksTransport,
@@ -186,7 +187,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
           return;
         }
         if (cursor !== undefined) seenCursors.add(cursor);
-      } catch {
+      } catch (error) {
         if (superseded()) return;
         if (page === 0) {
           // Nothing was read at all. The retained pins stay on screen: they are
@@ -204,6 +205,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
         }
         setAppendFailed(request.appending);
         setReading(false);
+        await presentTriageMountedUiActionFailure(hostApi, error, text);
         return;
       }
       if (cursor === undefined) break;
@@ -213,7 +215,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     setUnavailableReason(null);
     setAppendFailed(false);
     setReading(false);
-  }, [text, transport, readiness.pending, readiness.ready]);
+  }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
     if (readiness.pending || readiness.ready === false) return;
@@ -230,11 +232,13 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     }, { signal: controller.signal }).then(watch => {
       if (controller.signal.aborted) watch.dispose();
       else controller.signal.addEventListener('abort', () => watch.dispose(), { once: true });
-    }).catch(() => {
-      if (!controller.signal.aborted) setUnavailableReason(text('plugins.triage.surface.pins.unavailable', UNAVAILABLE_REASON));
+    }).catch(async (error: unknown) => {
+      if (controller.signal.aborted) return;
+      setUnavailableReason(text('plugins.triage.surface.pins.unavailable', UNAVAILABLE_REASON));
+      await presentTriageMountedUiActionFailure(hostApi, error, text);
     });
     return () => controller.abort();
-  }, [dataClient, readiness.pending, readiness.ready, readiness.revision, text]);
+  }, [dataClient, hostApi, readiness.pending, readiness.ready, readiness.revision, text]);
 
   const loadMorePins = useCallback((): void => {
     if (reading || readiness.pending || readiness.ready === false) return;
@@ -268,6 +272,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
         // back to its first one.
         await read(controller.signal, { ...demand, appending: false });
       } catch (error) {
+        await presentTriageMountedUiActionFailure(hostApi, error, text);
         if (isPluginError(error) && error.code === 'denied') {
           setNotice({ tone: 'warning', message: text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.') });
           return;
@@ -277,7 +282,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
         setBusyKey(null);
       }
     })();
-  }, [busyKey, demand, read, text, transport, unavailableReason]);
+  }, [busyKey, demand, hostApi, read, text, transport, unavailableReason]);
 
   /**
    * The same override order the window store publishes: a running read outranks

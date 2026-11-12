@@ -1,5 +1,6 @@
 import type { ActionExecutionOptions, PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 
 /**
  * Opening a linked Session.
@@ -44,7 +45,7 @@ export type TriageSessionOpenInvokerV1 = (
 
 export type TriageOpenLinkedSessionResultV1 =
     | Readonly<{ status: 'opened' }>
-    | Readonly<{ status: 'failed' }>;
+    | Readonly<{ status: 'failed'; failure?: TriageNewSessionFailureV1 }>;
 
 export async function openLinkedSession(input: Readonly<{
     execute: TriageSessionOpenInvokerV1;
@@ -62,10 +63,11 @@ export async function openLinkedSession(input: Readonly<{
             },
             input.signal ? { signal: input.signal } : undefined,
         );
-    } catch {
+    } catch (error) {
         // An already-open Session is satisfied by the generic Action itself, so
         // a rejection here is a real navigation failure and stays retryable.
-        return { status: 'failed' };
+        const failure = projectTriageNewSessionFailureV1(error);
+        return { status: 'failed', ...(failure === undefined ? {} : { failure }) };
     }
     return { status: 'opened' };
 }

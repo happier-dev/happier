@@ -34,7 +34,7 @@ export const NO_PERSISTENCE_INSTANCE_IDS = [
 
 /** The existing composed Action fixture: only host admission, dispatch and
  * durable storage ports are replaced. All list/fold/refresh logic remains real. */
-export function createNoPersistenceTriageFixture() {
+export function createNoPersistenceTriageFixture(options?: Readonly<{ taskRead?: () => Promise<TaskList> }>) {
     const { collections, control } = createTestkitCorpusCollections();
     const source = { pluginId: 'happier.example.source', localId: 'example-forge' };
     for (const [index, sourceInstanceId] of NO_PERSISTENCE_EXTERNAL_INSTANCE_IDS.entries()) {
@@ -136,6 +136,7 @@ export function createNoPersistenceTriageFixture() {
             }) },
             actions: { execute: async (id: string) => {
                 if (id !== 'tasks.internal.list') throw new Error(`Unexpected host Action ${id}`);
+                if (options?.taskRead !== undefined) return options.taskRead();
                 const taskId = `${NO_PERSISTENCE_INSTANCE_IDS[2]}-initial`;
                 // Native Tasks now consume one host TaskList, rather than a second
                 // source-dispatch read. Only that genuine host RPC port is replaced.

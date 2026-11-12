@@ -1,5 +1,6 @@
-import { isPluginError, PluginError, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { isPluginError, PluginError, readPluginErrorRequestIdV1, type PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
+import { presentActionFailure, type PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiResultV1Schema, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { TriageSourcePanelOperationV1Schema, triageSourcePanelIntentKeyV1, type TriageSourcePanelOperationV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageSourcePanelHandlerV1 } from '@happier-dev/triage-sources/ui';
@@ -25,9 +26,17 @@ export async function presentTriageMountedUiActionFailure(host: PluginUiHostApi,
     const diagnostics = isPluginError(error) && error.diagnostics?.length
       ? error.diagnostics : [{ code: 'triage_mounted_ui_failed', severity: 'error' as const }];
     for (const diagnostic of diagnostics) host.diagnostic(diagnostic);
-    await host.notify(isPluginError(error) && error.code === 'denied'
-      ? text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.')
-      : text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.'),
+    const authored = readPluginActionFailureAuthorPayload(isPluginError(error) ? error.data : undefined);
+    const presentation = isPluginError(error) ? await presentActionFailure(host, {
+      ok: false, errorCode: error.code, message: error.message,
+      ...(authored.details === undefined ? {} : { details: authored.details }),
+      ...(authored.remediation === undefined ? {} : { remediation: authored.remediation }),
+      ...(authored.failureCause === undefined ? {} : { failureCause: authored.failureCause }),
+      requestId: readPluginErrorRequestIdV1(error),
+    }) : null;
+    await host.notify(presentation === null ? text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.')
+      : [presentation.reason, presentation.nextStep, ...presentation.technicalDetails.map(line => `${line.label}: ${line.value}`)]
+        .filter(value => value != null).join('\n'),
     { severity: 'error' }).catch(() => {
       host.diagnostic({ code: 'triage_mounted_ui_notification_unavailable', severity: 'warning' });
     });

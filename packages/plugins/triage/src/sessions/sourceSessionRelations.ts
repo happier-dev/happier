@@ -400,8 +400,15 @@ export function createTriageSourceSessionRelations(
                     if (input.readFailure === 'throw') throw isPluginError(error) ? error
                         : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
                     unknownCorpusCoverage = true;
+                    const requestId = readPluginErrorRequestIdV1(error);
+                    const diagnostic = isPluginError(error) ? TriageListInvocationErrorV1Schema.safeParse({
+                        code: error.code, retryable: error.retryable,
+                        ...(requestId === undefined ? {} : { requestId }),
+                    }) : null;
                     for (const lane of corpusLanes) lanes[lanes.indexOf(lane)] = { ...lane,
-                        health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksReadFailed' } } };
+                        health: { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksReadFailed' },
+                            ...(diagnostic?.success ? { invocationError: diagnostic.data } : {}),
+                        } };
                 }
             }
             for (const [index, candidates] of duplicateInstances) {
@@ -436,7 +443,8 @@ export function createTriageSourceSessionRelations(
                 || unknownCorpusCoverage || lanes.some(lane => lane.health.kind === 'failed' || lane.health.kind === 'unavailable'))) {
                 const health = lanes.find(lane => lane.health.kind === 'failed')?.health;
                 throw new PluginError(health?.kind === 'failed'
-                    ? { code: health.failure.code, retryable: health.failure.class === 'transient' }
+                    ? { code: health.failure.code, retryable: health.failure.class === 'transient',
+                        ...(health.failure.requestId === undefined ? {} : { details: { requestId: health.failure.requestId } }) }
                     : { code: 'sessionLinksReadFailed', retryable: true });
             }
             return result;

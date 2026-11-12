@@ -58,6 +58,28 @@ async function withSource(run: (kit: Awaited<ReturnType<typeof createPluginTestk
 }
 
 describe('registered internal Happier task source', () => {
+  it('preserves host read refusal Code and Request ID through each registered source read', async () => {
+    const error = new PluginError({ code: 'task_storage_unavailable', retryable: true, details: { requestId: 'task-read-17' } });
+    await withSource(async kit => {
+      for (const [action, input] of [
+        ['internal/tasks/scan-v1', { v: 1, instance, page: { kind: 'initial', limit: 20 } }],
+        ['internal/tasks/get-v1', { v: 1, instance, localRef }],
+        ['internal/tasks/read-session-links-v1', { v: 1, instance, localRef }],
+      ] as const) await expect(kit.invokeAction(action, input)).rejects.toMatchObject({
+        code: error.code, data: { details: { requestId: 'task-read-17' } },
+      });
+    }, undefined, () => { throw error; });
+  });
+  it('keeps exact Task content readable when inverse child enrichment is unavailable', async () => {
+    await withSource(async kit => {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
+      expect(result).toMatchObject({ kind: 'present', snapshot: { title: predecessor.title } });
+      if (result.kind === 'present') expect(result.snapshot.relations).not.toHaveProperty('children');
+    }, undefined, id => {
+      if (id === 'tasks.internal.read') return { status: 'applied', scope, todo: { ...predecessor, state: 'unstarted' } };
+      throw new PluginError({ code: 'task_list_unavailable', details: { requestId: 'children-17' } });
+    });
+  });
   const sortedTasks = [
     { ...predecessor, id: 'delta', state: 'started', createdAt: 20, updatedAt: 30, dueAt: 30 },
     { ...predecessor, id: 'bravo', state: 'backlog', createdAt: 30, updatedAt: 10, dueAt: 10 },

@@ -24,7 +24,7 @@ import {
 
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, formatTriageCompactAgeV1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
-import { bindTriageMountedUiActions } from '../mountedActions.js';
+import { bindTriageMountedUiActions, presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import { useTriageCurrentUiContextPublication } from '../currentContextPublication.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1, TRIAGE_TASK_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
 import { TRIAGE_LIST_DEFAULT_LENS_V1, triageEntryRowKey } from '../../projection/listWindow.js';
@@ -41,6 +41,7 @@ import { TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
 import { readTriageHostOutageV1, readTriageListFailureNotice, resolveTriageListShellState } from '../shell/windowState.js';
 import { readTriageListEmptyScene, readTriageListEmptyState, readTriageListEmptyStateKeys } from '../shell/emptyState.js';
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
+import { isHostCancellation } from '../../hostCancellation.js';
 import { stageTriageTaskDraft } from '../taskDraftHandoff.js';
 
 /**
@@ -122,14 +123,14 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   const rows = view?.rows;
   const openPage = React.useCallback(() => {
     void hostApi.openSurface(tasksOnly ? TRIAGE_TASK_DETAIL_DESTINATION_V1 : TRIAGE_ENTRY_DETAIL_DESTINATION_V1,
-      undefined, { subPath: tasksOnly ? 'tasks,mine' : '' }).catch(() => undefined);
-  }, [hostApi, tasksOnly]);
+      undefined, { subPath: tasksOnly ? 'tasks,mine' : '' }).catch(error => { if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(hostApi, error, text); });
+  }, [hostApi, tasksOnly, text]);
   const createTask = React.useCallback(() => {
     const handoff = stageTriageTaskDraft(sharedScope, {});
     if (handoff === null) return;
     void hostApi.openSurface(TRIAGE_TASK_DETAIL_DESTINATION_V1, handoff.input, { subPath: 'tasks,mine' })
-      .catch(() => { handoff.discard(); });
-  }, [hostApi, sharedScope]);
+      .catch(error => { handoff.discard(); if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(hostApi, error, text); });
+  }, [hostApi, sharedScope, text]);
   // My tasks lends its frame header what the lab draws there: how many are in progress, and the plus that
   // starts a new task (lab `tasks-widget`). The host puts it in the frame's header; elsewhere it draws nothing.
   const newTaskLabel = text('plugins.triage.tasks.new', 'New task');
@@ -285,7 +286,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
               {...(loud === null ? {} : { ...loud, detailNumberOfLines: 1 })}
               density="compact"
               onPress={() => { void openTriageLinkedEntry(hostApi, row.entryRef, undefined,
-                { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'mine' } }); }}
+                { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'mine' } }).then(result => {
+                  if (result.kind === 'refused' && result.reason === 'unavailable') return presentTriageMountedUiActionFailure(hostApi, result.error, text);
+                }); }}
             />
           );
         }
@@ -309,7 +312,9 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
             {...(detailTone === undefined ? {} : { detailTone })}
             density="compact"
             onPress={() => { void openTriageLinkedEntry(hostApi, row.entryRef, undefined,
-              tasksOnly ? { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'mine' } } : undefined); }}
+              tasksOnly ? { ...TRIAGE_ROUTE_DEFAULT_LENS_V1, filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, tasks: 'mine' } } : undefined).then(result => {
+                if (result.kind === 'refused' && result.reason === 'unavailable') return presentTriageMountedUiActionFailure(hostApi, result.error, text);
+              }); }}
           />
         );
       })}

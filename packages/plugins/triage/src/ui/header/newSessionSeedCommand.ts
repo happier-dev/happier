@@ -2,7 +2,9 @@ import type {
     OpenNewSessionRequest,
     OpenNewSessionOptions,
 } from '@happier-dev/plugin-sdk/ui';
+import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 
 /**
  * The one path to "put this on the host's New Session screen and open it".
@@ -24,11 +26,19 @@ import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-s
 
 export type TriageNewSessionSeedV1 = Readonly<OpenNewSessionRequest>;
 
-export type TriageNewSessionFailureV1 = Readonly<{ codes: readonly string[]; requestId?: string }>;
+export const TriageNewSessionFailureV1Schema = defineProtocolObject({
+    codes: defineProtocolArray(defineProtocolString()), requestId: defineProtocolString().optional(),
+}, { policy: 'closed' });
+export type TriageNewSessionFailureV1 = ReturnType<typeof TriageNewSessionFailureV1Schema.parse>;
 
 /** Keep public diagnostic identifiers, never arbitrary error messages or details. */
 export function projectTriageNewSessionFailureV1(error: unknown): TriageNewSessionFailureV1 | undefined {
-    if (!isPluginError(error)) return undefined;
+    if (!isPluginError(error)) {
+        const source = TriageSourceFailureV1Schema.safeParse(error);
+        if (!source.success) return undefined;
+        return { codes: [source.data.code],
+            ...(source.data.requestId === undefined ? {} : { requestId: source.data.requestId }) };
+    }
     const requestId = readPluginErrorRequestIdV1(error);
     return { codes: [error.code, ...(error.diagnostics ?? []).map(diagnostic => diagnostic.code)],
         ...(requestId === undefined ? {} : { requestId }) };

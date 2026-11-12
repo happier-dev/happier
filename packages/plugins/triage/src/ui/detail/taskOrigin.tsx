@@ -4,6 +4,8 @@ import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorResultV1Schema,
   type TriageTaskOriginErrorV1Schema } from '../../actions/taskOriginProtocol.js';
 import { openTriageLinkedEntry } from '../navigation/openLinkedEntry.js';
+import { isHostCancellation } from '../../hostCancellation.js';
+import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 
 type OriginError = ReturnType<typeof TriageTaskOriginErrorV1Schema.parse>;
@@ -15,7 +17,11 @@ export function TriageTaskOriginLink({ origin }: Readonly<{ origin: OriginError 
   const [failed, setFailed] = React.useState(false);
   return <Stack gap="small" align="flex-start">
     <Button variant="plain" size="small" title={text('plugins.triage.tasks.origin.label', 'From error: {title}', { title: origin.display.title })}
-      onPress={async () => { setFailed((await openTriageLinkedEntry(host, origin.entryRef)).kind === 'refused'); }} />
+      onPress={async () => {
+        const result = await openTriageLinkedEntry(host, origin.entryRef);
+        setFailed(result.kind === 'refused');
+        if (result.kind === 'refused' && result.reason === 'unavailable') await presentTriageMountedUiActionFailure(host, result.error, text);
+      }} />
     {!failed ? null : <Status tone="warning" label={text('plugins.triage.tasks.origin.openFailed', 'The origin error could not be opened. Try the link again.')} />}
   </Stack>;
 }
@@ -34,9 +40,13 @@ export function TriageTaskOrigin(props: Readonly<{ entryRef: TriageEntryRefV1; r
     setFailed(false);
     void host.executeAction(TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, { v: 1, entryRef: props.entryRef }, { signal: controller.signal })
       .then(raw => { const answer = TriageReadTaskOriginErrorResultV1Schema.parse(raw); if (!controller.signal.aborted) setOrigin(answer.originError); })
-      .catch(() => { if (!controller.signal.aborted) setFailed(true); });
+      .catch(async (error: unknown) => {
+        if (isHostCancellation(error, controller.signal)) return;
+        setFailed(true);
+        await presentTriageMountedUiActionFailure(host, error, text);
+      });
     return () => controller.abort();
-  }, [host, key, props.refreshGeneration, retry]);
+  }, [host, key, props.refreshGeneration, retry, text]);
   if (failed) return <Button variant="plain" size="small" title={text('plugins.triage.tasks.origin.retry', 'Retry origin link')}
     onPress={() => setRetry(value => value + 1)} />;
   return origin === null ? null : <TriageTaskOriginLink origin={origin} />;

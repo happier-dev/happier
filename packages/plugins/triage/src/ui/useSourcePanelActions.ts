@@ -2,8 +2,9 @@ import * as React from 'react';
 import type { PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { triageSourcePanelActionIdV1, type TriageSourcePanelActionsV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
-import { bindTriageMountedSourcePanelAction } from './mountedActions.js';
+import { bindTriageMountedSourcePanelAction, presentTriageMountedUiActionFailure } from './mountedActions.js';
 import { TriageMountedUiResultV1Schema } from '../actions/mountedUiProtocol.js';
+import { usePluginTranslation } from '@happier-dev/plugin-ui';
 import { isHostCancellation } from '../hostCancellation.js';
 
 const NO_COMMANDS: readonly TriageSourcePanelCommandV1[] = Object.freeze([]);
@@ -11,6 +12,7 @@ const NO_COMMANDS: readonly TriageSourcePanelCommandV1[] = Object.freeze([]);
 /** The mounted dispatcher retains callbacks/commands only; source controllers retain all selection. */
 export function useTriageSourcePanelActionsV1(scope: PluginEphemeralSharedScope | null,
   mountId: string, identity: string | null, active: boolean, hostApi: PluginUiHostApi) {
+  const text = usePluginTranslation();
   const [published, setPublished] = React.useState<Readonly<{
     owner: TriageSourcePanelActionsV1; commands: readonly TriageSourcePanelCommandV1[];
   }> | null>(null);
@@ -38,12 +40,14 @@ export function useTriageSourcePanelActionsV1(scope: PluginEphemeralSharedScope 
           const parsed = TriageMountedUiResultV1Schema.safeParse(result);
           return parsed.success ? parsed.data : { status: 'rejected' };
         } catch (error) {
-          return { status: isHostCancellation(error, signal) ? 'unavailable' : 'rejected' };
+          if (isHostCancellation(error, signal)) return { status: 'unavailable' };
+          await presentTriageMountedUiActionFailure(hostApi, error, text);
+          return { status: 'rejected' };
         }
       },
     };
     return owner;
-  }, [active, hostApi, identity, mountId, scope]);
+  }, [active, hostApi, identity, mountId, scope, text]);
   React.useLayoutEffect(() => {
     current.current = actions;
     return () => { if (current.current === actions) current.current = null; };

@@ -32,6 +32,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TriageEntrySessionLinkDisplayV1Schema } from './sessionLinksProtocol.js';
+import { TriageNewSessionFailureV1Schema } from '../ui/header/newSessionSeedCommand.js';
 import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.js';
 
 export const TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 = 'entries/verify-existing-review-workspace-v1';
@@ -44,7 +45,7 @@ export const TriageVerifyExistingReviewWorkspaceInputV1Schema = defineProtocolOb
 export type TriageVerifyExistingReviewWorkspaceInputV1 = ReturnType<typeof TriageVerifyExistingReviewWorkspaceInputV1Schema.parse>;
 export const TriageVerifyExistingReviewWorkspaceResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('verified'), checkout: ProtocolWorkspaceAddressV1Schema }, { policy: 'closed' }),
-    defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('unavailable'), failure: TriageNewSessionFailureV1Schema.optional() }, { policy: 'closed' }),
 ]);
 export type TriageVerifyExistingReviewWorkspaceResultV1 = ReturnType<typeof TriageVerifyExistingReviewWorkspaceResultV1Schema.parse>;
 
@@ -535,6 +536,7 @@ export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         status: defineProtocolLiteral('refused'),
+        failure: TriageNewSessionFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral('sourceUnavailable'),
             defineProtocolLiteral('sourceMismatch'),
@@ -610,6 +612,7 @@ const startEntrySessionResult = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** Linked and delivered, but navigation failed. Retry re-opens. */
         type: defineProtocolLiteral('openPending'),
+        failure: TriageNewSessionFailureV1Schema.optional(),
         sessionAddress: ActionSessionAddressV1Schema.optional(),
         deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
@@ -638,6 +641,7 @@ const startEntrySessionResult = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         type: defineProtocolLiteral('workspacePreparationFailed'),
+        failure: TriageNewSessionFailureV1Schema.optional(),
         reason: defineProtocolUnion([
             defineProtocolLiteral('refused'),
             defineProtocolLiteral('failed'),

@@ -158,13 +158,15 @@ function createListHarness(withTasks = false, mineFacts: Readonly<Record<string,
 
 const mounted: PluginUiTestkit[] = [];
 const opened: unknown[] = [];
+const navigationFailures: unknown[] = [];
+const navigationNotifications: string[] = [];
 const clients: PluginClientTestkit[] = [];
 
 async function mountWidget(
     scope: ReturnType<typeof createTriageEphemeralSharedScopeOriginFixture>,
     executeAction: (input: unknown) => Promise<unknown>,
     publishCurrentUiContext?: (enrichment: unknown) => void,
-    options: Readonly<{ surface?: RenderSurface; targetedContributions?: PluginUiTargetedContributionsV1; frameHeader?: boolean;
+    options: Readonly<{ navigationFailure?: PluginError; surface?: RenderSurface; targetedContributions?: PluginUiTargetedContributionsV1; frameHeader?: boolean;
         /** The host's own facts about this mount's Run on Machine (its offline band speaks when it cannot answer). */
         machine?: Readonly<{ machineExecutionReady: boolean; machineConnectionPending?: boolean }> }> = {},
 ): Promise<PluginUiTestkit> {
@@ -183,7 +185,12 @@ async function mountWidget(
             handlers: {
                 publishCurrentUiContext: ({ enrichment }) => { publishCurrentUiContext?.(enrichment); },
                 executeAction: async ({ input }) => await executeAction(input),
-                openSurface: ({ view }) => { opened.push(view); },
+                openSurface: ({ view }) => { opened.push(view); if (options.navigationFailure) throw options.navigationFailure; },
+                presentActionFailure: async ({ failure }) => { navigationFailures.push(failure); return { reason: 'Cannot open', nextStep: 'Try again', technicalDetails: [
+                    { key: 'code', label: 'Code', value: failure.errorCode },
+                    { key: 'requestId', label: 'Request ID', value: failure.requestId ?? '' },
+                ] }; },
+                notify: async ({ message }) => { navigationNotifications.push(message); },
             },
         });
     });
@@ -194,11 +201,29 @@ async function mountWidget(
 afterEach(async () => {
     vi.useRealTimers();
     opened.splice(0);
+    navigationFailures.splice(0);
+    navigationNotifications.splice(0);
     for (const fixture of mounted.splice(0)) await fixture.dispose();
     for (const client of clients.splice(0)) await client.dispose();
 });
 
 describe('the New for you widget', () => {
+    it('presents a linked row navigation refusal with its Code and Request ID', async () => {
+        const harness = createListHarness();
+        const widget = await mountWidget(createTriageEphemeralSharedScopeOriginFixture(), input => harness.executeAction(input), undefined,
+            { targetedContributions: harness.targetedContributions,
+                navigationFailure: new PluginError({ code: 'destination_unavailable', details: { requestId: 'widget-open-17' } }) });
+        await vi.waitFor(() => widget.getByText(TITLE));
+        await act(async () => {
+            const row = (await widget.getAllByRole('button')).find(target => target.name?.includes(TITLE));
+            if (row === undefined) throw new Error('The linked entry row button was not found');
+            await widget.press(row);
+        });
+        await vi.waitFor(() => expect(navigationNotifications.join(' ')).toContain('widget-open-17'));
+        expect(navigationFailures).toEqual([expect.objectContaining({ errorCode: 'destination_unavailable', requestId: 'widget-open-17' })]);
+        expect(navigationNotifications.join(' ')).toContain('destination_unavailable');
+        expect(navigationNotifications.join(' ')).toContain('widget-open-17');
+    });
     it('shows personal tasks while an external source waits, then names its refusal beside those rows', async () => {
         const harness = createListHarness(false, {}, true);
         let release = (): void => {};

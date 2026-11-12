@@ -6,6 +6,7 @@ import { defineUiSurface, ErrorState, LoadingState, Stack, Status, Text, usePlug
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_V1, isInternalTaskReferenceV1, internalTaskOwnerAccountIdV1 } from './identity.js';
 import { presentInternalTaskReadFailure } from './readFailure.js';
+import { presentTriageMountedUiActionFailure } from '../ui/mountedActions.js';
 
 type Task = Extract<PluginActionResultById['tasks.internal.list'], { status: 'ok' }>['todos'][number];
 
@@ -32,7 +33,6 @@ function InternalTaskDetail(context: RenderContext): React.ReactElement {
     if (taskId === null) return;
     const controller = new AbortController();
     const fail = () => {
-      if (controller.signal.aborted) return;
       setRead(previous => ({ host, taskKey, failed: true,
         task: previous?.host === host && previous.taskKey === taskKey ? previous.task : null }));
     };
@@ -41,9 +41,13 @@ function InternalTaskDetail(context: RenderContext): React.ReactElement {
       if (result.status === 'refused') { setRead({ host, taskKey, task: null, failed: true, reason: result.reason }); return; }
       if (result.status !== 'applied') { fail(); return; }
       setRead({ host, taskKey, task: result.todo, failed: false });
-    }).catch(fail);
+    }).catch(async (error: unknown) => {
+      if (controller.signal.aborted) return;
+      fail();
+      await presentTriageMountedUiActionFailure(host, error, text);
+    });
     return () => controller.abort();
-  }, [host, taskId, taskKey, ownerAccountId, observedAtMs]);
+  }, [host, taskId, taskKey, ownerAccountId, observedAtMs, text]);
   // The Host API is Account-bound. Retained notes never cross a replacement authority.
   const currentRead = read?.host === host && read.taskKey === taskKey ? read : null;
   if (taskId === null || (currentRead !== null && currentRead.task === null)) {

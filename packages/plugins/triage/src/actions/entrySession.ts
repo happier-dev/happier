@@ -11,6 +11,7 @@ import { produceScmPullRequestReviewScope, ReviewStartInputSchema } from '@happi
 import { ScmComparisonSchema, ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 
+import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
@@ -50,8 +51,16 @@ export function createTriageVerifyExistingReviewWorkspaceActionHandler(): Triage
     return async (input, context) => {
         const unavailable = { kind: 'unavailable' as const };
         const options = { signal: context.signal };
-        const status = SessionStatusActionResultV1Schema.safeParse(await context.services.actions.execute(
-            'session.status.get', { sessionId: input.session.sessionId, includeAcceptedWorkspace: true }, options).catch(() => null));
+        let rawStatus: unknown;
+        try {
+            rawStatus = await context.services.actions.execute('session.status.get',
+                { sessionId: input.session.sessionId, includeAcceptedWorkspace: true }, options);
+        } catch (error) {
+            if (context.signal.aborted) return unavailable;
+            const failure = projectTriageNewSessionFailureV1(error);
+            return { ...unavailable, ...(failure === undefined ? {} : { failure }) };
+        }
+        const status = SessionStatusActionResultV1Schema.safeParse(rawStatus);
         if (!status.success || status.data.ok === false || status.data.session.id !== input.session.sessionId) return unavailable;
         const accepted = status.data.acceptedWorkspace;
         if (accepted === undefined || accepted.checkout.serverId !== input.session.serverId) return unavailable;
@@ -67,7 +76,11 @@ export function createTriageVerifyExistingReviewWorkspaceActionHandler(): Triage
             workspace: { serverId: accepted.checkout.serverId, machineId: accepted.checkout.machineId, rootPath: accepted.checkout.rootPath },
             prepared: { kind: 'acceptedCheckout', repositoryPath: accepted.checkout.rootPath },
         }, { ...options, ...('account' in instance.binding ? { expectedSelectedConnectedAccountRef: instance.binding.account } : {}) });
-        if (context.signal.aborted || verified.kind !== 'verified') return unavailable;
+        if (context.signal.aborted) return unavailable;
+        if (verified.kind !== 'verified') {
+            const failure = projectTriageNewSessionFailureV1(verified.failure);
+            return { ...unavailable, ...(failure === undefined ? {} : { failure }) };
+        }
         return { kind: 'verified', checkout: accepted.checkout };
     };
 }
@@ -163,6 +176,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: result.type,
+                ...(result.failure === undefined ? {} : { failure: result.failure }),
                 ...deliveryResult, ...sessionAddress,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
@@ -218,6 +232,7 @@ function projectStartResult(
                 type: 'workspacePreparationFailed',
                 reason: result.reason,
                 retryable: result.retryable,
+                ...(result.failure === undefined ? {} : { failure: result.failure }),
             };
         case 'rejected':
             return { v: 1, type: 'rejected', reason: result.reason };
@@ -525,14 +540,13 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                 ...(context.signal === undefined ? {} : { signal: context.signal }),
             },
         );
-        if (verified.kind === 'workspaceMismatch') {
-            return { v: 1, status: 'refused', reason: 'workspaceMismatch' };
-        }
-        if (verified.kind === 'unavailable') {
-            return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
-        }
         if (verified.kind !== 'verified') {
-            return { v: 1, status: 'refused', reason: 'revisionMismatch' };
+            const failure = projectTriageNewSessionFailureV1(verified.failure);
+            return { v: 1, status: 'refused',
+                reason: verified.kind === 'workspaceMismatch' ? 'workspaceMismatch'
+                    : verified.kind === 'unavailable' ? 'sourceUnavailable' : 'revisionMismatch',
+                ...(failure === undefined ? {} : { failure }),
+            };
         }
 
         const reviewAuthority = 'account' in input.review.instance.binding

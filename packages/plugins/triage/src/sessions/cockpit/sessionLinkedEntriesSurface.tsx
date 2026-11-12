@@ -41,6 +41,8 @@ import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
 import { useTriageUnlinkLinkedEntry } from './useUnlinkLinkedEntry.js';
 import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
+import { isHostCancellation } from '../../hostCancellation.js';
+import { presentTriageMountedUiActionFailure } from '../../ui/mountedActions.js';
 import { openTriageLinkedEntry } from '../../ui/navigation/openLinkedEntry.js';
 import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 import { applyTriageSessionPullRequestStatus } from './linkedEntrySummary.js';
@@ -249,6 +251,7 @@ function LinkedRowPeek(props: Readonly<{
     const [openFailed, setOpenFailed] = React.useState(false);
     const presentation = row.presentation;
     const entryRef = presentation.kind === 'linked' ? presentation.entryRef : null;
+    const sourceInstanceId = presentation.kind === 'linked' ? presentation.sourceInstanceId : undefined;
     const entry = entryOf(row);
     const updated = useAge(entry?.updatedAtMs ?? null);
     const linked = useAge(row.linkedAtMs > 0 ? row.linkedAtMs : null);
@@ -260,13 +263,14 @@ function LinkedRowPeek(props: Readonly<{
         void openTriageLinkedEntry(host, entryRef).then((result) => {
             setOpening(false);
             setOpenFailed(result.kind === 'refused');
+            if (result.kind === 'refused' && result.reason === 'unavailable') return presentTriageMountedUiActionFailure(host, result.error, text);
         });
-    }, [entryRef, host, opening]);
+    }, [entryRef, host, opening, text]);
 
     const unlink = React.useCallback(() => {
         if (entryRef === null) return;
-        void unlinkRelationship({ sessionId, entryRef });
-    }, [entryRef, sessionId, unlinkRelationship]);
+        void unlinkRelationship({ sessionId, entryRef, sourceInstanceId });
+    }, [entryRef, sourceInstanceId, sessionId, unlinkRelationship]);
 
     if (entryRef === null || presentation.kind !== 'linked') return null;
     const facts = entry === null
@@ -317,7 +321,7 @@ function LinkedRowPeek(props: Readonly<{
                     <Button
                         variant="plain"
                         title={text('plugins.triage.surface.detail.openAtSource', 'Open at source')}
-                        onPress={() => { void host.openExternalLink(webUrl).catch(() => undefined); }}
+                        onPress={() => { void host.openExternalLink(webUrl).catch(error => { if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(host, error, text); }); }}
                     />
                 )}
                 <Stack grow />
@@ -702,7 +706,7 @@ function TriageSessionLinkedEntriesPanel(
                         <Button
                             variant="plain"
                             title={text('plugins.triage.sessionLinks.browse', 'Browse PRs & Issues')}
-                            onPress={() => { void host.openSurface(TRIAGE_ENTRY_DETAIL_DESTINATION_V1).catch(() => undefined); }}
+                            onPress={() => { void host.openSurface(TRIAGE_ENTRY_DETAIL_DESTINATION_V1).catch(error => { if (!isHostCancellation(error, undefined)) return presentTriageMountedUiActionFailure(host, error, text); }); }}
                         />
                     )}
                 />

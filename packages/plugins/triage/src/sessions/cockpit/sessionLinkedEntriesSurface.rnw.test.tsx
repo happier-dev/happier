@@ -15,7 +15,7 @@ import type {
     PluginUiCollectionQuerySnapshot,
     PluginUiDataClient,
 } from '@happier-dev/plugin-ui/data';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../../../../../plugin-ui/src/data/accountKv.js';
 import { createPluginUiHostApiResourceClient, createPluginUiResourceStore, type PluginUiResourceStore } from '../../../../../plugin-ui/src/hostApi/resourceStore.js';
@@ -68,6 +68,8 @@ import { operationOffers } from '../testkit/sessionPullRequestOperations.test-su
 
 const PLUGIN_ID = 'happier.triage';
 const SESSION_ID = 'session-cockpit-1';
+const navigationFailures: unknown[] = [];
+const navigationNotifications: string[] = [];
 
 function linkRow(overrides: Partial<CorpusSessionLinkRowV1> = {}): CorpusSessionLinkRowV1 {
     return {
@@ -337,6 +339,11 @@ async function mountCockpit(
             adapter: createCockpitAdapter(accountReachable ? harness.client : null, sourceScope ?? statusFixture?.scope),
             handlers: {
                 confirm: async () => true,
+                presentActionFailure: async ({ failure }) => { navigationFailures.push(failure); return { reason: 'Cannot open', nextStep: 'Try again', technicalDetails: [
+                    { key: 'code', label: 'Code', value: failure.errorCode },
+                    { key: 'requestId', label: 'Request ID', value: failure.requestId ?? '' },
+                ] }; },
+                notify: async ({ message }) => { navigationNotifications.push(message); },
                 // Direct Account writes use the host's Action admission boundary.
                 admitAction: async () => true,
                 readResource: async ({ resource }) => {
@@ -399,6 +406,8 @@ async function mountCockpit(
 afterEach(async () => {
     actionCalls.splice(0);
     surfaceOpens.splice(0);
+    navigationFailures.splice(0);
+    navigationNotifications.splice(0);
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -1258,7 +1267,7 @@ describe('the mounted Session cockpit', () => {
             { kind: 'session', sessionId: SESSION_ID },
             null,
             true,
-            new Error('The destination is unavailable.'),
+            new PluginError({ code: 'destination_unavailable', details: { requestId: 'cockpit-open-17' } }),
         );
 
         await openRow(fixture, 'example/repository#42');
@@ -1267,6 +1276,10 @@ describe('the mounted Session cockpit', () => {
 
         await expect(fixture.getByText('This entry could not be opened.')).resolves
             .toEqual({ content: 'This entry could not be opened.' });
+        await vi.waitFor(() => expect(navigationNotifications.join(' ')).toContain('cockpit-open-17'));
+        expect(navigationFailures).toEqual([expect.objectContaining({ errorCode: 'destination_unavailable', requestId: 'cockpit-open-17' })]);
+        expect(navigationNotifications.join(' ')).toContain('destination_unavailable');
+        expect(navigationNotifications.join(' ')).toContain('cockpit-open-17');
         expect((await fixture.queryAllByRole('button'))
             .filter((button) => button.name === 'Unlink example/repository#42'))
             .toHaveLength(1);

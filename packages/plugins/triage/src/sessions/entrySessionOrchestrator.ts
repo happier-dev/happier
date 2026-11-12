@@ -7,6 +7,7 @@ import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInput
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
 import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
+import type { TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
@@ -184,6 +185,7 @@ export type TriageEntrySessionStartResultV1 = (
     }>
     | Readonly<{
         type: 'openPending';
+        failure?: TriageNewSessionFailureV1;
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
@@ -204,6 +206,7 @@ export type TriageEntrySessionStartResultV1 = (
     }>
     | Readonly<{
         type: 'workspacePreparationFailed';
+        failure?: TriageNewSessionFailureV1;
         reason: TriageWorkspacePreparationFailureV1['reason'];
         retryable: boolean;
     }>
@@ -355,6 +358,7 @@ async function deliverThenOpen(
     });
     return {
         type: opened.status === 'opened' ? 'opened' : 'openPending',
+        ...(opened.status === 'failed' && opened.failure !== undefined ? { failure: opened.failure } : {}),
         sessionId: input.sessionId,
         disposition: input.disposition,
         workspace: input.workspace,
@@ -632,6 +636,7 @@ export async function startEntrySession(
             type: 'workspacePreparationFailed',
             reason: resolved.failure.reason,
             retryable: resolved.failure.retryable,
+            ...(resolved.failure.failure === undefined ? {} : { failure: resolved.failure.failure }),
         };
     }
 

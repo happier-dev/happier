@@ -1,6 +1,9 @@
 import * as React from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import { resolveReviewNarratorPolicy } from '@happier-dev/plugin-sdk/reviews';
 import {
+  Action,
   Button,
   Form,
   Heading,
@@ -12,8 +15,11 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 
-import { continueTriagePullRequestReviewV1 } from '../../sessions/pullRequestReviewContinuation.js';
-import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1 } from '../../actions/entrySessionProtocol.js';
+import { prepareTriagePullRequestReviewContinuationV1, settleTriagePullRequestReviewContinuationV1, type TriagePullRequestReviewContinuationOutcomeV1 } from '../../sessions/pullRequestReviewContinuation.js';
+import { useLinkedSessionOpen } from '../detail/useLinkedSessionOpen.js';
 import {
   readAvailableEngineOptions,
   type TriageReviewEngineOptionV1,
@@ -72,6 +78,7 @@ export function TriagePullRequestReviewChooser(
 ): React.ReactElement {
   const host = usePluginHostApi();
   const text = usePluginTranslation();
+  const linkedSession = useLinkedSessionOpen();
   const engineFocus = usePluginUiFocusTarget();
   const recoveryFocus = usePluginUiFocusTarget();
   const [phase, setPhase] = React.useState<ReviewChooserPhaseV1>(IDLE);
@@ -94,12 +101,13 @@ export function TriagePullRequestReviewChooser(
         return;
       }
       setPhase({ kind: 'choosing', options, selected: [] });
-    } catch {
+    } catch (error) {
       if (operation.current === currentOperation) {
         setPhase({ kind: 'failed', failure: 'engineList', options: [], selected: [] });
+        await presentTriageMountedUiActionFailure(host, error, text);
       }
     }
-  }, [host, props.pending.sessionId]);
+  }, [host, props.pending.sessionId, text]);
 
   React.useEffect(() => {
     void loadEngines();
@@ -118,76 +126,76 @@ export function TriagePullRequestReviewChooser(
     const currentOperation = operation.current + 1;
     operation.current = currentOperation;
     setPhase({ kind: 'settled' });
-    const result = await openLinkedSession({
-      execute: async (actionId, input, options) => await host.executeAction(actionId, input, options),
-      sessionId: props.pending.sessionId,
-    });
+    const result = await linkedSession.open(props.pending.sessionId);
     if (operation.current !== currentOperation) return;
-    if (result.status === 'opened') {
+    if (result?.status === 'opened') {
       props.onFinished();
       return;
     }
     setPhase({ kind: 'failed', failure: 'open', options: [], selected: [] });
-  }, [host, props.onFinished, props.pending.sessionId]);
+  }, [linkedSession.open, props.onFinished, props.pending.sessionId]);
 
-  const startReview = React.useCallback(async (
+  const reviewController = (
     options: readonly TriageReviewEngineOptionV1[],
     selected: readonly string[],
     writeWalkthrough = walkthrough,
-  ): Promise<void> => {
-    if (selected.length === 0) return;
-    const policy = resolveReviewNarratorPolicy({ selectedEngineIds: selected, engines: options });
-    const candidates = options.filter((option) => option.capabilities.structuredNarration);
-    const narrator = candidates.find((option) => option.value === narratorEngineId)
-      ?? candidates.find((option) => option.value === policy.defaultNarratorEngineId)
-      ?? candidates[0];
-    if (writeWalkthrough && (props.pending.comparisonSource === undefined || narrator === undefined)) return;
-    const currentOperation = operation.current + 1;
-    operation.current = currentOperation;
-    setPhase({ kind: 'starting', options, selected });
-    const continuation = await continueTriagePullRequestReviewV1(host, props.pending, {
-      engineIds: [...selected],
-      ...(writeWalkthrough ? {
-        outputs: ['walkthrough'], comparisonSource: props.pending.comparisonSource,
-        ...(policy.requiresSeparateNarrator ? { narrator: { engineId: narrator!.value } } : {}),
-      } : {}),
-    }, { isCurrent: () => operation.current === currentOperation });
-    if (operation.current !== currentOperation) return;
-    if (continuation.kind === 'cancelled') {
-      setPhase({ kind: 'choosing', options, selected });
-      return;
-    }
-    if (continuation.kind === 'unknown') {
-      // This outward write may already have reached review.start. Repeating it
-      // would be a blind second mutation; only the idempotent Session open is
-      // offered from this state.
-      setPhase({ kind: 'failed', failure: 'reviewUnknown', options, selected });
-      return;
-    }
-    if (continuation.kind !== 'settled' || continuation.result.status !== 'started') {
-      setPhase({ kind: 'failed', failure: 'reviewRefused', options, selected });
-      return;
-    }
-    const result = continuation.result;
-    // The fan-out answers per engine. A run that never started must be visible
-    // and repeatable, and the runs that DID start must not be repeated with it,
-    // so the retry selection narrows to exactly the refused engines.
-    if (result.failedEngineIds.length > 0) {
-      setPhase({
-        kind: 'failed',
-        failure: 'reviewPartial',
-        options,
-        selected: [...result.failedEngineIds],
-      });
-      return;
-    }
-    await openSession();
-  }, [host, narratorEngineId, openSession, props.pending, walkthrough]);
+  ): PluginUiActionControlController => {
+    let currentOperation = operation.current;
+    const settleReview = async (continuation: TriagePullRequestReviewContinuationOutcomeV1) => {
+      if (operation.current !== currentOperation) return;
+      if (continuation.kind === 'cancelled') { setPhase({ kind: 'choosing', options, selected }); return; }
+      const failure = continuation.kind === 'settled'
+        ? continuation.result.status === 'refused' ? continuation.result.failure : undefined
+        : continuation.failure;
+      if (failure !== undefined) void presentTriageMountedUiActionFailure(host, new PluginError({
+        code: failure.codes[0] ?? 'unavailable',
+        diagnostics: failure.codes.slice(1).map(code => ({ code, severity: 'error' })),
+        ...(failure.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
+      }), text);
+      if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown', options, selected }); return; }
+      if (continuation.kind !== 'settled' || continuation.result.status !== 'started') {
+        setPhase({ kind: 'failed', failure: 'reviewRefused', options, selected }); return;
+      }
+      if (continuation.result.failedEngineIds.length > 0) {
+        setPhase({ kind: 'failed', failure: 'reviewPartial', options, selected: [...continuation.result.failedEngineIds] }); return;
+      }
+      await openSession();
+    };
+    return {
+      async prepare({ signal }) {
+        if (selected.length === 0) return null;
+        const policy = resolveReviewNarratorPolicy({ selectedEngineIds: selected, engines: options });
+        const candidates = options.filter((option) => option.capabilities.structuredNarration);
+        const narrator = candidates.find((option) => option.value === narratorEngineId)
+          ?? candidates.find((option) => option.value === policy.defaultNarratorEngineId)
+          ?? candidates[0];
+        if (writeWalkthrough && (props.pending.comparisonSource === undefined || narrator === undefined)) return null;
+        currentOperation = operation.current + 1;
+        operation.current = currentOperation;
+        setPhase({ kind: 'starting', options, selected });
+        const continuation = await prepareTriagePullRequestReviewContinuationV1(host, props.pending, {
+          engineIds: [...selected],
+          ...(writeWalkthrough ? {
+            outputs: ['walkthrough'], comparisonSource: props.pending.comparisonSource,
+            ...(policy.requiresSeparateNarrator ? { narrator: { engineId: narrator!.value } } : {}),
+          } : {}),
+        }, { signal, isCurrent: () => operation.current === currentOperation });
+        if (continuation.kind !== 'ready') { await settleReview(continuation); return null; }
+        return { input: continuation.input };
+      },
+      onSettled(execution) {
+        const projected = projectPluginActionControlExecutionV1(execution, text);
+        void settleReview(projected.status === 'success'
+          ? settleTriagePullRequestReviewContinuationV1(projected.result)
+          : { kind: projected.status === 'outcomeUnknown' ? 'unknown' : 'unavailable' });
+      },
+    };
+  };
 
   const choosing = phase.kind === 'choosing' ? phase : null;
   const failed = phase.kind === 'failed' ? phase : null;
-  const options = choosing?.options ?? failed?.options ?? [];
-  const selected = choosing?.selected ?? failed?.selected ?? [];
+  const options = choosing?.options ?? failed?.options ?? (phase.kind === 'starting' ? phase.options : []);
+  const selected = choosing?.selected ?? failed?.selected ?? (phase.kind === 'starting' ? phase.selected : []);
   const canRetryReview = failed?.failure === 'reviewRefused' || failed?.failure === 'reviewPartial';
   const mustOnlyOpen = failed?.failure === 'reviewUnknown' || failed?.failure === 'open';
   const narratorPolicy = resolveReviewNarratorPolicy({ selectedEngineIds: selected, engines: options });
@@ -326,13 +334,14 @@ export function TriagePullRequestReviewChooser(
       ) : null}
 
       <Row gap="small" align="center" wrap>
-        {phase.kind === 'choosing' ? (
-          <Button
-            titleKey="plugins.triage.surface.reviewChooser.start"
-            title="Start review"
+        {phase.kind === 'choosing' || phase.kind === 'starting' || canRetryReview ? (
+          <Action.Control
+            action={{ pluginId: 'happier.triage', localId: TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1 }}
+            titleKey={canRetryReview ? 'plugins.triage.surface.loadMore.retry' : 'plugins.triage.surface.reviewChooser.start'}
+            title={canRetryReview ? 'Try again' : 'Start review'}
             variant="primary"
-            disabled={!canStart}
-            onPress={() => { void startReview(phase.options, phase.selected); }}
+            disabled={!canStart || phase.kind === 'starting'}
+            controller={reviewController(options, selected, failed?.failure === 'reviewPartial' ? false : walkthrough)}
           />
         ) : null}
         {phase.kind === 'choosing' && phase.options.length === 0 ? (
@@ -351,17 +360,6 @@ export function TriagePullRequestReviewChooser(
             variant="primary"
             focusTarget={recoveryFocus}
             onPress={() => { void loadEngines(); }}
-          />
-        ) : null}
-        {canRetryReview ? (
-          <Button
-            titleKey="plugins.triage.surface.loadMore.retry"
-            title="Try again"
-            variant="primary"
-            focusTarget={recoveryFocus}
-            // The original operation already admitted its one narrator. A
-            // partial retry starts only the refused reviewers, never another narrator.
-            onPress={() => { void startReview(options, selected, failed?.failure === 'reviewPartial' ? false : walkthrough); }}
           />
         ) : null}
         {mustOnlyOpen ? (

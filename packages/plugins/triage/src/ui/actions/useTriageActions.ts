@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 
-import type { TriageAdministerActionInputV1 } from '../../actions/actionsCatalogProtocol.js';
+import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+import { TriageAdministerActionResultV1Schema, type TriageAdministerActionInputV1 } from '../../actions/actionsCatalogProtocol.js';
 import type { TriageActionV1, TriageActionsReadV1 } from '../../settings/actions.js';
 import {
   planTriageOfferableActionsV1,
@@ -17,6 +19,7 @@ import {
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
+import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import {
   TRIAGE_UNREAD_ACTIONS_V1,
   createActionTriageActionsTransport,
@@ -94,6 +97,8 @@ export type TriageMountedActionsV1 = Readonly<{
    * the owner applied the write, and to `null` for every settled refusal — so a
    * caller never has to guess at the set a refusal left behind.
    */
+  prepareAdminister(input: TriageAdministerActionInputV1): Readonly<{ input: JsonValue }> | null;
+  settleAdminister(input: TriageAdministerActionInputV1, execution: PluginUiActionControlExecution): ReturnType<TriageMountedActionsV1['administer']>;
   administer(input: TriageAdministerActionInputV1): Promise<Readonly<{
     actions: readonly TriageActionV1[];
     revision: string | null;
@@ -150,7 +155,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
       setRevision(projection.revision);
       setLoaded(true);
       setUnavailableReason(null);
-    } catch {
+    } catch (error) {
       if (signal.aborted || current !== generation.current) return;
       // A stale catalog is not executable authority. Blanking it is how a
       // deleted remote action cannot remain pressable during an outage.
@@ -158,8 +163,9 @@ export function useTriageActions(): TriageMountedActionsV1 {
       setRevision(null);
       setLoaded(false);
       setUnavailableReason(text('plugins.triage.surface.actions.unavailable', UNAVAILABLE_REASON));
+      await presentTriageMountedUiActionFailure(hostApi, error, text);
     }
-  }, [text, transport, readiness.pending, readiness.ready]);
+  }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
     if (readiness.pending || readiness.ready === false) return;
@@ -213,25 +219,40 @@ export function useTriageActions(): TriageMountedActionsV1 {
         return { status: 'missing' };
       }
       return { status: 'resolved', action };
-    } catch {
+    } catch (error) {
       setRead(TRIAGE_UNREAD_ACTIONS_V1);
       setRevision(null);
       setLoaded(false);
       setUnavailableReason(text('plugins.triage.surface.actions.unavailable', UNAVAILABLE_REASON));
+      await presentTriageMountedUiActionFailure(hostApi, error, text);
       return { status: 'unavailable' };
     }
-  }, [text, transport, readiness.pending, readiness.ready]);
+  }, [hostApi, text, transport, readiness.pending, readiness.ready]);
 
-  const administer = useCallback(async (
-    input: TriageAdministerActionInputV1,
-  ): ReturnType<TriageMountedActionsV1['administer']> => {
+  const prepareAdminister = useCallback((input: TriageAdministerActionInputV1) => {
     if (busy || unavailableReason !== null) return null;
-    const controller = new AbortController();
     setBusy(true);
     setNotice(null);
+    return { input: input as unknown as JsonValue };
+  }, [busy, unavailableReason]);
+
+  const settleAdminister = useCallback(async (
+    input: TriageAdministerActionInputV1,
+    execution: PluginUiActionControlExecution,
+  ): ReturnType<TriageMountedActionsV1['administer']> => {
+    const controller = new AbortController();
     try {
-      const result = await transport.administer(input, { signal: controller.signal });
-      if (result === null) return null;
+      if (!execution.ok) {
+        // The host ActionControl carries the original JSON failure envelope.
+        const author = readPluginActionFailureAuthorPayload(execution.details as JsonValue | undefined);
+        throw new PluginError({ code: execution.errorCode, message: execution.error, ...author,
+          ...(execution.requestId === undefined ? {} : { details: {
+            ...(author.details !== null && typeof author.details === 'object' && !Array.isArray(author.details) ? author.details : {}),
+            requestId: execution.requestId,
+          } }),
+          ...(execution.failureCause === undefined ? {} : { failureCause: execution.failureCause }) });
+      }
+      const result = TriageAdministerActionResultV1Schema.parse(execution.result);
       if (result.status === 'applied') {
         // Restoring removes the stored set, so what is on screen is the shipped catalog again, not a configured one.
         const projection = readTriageActionsProjectionV1({
@@ -259,6 +280,7 @@ export function useTriageActions(): TriageMountedActionsV1 {
       }
       return null;
     } catch (error) {
+      await presentTriageMountedUiActionFailure(hostApi, error, text);
       if (isPluginError(error) && error.code === 'denied') {
         setNotice({ tone: 'warning', message: text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.') });
         return null;
@@ -271,7 +293,24 @@ export function useTriageActions(): TriageMountedActionsV1 {
     } finally {
       setBusy(false);
     }
-  }, [busy, load, text, transport, unavailableReason]);
+  }, [hostApi, load, text]);
+
+  // Automation keeps its existing admission and transport. Person controls only
+  // prepare operands and consume the original host execution settlement.
+  const administer = useCallback(async (input: TriageAdministerActionInputV1): ReturnType<TriageMountedActionsV1['administer']> => {
+    if (prepareAdminister(input) === null) return null;
+    try {
+      const result = await transport.administer(input);
+      if (result === null) { setBusy(false); return null; }
+      return await settleAdminister(input, { ok: true, result });
+    } catch (error) {
+      return await settleAdminister(input, { ok: false,
+        errorCode: isPluginError(error) ? error.code : 'unavailable',
+        error: isPluginError(error) ? error.message : 'Account transport unavailable',
+        requestId: readPluginErrorRequestIdV1(error),
+        ...(isPluginError(error) ? { details: error.data } : {}) });
+    }
+  }, [prepareAdminister, settleAdminister, transport]);
 
   return useMemo(() => Object.freeze({
     read,
@@ -283,9 +322,13 @@ export function useTriageActions(): TriageMountedActionsV1 {
     unavailableReason: readiness.pending ? null : unavailableReason,
     retry,
     resolveForExecution,
+    prepareAdminister,
+    settleAdminister,
     administer,
   }), [
     administer,
+    prepareAdminister,
+    settleAdminister,
     busy,
     loaded,
     notice,

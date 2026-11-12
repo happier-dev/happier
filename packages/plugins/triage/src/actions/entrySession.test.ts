@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue, PluginApi, PluginAccountApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
@@ -54,8 +55,10 @@ import {
     TriageStartEntrySessionResultV1Schema,
     TriageStartEntrySessionSettledDraftV1Schema,
     TriageStartPullRequestReviewInputV1Schema,
+    TriageStartPullRequestReviewResultV1Schema,
     TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1,
     TriageVerifyExistingReviewWorkspaceInputV1Schema,
+    TriageVerifyExistingReviewWorkspaceResultV1Schema,
 } from './entrySessionProtocol.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
@@ -75,6 +78,46 @@ const START_INPUT_BASE = Object.freeze({
     v: 1 as const,
     entryRef: testkitEntryRef(),
     display: { locator: testkitLocator(), scopeLabel: 'example/repository' },
+});
+
+it('keeps open failure diagnostics beside a successfully created Session through the strict result schema', async () => {
+    const failure = { codes: ['unavailable', 'session_not_found'], requestId: 'open-wire-17' };
+    const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+    const result = await startTriageEntrySession({ ...START_INPUT_BASE, workspaceMode: 'reference_only', destination: {
+        kind: 'new', creationKey: 'open-wire-key', spawn: TESTKIT_SPAWN_REQUEST,
+        materialization: { kind: 'referenceOnly', directory: '/repo' },
+    } }, {
+        execute: async (id, input, options) => {
+            if (id === 'session.open') throw new PluginError({ code: 'unavailable',
+                diagnostics: [{ code: 'session_not_found', severity: 'error' }], details: { requestId: failure.requestId } });
+            return invoker.execute(id, input, options);
+        },
+        linkSession: async () => ({ status: 'linked' }),
+    });
+    expect(TriageStartEntrySessionResultV1Schema.parse(result)).toMatchObject({ type: 'openPending', sessionId: 'session-a', failure });
+    if (result.type !== 'openPending') throw new Error('Expected the existing Session to need only navigation retry');
+    const { failure: _failure, ...olderResult } = result;
+    expect(TriageStartEntrySessionResultV1Schema.parse(olderResult)).toEqual(olderResult);
+});
+
+it('retains workspace refusal diagnostics before a Session is created through the strict start result', async () => {
+    const source = createTestkitPrepareReviewWorkspace({ results: [{ kind: 'unavailable', failure: {
+        class: 'authentication', code: 'plugin_account_refused', requestId: 'prepare-wire-17',
+    } }] });
+    const invoker = createTestkitActionInvoker();
+    const result = await startTriageEntrySession({ ...START_INPUT_BASE, workspaceMode: 'pull_request', destination: {
+        kind: 'new', creationKey: 'prepare-wire-key', spawn: TESTKIT_SPAWN_REQUEST,
+        materialization: { kind: 'reviewWorkspace', request: {
+            instance: testkitConfiguredInstance(), entryRef: testkitEntryRef(), workflowSubject: 'pullRequest',
+            lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION, workspace: TESTKIT_SELECTED_WORKSPACE,
+        } },
+    } }, { execute: invoker.execute,
+        linkSession: async () => ({ status: 'linked' }), prepareReviewWorkspace: source.deps,
+    });
+    expect(TriageStartEntrySessionResultV1Schema.parse(result)).toEqual({ v: 1, type: 'workspacePreparationFailed',
+        reason: 'failed', retryable: true, failure: { codes: ['plugin_account_refused'], requestId: 'prepare-wire-17' },
+    });
+    expect(invoker.calls).toEqual([]);
 });
 
 const NEW_DESTINATION = Object.freeze({
@@ -360,7 +403,7 @@ const REVIEW_COMPARISON = {
 };
 
 describe('the Session-start Action a mounted header can actually press', () => {
-    it.each(['verified', 'otherPlugin', 'wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure', 'workspaceMismatch', 'sourceRetired', 'cancelled'] as const)(
+    it.each(['verified', 'otherPlugin', 'wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure', 'typedStatusFailure', 'typedWorkspaceFailure', 'workspaceMismatch', 'sourceRetired', 'cancelled'] as const)(
         'verifies an existing PR checkout through the selected source without preparing it (%s)', async (mode) => {
             const { collections, control } = createTestkitCorpusCollections();
             const instance = testkitConfiguredInstance();
@@ -381,6 +424,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
                         requests.push({ id, input });
                         if (id !== 'session.status.get') throw new Error(`Unexpected write ${String(id)}`);
                         if (mode === 'statusFailure') throw new Error('Exact Session metadata unavailable');
+                        if (mode === 'typedStatusFailure') throw new PluginError({ code: 'metadata_unavailable', details: { requestId: 'verify-status-17' } });
                         return { session: { id: mode === 'wrongSession' ? 'another-session' : 'session-a',
                             createdAt: 1, updatedAt: 1, active: true, activeAt: 1, encryption: null },
                             ...(mode === 'missingCheckout' ? {} : { acceptedWorkspace: { checkout: { ...checkout,
@@ -390,6 +434,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
                         requests.push({ id: operation, input });
                         if (mode === 'sourceRetired') control.sourceInstances.tombstone(row.rowId);
                         if (mode === 'cancelled') controller.abort();
+                        if (mode === 'typedWorkspaceFailure') return { kind: 'unavailable', failure: { class: 'authentication', code: 'plugin_account_refused', requestId: 'verify-source-17' } };
                         return mode === 'workspaceMismatch' ? { kind: 'workspaceMismatch' } : { kind: 'verified', pullRequest: { number: 17 } };
                     },
                 },
@@ -399,11 +444,15 @@ describe('the Session-start Action a mounted header can actually press', () => {
             const input = TriageVerifyExistingReviewWorkspaceInputV1Schema.parse({ v: 1,
                 session: { serverId: 'server-a', sessionId: 'session-a' }, entryRef: testkitEntryRef(),
                 sourceInstanceId: instance.instance.sourceInstanceId, lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION });
-            const result = await registeredHandler(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1)(input, context);
+            const result = TriageVerifyExistingReviewWorkspaceResultV1Schema.parse(
+                await registeredHandler(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1)(input, context));
             // Finite verification keeps its admitted source; withdrawal applies at the next request.
-            expect(result).toEqual(['verified', 'otherPlugin', 'sourceRetired'].includes(mode) ? { kind: 'verified', checkout } : { kind: 'unavailable' });
+            expect(result).toEqual(['verified', 'otherPlugin', 'sourceRetired'].includes(mode) ? { kind: 'verified', checkout }
+                : mode === 'typedStatusFailure' ? { kind: 'unavailable', failure: { codes: ['metadata_unavailable'], requestId: 'verify-status-17' } }
+                : mode === 'typedWorkspaceFailure' ? { kind: 'unavailable', failure: { codes: ['plugin_account_refused'], requestId: 'verify-source-17' } }
+                : { kind: 'unavailable' });
             expect(requests[0]).toEqual({ id: 'session.status.get', input: { sessionId: 'session-a', includeAcceptedWorkspace: true } });
-            expect(requests).toHaveLength(['wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure'].includes(mode) ? 1 : 2);
+            expect(requests).toHaveLength(['wrongHome', 'wrongSession', 'missingCheckout', 'statusFailure', 'typedStatusFailure'].includes(mode) ? 1 : 2);
             if (requests.length === 2) expect(requests[1]).toMatchObject({ id: { handle: 'source-existing-checkout-verifier' },
                 input: { instance, workspace: { serverId: checkout.serverId, machineId: checkout.machineId, rootPath: checkout.rootPath },
                     prepared: { kind: 'acceptedCheckout', repositoryPath: checkout.rootPath } } });
@@ -1100,6 +1149,7 @@ describe('the registered formal Review transition', () => {
         ['provider revision moved', { kind: 'refused', reason: 'observedHeadMoved' }, 'revisionMismatch'],
         ['prepared workspace moved', { kind: 'workspaceMismatch' }, 'workspaceMismatch'],
         ['source became unavailable', { kind: 'unavailable', reason: 'account' }, 'sourceUnavailable'],
+        ['source supplied a diagnostic refusal', { kind: 'unavailable', failure: { class: 'authentication', code: 'plugin_account_refused', requestId: 'formal-verify-17' } }, 'sourceUnavailable'],
     ] as const)('starts zero reviews when the %s', async (_label, verifyResult, reason) => {
         const events: string[] = [];
         const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
@@ -1107,7 +1157,9 @@ describe('the registered formal Review transition', () => {
         await expect(handler(formalReviewInput(), createFormalReviewContext({
             verifyResult,
             events,
-        }))).resolves.toEqual({ v: 1, status: 'refused', reason });
+        })).then(raw => TriageStartPullRequestReviewResultV1Schema.parse(raw))).resolves.toEqual({ v: 1, status: 'refused', reason,
+            ...('failure' in verifyResult ? { failure: { codes: [verifyResult.failure.code], requestId: verifyResult.failure.requestId } } : {}),
+        });
 
         expect(events).not.toContain('review.start');
     });

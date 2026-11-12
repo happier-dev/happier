@@ -54,6 +54,16 @@ const PREPARED_CURRENT: TriagePrepareReviewWorkspaceResultV1 = {
 };
 
 describe('resolveEntrySessionWorkspace', () => {
+    it('retains the source workspace failure identifiers in the existing failed preparation result', async () => {
+        const unavailable = { kind: 'unavailable' as const, failure: {
+            class: 'unknown' as const, code: 'checkout_unavailable', requestId: 'workspace-17',
+        } };
+        const source = createTestkitPrepareReviewWorkspace({ results: [unavailable] });
+        expect(await resolveEntrySessionWorkspace(source.deps, REQUEST)).toEqual({ status: 'failed', failure: {
+            reason: 'failed', retryable: true,
+            failure: { codes: ['checkout_unavailable'], requestId: 'workspace-17' },
+        } });
+    });
     it('prepares a native-bound workspace without a synthetic selected connected account', async () => {
         const source = createTestkitPrepareReviewWorkspace({ results: [PREPARED_CURRENT] });
         const instance = testkitConfiguredInstance();

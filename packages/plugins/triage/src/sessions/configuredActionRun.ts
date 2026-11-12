@@ -1,7 +1,7 @@
 import { createTriageBulkEntrySessionsController, projectTriageConfiguredBulkResultV1, type TriageBulkSessionsRequestV1, type TriageBulkHostV1 } from './bulkEntrySessionsController.js';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriagePendingPullRequestReviewV1 } from './entrySessionStartController.js';
 import type { TriageRunConfiguredActionInputV1, TriageLegacyConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1, TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
-import { planTriageOfferedActionsV1 } from '../settings/actions.js';
+import { planTriageOfferedActionsV1, applyTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
 import type { TriagePullRequestReviewChoiceV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
 import { continueTriagePullRequestReviewV1 } from './pullRequestReviewContinuation.js';
 import { openLinkedSession } from './entrySessionOpen.js';
@@ -10,7 +10,7 @@ import { resolveTriageConfiguredActionForExecutionV1 } from './actionResolution.
 import { readTriageActionPlacementV1, resolveTriageActionReferencesV1, resolveTriageActionInstructionV1 } from './actionResolution.js';
 import { triageFailureSubjectEntryV1, triageHealthAlertEntryV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 import { SessionMessageSendResultV1ProtocolSchema, type ActionSessionAddressV1, type SessionInputForgeEvidenceV1, type SessionStatusActionResultV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { PluginUiHostApi, ComposerTransactionV1, PluginUiActionReference, PluginUiActionInputFor, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiHostApi, ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
@@ -210,9 +210,9 @@ export async function runTriageConfiguredHandoffV1(
         if (action.workspaceMode === 'pull_request' && primary.reviewWorkspace === undefined) return targetUnavailable('entry_review_workspace_missing');
         if (options.resumeStart !== undefined && options.resumeStart.state.kind !== 'single') return unavailable('scopeMismatch');
         const openNewSession = host.openNewSession;
-        const executionHost: TriageConfiguredActionRunHostV1 = {
+        const executionHost: TriageStartHostV1 = {
             ...host,
-            executeAction: <TAction extends PluginUiActionReference>(id: TAction, value?: PluginUiActionInputFor<TAction>, executionOptions?: PluginUiActionExecutionOptions) => host.executeAction<TAction>(id, value, { ...executionOptions, signal: options.signal }),
+            executeAction: (id, value, executionOptions) => host.executeAction(id, value, { ...executionOptions, signal: options.signal }),
             selectActionInput: (request, selectionOptions) => host.selectActionInput(request, { ...selectionOptions, signal: options.signal }),
             ...(openNewSession ? { openNewSession: (request: Parameters<typeof openNewSession>[0],
                 authoringOptions?: Parameters<typeof openNewSession>[1]) => openNewSession(request, { ...authoringOptions, signal: options.signal }) } : {}),
@@ -477,6 +477,7 @@ export type TriageConfiguredActionRunRequestV1 = Readonly<{
     unavailableKeys?: readonly string[];
     destination: 'single' | TriageBulkSessionsRequestV1['destination'];
     settlements?: readonly unknown[];
+    singleIntent?: TriageRunConfiguredActionInputV1['singleIntent'];
     reviewChoices?: TriagePullRequestReviewChoiceV1;
     resumeReview?: TriageRunConfiguredActionInputV1['resumeReview'];
     resumeStart?: TriageLegacyConfiguredStartRecoveryV1;
@@ -502,11 +503,26 @@ export async function runTriageConfiguredActionV1(
             result: request.resumeReview.result, reviewInstructions: request.resumeReview.instructions,
         }),
     });
-    const resolved = await resolveTriageConfiguredActionForExecutionV1(host, request.actionId, undefined,
-        options?.signal === undefined ? undefined : { signal: options.signal });
-    if (options?.signal?.aborted) return { v: 1, status: 'cancelled' };
-    if (resolved.status !== 'resolved') return refuse(resolved.reason);
-    const action = resolved.action;
+    const intent = request.singleIntent;
+    if (intent !== undefined && request.destination !== 'single') return refuse('scopeMismatch');
+    let action: TriageActionV1;
+    if (intent?.kind === 'orchestrate' || intent?.kind === 'comparison') {
+        action = intent.kind === 'orchestrate' ? {
+            actionId: 'orchestrate-issue', label: 'Orchestrate this', enabled: true, appliesTo: ['issue'],
+            profileId: null, workspaceMode: 'repository', target: { kind: 'agent', promptInvocationId: null, delivery: 'send' },
+        } : {
+            actionId: 'walk-comparison', label: 'Walk through', enabled: true, appliesTo: ['pullRequest'],
+            profileId: null, workspaceMode: 'reference_only', target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+        };
+    } else {
+        const resolved = await resolveTriageConfiguredActionForExecutionV1(host, request.actionId, undefined,
+            options?.signal === undefined ? undefined : { signal: options.signal });
+        if (options?.signal?.aborted) return { v: 1, status: 'cancelled' };
+        if (resolved.status !== 'resolved') return refuse(resolved.reason);
+        const selected = intent === undefined ? resolved.action : applyTriageActionLaunchModeV1(resolved.action, intent.launchMode);
+        if (selected === null) return refuse('instructionMissing');
+        action = selected;
+    }
     const selectedEntries = request.selectedEntries ?? request.entries.map((entry) => ({ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }));
     const recovery = request.resumeStart;
     if (recovery !== undefined) {
@@ -528,7 +544,7 @@ export async function runTriageConfiguredActionV1(
     if (request.destination === 'single' && recovery === undefined && request.resumeReview === undefined) {
         const entry = request.entries.length === 1 ? request.entries[0] : undefined;
         if (entry === undefined) return refuse('singleEntryRequired');
-        if (entry.workflowSubject === null || planTriageOfferedActionsV1([action], entry.workflowSubject).length === 0) {
+        if (entry.workflowSubject === null || planTriageOfferedActionsV1([action], entry.workflowSubject, intent?.kind === 'orchestrate' ? intent.prompt : undefined).length === 0) {
             return refuse('actionInapplicable');
         }
     }
@@ -537,13 +553,15 @@ export async function runTriageConfiguredActionV1(
         if (request.reviewChoices === undefined) return { ...basis, status: 'awaitingReview' };
         const continuation = await continueTriagePullRequestReviewV1(host, pending, request.reviewChoices, options);
         if (continuation.kind !== 'settled') return { ...basis, status: continuation.kind === 'unknown'
-            ? 'reviewUnknown' : continuation.kind === 'cancelled' ? 'awaitingReview' : 'reviewRefused' };
+            ? 'reviewUnknown' : continuation.kind === 'cancelled' ? 'awaitingReview' : 'reviewRefused',
+            ...(continuation.kind !== 'cancelled' && continuation.failure !== undefined ? { failure: continuation.failure } : {}) };
         const reviewResult = continuation.result;
         if (reviewResult.status !== 'started') return { ...basis, status: 'reviewRefused', reviewResult };
         if (reviewResult.failedEngineIds.length > 0) return { ...basis, status: 'reviewPartial', reviewResult };
         const opened = await openLinkedSession({ execute: async (id, input, cancellation) => host.executeAction(id, input, cancellation),
             sessionId: pending.sessionId, signal: options?.signal });
-        return { ...basis, status: 'reviewStarted', reviewResult, sessionOpen: opened.status };
+        return { ...basis, status: 'reviewStarted', reviewResult, sessionOpen: opened.status,
+            ...(opened.status === 'failed' && opened.failure !== undefined ? { failure: opened.failure } : {}) };
     };
     if (request.resumeReview !== undefined) {
         const { result, instructions } = request.resumeReview;
@@ -570,7 +588,11 @@ export async function runTriageConfiguredActionV1(
         const owner = createTriageEntrySessionStartController(singleHost, options);
         try {
             if (recovery?.state.kind === 'single') owner.restore(recovery.state);
-            owner.getSnapshot().start({ ...entry, action, ...(request.settlements?.[0] === undefined ? {} : { settlement: request.settlements[0] }) });
+            owner.getSnapshot().start({ ...entry, action,
+                ...(intent?.kind === 'orchestrate' ? { orchestrationPrompt: intent.prompt } : {}),
+                ...(intent?.kind === 'comparison' ? { comparisonDestination: { kind: 'scmReview', comparison: intent.comparison, view: 'walkthrough' } } : {}),
+                ...(intent?.kind === 'configured' && intent.comparisonSource !== undefined ? { comparisonSource: intent.comparisonSource } : {}),
+                ...(request.settlements?.[0] === undefined ? {} : { settlement: request.settlements[0] }) });
             const outcome = await owner.waitForSettled();
             const state = owner.getRecovery();
             const retained = state === null ? {} : { recovery: { entries: selectedEntries, state } };
@@ -583,7 +605,8 @@ export async function runTriageConfiguredActionV1(
                 ...(outcome.review === null ? {} : { reviewInstructions: outcome.review.instructions }),
             };
             if (options?.signal?.aborted) return { v: 1, status: 'cancelled', ...retained };
-            if (outcome.phase.kind === 'unavailable') return { v: 1, status: 'unavailable', reason: outcome.phase.reason, ...retained };
+            if (outcome.phase.kind === 'unavailable') return { v: 1, status: 'unavailable', reason: outcome.phase.reason,
+                ...(outcome.phase.failure === undefined ? {} : { failure: outcome.phase.failure }), ...retained };
             return { v: 1, status: 'seeded' };
         } finally { owner.dispose(); }
     }
@@ -603,6 +626,7 @@ export async function runTriageConfiguredActionV1(
         const { phase } = await owner.waitForSettled();
         const state = owner.getRecovery();
         if (phase.kind === 'settled') return {
+            ...(phase.failure === undefined ? {} : { failure: phase.failure }),
             v: 1, status: 'bulk', unavailableKeys: [...phase.unavailableKeys],
             refusals: phase.refusals.map((refusal) => ({ entryRef: refusal.entry.entryRef, reason: refusal.reason })),
             results: phase.results.map(projectTriageConfiguredBulkResultV1),
@@ -611,7 +635,8 @@ export async function runTriageConfiguredActionV1(
         if (phase.kind === 'seeded') return { v: 1, status: 'seeded', entries: [...phase.outcomes],
             refusals: phase.refusals.map((refusal) => ({ entryRef: refusal.entry.entryRef, reason: refusal.reason })),
         };
-        if (phase.kind === 'unavailable') return refuse(phase.reason);
+        if (phase.kind === 'unavailable') return { ...refuse(phase.reason),
+            ...(phase.failure === undefined ? {} : { failure: phase.failure }) };
         return { v: 1, status: 'cancelled' };
     } finally {
         options?.signal?.removeEventListener('abort', detach);

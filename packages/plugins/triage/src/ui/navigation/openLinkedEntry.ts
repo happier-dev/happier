@@ -13,12 +13,9 @@ import {
 export type OpenTriageLinkedEntryOutcomeV1 =
     | Readonly<{ kind: 'opened' }>
     | Readonly<{ kind: 'cancelled' }>
-    | Readonly<{ kind: 'refused'; reason: 'routeTooLong' | 'unavailable'; code?: string }>;
+    | Readonly<{ kind: 'refused'; reason: 'routeTooLong' }>
+    | Readonly<{ kind: 'refused'; reason: 'unavailable'; error: unknown }>;
 
-function hostErrorCode(error: unknown): string | undefined {
-    const code = (error as Readonly<{ code?: unknown }> | null)?.code;
-    return typeof code === 'string' && code !== '' ? code : undefined;
-}
 
 /**
  * Open one linked entry through the qualified Triage destination.
@@ -52,10 +49,7 @@ export async function openTriageLinkedEntry(
         );
     } catch (error) {
         if (isHostCancellation(error, signal)) return { kind: 'cancelled' };
-        const code = hostErrorCode(error);
-        return code === undefined
-            ? { kind: 'refused', reason: 'unavailable' }
-            : { kind: 'refused', reason: 'unavailable', code };
+        return { kind: 'refused', reason: 'unavailable', error };
     }
     return { kind: 'opened' };
 }

@@ -1,4 +1,6 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isHostCancellation } from '../../hostCancellation.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from './newSessionSeedCommand.js';
 
 /**
  * The header's one path to the host's own New Session surface.
@@ -54,7 +56,7 @@ export type TriageNewSessionDraftResultV1 =
     /** This mount installs no Action-input selection at all. */
     | Readonly<{ status: 'unsupported' }>
     /** The surface could not be opened or did not answer in the host's shape. */
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>;
 
 export async function requestTriageNewSessionDraft(
     host: TriageNewSessionDraftHostV1,
@@ -75,8 +77,9 @@ export async function requestTriageNewSessionDraft(
             hostAction: NEW_SESSION_DRAFT_REQUEST,
             ...(seed ? { draft: seed } : {}),
         }, options);
-    } catch {
-        return { status: 'unavailable' };
+    } catch (error) {
+        if (isHostCancellation(error, options?.signal)) return { status: 'cancelled' };
+        return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
     }
     // `kind`, not a member of the settled draft, is what says which arm this is
     // — the same discrimination the host's own result schema makes.

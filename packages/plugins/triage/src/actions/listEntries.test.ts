@@ -215,6 +215,20 @@ describe('the aggregate list Action handler', () => {
 });
 
 describe('the aggregate list pass persists nothing provider-derived', () => {
+    it('keeps a native Task read refusal identifiable while other source lanes still populate', async () => {
+        const fixture = createNoPersistenceTriageFixture({ taskRead: async () => {
+            throw new PluginError({ code: 'task_storage_unavailable', retryable: false, details: { requestId: 'task-list-17' } });
+        } });
+        const result = TriageListEntriesResultV1Schema.parse(await fixture.readEntries({
+            v: 1, sources: { kind: 'allConfigured' }, limit: 30, order: 'newest',
+        }));
+        const task = result.window.lanes.find(lane => lane.sourceInstanceId === INTERNAL_INSTANCE_ID);
+        expect(task?.health).toMatchObject({ kind: 'unavailable', error: {
+            code: 'task_storage_unavailable', requestId: 'task-list-17', retryable: false,
+        } });
+        expect(result.window.rows.length).toBeGreaterThan(0);
+        expect(result.window.rows.every(row => row.content?.sourceInstanceId !== INTERNAL_INSTANCE_ID)).toBe(true);
+    });
     /**
      * The `r0.16` ruling is that no provider entity is durable anywhere. Nothing
      * proved it at the one place a resurrected cache would actually be written:

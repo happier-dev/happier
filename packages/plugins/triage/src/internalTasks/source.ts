@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import { triageTaskWriteInvocationFailureV1 } from '../actions/taskWriteFailure.js';
 
@@ -58,7 +59,7 @@ async function readTasks(context: TaskReadContext): Promise<TaskList | null> {
   try {
     const result = await context.services.actions.execute('tasks.internal.list', {}, { signal: context.signal });
     return !isPluginActionApprovalRequestCreated(result) && result.status === 'ok' ? result : null;
-  } catch (error) { if (context.signal.aborted) throw error; return null; }
+  } catch (error) { if (context.signal.aborted || isPluginError(error)) throw error; return null; }
 }
 export { readTasks as readInternalTaskList };
 
@@ -68,7 +69,7 @@ async function readTask(localRef: TriageSourceEntryLocalRefV1, context: TaskRead
     const result = await context.services.actions.execute('tasks.internal.read', { taskId: localRef.entryId,
       ...(ownerAccountId === undefined ? {} : { ownerAccountId }) }, { signal: context.signal });
     return !isPluginActionApprovalRequestCreated(result) && (result.status === 'applied' || result.status === 'refused') ? result : null;
-  } catch (error) { if (context.signal.aborted) throw error; return null; }
+  } catch (error) { if (context.signal.aborted || isPluginError(error)) throw error; return null; }
 }
 
 /** All projections join owner-relative parent ids; unreadable siblings leave membership unknown. */
@@ -205,7 +206,11 @@ export async function getInternalTask(input: TriageGetInputV1, context: TriageDa
   const task = result.todo;
   const owner = ownerOf(task, result);
   // The exact read owns task content/access. One existing list read supplies the inverse parent relation.
-  const relations = await readTasks(context);
+  const relations = await readTasks(context).catch(error => {
+    // Inverse children enrich the exact Task read; their absence does not hide its content.
+    if (context.signal.aborted) throw error;
+    return null;
+  });
   const children = relations === null ? undefined : indexChildren(relations, [task]).get(taskKey(task.id, owner));
   return taskGetResult(task, result, input.localRef, children);
 }

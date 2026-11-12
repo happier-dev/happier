@@ -15,6 +15,7 @@ import {
     type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { defineProtocolLiteral, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 
@@ -272,6 +273,7 @@ export type TriageReviewWorkspacePreparationDepsV1 = Readonly<{
 export type TriageWorkspacePreparationFailureV1 = Readonly<{
     reason: 'refused' | 'failed';
     retryable: boolean;
+    failure?: TriageNewSessionFailureV1;
 }>;
 
 export type TriageResolvedEntrySessionWorkspaceV1 =
@@ -371,8 +373,9 @@ function reviewEligibilityFor(
 function failureFor(
     result: Exclude<TriagePrepareReviewWorkspaceResultV1, Readonly<{ kind: 'prepared' }>>,
 ): TriageResolvedEntrySessionWorkspaceV1 {
-    if (result.kind === 'unavailable') {
-        return { status: 'failed', failure: { reason: 'failed', retryable: true } };
-    }
-    return REFUSED_TERMINAL;
+    const failure = projectTriageNewSessionFailureV1('failure' in result ? result.failure : undefined);
+    return { status: 'failed', failure: {
+        ...(result.kind === 'unavailable' ? { reason: 'failed' as const, retryable: true } : TRIAGE_WORKSPACE_PREPARATION_REFUSED_V1),
+        ...(failure === undefined ? {} : { failure }),
+    } };
 }

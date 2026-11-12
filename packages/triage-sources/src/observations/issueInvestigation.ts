@@ -1,6 +1,6 @@
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
-import type { TriageSessionHandoffInputV1, TriageSessionHandoffSelectionV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceFailureV1Schema, type TriageSessionHandoffInputV1, type TriageSessionHandoffSelectionV1 } from '@happier-dev/triage-protocol/v1';
 import {
   readTriageSessionHandoffChoicesV1, requestTriageSessionHandoffV1, type TriageSessionHandoffHostV1,
 } from '../sessionHandoff.js';
@@ -12,22 +12,26 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** Only closed codes become notice text; exception messages and recovery are private. */
-function failure(code: unknown, attempted: boolean): string {
-  if (attempted) return code === 'permission_denied' ? `${uncertain} Access was denied.`
-    : code === 'machine_unavailable' ? `${uncertain} Its Machine is unavailable.` : uncertain;
-  switch (code) {
-    case 'machine_unavailable': return "Automatic investigation couldn't start: its Machine is unavailable.";
-    case 'permission_denied': return "Automatic investigation couldn't start: access was denied.";
-    case 'approval_required': return approval;
-    default: return "Automatic investigation couldn't start: the configured Action is unavailable.";
+/** Keep typed technical references, never exception messages or private recovery. */
+function failure(code: unknown, attempted: boolean, requestId?: string): string {
+  let message = attempted ? code === 'permission_denied' ? `${uncertain} Access was denied.`
+    : code === 'machine_unavailable' ? `${uncertain} Its Machine is unavailable.` : uncertain
+    : "Automatic investigation couldn't start: the configured Action is unavailable.";
+  if (!attempted) switch (code) {
+    case 'machine_unavailable': message = "Automatic investigation couldn't start: its Machine is unavailable."; break;
+    case 'permission_denied': message = "Automatic investigation couldn't start: access was denied."; break;
+    case 'approval_required': message = approval; break;
   }
+  const reference = TriageSourceFailureV1Schema.safeParse({ class: 'unknown', code,
+    ...(requestId === undefined ? {} : { requestId }) });
+  return reference.success ? [message, `Code: ${reference.data.code}`,
+    ...(reference.data.requestId === undefined ? [] : [`Request ID: ${reference.data.requestId}`])].join('\n') : message;
 }
 
 /** The client already validated the handoff. Present its result without retaining recovery custody. */
 function noticeOutcome(response: unknown, attempted = true): string | null {
   if (!record(response)) return failure(undefined, attempted);
-  if (response.ok === false) return failure(response.errorCode, attempted && response.effectAttempted !== false);
+  if (response.ok === false) return failure(response.errorCode, attempted && response.effectAttempted !== false, typeof response.requestId === 'string' ? response.requestId : readPluginErrorRequestIdV1(response));
   const result = response.ok === true ? response.result : response;
   if (isPluginActionApprovalRequestCreated(result)) return approval;
   if (!record(result) || !record(result.handoff)) return failure(undefined, attempted);
@@ -76,7 +80,7 @@ export async function readTriageIssueAutomaticInvestigationChoiceV1(
     return selection ?? failure(undefined, false);
   } catch (error) {
     options.signal.throwIfAborted();
-    return failure(isPluginError(error) ? error.code : undefined, false);
+    return failure(isPluginError(error) ? error.code : undefined, false, isPluginError(error) ? readPluginErrorRequestIdV1(error) : undefined);
   }
 }
 
@@ -107,6 +111,6 @@ export async function requestTriageAutomaticInvestigationV1(
     return noticeOutcome(response);
   } catch (error) {
     options.signal.throwIfAborted();
-    return failure(isPluginError(error) ? error.code : undefined, true);
+    return failure(isPluginError(error) ? error.code : undefined, true, isPluginError(error) ? readPluginErrorRequestIdV1(error) : undefined);
   }
 }

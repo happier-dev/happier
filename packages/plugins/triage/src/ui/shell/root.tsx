@@ -425,7 +425,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [props.actionEditor]);
   const pageLocation = props.subPath;
   const launchActionEditor = React.useCallback((actionId?: string) => {
-    openTriageActionEditorV1(hostApi, { ...(actionId === undefined ? {} : { actionId }), subPath: pageLocation ?? '' });
+    return openTriageActionEditorV1(hostApi, { ...(actionId === undefined ? {} : { actionId }), subPath: pageLocation ?? '' });
   }, [hostApi, pageLocation]);
   const [creatingTask, setCreatingTask] = React.useState(props.createDraft !== undefined);
   const [localTaskDraft, setLocalTaskDraft] = React.useState<ReturnType<typeof stageTriageTaskDraft>>(null);
@@ -1640,7 +1640,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         setOpenSourceDetails(operation.expanded ? operation.sourceInstanceId : null);
         break;
       case 'setOrganizing': setOrganizing(operation.organizing); break;
-      case 'openActionEditor': launchActionEditor(operation.launch.actionId); break;
+      case 'openActionEditor': await launchActionEditor(operation.launch.actionId); break;
       case 'closeActionEditor': setEditingActions(false); break;
       case 'setAddSourceOpen':
         if (!editingSources || addSourceOffers.length < 2) return { status: 'unavailable' };

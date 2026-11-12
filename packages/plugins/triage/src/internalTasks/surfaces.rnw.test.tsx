@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cloneElement, type ReactElement } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, expect, it } from 'vitest';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit,
   type PluginUiSemanticSurfaceMount } from '@happier-dev/plugin-sdk/testing';
@@ -72,7 +73,8 @@ function accountData(options: Readonly<{ waitForSources?: Promise<void>; failSou
 }
 
 async function mountSurface(surface: RenderSurface, executeAction: ExecuteAction, launchInput?: TriageDetailSurfaceInputV1,
-  dataClient: PluginUiDataClient | null = accountData().client) {
+  dataClient: PluginUiDataClient | null = accountData().client,
+  handlers: NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']> = {}) {
   const adapter = createPluginUiRnwSemanticSurfaceAdapter();
   let mount: PluginUiSemanticSurfaceMount | undefined;
   let fixture!: PluginUiTestkit;
@@ -89,7 +91,7 @@ async function mountSurface(surface: RenderSurface, executeAction: ExecuteAction
         return mount;
       } },
       // Only the real host Action transport is substituted; the renderer and UI primitives remain real.
-      handlers: { executeAction },
+      handlers: { ...handlers, executeAction },
     });
   });
   mounted.push(fixture);
@@ -272,4 +274,52 @@ it('says why a shared task cannot be opened instead of a generic read failure', 
   const { fixture: revoked } = await mountSurface(renderDetail, () => ({ status: 'refused', reason: 'task_not_found' }),
     detailInput('task-b', 1, 'other'));
   await expect(revoked.getByText('This task isn’t shared with you anymore')).resolves.toBeDefined();
+});
+
+
+it('presents typed internal-task read failures with their Code and Request ID', async () => {
+  const failures: unknown[] = [];
+  const notifications: string[] = [];
+  const { fixture } = await mountSurface(renderDetail, () => {
+    throw new PluginError({ code: 'task_read_unavailable', message: 'Task read unavailable',
+      details: { requestId: 'internal-task-read-request' } });
+  }, detailInput(), undefined, {
+    presentActionFailure: async ({ failure }) => { failures.push(failure); return {
+      reason: 'Task read unavailable', nextStep: 'Retry', technicalDetails: [
+        { key: 'code', label: 'Code', value: failure.errorCode },
+        ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
+      ],
+    }; },
+    notify: async ({ message }) => { notifications.push(message); },
+  });
+  await expect(fixture.getByText('This task could not be read')).resolves.toBeDefined();
+  expect(failures).toEqual([expect.objectContaining({ errorCode: 'task_read_unavailable', requestId: 'internal-task-read-request' })]);
+  expect(notifications.join(' ')).toContain('Code: task_read_unavailable');
+  expect(notifications.join(' ')).toContain('Request ID: internal-task-read-request');
+});
+
+it('keeps a superseded internal-task read rejection quiet and the current task visible', async () => {
+  let rejectOld!: (reason: Error) => void;
+  let oldSignal: AbortSignal | undefined;
+  const failures: unknown[] = [];
+  const notifications: string[] = [];
+  const { fixture, updateInput } = await mountSurface(renderDetail, ({ input, signal }) => {
+    if (input !== null && typeof input === 'object' && !Array.isArray(input) && input.taskId === 'task-a') {
+      oldSignal = signal;
+      return new Promise((_resolve, reject) => { rejectOld = reject; });
+    }
+    return taskRead('task-b', 'Current task notes.');
+  }, detailInput(), undefined, {
+    presentActionFailure: async ({ failure }) => { failures.push(failure); return {
+      reason: 'Unexpected stale failure', nextStep: null, technicalDetails: [],
+    }; },
+    notify: async ({ message }) => { notifications.push(message); },
+  });
+  await act(async () => { await updateInput(detailInput('task-b', 2)); });
+  expect(oldSignal?.aborted).toBe(true);
+  await act(async () => { rejectOld(new PluginError({ code: 'task_read_unavailable',
+    details: { requestId: 'retired-task-read-request' } })); });
+  await expect(fixture.getByText('Current task notes.')).resolves.toBeDefined();
+  expect(failures).toEqual([]);
+  expect(notifications).toEqual([]);
 });

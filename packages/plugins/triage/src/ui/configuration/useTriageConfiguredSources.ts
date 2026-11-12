@@ -8,6 +8,7 @@ import { removeConfiguredSourceInstance } from '../../corpus/configuration/admin
 import { useTriageDurableAccount, type TriageDurableAccountV1 } from '../durable/accountDurableState.js';
 import { TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, type TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { isInternalTaskConfiguredInstanceV1 } from '../../internalTasks/configuration.js';
+import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 
 export type TriageMountedConfiguredSourceV1 = Readonly<{
   sourceInstanceId: string;
@@ -106,12 +107,13 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
       })));
       setAcceptedRead({ collections: durable.collections, sources, loaded: true, unavailableReason: null });
       return true;
-    } catch {
+    } catch (error) {
       if (signal.aborted || generation.current !== current) return false;
       setUnavailableReason(text('plugins.triage.surface.sources.unavailable', UNAVAILABLE_REASON));
+      await presentTriageMountedUiActionFailure(host, error, text);
       return false;
     }
-  }, [durable.collections, setUnavailableReason, text]);
+  }, [durable.collections, host, setUnavailableReason, text]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,12 +124,14 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
           if (controller.signal.aborted) { opened.dispose(); return; }
           watch = opened;
           void read(controller.signal);
-        }).catch(() => {
-          if (!controller.signal.aborted) setUnavailableReason(text('plugins.triage.surface.sources.unavailable', UNAVAILABLE_REASON));
+        }).catch(async (error: unknown) => {
+          if (controller.signal.aborted) return;
+          setUnavailableReason(text('plugins.triage.surface.sources.unavailable', UNAVAILABLE_REASON));
+          await presentTriageMountedUiActionFailure(host, error, text);
         });
     } else void read(controller.signal);
     return () => { controller.abort(); watch?.dispose(); };
-  }, [dataClient, read, setUnavailableReason, text]);
+  }, [dataClient, host, read, setUnavailableReason, text]);
 
   const remove = useCallback(async (sourceInstanceId: string): Promise<boolean> => {
     if (!loaded || durable.collections === null || busySourceInstanceId !== null || unavailableReason !== null) {
@@ -168,6 +172,7 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
       }
       return await read(controller.signal);
     } catch (error) {
+      await presentTriageMountedUiActionFailure(host, error, text);
       if (isPluginError(error) && error.code === 'denied') {
         setNotice({ kind: 'refused', message: text('happier.plugin-ui.action.error.denied', 'This isn’t allowed here.') });
         return false;

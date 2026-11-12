@@ -9,15 +9,18 @@ import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PR
 import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
 import { createTriageConfiguredActionHost } from '../actions/configuredActionHost.js';
 import { TriageLegacyRunConfiguredActionResultV1Schema as TriageRunConfiguredActionResultV1Schema,
-    TriageRunConfiguredActionInputV1Schema as TriagePublicHandoffActionInputV1Schema } from '../actions/configuredActionRunProtocol.js';
+    TriageRunConfiguredActionInputV1Schema as TriagePublicHandoffActionInputV1Schema,
+    TriageRunConfiguredActionResultV1Schema as TriagePublicHandoffActionResultV1Schema } from '../actions/configuredActionRunProtocol.js';
 import { TriageReadActionsResultV1Schema } from '../actions/actionsCatalogProtocol.js';
 import type { TriageActionV1 } from '../settings/actions.js';
+import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
 import { startTriageEntrySession } from '../actions/entrySession.js';
 import { TriageStartEntrySessionInputV1Schema, TriageStartEntrySessionResultV1Schema, TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
 import { createTestkitActionInvoker, createTestkitEntrySessionLinkWriter, createTestkitSourceSessionRelations, spawnSuccess, testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, testkitTriageActionId as triageBoundaryActionId } from './testkit/entrySessionTestkit.test-support.js';
 import { resolveTriageEntryForDispatch } from '../composer/resolveForDispatch.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunHostV1, type TriageConfiguredActionRunRequestV1 } from './configuredActionRun.js';
+import { createTriageEntrySessionStartController, type TriageStartHostV1 } from './entrySessionStartController.js';
 import { createTriageBulkEntrySessionsController } from './bulkEntrySessionsController.js';
 import { continueTriagePullRequestReviewV1 } from './pullRequestReviewContinuation.js';
 import { readTriageActionsForSurface } from '../actions/actionsCatalog.js';
@@ -46,7 +49,7 @@ function parseHandoffInput(value: unknown) {
 function parseEntryExecutionInput(input: Readonly<{
     v: 1; actionId: string; destination: TriageConfiguredActionRunRequestV1['destination'];
     entries: NonNullable<TriageConfiguredActionRunRequestV1['selectedEntries']>;
-    drafts?: readonly unknown[]; reviewChoices?: unknown; resumeStart?: unknown; resumeReview?: unknown;
+    drafts?: readonly unknown[]; reviewChoices?: unknown; resumeStart?: unknown; resumeReview?: unknown; singleIntent?: unknown;
 }>) {
     const { actionId, destination, entries, ...choices } = input;
     return parseHandoffInput({ ...choices, handoff: {
@@ -86,6 +89,96 @@ function projectOperation(sourceWorkspace = acceptedWorkspace.checkout) {
 }
 
 describe('configured action execution through the shared Session owner', () => {
+    it.each([
+        { name: 'split Add instructions', actionId: action.actionId, singleIntent: { kind: 'configured', launchMode: 'review' }, prompt: 'Repair this issue.' },
+        { name: 'human-edited orchestration', actionId: 'orchestrate-issue', singleIntent: { kind: 'orchestrate', prompt: 'Coordinate the fix and its verification.' }, prompt: 'Coordinate the fix and its verification.' },
+    ])('carries $name through the public configured operand to the ordinary composer', async ({ actionId, singleIntent, prompt }) => {
+        const seeds: unknown[] = [];
+        const input = parseEntryExecutionInput({ v: 1, actionId, destination: 'single',
+            entries: [{ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }],
+            singleIntent,
+        });
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async (seed: unknown) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + id);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Host UI/Action transports are the external boundary.
+        const result = await runTriageConfiguredActionV1(host, { actionId,
+            entries: [entry], destination: 'single', singleIntent: input.singleIntent });
+        expect(result.status).toBe('seeded');
+        expect(seeds).toHaveLength(1);
+        expect(seeds[0]).toMatchObject({ prompt });
+    });
+
+    it('carries Walk through into the incumbent composer when no linked Session can open', async () => {
+        const comparison = { kind: 'pullRequest', locator: { providerId: 'forge', repository: 'example/repository', number: 17,
+            baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } } as const;
+        const seeds: unknown[] = [];
+        const input = parseEntryExecutionInput({ v: 1, actionId: 'walk-comparison', destination: 'single',
+            entries: [{ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }],
+            singleIntent: { kind: 'comparison', comparison } });
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async (seed: unknown) => { seeds.push(seed); },
+            executeAction: async (id: string) => {
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + id);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Only external authoring and Action transport are replaced.
+        const result = await runTriageConfiguredActionV1(host, { actionId: 'walk-comparison',
+            entries: [{ ...entry, workflowSubject: 'pullRequest' }], destination: 'single', singleIntent: input.singleIntent });
+        expect(result.status).toBe('seeded');
+        expect(seeds).toHaveLength(1);
+        expect(seeds[0]).toMatchObject({ attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })] });
+    });
+
+    it('retains workspace recovery guidance and diagnostic identity through a configured composer refusal', async () => {
+        const host = {
+            version: () => ({ methods: ['openNewSession'] }),
+            openNewSession: async () => { throw new PluginError({ code: 'workspaceMismatch', details: { requestId: 'seed-request' } }); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + id);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Only host authoring and transport are external boundaries.
+        const result = await runTriageConfiguredActionV1(host, { actionId: action.actionId, entries: [entry], destination: 'single',
+            singleIntent: { kind: 'configured', launchMode: 'review' } });
+        const publicResult = TriagePublicHandoffActionResultV1Schema.parse({ ...result, handoff: { kind: 'entryExecution', status: result.status } });
+        expect.soft(publicResult).toMatchObject({ status: 'unavailable', reason: 'newSessionUnavailable',
+            failure: { codes: ['workspaceMismatch'], requestId: 'seed-request' } });
+        expect.soft(describeTriageEntrySessionPhaseV1({ kind: 'handoffSettled', result: publicResult })?.labelKey)
+            .toBe('plugins.triage.surface.session.workspaceMismatch');
+    });
+
+    it.each(['attachAllToNewSession', 'oneSessionPerEntry'] as const)('retains a typed bulk %s refusal through the public result', async (destination) => {
+        const host = {
+            version: () => ({ methods: ['openNewSession', 'selectActionInput'] }),
+            openNewSession: async () => { throw new PluginError({ code: 'authoring_unavailable', details: { requestId: 'bulk-authoring-17' } }); },
+            selectActionInput: async () => { throw new PluginError({ code: 'authoring_unavailable', details: { requestId: 'bulk-authoring-17' } }); },
+            executeAction: async (id: string) => {
+                if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                if (id === 'projects.list') return { items: [], truncated: false };
+                throw new Error('Unexpected host Action ' + id);
+            },
+        } as unknown as TriageConfiguredActionRunHostV1; // Only host authoring and transport are external boundaries.
+        const result = await runTriageConfiguredActionV1(host, { actionId: action.actionId, entries: [entry], destination });
+        const publicResult = TriagePublicHandoffActionResultV1Schema.parse({ ...result, handoff: { kind: 'entryExecution', status: result.status } });
+        expect(publicResult).toMatchObject({ status: 'unavailable', reason: 'newSessionUnavailable',
+            failure: { codes: ['authoring_unavailable'], requestId: 'bulk-authoring-17' } });
+        const owner = createTriageBulkEntrySessionsController(host);
+        try {
+            await owner.getSnapshot().prepareAction({ action, destination, entries: [entry] }, { signal: new AbortController().signal });
+            owner.getSnapshot().settleAction({ status: 'success', result: publicResult });
+            expect(owner.getSnapshot().phase).toMatchObject({ kind: 'unavailable',
+                failure: { codes: ['authoring_unavailable'], requestId: 'bulk-authoring-17' } });
+        } finally { owner.dispose(); }
+    });
+
     it('retains a typed catalog transport refusal in the configured handoff', async () => {
         const controller = new AbortController();
         const host = createTriageConfiguredActionHost({ signal: controller.signal,
@@ -1648,7 +1741,7 @@ describe('configured action execution through the shared Session owner', () => {
         expect(result).toMatchObject({ status: 'cancelled', recovery: { state: { kind: 'single' } } });
     });
 
-    it.each([false, true, 'partial', 'disabled', 'disabledWhileChoosing'] as const)('does not report prepared formal Review as complete (explicit engines: %s)', async (hasChoices) => {
+    it.each([false, true, 'partial', 'disabled', 'disabledWhileChoosing', 'openFailure', 'continuationFailure'] as const)('does not report prepared formal Review as complete (explicit engines: %s)', async (hasChoices) => {
         const reviewAction = { ...action, actionId: 'fix', appliesTo: ['pullRequest'], workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review this pull request.' },
         } as const satisfies TriageActionV1;
@@ -1693,11 +1786,15 @@ describe('configured action execution through the shared Session owner', () => {
                 if (triageBoundaryActionId(id) === 'sessions/start-entry-v1') return { v: 1, type: 'linked', sessionId: 'session-a', disposition: 'created',
                     delivery: 'none', finalOpen: 'deferred', review };
                 if (id === 'sessions/start-pull-request-review-v1') {
+                    if (hasChoices === 'continuationFailure') throw new PluginError({ code: 'review_transport_unavailable', details: { requestId: 'review-continue-17' } });
                     expect(input).toMatchObject({ sessionId: 'session-a', engineIds,
                         instructions: reviewAction.target.seededFallbackInstruction, review });
                     return { v: 1, status: 'started', startedEngineIds: ['engine-a'], failedEngineIds };
                 }
-                if (id === 'session.open') return null;
+                if (id === 'session.open') {
+                    if (hasChoices === 'openFailure') throw new PluginError({ code: 'session_navigation_unavailable', details: { requestId: 'review-open-17' } });
+                    return null;
+                }
                 throw new Error(`unexpected Action ${id}`);
             },
         } as unknown as TriageConfiguredActionRunHostV1; // Exact daemon RPC and host selection boundaries.
@@ -1707,7 +1804,14 @@ describe('configured action execution through the shared Session owner', () => {
             } }], ...(launchImmediately ? { reviewChoices: { engineIds, launchSelection: {} } } : {}),
         };
         const result = await runTriageConfiguredActionV1(host, request);
-        expect(result).toMatchObject({ status: hasChoices === 'partial' ? 'reviewPartial' : launchImmediately ? 'reviewStarted' : 'awaitingReview' });
+        expect(result).toMatchObject({ status: hasChoices === 'continuationFailure' ? 'reviewUnknown' : hasChoices === 'partial' ? 'reviewPartial' : launchImmediately ? 'reviewStarted' : 'awaitingReview' });
+        if (hasChoices === 'openFailure' || hasChoices === 'continuationFailure') {
+            expect(result).toMatchObject({ result: { type: 'linked', sessionId: 'session-a' },
+                failure: { codes: [hasChoices === 'openFailure' ? 'session_navigation_unavailable' : 'review_transport_unavailable'],
+                    requestId: hasChoices === 'openFailure' ? 'review-open-17' : 'review-continue-17' } });
+            expect(events.filter(id => id === 'sessions/start-entry-v1')).toHaveLength(1);
+            return;
+        }
         expect(events.includes('sessions/start-pull-request-review-v1')).toBe(launchImmediately);
         if (launchImmediately) expect(result.reviewResult).toMatchObject({ startedEngineIds: ['engine-a'], failedEngineIds });
         if (hasChoices === 'partial') expect(events).not.toContain('session.open');
@@ -1859,11 +1963,38 @@ describe('configured action execution through the shared Session owner', () => {
                 expect(result).toMatchObject(destination === 'single'
                     ? { status: 'unavailable', reason: 'startOutcomeUnknown' } : { status: 'bulk' });
                 expect(result.recovery).toBeDefined();
-                const { drafts: _initialDrafts, ...continuationInput } = configuredInput;
+                let preparedResume;
+                if (destination === 'single') {
+                    const uiOwner = createTriageEntrySessionStartController({} as TriageStartHostV1);
+                    const uiRequest = { ...entry, action, requestedTask: 'fix' as const };
+                    try {
+                        await uiOwner.getSnapshot().prepareAction(uiRequest, { signal: new AbortController().signal });
+                        uiOwner.getSnapshot().settleAction({ status: 'success', result });
+                        await uiOwner.getSnapshot().prepareAction(uiRequest, { signal: new AbortController().signal });
+                        uiOwner.getSnapshot().settleAction({ status: 'outcomeUnknown', code: 'timeout', message: 'Lost outer response' });
+                        expect(await uiOwner.getSnapshot().prepareAction({ ...uiRequest, entryRef: { ...entry.entryRef, entryId: 'another' } },
+                            { signal: new AbortController().signal })).toBeNull();
+                        preparedResume = await uiOwner.getSnapshot().prepareAction(uiRequest, { signal: new AbortController().signal });
+                    } finally { uiOwner.dispose(); }
+                } else {
+                    const uiOwner = createTriageBulkEntrySessionsController(host);
+                    const uiRequest = { action, entries, destination };
+                    try {
+                        await uiOwner.getSnapshot().prepareAction(uiRequest, { signal: new AbortController().signal });
+                        uiOwner.getSnapshot().settleAction({ status: 'success', result });
+                        await uiOwner.getSnapshot().prepareRetryAction({ signal: new AbortController().signal });
+                        uiOwner.getSnapshot().settleAction({ status: 'outcomeUnknown', code: 'timeout', message: 'Lost outer response' });
+                        expect(uiOwner.getSnapshot().retryable).toBe(true);
+                        expect(await uiOwner.getSnapshot().prepareAction({ ...uiRequest, entries: [{ ...entry, entryRef: { ...entry.entryRef, entryId: 'another' } }] },
+                            { signal: new AbortController().signal })).toBeNull();
+                        preparedResume = await uiOwner.getSnapshot().prepareRetryAction({ signal: new AbortController().signal });
+                    } finally { uiOwner.dispose(); }
+                }
+                expect(preparedResume).not.toBeNull();
+                const continuationInput = parseHandoffInput(preparedResume?.input);
+                expect(continuationInput.resumeStart).toEqual(result.recovery);
                 providerUnavailable = true;
-                result = await handler(parseHandoffInput({
-                    ...continuationInput, resumeStart: JSON.parse(JSON.stringify(result.recovery)),
-                }), clientContext);
+                result = await handler(continuationInput, clientContext);
                 expect(await requestTriageSessionHandoffV1({ executeAction: async () => result }, configuredInput.handoff)).toBe(result);
                 expect(emitted.at(-1)).toEqual(emitted[destination === 'oneSessionPerEntry' ? 1 : 0]);
             }

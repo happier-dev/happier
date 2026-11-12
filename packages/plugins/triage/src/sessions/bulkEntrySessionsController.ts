@@ -1,9 +1,13 @@
-import type { PluginUiHostApi, PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginUiActionControlController, PluginUiHostApi, PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 import { buildQualifiedPluginContributionKey, PluginError } from '@happier-dev/plugin-sdk';
 
+import { isHostCancellation } from '../hostCancellation.js';
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import type { TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
 import { TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
+import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema, type TriageRunConfiguredActionInputV1, type TriageRunConfiguredActionResultV1 as TriagePublicConfiguredResultV1 } from '../actions/configuredActionRunProtocol.js';
 import type { TriageConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
@@ -44,6 +48,7 @@ import {
     type TriageNewSessionDraftHostV1,
 } from '../ui/header/newSessionDraftCommand.js';
 import {
+    projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1,
     type TriageNewSessionSeedHostV1,
 } from '../ui/header/newSessionSeedCommand.js';
 import type { TriageBulkSelectedEntryV1 } from '../ui/list/bulkSelectionEntries.js';
@@ -105,6 +110,17 @@ export type TriageBulkSessionOutcomeV1 = TriageBulkSessionUnitResultV1<
     TriageBulkSelectedEntryV1
 >;
 
+export type TriageBulkSettledPhaseV1 = Readonly<{
+    kind: 'settled';
+    failure?: TriageNewSessionFailureV1;
+    results: readonly TriageBulkSessionOutcomeV1[];
+    /** The exact List set this result and its same-key retries belong to. */
+    selectionKeys: readonly string[];
+    /** Selected rows this window could no longer supply a payload for. */
+    unavailableKeys: readonly string[];
+    refusals: readonly TriageBulkActionRefusalV1<Pick<TriageBulkSelectedEntryV1, 'entryRef'>>[];
+}>;
+
 export type TriageBulkSessionsPhaseV1 =
     | Readonly<{ kind: 'idle' }>
     /** The action's profile, prompt and placement are being resolved. */
@@ -118,16 +134,8 @@ export type TriageBulkSessionsPhaseV1 =
         outcomes: readonly TriageBulkEntryOutcomeV1[];
         refusals: readonly TriageBulkActionRefusalV1<TriageBulkSelectedEntryV1>[];
     }>
-    | Readonly<{
-        kind: 'settled';
-        results: readonly TriageBulkSessionOutcomeV1[];
-        /** The exact List set this result and its same-key retries belong to. */
-        selectionKeys: readonly string[];
-        /** Selected rows this window could no longer supply a payload for. */
-        unavailableKeys: readonly string[];
-        refusals: readonly TriageBulkActionRefusalV1<Pick<TriageBulkSelectedEntryV1, 'entryRef'>>[];
-    }>
-    | Readonly<{ kind: 'unavailable'; reason: TriageBulkUnavailableReasonV1 }>;
+    | TriageBulkSettledPhaseV1
+    | Readonly<{ kind: 'unavailable'; reason: TriageBulkUnavailableReasonV1; failure?: TriageNewSessionFailureV1; lastSettlement?: TriageBulkSettledPhaseV1 }>;
 
 /**
  * Why nothing was started.
@@ -155,6 +163,7 @@ export type TriageBulkUnavailableReasonV1 =
     /** The catalog did not answer; the reference may well still be good. */
     | 'profileUnavailable'
     | 'promptUnavailable'
+    | 'handoffOutcomeUnknown'
     | 'dispatch'
     /** Every selected row lost its connection or its observation. */
     | 'noEntriesAvailable';
@@ -170,8 +179,13 @@ function referenceRefusal(
 
 export type TriageBulkSessionsControllerV1 = Readonly<{
     phase: TriageBulkSessionsPhaseV1;
+    /** Retained Action-owned outcomes and recovery from the most recent settled run. */
+    configuredResult: TriagePublicConfiguredResultV1 | null;
     /** Ignored while a press is in flight; otherwise runs exactly one. */
     run: (request: TriageBulkSessionsRequestV1) => void;
+    prepareAction: (request: TriageBulkSessionsRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0]) => ReturnType<PluginUiActionControlController['prepare']>;
+    prepareRetryAction: PluginUiActionControlController['prepare'];
+    settleAction: (execution: PluginActionExecution) => void;
     retryable: boolean;
     retry: () => void;
     /**
@@ -191,9 +205,11 @@ export function canRetryTriageBulkSessionsForSelectionV1(
     state: Pick<TriageBulkSessionsControllerV1, 'phase' | 'retryable'>,
     selected: ReadonlySet<string>,
 ): boolean {
-    return state.retryable && state.phase.kind === 'settled'
-        && selected.size === state.phase.selectionKeys.length
-        && state.phase.selectionKeys.every((key) => selected.has(key));
+    const settlement = state.phase.kind === 'settled' ? state.phase
+        : state.phase.kind === 'unavailable' && state.phase.reason === 'handoffOutcomeUnknown' ? state.phase.lastSettlement : undefined;
+    return state.retryable && settlement !== undefined
+        && selected.size === settlement.selectionKeys.length
+        && settlement.selectionKeys.every((key) => selected.has(key));
 }
 
 export type TriageBulkSessionsRequestV1 = Readonly<{
@@ -212,8 +228,8 @@ const RESOLVING: TriageBulkSessionsPhaseV1 = Object.freeze({ kind: 'resolving' }
 const CHOOSING: TriageBulkSessionsPhaseV1 = Object.freeze({ kind: 'choosing' });
 const START_ENTRY_ACTION_ID = buildQualifiedPluginContributionKey({ pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 });
 
-function unavailable(reason: TriageBulkUnavailableReasonV1): TriageBulkSessionsPhaseV1 {
-    return Object.freeze({ kind: 'unavailable', reason });
+function unavailable(reason: TriageBulkUnavailableReasonV1, failure?: TriageNewSessionFailureV1): TriageBulkSessionsPhaseV1 {
+    return Object.freeze({ kind: 'unavailable', reason, ...(failure === undefined ? {} : { failure }) });
 }
 
 export function isTriageBulkSessionOutcomeRetryableV1(
@@ -652,6 +668,7 @@ export function createTriageBulkEntrySessionsController(
 
     const run = (request: TriageBulkSessionsRequestV1) => {
         if (inFlight.current) return;
+        clearConfiguredProjection();
         retryContext.current = null;
         const action = request.action;
         if (requiresTriageActionInstructionV1(action.target)
@@ -831,7 +848,7 @@ export function createTriageBulkEntrySessionsController(
                     }
                     if (seeded.status !== 'seeded') {
                         setPhase(unavailable(seeded.status === 'refused' ? seeded.reason
-                            : seeded.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable'));
+                            : seeded.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable', seeded.status === 'unavailable' ? seeded.failure : undefined));
                         return;
                     }
                     setPhase(Object.freeze({
@@ -882,7 +899,7 @@ export function createTriageBulkEntrySessionsController(
                     if (draft.status !== 'settled') {
                         setPhase(unavailable(draft.status === 'unsupported'
                             ? 'newSessionUnsupported'
-                            : 'newSessionUnavailable'));
+                            : 'newSessionUnavailable', draft.status === 'unavailable' ? draft.failure : undefined));
                         return;
                     }
                     const admitted = projectTriageNewSessionDestinationV1({
@@ -950,9 +967,9 @@ export function createTriageBulkEntrySessionsController(
                     unavailableKeys: request.unavailableKeys ?? [],
                     refusals: plan.refusals,
                 }));
-            } catch {
+            } catch (error) {
                 if (!retired.current) {
-                    setPhase(stopped || controller.signal.aborted ? IDLE : unavailable('dispatch'));
+                    setPhase(stopped || isHostCancellation(error, controller.signal) ? IDLE : unavailable('dispatch', projectTriageNewSessionFailureV1(error)));
                 }
             } finally {
                 inFlight.current = false;
@@ -1020,10 +1037,12 @@ export function createTriageBulkEntrySessionsController(
                 });
                 setPhase(Object.freeze({
                     ...prior,
+                    failure: undefined,
                     results: mergeTriageBulkRetryResultsV1(prior.results, retried),
                 }));
-            } catch {
-                if (!retired.current) setPhase(prior);
+            } catch (error) {
+                if (!retired.current) setPhase(stopped || isHostCancellation(error, controller.signal) ? prior
+                    : { ...prior, failure: projectTriageNewSessionFailureV1(error) });
             } finally {
                 inFlight.current = false;
                 notify();
@@ -1054,11 +1073,99 @@ export function createTriageBulkEntrySessionsController(
             await cancel();
             return;
         }
+        clearConfiguredProjection();
         retryContext.current = null;
         setPhase(IDLE);
     };
 
-    const readSnapshot = (): TriageBulkSessionsControllerV1 => Object.freeze({ phase, run, retryable: readRetryable(), retry, cancel, reset });
+    let configuredRequest: TriageBulkSessionsRequestV1 | null = null;
+    let configuredInput: TriageRunConfiguredActionInputV1 | null = null;
+    let configuredResult: TriagePublicConfiguredResultV1 | null = null;
+    let releasePreparation: (() => void) | undefined;
+    let configuredOutcomeUnknown = false;
+    let configuredSettlement: TriageBulkSettledPhaseV1 | undefined;
+    const clearConfiguredProjection = () => {
+        releasePreparation?.();
+        releasePreparation = undefined;
+        configuredRequest = null;
+        configuredInput = null;
+        configuredResult = null;
+        configuredOutcomeUnknown = false;
+        configuredSettlement = undefined;
+    };
+    const markConfiguredOutcomeUnknown = () => {
+        configuredOutcomeUnknown = true;
+        if (!retired.current) setPhase({ kind: 'unavailable', reason: 'handoffOutcomeUnknown',
+            ...(configuredSettlement === undefined ? {} : { lastSettlement: configuredSettlement }) });
+    };
+    const prepareAction: TriageBulkSessionsControllerV1['prepareAction'] = (request, options) => {
+        if (inFlight.current || retired.current || options.signal.aborted || configuredOutcomeUnknown && configuredResult?.recovery === undefined || request.entries.length === 0) return null;
+        const entries = request.entries.map(entry => ({ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }));
+        const handoff = { task: 'fix', configuredActionId: request.action.actionId,
+            context: { kind: 'entries', entries, destination: request.destination },
+            evidence: entries.map(entry => ({ kind: 'entry', entry })), sessionChoice: { kind: 'configured' },
+            agentChoice: { kind: 'configured' }, delivery: 'configured' };
+        const sameRequest = configuredInput !== null && JSON.stringify(configuredInput.handoff) === JSON.stringify(handoff);
+        if (configuredOutcomeUnknown && !sameRequest) return null;
+        const recovery = sameRequest ? configuredResult?.recovery : undefined;
+        if (!sameRequest) { configuredResult = null; configuredSettlement = undefined; }
+        configuredInput = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff, ...(recovery === undefined ? {} : { resumeStart: recovery }) });
+        configuredRequest = request;
+        inFlight.current = true;
+        const cancel = () => { inFlight.current = false; markConfiguredOutcomeUnknown(); };
+        options.signal.addEventListener('abort', cancel, { once: true });
+        releasePreparation = () => options.signal.removeEventListener('abort', cancel);
+        setPhase(RESOLVING);
+        return { input: projectNativeJsonValueForTransport(configuredInput) };
+    };
+    const prepareRetryAction: TriageBulkSessionsControllerV1['prepareRetryAction'] = options => configuredRequest === null || configuredResult?.recovery === undefined
+        ? null : prepareAction(configuredRequest, options);
+    const settleAction: TriageBulkSessionsControllerV1['settleAction'] = execution => {
+        releasePreparation?.(); releasePreparation = undefined;
+        inFlight.current = false;
+        if (retired.current || configuredRequest === null) return;
+        if (execution.status === 'idle' || execution.status === 'pending') return;
+        if (execution.status === 'error') { setPhase(unavailable('dispatch', {
+            codes: [execution.code, ...(execution.diagnostics ?? []).map(diagnostic => diagnostic.code)],
+            ...(execution.requestId === undefined ? {} : { requestId: execution.requestId }),
+        })); return; }
+        const parsed = execution.status === 'success' ? TriageRunConfiguredActionResultV1Schema.safeParse(execution.result) : null;
+        if (!parsed?.success) { markConfiguredOutcomeUnknown(); return; }
+        configuredResult = parsed.data;
+        configuredOutcomeUnknown = false;
+        const result = parsed.data;
+        const request = configuredRequest;
+        const results: TriageBulkSessionOutcomeV1[] = (result.results ?? []).map(retained => {
+            const entries = retained.entryRefs.flatMap(ref => request.entries.filter(entry => sameTriageEntryReference(entry.entryRef, ref)));
+            const unit = { creationKey: retained.creationKey, entries };
+            return retained.status === 'settled'
+                ? { unit, status: 'settled', outcome: { start: retained.start, entries: retained.entries } }
+                : { unit, status: retained.status };
+        });
+        const refusals: Extract<TriageBulkSessionsPhaseV1, { kind: 'settled' }>['refusals'][number][] = [];
+        for (const refusal of result.refusals ?? []) {
+            if (refusal.reason === 'workflowSubjectUnavailable' || refusal.reason === 'actionInapplicable') {
+                refusals.push({ entry: { entryRef: refusal.entryRef }, reason: refusal.reason });
+            }
+        }
+        if (result.status === 'seeded') {
+            const fullRefusals = refusals.flatMap(refusal => {
+                const entry = request.entries.find(entry => sameTriageEntryReference(entry.entryRef, refusal.entry.entryRef));
+                return entry === undefined ? [] : [{ entry, reason: refusal.reason }];
+            });
+            setPhase({ kind: 'seeded', outcomes: result.entries ?? [], refusals: fullRefusals });
+        } else if (result.status === 'cancelled') setPhase(IDLE);
+        else if (result.status === 'bulk') {
+            configuredSettlement = { kind: 'settled', results, refusals,
+                ...(result.failure === undefined ? {} : { failure: result.failure }),
+                selectionKeys: [...request.entries.map(entry => entry.key), ...(request.unavailableKeys ?? [])],
+                unavailableKeys: [...(result.unavailableKeys ?? []), ...(request.unavailableKeys ?? [])] };
+            setPhase(configuredSettlement);
+        }
+        else setPhase(unavailable('dispatch', result.failure));
+    };
+    const readSnapshot = (): TriageBulkSessionsControllerV1 => Object.freeze({ phase, run, prepareAction, prepareRetryAction, settleAction, configuredResult,
+        retryable: configuredInput === null ? readRetryable() : (phase.kind === 'settled' || configuredOutcomeUnknown && configuredSettlement !== undefined) && configuredResult?.recovery !== undefined, retry, cancel, reset });
     snapshot = readSnapshot();
     return Object.freeze({
         getSnapshot: () => snapshot,

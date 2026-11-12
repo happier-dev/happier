@@ -240,6 +240,7 @@ export async function assembleTriageListPass(
     const intended: TriageListIntendedSourceV1[] = [];
     const lanes: TriageScanLaneV1[] = [];
     let taskList: TaskList | null = null;
+    let taskReadFailure: Readonly<{ error: unknown }> | undefined;
     const unknownCompletedCoverage = new Set<string>();
     const configurationBySourceInstanceId = new Map(configuredRecords.map((record) => [
         record.value.configured.instance.sourceInstanceId,
@@ -351,12 +352,13 @@ export async function assembleTriageListPass(
             ...(resume === undefined
                 ? {}
                 : { resume: resume.continuation, pageLimit: resume.pageLimit }),
-            scan: (scanInput, scanOptions) => deps.readInternalTasks !== undefined && isInternalTaskConfiguredInstanceV1(scanInput.instance)
-                ? Promise.resolve(projectInternalTaskScan(scanInput, taskList)) : deps.executeScan(
-                contribution.operations.scan,
-                scanInput,
-                scanOptions,
-            ),
+            scan: (scanInput, scanOptions) => {
+                if (deps.readInternalTasks !== undefined && isInternalTaskConfiguredInstanceV1(scanInput.instance)) {
+                    return taskReadFailure === undefined ? Promise.resolve(projectInternalTaskScan(scanInput, taskList))
+                        : Promise.reject(taskReadFailure.error);
+                }
+                return deps.executeScan(contribution.operations.scan, scanInput, scanOptions);
+            },
         });
     }
 
@@ -392,7 +394,14 @@ export async function assembleTriageListPass(
     ];
     const taskLane = deps.readInternalTasks === undefined ? undefined
         : lanes.find(lane => isInternalTaskConfiguredInstanceV1(lane.configured));
-    if (taskLane !== undefined && lens.limit > 0) taskList = await deps.readInternalTasks!();
+    if (taskLane !== undefined && lens.limit > 0) {
+        try { taskList = await deps.readInternalTasks!(); }
+        catch (error) {
+            if (deps.signal?.aborted) throw error;
+            // The existing scan pass projects the native refusal on its lane while peers remain readable.
+            taskReadFailure = { error };
+        }
+    }
     const pass = await runTriageScanPass({
         lanes: orderedLanes,
         pageLimit,

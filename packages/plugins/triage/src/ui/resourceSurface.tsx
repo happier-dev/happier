@@ -18,7 +18,7 @@ import { useTriagePinnedEntries } from './marks/useTriagePinnedEntries.js';
 import { indexTriagePinsByEntry, projectTriageWindowRow } from './marks/pinnedRows.js';
 import { resolveTriageActionTargetV1 } from './state/actionTarget.js';
 import { useTriageSourcePanelActionsV1 } from './useSourcePanelActions.js';
-import { bindTriageMountedUiActions, executeTriageMountedUiAction } from './mountedActions.js';
+import { bindTriageMountedUiActions, executeTriageMountedUiAction, presentTriageMountedUiActionFailure } from './mountedActions.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { useTriageCurrentUiContextPublication } from './currentContextPublication.js';
 import { projectTriageEntryDisplay } from './window/entryDisplay.js';
@@ -119,7 +119,9 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const execute = React.useCallback((operation: TriageMountedUiOperationV1) => {
     executeTriageMountedUiAction(host, mountId, operation, text);
   }, [host, mountId, text]);
-  const editAction = React.useCallback((actionId: string) => { openTriageActionEditorV1(host, { actionId }); }, [host]);
+  const editAction = React.useCallback((actionId: string) => {
+    void openTriageActionEditorV1(host, { actionId }).catch(error => presentTriageMountedUiActionFailure(host, error, text));
+  }, [host, text]);
   const currentContext = React.useMemo<PluginUiContextEnrichmentV1>(() => {
     const command = (title: string, operation: TriageMountedUiOperationV1): CurrentUiCommandDeclarationV1 => ({
       title, command: { kind: 'executeAction', action: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, input: { mountId, operation } },
