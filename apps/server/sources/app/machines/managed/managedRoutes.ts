@@ -84,10 +84,11 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
             if (proof.custodianAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
             return { ...proof, requestAuthority: managedRequestAuthority(request) };
         }
-        // Home owns retained intent admission, including approved automation.
+        // Home owns retained intent admission, including paired-terminal automation.
         // admitManagedControl checks this actor's Manage role; a controller
         // signature belongs to later native submission, not this Account write.
-        if (options.admission && request.authTokenKind === 'account' && request.authTokenLegacy === false) {
+        if (options.admission && (request.authTokenKind === 'account' || request.authTokenKind === 'terminal')
+            && request.authTokenLegacy === false) {
             if (!input.requestId) throw new ManagedMachineError('request_conflict');
             return { requestId: input.requestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'intent' as const };
         }

@@ -2912,7 +2912,12 @@ describe('managed catalog original Account transport', () => {
     } finally { softwareAccount?.dispose(); await softwareRuntime.dispose(); restoreHttp(); await app.close(); await io.close(); }
   });
 
-  it.each(['plain', 'e2ee'] as const)('executes deferred power through CLI approval and real Home admission (%s)', async mode => {
+  it.each([
+    { mode: 'plain', credentialKind: 'account' },
+    { mode: 'e2ee', credentialKind: 'account' },
+    { mode: 'plain', credentialKind: 'terminal' },
+    { mode: 'e2ee', credentialKind: 'terminal' },
+  ] as const)('executes deferred power through CLI approval and real Home admission ($mode/$credentialKind)', async ({ mode, credentialKind }) => {
     const machineKey = new Uint8Array(32).fill(37);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
     const createAccount = async () => {
@@ -2923,10 +2928,12 @@ describe('managed catalog original Account transport', () => {
     };
     const account = await createAccount();
     const homeId = await getOrCreateServerIdentityId();
-    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const token = await createAccountTokenForTests(account.id, credentialKind === 'terminal'
+      ? { kind: 'terminal', authority: 'account_automation' } : { kind: 'account', authority: 'present_user' });
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
       : { type: 'dataKey', machineKey, publicKey } };
-    const controller = { machineId: `deferred-controller-${mode}`, installationId: `deferred-installation-${mode}` };
+    const controller = { machineId: `deferred-controller-${mode}-${credentialKind}`,
+      installationId: `deferred-installation-${mode}-${credentialKind}` };
     const provisioner = nativeFixture({ credentialPurposes: [], supportedIntents: ['start', 'stop', 'suspend', 'resume', 'delete'] });
     const manifest = PluginManifestV2Schema.parse(provisioner.runtimeRegistry.contributes.activationTargets[0]!.manifest);
     const declaration = createReleaseLessDeclarationV1(manifest);
@@ -2947,9 +2954,9 @@ describe('managed catalog original Account transport', () => {
       capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
     app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
-    const homeResponses: Array<{ path: string; status: number; authority?: string; signed?: boolean }> = [];
+    const homeResponses: Array<{ path: string; status: number; authority?: string; kind?: string; signed?: boolean }> = [];
     app.addHook('onResponse', async (request, reply) => { homeResponses.push({ path: request.url, status: reply.statusCode,
-      authority: request.authAuthority, signed: request.externalActionExecutionAuthorized }); });
+      authority: request.authAuthority, kind: request.authTokenKind, signed: request.externalActionExecutionAuthorized }); });
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
     const policy = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.presets.create': ['cli'] } });
     const makeExecutor = (credentials: StoredCredentials) => createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
@@ -2971,14 +2978,14 @@ describe('managed catalog original Account transport', () => {
       const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
         headers: { authorization: `Bearer ${token}` }, payload: { manifest } });
       expect(claim.statusCode, claim.payload).toBe(200);
-      const presetId = `deferred-preset-${mode}`;
+      const presetId = `deferred-preset-${mode}-${credentialKind}`;
       expect(await executor.execute('machines.presets.create', { id: presetId, homeId, name: 'Deferred guest',
         owner: { kind: 'account', accountId: account.id }, controller,
         launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, context)).toMatchObject({ ok: true });
       const admitted = ManagedAdmissionOutputV1Schema.parse(await admitManagedAcquire({ custodianAccountId: account.id,
         requesterAccountId: account.id, requestEnvelopeDigest: 'deferred-power-fixture', input: {
-          requestId: `deferred-acquire-${mode}`, continuationPresent: false, input: {
+          requestId: `deferred-acquire-${mode}-${credentialKind}`, continuationPresent: false, input: {
             enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 },
             controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -2992,11 +2999,12 @@ describe('managed catalog original Account transport', () => {
         { permitted: true, intent: 'suspend' }, { permitted: false, intent: 'stop' }] as const) {
         const actorAccount = permitted ? account : await createAccount();
         const actorCredentials = permitted ? credentials : { ...credentials, token: await createAccountTokenForTests(
-          actorAccount.id, { kind: 'account', authority: 'present_user' }) };
+          actorAccount.id, credentialKind === 'terminal' ? { kind: 'terminal', authority: 'account_automation' }
+            : { kind: 'account', authority: 'present_user' }) };
         const actor = permitted ? executor : makeExecutor(actorCredentials);
         const proposed = await actor.execute('machines.managed.power.set', {
           homeId, managedId: admitted.machine.id, when: 'after-idle', intent,
-        }, { ...context, authority: 'account_automation', actionRequestId: `deferred-${intent}-${mode}-${permitted}` });
+        }, { ...context, authority: 'account_automation', actionRequestId: `deferred-${intent}-${mode}-${credentialKind}-${permitted}` });
         expect(proposed, JSON.stringify({ proposed, homeResponses })).toMatchObject({ ok: true,
           result: { kind: 'approval_request_created', actionId: 'machines.managed.power.set' } });
         if (!proposed.ok || !proposed.result || typeof proposed.result !== 'object' || !('artifactId' in proposed.result)
@@ -3019,20 +3027,21 @@ describe('managed catalog original Account transport', () => {
           .toMatchObject({ desired: permitted ? intent : 'suspend', desiredWhen: 'after-idle', intentRevision });
       }
       expect(homeResponses.filter(response => response.path.endsWith('/admit-control'))).toMatchObject([
-        { status: 200, authority: 'account_automation' }, { status: 200, authority: 'account_automation' },
-        { status: 403, authority: 'account_automation' },
+        { status: 200, authority: 'account_automation', kind: credentialKind },
+        { status: 200, authority: 'account_automation', kind: credentialKind },
+        { status: 403, authority: 'account_automation', kind: credentialKind },
       ]);
       const nativeSubmit = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/submit-intent',
         headers: { authorization: `Bearer ${token}` }, payload: { homeId, managedId: admitted.machine.id,
-          expectedIntentRevision: intentRevision, requestId: `deferred-suspend-${mode}-true` } });
+          expectedIntentRevision: intentRevision, requestId: `deferred-suspend-${mode}-${credentialKind}-true` } });
       expect(nativeSubmit.statusCode, nativeSubmit.payload).toBe(403);
       expect(nativeSubmit.json()).toMatchObject({ code: 'permission_denied' });
       const terminalToken = await createAccountTokenForTests(account.id, { kind: 'terminal', authority: 'account_automation' });
-      const terminalAdmission = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control',
-        headers: { authorization: `Bearer ${terminalToken}` }, payload: { action: 'machines.managed.power.set',
-          requestId: `terminal-deferred-${mode}`, input: { homeId, managedId: admitted.machine.id, when: 'after-idle', intent: 'stop' } } });
-      expect(terminalAdmission.statusCode, terminalAdmission.payload).toBe(403);
-      expect(terminalAdmission.json()).toMatchObject({ code: 'permission_denied' });
+      const terminalSubmit = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/submit-intent',
+        headers: { authorization: `Bearer ${terminalToken}` }, payload: { homeId, managedId: admitted.machine.id,
+          expectedIntentRevision: intentRevision, requestId: `deferred-suspend-${mode}-${credentialKind}-true` } });
+      expect(terminalSubmit.statusCode, terminalSubmit.payload).toBe(403);
+      expect(terminalSubmit.json()).toMatchObject({ code: 'permission_denied' });
       expect(homeResponses.filter(response => /\/report-intent$/.test(response.path))).toEqual([]);
     } finally { restoreHttp(); await app.close(); }
   });
