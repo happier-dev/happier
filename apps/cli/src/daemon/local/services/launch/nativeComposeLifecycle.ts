@@ -18,7 +18,7 @@ import type { DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-s
 import type { MachineNativeEffectContext, MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
 import { resolveEnvironmentComposeProjectName } from '@/workspaces/projectSetup/projectNativeResolution';
-import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
+import { readNativeComposeSourceBytes } from './nativeComposeSource';
 import { assertStoredComposeToolSupport } from '@/workspaces/projectSetup/nativeComposeSource';
 import { projectNativeComposeReview, type NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentImageReferences, normalizeNativeComposePlatform,
@@ -1002,10 +1002,9 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         const toolVersion = (await run(['compose', 'version', '--short'], signal)).stdout.trim();
         const configInputDigests: { path: string; digest: string }[] = [];
         for (const file of files) {
-            const read = await readProjectDefinitionFileBytes(input.source.rootPath, file);
-            if (read.kind !== 'read') return nativeRefusal('deployment_source_unavailable');
-            configInputDigests.push({ path: file, digest: `sha256:${createHash('sha256').update(read.bytes).digest('hex')}` });
-            if (input.sourceKind === 'stored') await assertStoredComposeToolSupport(Buffer.from(read.bytes).toString('utf8'), toolVersion);
+            const bytes = await readNativeComposeSourceBytes(input.source.rootPath, file);
+            configInputDigests.push({ path: file, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` });
+            if (input.sourceKind === 'stored') await assertStoredComposeToolSupport(bytes.toString('utf8'), toolVersion);
         }
         // Compose also resolves bare environment entries and environment-backed
         // configs/secrets with --no-interpolate. Normalize with canonical tool
