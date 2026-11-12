@@ -24,11 +24,9 @@ import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseCha
 import { writeCredentialsLegacy, type Credentials } from '@/persistence';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
@@ -209,19 +207,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     createRuntime: ({ home, controller }) => createAuthoredAdmittedPluginRuntimeFixture({
       plugins, happyHomeDir: home, controller, coldStart: true, runtimeOptions: options.runtimeOptions,
       async resolveContributes(happyHomeDir) {
-        const bundledPluginIds = new Set(options.configFileAgent ? [] : [agentPluginId]);
-        const bundled = projectLoadedPluginContributes({
-          loadResult: {
-            loadedPlugins: loadCurrentBundledPluginLocatorResult().loadedPlugins
-              .filter(plugin => bundledPluginIds.has(plugin.pluginId)),
-            diagnosticsByPluginId: {},
-          },
-          provenance: 'first_party',
-        });
-        const builtIn = {
-          ...bundled,
-          agents: resolveBuiltInContributions().agents.filter(agent => bundledPluginIds.has(agent.pluginId ?? '')),
-        };
+        const builtIn = options.configFileAgent ? { agents: [] } : resolveBuiltInContributions();
         const external = await resolvePluginContributes({
           happyHomeDir, existingAgentIds: new Set(builtIn.agents.map(agent => agent.id)),
         });

@@ -1,3 +1,4 @@
+import { getSessionCommittedTranscriptLocalIds, loadCommittedTranscriptLocalIdBaseline } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -340,7 +341,12 @@ it.each(['bounded', 'retained', 'finite'] as const)('follows the child native so
             retentionPolicy: kind === 'retained' ? 'resumable' : 'ephemeral', ioMode: 'streaming' },
         session: { sessionId: 'session-parent', getMetadataSnapshot: () => ({ path: '/repo' }),
             updateMetadata: vi.fn(), updateAgentState: vi.fn(), enqueueAgentMessageCommitted: parentWrites,
-            fetchCommittedTranscriptLocalIdBaseline: async () => ({ complete: true, localIds: new Set(['already-written']) }),
+            async fetchCommittedTranscriptLocalIdBaseline(input: { signal?: AbortSignal; deadlineAtMs?: number }) {
+                return await loadCommittedTranscriptLocalIdBaseline({ ...input,
+                    localIds: getSessionCommittedTranscriptLocalIds(this),
+                    fetchPage: async () => ({ messages: [{ localId: 'already-written' }], hasMore: false, nextBeforeSeq: null }),
+                });
+            },
         } as never,
         sessionOwnedRunScope: { runId: 'host-voice-run', workDepth: 1, sidechainId: 'child-sidechain',
             readCurrentRunOccurrence: () => null, publishSupportedSessionReadActions() {},

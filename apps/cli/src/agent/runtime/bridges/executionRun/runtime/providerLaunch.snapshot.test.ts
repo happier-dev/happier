@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createServer } from 'node:http';
-import { convertBackendTargetRefV2ToV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
@@ -178,7 +178,8 @@ describe('execution-run pinned Provider preparation', () => {
                     // also be accepted by the runner's strict transport reader.
                     AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
                         context: { token: 'A'.repeat(43), sessionId: 'effort-session' },
-                        operation: { kind: 'execution_run.provider.admit_v1', ...request },
+                        operation: { kind: 'execution_run.provider.admit_v1', ...request,
+                            backendTarget: readBackendTargetRefV2(request.backendTarget) },
                     });
                     return { machineId: fixture.machineId, featureEnabled: true,
                     happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: snapshot, isCurrent: () => true,
@@ -343,7 +344,7 @@ describe('execution-run pinned Provider preparation', () => {
         } finally { await resources.release(); await fixture.cleanup(); }
     });
 
-    it('revalidates the current owning Account grant rather than its initial snapshot', async () => {
+    it('keeps an admitted Run across grant withdrawal and refuses the next admission', async () => {
         const fixture = await createManagedRunLaunchFixture({ physicalGateway: true });
         let current: ActiveAccountSettingsSnapshot = fixture.snapshot;
         let released = false;
@@ -362,7 +363,11 @@ describe('execution-run pinned Provider preparation', () => {
             const catalog = splitProviderSettingsV1({ ...fixture.providerSettings, machineGrants: [] }).catalog;
             current = { ...current, settingsVersion: current.settingsVersion + 1,
                 providerConnectionsCatalog: { status: 'ready', revision: 2, catalog } };
-            await expect(prepared.revalidateBeforeCommit()).resolves.toMatchObject({ ok: false });
+            await expect(prepared.revalidateBeforeCommit()).resolves.toMatchObject({ ok: true });
+            expect(released).toBe(false);
+            await expect(prepareExecutionRunProviderLaunch({ ...input, accountSettingsSnapshot: current }))
+                .rejects.toMatchObject({ code: 'provider_not_enabled_on_machine' });
+            await prepared.cleanupOnExit?.();
             expect(released).toBe(true);
             expect(pluginReloadController.getState().activeRegistry).toBeNull();
         } finally { await fixture.cleanup(); }

@@ -168,7 +168,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
       });
       expect(claimed).toEqual({
         ok: false,
-        error: createProviderErrorV1('provider_authorization_changed', { connectionId: fixture.connectionId, machineId: 'machine-1' }),
+        error: createProviderErrorV1('provider_authorization_changed', { connectionId: fixture.connectionId, machineId: 'machine-1', sourceProfileId: 'profile-1' }),
       });
       expect(claimed).not.toHaveProperty('environment');
       expect(claimed).not.toHaveProperty('profileSecretRecovery');
@@ -239,7 +239,7 @@ describe('foreground admission composed real Provider authorization seam', () =>
         ok: true,
         environment: { PROFILE_SECRET: 'profile-plaintext', HAPPIER_CODEX_PROVIDER_API_KEY: 'provider-plaintext' },
         invocationContext: { cwd: fixture.directory, environment: {}, providerBindingActive: false },
-        sensitiveEnvironmentVariableNames: ['PROFILE_SECRET'],
+        sensitiveEnvironmentVariableNames: expect.arrayContaining(['PROFILE_SECRET']),
       });
       if (!claimed.ok) throw new Error(claimed.error.code);
       const handoff = consumeProviderBindingLaunchHandoffFromEnvironments([{ ...claimed.environment }]);

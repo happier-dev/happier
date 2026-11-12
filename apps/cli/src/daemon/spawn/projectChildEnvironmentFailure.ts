@@ -1,3 +1,5 @@
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
 import { buildProviderSpawnErrorResult } from './buildProviderSpawnErrorResult';
@@ -12,5 +14,16 @@ export function projectChildEnvironmentFailure(
     errorCode: failure.errorCode,
     errorMessage: failure.errorMessage,
     ...(failure.agentId !== undefined ? { agentId: failure.agentId } : {}),
+  };
+}
+
+/** Foreground admission uses the existing launch-error envelope for native causes. */
+export function projectChildEnvironmentLaunchError(
+  failure: Extract<ResolveSpawnChildEnvironmentResult, { ok: false }>,
+): ProviderErrorV1 | SessionSpawnLaunchErrorV1 {
+  return failure.providerError ?? {
+    kind: 'launch_error',
+    code: failure.errorCode,
+    message: failure.errorMessage,
   };
 }

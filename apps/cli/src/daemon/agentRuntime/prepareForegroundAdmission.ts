@@ -28,7 +28,9 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { resolveAgentContributionQualifiedId } from '@/plugins/projection/registry/agentRoutingIdentity';
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
-import { prepareDirectProviderLaunch } from '@/providers/lifecycle/prepareDirectLaunch';
+import { prepareDirectProviderLaunch, type DirectProviderLaunchResult } from '@/providers/lifecycle/prepareDirectLaunch';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { projectChildEnvironmentLaunchError } from '../spawn/projectChildEnvironmentFailure';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import {
@@ -124,7 +126,7 @@ import type {
 import type { PreparedForegroundAgentRuntimeAdmission } from './foregroundAdmission';
 
 function refusal(
-  error: ProviderErrorV1,
+  error: Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }>['error'],
 ): Extract<ForegroundAgentRuntimeAdmissionResponseV1, { ok: false }> {
   return { ok: false, error };
 }
@@ -393,7 +395,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
   lease: Awaited<ReturnType<
     typeof acquireAuthoritativePluginRuntimeRegistryLease
   >>;
-}>): Promise<Awaited<ReturnType<typeof prepareDirectProviderLaunch>> | null> {
+}>): Promise<DirectProviderLaunchResult<Readonly<{ ok: false; error: ProviderErrorV1 | SessionSpawnLaunchErrorV1 }>> | null> {
   const { request, lease, dependencies } = input;
   if ((!request.selection || request.selection.ref.providerConnectionId === null)
     && !request.previousBinding && !request.connectedServices) return null;
@@ -405,7 +407,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
       serverUrl: requester?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
     })
   ).decision.state === 'enabled';
-  return await prepareDirectProviderLaunch({
+  return await prepareDirectProviderLaunch<Readonly<{ ok: false; error: ProviderErrorV1 | SessionSpawnLaunchErrorV1 }>>({
     signal: dependencies.signal,
     selection: request.selection,
     backendTarget: request.backendTarget,
@@ -456,13 +458,7 @@ async function prepareForegroundProviderLaunch(input: Readonly<{
           }
         : {
             ok: false as const,
-            error: createProviderErrorV1(
-              'provider_agent_runtime_unsupported',
-              {
-                connectionId: providerBindingContext.connectionId,
-                machineId: request.machineId,
-              },
-            ),
+            error: projectChildEnvironmentLaunchError(result),
             cleanupOnFailure: result.cleanupOnFailure,
             cleanupOnExit: result.cleanupOnExit,
           };

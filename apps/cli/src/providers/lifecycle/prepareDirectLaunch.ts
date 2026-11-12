@@ -72,7 +72,7 @@ function projectLaunchEnvironment(overlay: SessionEnvOverlayV1) {
     return { environment: Object.freeze(environment), unsetEnvKeys: Object.freeze([...unsetEnvKeysByIdentity.values()]) };
 }
 
-export type DirectProviderLaunchResult =
+export type DirectProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok: false }> = never> =
   | Readonly<{
       ok: true;
       kind: 'native';
@@ -113,7 +113,8 @@ export type DirectProviderLaunchResult =
       revalidateBeforeCommit(signal?: AbortSignal): Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
       cleanupOnExit: ProviderLaunchCleanup | null;
     }>
-  | Readonly<{ ok: false; error: ProviderErrorV1 }>;
+  | Readonly<{ ok: false; error: ProviderErrorV1 }>
+  | PrerequisiteFailure;
 
 /**
  * Direct/in-process half of the canonical Provider launch corridor. The caller
@@ -121,7 +122,7 @@ export type DirectProviderLaunchResult =
  * this function owns late materialization, final ticket revalidation, and
  * exact-once transfer of every Provider resource into the runtime lifetime.
  */
-export async function prepareDirectProviderLaunch(input: Readonly<{
+export async function prepareDirectProviderLaunch<PrerequisiteFailure extends Readonly<{ ok: false }> = never>(input: Readonly<{
   signal?: AbortSignal;
   selection?: SessionModelSelectionV1;
   backendTarget: BackendTargetRefV2Input;
@@ -140,7 +141,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
   resolvePrerequisites: (
     context: ProviderLaunchPrerequisiteContext,
   ) => Promise<Readonly<
-    ({ ok: true } | { ok: false; error: ProviderErrorV1 }) & {
+    ({ ok: true } | { ok: false; error: ProviderErrorV1 } | PrerequisiteFailure) & {
       cleanupOnFailure?: ProviderLaunchCleanup | null;
       cleanupOnExit?: ProviderLaunchCleanup | null;
     }
@@ -155,7 +156,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
   prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
   /** The actual runtime retains this scope even if preparation rejects. */
   retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
-}>): Promise<DirectProviderLaunchResult> {
+}>): Promise<DirectProviderLaunchResult<PrerequisiteFailure>> {
   const scope = createProviderLaunchResourceScope();
   const trace = <T>(phase: Parameters<typeof traceRunPreparationPhase>[1], work: () => Promise<T>) =>
     traceRunPreparationPhase(input.scope.kind === 'execution_run' ? input.scope.executionRunId : undefined,
@@ -164,7 +165,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     dependencies.retainCleanup?.(scope.retire);
     for (const resource of dependencies.initialResources ?? []) scope.register(resource);
     const { scope: executionScope, ...providerLaunchInput } = input;
-    const prepared = await trace('provider_authorization', () => prepareProviderLaunch<never>({
+    const prepared = await trace('provider_authorization', () => prepareProviderLaunch<PrerequisiteFailure>({
       ...providerLaunchInput,
       ...(executionScope.kind === 'session' ? { sessionId: executionScope.sessionId } : {}),
       resolvePrerequisites: async (context) => {
@@ -175,7 +176,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
             onExit: result.cleanupOnExit ?? (() => {}),
           });
         }
-        return result.ok ? { ok: true } : { ok: false, error: result.error };
+        return result.ok ? { ok: true } : result;
       },
       createAuthorizationAttempt: dependencies.createAuthorizationAttempt,
     }));
