@@ -114,7 +114,7 @@ export function useVoiceSetupBlock(input: Readonly<{
     const actions = React.useMemo((): VoiceSetupPanelActions => ({
         onSelectService: readinessModel.selectService,
         onRecover: () => recoverVoiceSettingsReadiness(recoveryAction, (action) => {
-            const target = resolveVoiceSettingsRecoveryTarget(action);
+            const target = resolveVoiceSettingsRecoveryTarget(action, voiceSettings.providerId);
             if (target) router.push(target);
         }),
         onAllowMicrophone: allow,
@@ -131,7 +131,7 @@ export function useVoiceSetupBlock(input: Readonly<{
         },
         onClose: closePanel,
         onOpenSettings: () => router.push(SETTINGS_ROUTES.voice as never),
-    }), [allow, closePanel, dismiss, executeValue, readinessModel.selectService, recoveryAction, router, tryIt]);
+    }), [allow, closePanel, dismiss, executeValue, readinessModel.selectService, recoveryAction, router, tryIt, voiceSettings.providerId]);
 
     const model = React.useMemo((): VoiceSetupPanelModel => ({
         facts: setup.facts,

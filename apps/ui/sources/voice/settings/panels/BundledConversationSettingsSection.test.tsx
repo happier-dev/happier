@@ -113,7 +113,7 @@ describe('BundledConversationSettingsSection', () => {
     if (!recipient) throw new Error('Expected ElevenLabs recipient contract');
     account.replaceSettings(await withVoiceSettingsCredentialResource(account, {
       settings: account.settings, declaration: provider.entry.declaration, pluginId: provider.entry.pluginId,
-      resourceId: 'voice-test-secret', recipientContractDigest: createRecipientContractDigestV1(recipient),
+      resourceId: 'voice-test-secret', approvedRecipientContractDigest: createRecipientContractDigestV1(recipient),
     }));
     await refreshSavedSecretCatalog(account.scope);
     // Capture action authority from the real current material catalog.
@@ -128,8 +128,8 @@ describe('BundledConversationSettingsSection', () => {
     expect(resolveSavedSecretReference(account.scope, account.settings.secrets, reference?.secretId ?? ''))
       .toMatchObject({ status: 'ready', ref: reference?.secretId });
   }
-  async function render(voice = account.settings.voice) {
-    return await renderScreen(<BundledConversationSettingsSection voice={voice} />, {
+  async function render(voice = account.settings.voice, content?: React.ReactElement) {
+    return await renderScreen(content ?? <BundledConversationSettingsSection voice={voice} />, {
       wrapper: ConversationProviders,
       // The native SDK supplies physical view geometry; Popover measures and
       // chooses placement, portal ownership, and its render frame for real.
@@ -235,6 +235,38 @@ describe('BundledConversationSettingsSection', () => {
     await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('app-shell-confirmation-confirm')).not.toBeNull());
     await screen.pressByTestIdAsync('app-shell-confirmation-confirm');
   }
+
+  it('finishes empty-agent setup through one confirmed creation and saves a ready provider', async () => {
+    const { resolveVoiceSettingsRecoveryTarget } = await import('@/voice/settings/voiceSettingsRouteFocus');
+    expect(resolveVoiceSettingsRecoveryTarget('open_provider_settings', providerId)).toEqual({
+      pathname: '/settings/voice/conversations',
+      params: { setting: 'voiceConversations.provider.happier.voice.elevenlabs/realtime-elevenlabs.action.create-agent' },
+    });
+    await saveCredential();
+    const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const screen = await render(account.settings.voice,
+      <InjectedAuthProvider credentials={account.credentials}><VoiceConversationsSettingsScreen /></InjectedAuthProvider>);
+    expect(config()).toMatchObject({ agentId: '' });
+    await waitForTestEvent(screen.subscribe, () => screen.tree.findAll(node => typeof node.props.testID === 'string'
+      && node.props.testID.startsWith('settings.voice.conversations.pipeline') && node.props.testID.endsWith('.recover')
+      && typeof node.props.onPress === 'function')[0], control => Boolean(control));
+    const recovery = screen.tree.findAll(node => typeof node.props.testID === 'string'
+      && node.props.testID.startsWith('settings.voice.conversations.pipeline') && node.props.testID.endsWith('.recover')
+      && typeof node.props.onPress === 'function')[0];
+    await act(async () => { recovery!.props.onPress(); });
+    await flushHookEffects();
+    expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
+    expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+    expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
+    await screen.pressByTestIdAsync('app-shell-confirmation-confirm');
+    await waitForTestEvent(account.subscribe, () => config()?.agentId, value => value === 'agent_created');
+    expect(account.persistedSettings.voice.providers[providerId]?.config).toMatchObject({ agentId: 'agent_created' });
+    expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(1);
+    expect(createDefaultVoiceProviderRegistry().get(providerId)?.projectSettings?.(account.settings.voice.providers[providerId] ?? null)).toMatchObject({ status: 'ready' });
+  });
 
   it('places credentials and provisioning, output voice, and greeting in their contributed groups', async () => {
     const screen = await render();

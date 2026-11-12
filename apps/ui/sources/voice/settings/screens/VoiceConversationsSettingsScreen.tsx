@@ -21,6 +21,7 @@ import {
 } from '@/voice/settings/voiceSettingsRouteFocus';
 import { useVoiceSettingsMutable } from '@/voice/settings/useVoiceSettingsMutable';
 import { useVoiceSettingsReadinessInputs } from '@/voice/settings/useVoiceSettingsReadinessInputs';
+import { useVoiceProviderSettingsRecovery } from '@/voice/settings/panels/realtime/VoiceProviderSettingsActions';
 
 export function VoiceConversationsSettingsScreen() {
   const routeParams = useLocalSearchParams<{ focus?: string | string[] }>();
@@ -49,16 +50,18 @@ export function VoiceConversationsSettingsScreen() {
   React.useEffect(() => {
     if (routeFocus === 'execution_machine') setMachineChooserOpen(true);
   }, [routeFocus]);
+  const [voice, setVoice] = useVoiceSettingsMutable();
+  const recoverProviderSettings = useVoiceProviderSettingsRecovery(voice);
   const focusRecovery = React.useCallback((action: Parameters<typeof resolveVoiceSettingsRecoveryTarget>[0]) => {
+    if (recoverProviderSettings(action)) return;
     if (resolveVoiceSettingsRecoveryFocus(action) === 'execution_machine') {
       setMachineChooserOpen(true);
       return;
     }
-    const target = resolveVoiceSettingsRecoveryTarget(action);
+    const target = resolveVoiceSettingsRecoveryTarget(action, voice.providerId);
     if (typeof target === 'string') router.push(target);
     else if (target) router.setParams(target.params ?? {});
-  }, [router]);
-  const [voice, setVoice] = useVoiceSettingsMutable();
+  }, [recoverProviderSettings, router, voice.providerId]);
   const {
     happierVoiceSupported,
     executionMachine,

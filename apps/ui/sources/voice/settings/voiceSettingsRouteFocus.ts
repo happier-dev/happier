@@ -1,9 +1,11 @@
 import type { Href } from 'expo-router';
+import { getSettingsDeclarationCatalogV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { SETTING_ANCHOR_QUERY_PARAM } from '@/components/settings/catalog/settingDeclarations';
 import { VOICE_CONVERSATIONS_SETTINGS } from './voiceSettingsDeclarations';
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 type RouteParamValue = string | string[] | undefined;
 
@@ -34,13 +36,27 @@ export function resolveVoiceSettingsRecoveryFocus(
 }
 
 /** The existing feature turn-on destination and section recovery share one route owner. */
-export function resolveVoiceSettingsRecoveryTarget(readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'>): Href | null;
-export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction']): Href | null;
-export function resolveVoiceSettingsRecoveryTarget(input: VoiceRoleReadiness['recoveryAction'] | Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'>): Href | null {
+export function resolveVoiceSettingsRecoveryTarget(readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'> & Partial<Pick<VoiceRoleReadiness, 'providerId'>>, providerId?: string | null): Href | null;
+export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction'], providerId?: string | null): Href | null;
+export function resolveVoiceSettingsRecoveryTarget(input: VoiceRoleReadiness['recoveryAction'] | (Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'> & Partial<Pick<VoiceRoleReadiness, 'providerId'>>), providerId?: string | null): Href | null {
   // An unsettled observation has no setup destination; its owner will publish the result.
   if (typeof input !== 'string' && (input.status === 'ready'
     || (input.status === 'unavailable' && input.code.endsWith('_unknown')))) return null;
   const action = typeof input === 'string' ? input : input.recoveryAction;
+  const selectedProviderId = providerId ?? (typeof input === 'string' ? null : input.providerId);
+  if (action === 'open_provider_settings' && selectedProviderId) {
+    const registry = createDefaultVoiceProviderRegistry();
+    const entry = registry.get(selectedProviderId);
+    const agentAction = entry?.presentation?.agentAction;
+    // Both create and update are anchored on the same state-selected control.
+    // Keep provisioning and confirmation with the contributed settings Action.
+    const setting = agentAction ? getSettingsDeclarationCatalogV1(registry).find(row =>
+      row.operation?.owner === 'voiceProviderSettingsAction'
+      && row.operation.options?.[0] === selectedProviderId
+      && row.operation.options?.[1] === agentAction.createActionId) : null;
+    if (setting) return { pathname: SETTINGS_ROUTES.voiceConversations,
+      params: { [SETTING_ANCHOR_QUERY_PARAM]: setting.anchor } };
+  }
   if (action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
   const focus = resolveVoiceSettingsRecoveryFocus(action);
   if (focus === 'provider') return VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;

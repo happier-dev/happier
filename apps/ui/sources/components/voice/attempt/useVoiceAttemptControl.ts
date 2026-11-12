@@ -669,9 +669,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         let target: Href | null = null;
         if (refusalRecoveryAction === 'open_session') target = '/new';
         else if (refusalRecoveryAction === 'open_setup') target = SETTINGS_ROUTES.voice;
-        else target = resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
+        else target = resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction, providerId);
         if (target) navigateWithFocusReturn(() => router.push(target as never));
-    }, [navigateWithFocusReturn, refusalRecoveryAction, router]);
+    }, [navigateWithFocusReturn, refusalRecoveryAction, router, providerId]);
     const refusalReason = refusalReasonKey ? translateVoiceReadiness(refusalReasonKey) : null;
     const refusalActionLabel = refusalRecoveryAction === 'open_session' ? t('commandPalette.commands.newSessionTitle')
         : refusalRecoveryAction === 'open_setup' ? t('voicePresence.setUp')

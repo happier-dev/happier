@@ -1,4 +1,8 @@
 import * as React from 'react';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import { useBundledConversationProviderSettings } from './useBundledConversationProviderSettings';
+import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 
 import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 
@@ -70,13 +74,10 @@ function localized(value: string | Readonly<{ key: string; fallback: string }>):
   return typeof value === 'string' ? value : value.fallback;
 }
 
-export function VoiceProviderSettingsActions(props: Readonly<{
+/** Shared mounted ingress for the contributed control and Finish setup. */
+function useVoiceProviderSettingsAction(props: Readonly<{
   providerId: string;
-  owner: VoiceProviderSettingsActionOwner;
-  actions: readonly VoiceProviderSettingsActionDeclaration[];
-  config?: Readonly<Record<string, unknown>>;
-  agentAction?: VoiceProviderPresentation['agentAction'];
-  placement: Readonly<{ kind: 'afterField'; fieldId: string }> | Readonly<{ kind: 'contributionFooter' }>;
+  owner: VoiceProviderSettingsActionOwner | null;
 }>) {
   const settingRef = useVoiceContributedSettingRefs(props.providerId);
   const registration = getExternalVoiceProviderRegistration(props.providerId);
@@ -100,9 +101,117 @@ export function VoiceProviderSettingsActions(props: Readonly<{
     return () => lifecycleRef.current.abort();
   }, [props.providerId, registration?.token]);
 
+  const invoke = React.useCallback((action: VoiceProviderSettingsActionDeclaration, enabled: boolean) => {
+    if (!props.owner || !registration?.settingsActions || !registration.occurrenceId || busyActionIds.has(action.id) || !enabled) return false;
+    const occurrenceId = registration.occurrenceId;
+    const signal = lifecycleRef.current.signal;
+    const context = Object.freeze({
+      actionId: action.id,
+      providerId: props.providerId,
+      occurrenceId,
+      owner: props.owner,
+      registration,
+      settingsScope,
+    });
+    setBusyActionIds((current) => new Set(current).add(action.id));
+    fireAndForget((async () => {
+      try {
+        const setting = settingRef(`action.${action.id}`);
+        if (!setting) throw Object.assign(new Error('voice_provider_settings_action_unavailable'), { code: 'voice_provider_settings_action_unavailable' });
+        const outcome = await execute('settings.invoke', { anchor: setting.anchor }, { signal });
+        if (!outcome.ok && presentActionTurnedOffNoticeIfOff(outcome, 'settings.invoke')) return;
+        requireActionSuccess(outcome);
+        const result = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(outcome.result);
+        if (result.status === 'cancelled') return;
+        if (result.status !== 'completed') {
+          const diagnostic = projectSafeSettingsActionFailure(result.value);
+          throw Object.assign(new Error(result.reason ?? 'voice_provider_settings_action_unavailable'), diagnostic,
+            { code: result.reason ?? 'voice_provider_settings_action_unavailable' });
+        }
+      } catch (error) {
+        const code = (error as Readonly<{ code?: unknown }>)?.code;
+        // Every press that applies nothing is nameable, including the
+        // ones the user is not alerted about. Only an outcome the user
+        // caused (declining, leaving, switching provider) stays quiet;
+        // anything else would make the row a placebo.
+        const outcome = code === 'plugin_settings_action_confirmation_declined'
+          || code === 'plugin_settings_action_cancelled'
+          || isActionApprovalDeclinedErrorCode(code)
+          ? 'declined'
+          : !mountedRef.current
+            ? 'unmounted'
+            : isPressedProviderSelected(context)
+              ? 'failed'
+              : 'deselected';
+        const diagnostic = projectSafeSettingsActionFailure(error);
+        log.log(
+          `[VoiceProviderSettingsActions] settings action ${outcome} ${JSON.stringify({
+            actionId: action.id,
+            ...(signal.aborted ? { aborted: true } : {}),
+            ...(isContextCurrent(context) ? {} : { retired: true }),
+            ...diagnostic,
+          })}`,
+        );
+        if (outcome !== 'failed') return;
+        await Modal.alertAsync(
+          t('common.error'),
+          settingsActionFailureBody(diagnostic),
+        );
+      } finally {
+        if (mountedRef.current) {
+          setBusyActionIds((current) => {
+            const next = new Set(current);
+            next.delete(action.id);
+            return next;
+          });
+        }
+      }
+    })(), { tag: `VoiceProviderSettingsActions.${action.id}` });
+    return true;
+  }, [props.owner, props.providerId, registration, settingsScope, busyActionIds, settingRef, execute]);
+  return { busyActionIds, invoke };
+}
+
+function isSettingsActionEnabled(action: VoiceProviderSettingsActionDeclaration, config?: Readonly<Record<string, unknown>> | null): boolean {
+  const value = action.enabledWhen ? config?.[action.enabledWhen.settingId] : undefined;
+  return !action.enabledWhen || typeof value === 'string' && value.trim().length > 0;
+}
+
+function isAgentConfigured(agentAction: VoiceProviderPresentation['agentAction'], config?: Readonly<Record<string, unknown>> | null): boolean {
+  return Boolean(agentAction && typeof config?.[agentAction.settingId] === 'string'
+    && String(config[agentAction.settingId]).trim().length > 0);
+}
+
+const registry = createDefaultVoiceProviderRegistry();
+
+/** Finish setup enters the same confirmed Action as the provider's Create/Update control. */
+export function useVoiceProviderSettingsRecovery(voice: VoiceSettings) {
+  const { providerId, owner, config } = useBundledConversationProviderSettings(voice);
+  const { invoke } = useVoiceProviderSettingsAction({ providerId: providerId ?? '', owner });
+  const entry = providerId ? registry.get(providerId) : null;
+  const agentAction = entry?.presentation?.agentAction;
+  const actionId = agentAction ? isAgentConfigured(agentAction, config) ? agentAction.updateActionId : agentAction.createActionId : null;
+  const action = entry?.kind === 'voice.conversation-provider.v1'
+    ? entry.declaration?.settings?.actions?.find(candidate => candidate.id === actionId) : null;
+  return React.useCallback((recovery: VoiceRoleReadiness['recoveryAction']): boolean => {
+    if (recovery !== 'open_provider_settings' || !action || !owner) return false;
+    return invoke(action, isSettingsActionEnabled(action, config));
+  }, [action, config, invoke, owner]);
+}
+
+export function VoiceProviderSettingsActions(props: Readonly<{
+  providerId: string;
+  owner: VoiceProviderSettingsActionOwner;
+  actions: readonly VoiceProviderSettingsActionDeclaration[];
+  config?: Readonly<Record<string, unknown>>;
+  agentAction?: VoiceProviderPresentation['agentAction'];
+  placement: Readonly<{ kind: 'afterField'; fieldId: string }> | Readonly<{ kind: 'contributionFooter' }>;
+}>) {
+  const settingRef = useVoiceContributedSettingRefs(props.providerId);
+  const registration = getExternalVoiceProviderRegistration(props.providerId);
+  const { busyActionIds, invoke: invokeAction } = useVoiceProviderSettingsAction(props);
   const agentAction = props.agentAction;
-  const agentConfigured = agentAction && typeof props.config?.[agentAction.settingId] === 'string'
-    && String(props.config[agentAction.settingId]).trim().length > 0;
+  const agentConfigured = isAgentConfigured(agentAction, props.config);
   const actions = props.actions.filter((action) => (
     props.placement.kind === 'contributionFooter'
       ? action.placement.kind === 'contributionFooter'
@@ -110,81 +219,11 @@ export function VoiceProviderSettingsActions(props: Readonly<{
   )).filter((action) => !agentAction || (action.id !== agentAction.createActionId && action.id !== agentAction.updateActionId)
     || action.id === (agentConfigured ? agentAction.updateActionId : agentAction.createActionId));
   if (!registration?.settingsActions || !registration.occurrenceId || actions.length === 0) return null;
-  const occurrenceId = registration.occurrenceId;
 
   return <>
     {actions.map((action) => {
-      const enablingValue = action.enabledWhen
-        ? props.config?.[action.enabledWhen.settingId]
-        : undefined;
-      const enabled = !action.enabledWhen
-        || (typeof enablingValue === 'string' && enablingValue.trim().length > 0);
-      const invoke = () => {
-            if (busyActionIds.has(action.id) || !enabled) return;
-            const signal = lifecycleRef.current.signal;
-            const context = Object.freeze({
-              actionId: action.id,
-              providerId: props.providerId,
-              occurrenceId,
-              owner: props.owner,
-              registration,
-              settingsScope,
-            });
-            setBusyActionIds((current) => new Set(current).add(action.id));
-            fireAndForget((async () => {
-              try {
-                const setting = settingRef(`action.${action.id}`);
-                if (!setting) throw Object.assign(new Error('voice_provider_settings_action_unavailable'), { code: 'voice_provider_settings_action_unavailable' });
-                const outcome = await execute('settings.invoke', { anchor: setting.anchor }, { signal });
-                if (!outcome.ok && presentActionTurnedOffNoticeIfOff(outcome, 'settings.invoke')) return;
-                requireActionSuccess(outcome);
-                const result = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(outcome.result);
-                if (result.status === 'cancelled') return;
-                if (result.status !== 'completed') {
-                  const diagnostic = projectSafeSettingsActionFailure(result.value);
-                  throw Object.assign(new Error(result.reason ?? 'voice_provider_settings_action_unavailable'), diagnostic,
-                    { code: result.reason ?? 'voice_provider_settings_action_unavailable' });
-                }
-              } catch (error) {
-                const code = (error as Readonly<{ code?: unknown }>)?.code;
-                // Every press that applies nothing is nameable, including the
-                // ones the user is not alerted about. Only an outcome the user
-                // caused (declining, leaving, switching provider) stays quiet;
-                // anything else would make the row a placebo.
-                const outcome = code === 'plugin_settings_action_confirmation_declined'
-                  || code === 'plugin_settings_action_cancelled'
-                  || isActionApprovalDeclinedErrorCode(code)
-                  ? 'declined'
-                  : !mountedRef.current
-                    ? 'unmounted'
-                    : isPressedProviderSelected(context)
-                      ? 'failed'
-                      : 'deselected';
-                const diagnostic = projectSafeSettingsActionFailure(error);
-                log.log(
-                  `[VoiceProviderSettingsActions] settings action ${outcome} ${JSON.stringify({
-                    actionId: action.id,
-                    ...(signal.aborted ? { aborted: true } : {}),
-                    ...(isContextCurrent(context) ? {} : { retired: true }),
-                    ...diagnostic,
-                  })}`,
-                );
-                if (outcome !== 'failed') return;
-                await Modal.alertAsync(
-                  t('common.error'),
-                  settingsActionFailureBody(diagnostic),
-                );
-              } finally {
-                if (mountedRef.current) {
-                  setBusyActionIds((current) => {
-                    const next = new Set(current);
-                    next.delete(action.id);
-                    return next;
-                  });
-                }
-              }
-            })(), { tag: `VoiceProviderSettingsActions.${action.id}` });
-      };
+      const enabled = isSettingsActionEnabled(action, props.config);
+      const invoke = () => invokeAction(action, enabled);
       const row = agentAction ? (
         <Item key={action.id} title={tLoose(agentAction.titleKey)} subtitleLines={0} showChevron={false}
           subtitle={busyActionIds.has(action.id) ? t('common.loading')
