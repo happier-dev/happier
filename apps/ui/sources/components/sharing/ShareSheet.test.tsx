@@ -44,6 +44,41 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it.each(['team', 'group'] as const)('keeps lazy %s browsing reachable until an empty directory resolves', async (kind) => {
+        vi.useFakeTimers();
+        let reads = 0;
+        function DirectorySheet({ ownsTeam }: { ownsTeam: boolean }) {
+            const [resolved, setResolved] = React.useState(false);
+            const rows = React.useMemo(() => ownsTeam ? [{
+                principal: presentSharePrincipal({ ref: kind === 'team'
+                    ? { kind: 'team', teamId: 'design' } : { kind: 'group', teamId: 'design', groupId: 'editors' }, name: 'Design' }),
+                addition: { kind: 'allowed' as const }, operation: { kind: 'idle' as const },
+            }] : [], [ownsTeam]);
+            const resolve = React.useCallback(async () => { reads++; setResolved(true); return rows; }, [rows]);
+            return <ShareSheet model={{ ...model, directory: { query: '', sections: [{
+                kind, title: kind === 'team' ? 'Teams' : 'Groups', status: 'idle', candidates: resolved ? rows : [],
+                resolved, cursor: null, hasMore: false, loadingMore: false, resolveCandidates: resolve,
+            }] } }} actions={actions} adapter={adapter} presentation="inline" testID="document-share-editor" />;
+        }
+        for (const ownsTeam of [true, false]) {
+            const screen = await renderScreen(<DirectorySheet ownsTeam={ownsTeam} />);
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(reads).toBe(0);
+            expect(screen.findByTestId(`document-share-browse:${kind}`)).not.toBeNull();
+            await screen.pressByTestIdAsync(`document-share-browse:${kind}`);
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(reads).toBeGreaterThan(0);
+            if (ownsTeam) expect(screen.getTextContent()).toContain('Design');
+            // Return to the root with the settled directory projection.
+            await screen.update(<ShareSheet model={{ ...model, directory: { query: '', sections: [{
+                kind, title: 'Directory', status: 'idle', candidates: [], resolved: true,
+                cursor: null, hasMore: false, loadingMore: false, resolveCandidates: async () => [],
+            }] } }} actions={actions} adapter={adapter} presentation="inline" testID="document-share-editor" />);
+            if (!ownsTeam) expect(screen.findByTestId(`document-share-browse:${kind}`)).toBeNull();
+            await screen.unmount();
+            reads = 0;
+        }
+    });
     it('renders reported template versions on their existing recipient rows and distinguishes no report from unavailable', async () => {
         const grant = { accessLevel: 'view', createdByAccountId: 'author', createdAt: 1 };
         const response = ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: 'template', ownerAccountId: 'author', access: 'owner', grants: [

@@ -652,6 +652,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 resolveCandidates: (query: string) => resolveTeamMember(accountRows, query),
             }, {
                 kind: 'group' as const, title: t('session.access.groups'), candidates: groupCandidateRows,
+                resolved: teamGroups.status === 'ready',
                 status: teamGroups.status === 'error' ? 'error' as const : teamGroups.status === 'loading' ? 'loading' as const : teamGroups.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,
                 ...(teamGroups.status === 'error' ? { error: directoryError } : {}),
                 cursor: teamGroups.hasMore ? `team-groups:${teamGroups.rows.length}` : null,
@@ -682,6 +683,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             kind: 'team',
             title: t('session.access.teams'),
             candidates: applyOperations(teamPage.rows),
+            resolved: pages.team !== undefined,
             status: teamPage.failed ? 'error' : teamPage.loadingMore ? 'refreshing' : 'idle',
             ...(teamPage.failed ? { error: directoryError } : {}),
             cursor: teamPage.nextCursor,
@@ -704,6 +706,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             kind: 'group',
             title: t('session.access.groups'),
             candidates: applyOperations(groupRows(currentGroupPage)),
+            resolved: groupPage !== null,
             status: groupFailed ? 'error' : currentGroupPage.loadingMore ? 'refreshing' : 'idle',
             ...(groupFailed ? { error: directoryError } : {}),
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,

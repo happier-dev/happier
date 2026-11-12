@@ -232,7 +232,10 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         if (input.directoryKind && input.directoryKind !== kind) continue;
         const source = model.directory.sections.find((section) => section.kind === kind);
         if (!source) continue;
-        if (!input.directoryKind && kind !== 'account' && source.status === 'idle' && source.candidates.length === 0 && !source.hasMore) continue;
+        // Idle describes activity, not whether a lazy directory has answered. Keep its intent entry
+        // reachable until the owner resolves it; a resolver alone does not prove an empty directory.
+        if (!input.directoryKind && kind !== 'account' && (source.resolved ?? !source.resolveCandidates)
+            && source.status === 'idle' && source.candidates.length === 0 && !source.hasMore) continue;
         if (suggestionsShown) sections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
         if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,

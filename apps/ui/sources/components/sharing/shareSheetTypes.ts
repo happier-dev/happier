@@ -57,6 +57,8 @@ export type ShareDirectorySectionModel = Readonly<{
     title: string;
     candidates: readonly ShareCandidateRowModel[];
     status: 'idle' | 'loading' | 'refreshing' | 'error';
+    /** Whether the directory owner has answered its initial lookup. Fixed lists are already resolved. */
+    resolved?: boolean;
     error?: ShareUiError;
     cursor: string | null;
     hasMore: boolean;
