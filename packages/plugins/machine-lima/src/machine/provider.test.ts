@@ -305,8 +305,8 @@ describe('public Lima native leaf', () => {
     expect(effects).toEqual([]);
   });
 
-  it('exact delete retains the neighboring VM and waits for confirmed absence', async () => {
-    let present = true;
+  it.each([true, false])('deletes the retained stopped disk or confirms prior absence without a guest process (retained=%s)', async retained => {
+    let present = retained;
     const { executor, effects } = processBoundary((args, options) => {
       expect(options?.env?.LIMA_HOME).toBe('.');
       expect(options?.cwd).toBe(launch.store);
@@ -314,10 +314,10 @@ describe('public Lima native leaf', () => {
         expect(args).toEqual(['delete', '--force', resource.instance]);
         present = false;
       }
-      return { exitCode: 0, out: present ? JSON.stringify(native) : '', err: '' };
+      return { exitCode: 0, out: present ? JSON.stringify({ ...native, status: 'Stopped' }) : '', err: '' };
     });
     expect(await createLimaProvider(executor).destroy(resource)).toEqual({ kind: 'confirmed' });
-    expect(effects).toEqual([['delete', '--force', resource.instance]]);
+    expect(effects).toEqual(retained ? [['delete', '--force', resource.instance]] : []);
   });
 
   it('keeps Inspect, bootstrap, Stop and Delete usable after an owner changes native CPU sizing', async () => {

@@ -268,13 +268,16 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
         let nativeOwner: ReturnType<typeof createManagedNativeInvocation> | undefined;
         const native = () => nativeOwner ??= createManagedNativeInvocation({ ...params,
             options: { ...options, get context() { return effectContext; } } }, () => machine);
+        // Home's Delete admission can replace the cleanup diagnostic without releasing native ownership.
+        const canceledCleanup = params.action === 'machines.managed.delete'
+            && machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now'
+            && machine.archivedAt === undefined;
         if (params.action === 'machines.managed.delete' && machine.desired === 'delete' && machine.desiredWhen === 'now'
-            && machine.allocation === 'may-exist' && !machine.resource && !machine.nativeOperationRef) {
+            && machine.allocation === 'may-exist' && !machine.resource
+            && (!machine.nativeOperationRef || canceledCleanup)) {
             machine = await reconcileManagedAcquisitionIdentity(params, machine, native());
             if (machine.allocation === 'confirmed-absent') return machine;
         }
-        const canceledCleanup = params.action === 'machines.managed.delete'
-            && machine.creationState === 'canceled' && machine.desired === 'delete' && machine.desiredWhen === 'now' && machine.archivedAt === undefined;
         const pendingCleanup = machine.allocation === 'may-exist' && !machine.resource && Boolean(machine.nativeOperationRef)
             && (machine.desired === 'delete' || params.action === 'machines.managed.inspect' && machine.submittedNativeEffect?.intent === 'delete');
         if ((params.action !== 'machines.managed.inspect' && machine.creationState !== 'active' && !canceledCleanup)

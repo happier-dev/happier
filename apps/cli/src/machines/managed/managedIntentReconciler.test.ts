@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { tmpdir } from 'node:os';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -68,6 +70,10 @@ import { createModalProvisionerRoles, MODAL_CONTRIBUTION_REF } from '../../../..
 import type { ModalNativeClient, ModalSandboxHandle } from '../../../../../packages/plugins/machine-modal/src/machine/nativeClient';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
+import { createPluginInvocationServiceBinding, createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
+import { LIMA_PLUGIN } from '../../../../../packages/plugins/machine-lima/src/manifest';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { createConnectedAccountPluginHttpPurposeHost } from '@/plugins/runtime/fetch/connectedAccountPurpose';
 import { createDeferred } from '@/testkit/async/deferred';
@@ -229,6 +235,82 @@ describe('Delete with no native resource', () => {
         expect(test.post.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
             '/v1/machines/managed/controller/admit-control',
         ]);
+    });
+});
+
+describe('Delete with a retained native resource after canceled bootstrap', () => {
+    it.skipIf(process.platform === 'win32').each([
+        { incident: 'ADMIN bootstrap failure', bootstrapInstalled: true,
+            observation: { observedAt: 1, availability: 'unavailable', reason: 'bootstrap.remote_command_failed' } satisfies ProviderObservationV1 },
+        { incident: 'F acquisition recovery', bootstrapInstalled: undefined,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } satisfies ProviderObservationV1 },
+    ])('deletes the retained stopped Lima disk when Home admission changes the cleanup reason ($incident)', async ({ incident, bootstrapInstalled, observation }) => {
+        const directory = mkdtempSync(join(tmpdir(), 'managed-lima-delete-'));
+        const resource = { instance: 'happier-retained-stopped', store: join(directory, 'store'), arch: 'x86_64', vmType: 'qemu',
+            cpus: 1, memoryBytes: 2 * 1024 ** 3, diskBytes: 15 * 1024 ** 3, image: 'https://example.test/ubuntu.img', mounts: [] };
+        let retained = true;
+        const nativeDeletes: string[][] = [];
+        const exec: Pick<ExecService, 'run'> = { run: async request => {
+            expect(request.cwd).toBe(resource.store);
+            expect(request.env).toEqual({ LIMA_HOME: '.' });
+            const args = [...(request.args ?? [])];
+            expect(['list', 'delete']).toContain(args[0]);
+            if (args[0] === 'delete') {
+                expect(args).toEqual(['delete', '--force', resource.instance]);
+                nativeDeletes.push(args);
+                retained = false;
+            }
+            return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                stdout: new TextEncoder().encode(args[0] === 'list' && retained
+                    ? JSON.stringify({ name: resource.instance, dir: resource.instance, status: 'Stopped' }) : ''),
+                stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false } satisfies PluginProcessResult;
+        } };
+        const plugin = await createPluginTestkit({ manifest: LIMA_PLUGIN.manifest, module: LIMA_PLUGIN });
+        try {
+            const actionHandlers = new Map(LIMA_PLUGIN.manifest.contributes.actions!.map(action => {
+                const handler = plugin.registration('actions', action.id);
+                if (!handler) throw new Error(`Missing Lima Action ${action.id}`);
+                return [action.id, handler] as const;
+            }));
+            const unavailableServices = createUnavailablePluginServicesFactory();
+            const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, false, undefined, {
+                fixtureManifest: normalizePluginManifestV2(LIMA_PLUGIN.manifest), actionHandlers,
+                resolveHostBinding: createTargetActionHostBindingResolver({
+                    createServiceBinding: (occurrence, id) => createPluginInvocationServiceBinding(occurrence, id),
+                }),
+                createServices(seed, binding) {
+                    const services = unavailableServices(seed, binding);
+                    return { ...services, exec: { ...services.exec, ...exec }, managedServices: { ...services.managedServices,
+                        dependencies: { ...services.managedServices.dependencies, status: async id => ({ state: 'ready', id,
+                            supported: true, version: '2.2.1', sourceId: 'system', executable: { kind: 'managedDependency',
+                                id: { pluginId: LIMA_PLUGIN.manifest.id, localId: id } } }) } } };
+                },
+            });
+            const provider = { pluginId: LIMA_PLUGIN.manifest.id, localId: 'lima' };
+            const { instance: _instance, memoryBytes, diskBytes, ...launch } = resource;
+            test.setMachine({ creationState: 'canceled', enrolledMachineId: undefined, bootstrapInstalled,
+                launch: { ...test.readMachine().launch, provider, choices: { ...launch,
+                    memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 } },
+                resource: { contributionRef: provider, schemaVersion: 1, value: resource },
+                observation, ...(incident === 'F acquisition recovery' ? { recovery: {
+                    reference: `${resource.store}/${resource.instance}`, reason: 'lima_start_failed' } } : {}),
+                cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
+            const transport = test.post.getMockImplementation()!;
+            test.post.mockImplementation(async (url, body, config) => {
+                // Home admission changes diagnostics while retaining native ownership.
+                if (String(url).endsWith('/admit-control')) {
+                    test.setMachine({ cleanup: { disposition: 'pending', reason: 'delete_requested' } });
+                }
+                return await transport(url, body, config);
+            });
+            await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+            expect(nativeDeletes).toEqual([['delete', '--force', resource.instance]]);
+            expect(retained).toBe(false);
+            expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+        } finally {
+            await plugin.dispose();
+            rmSync(directory, { recursive: true, force: true });
+        }
     });
 });
 
@@ -2449,6 +2531,23 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', resource: { value: {} },
             observation: { availability: 'absent' } });
     });
+    it('recovers an unbound canceled native operation before entering the shared Delete path', async () => {
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
+        const machine = test.readMachine();
+        test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined,
+            nativeOperationRef: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} }, enrolledMachineId: undefined,
+            cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
+        const home = test.post.getMockImplementation()!;
+        test.post.mockImplementation(async (url, body, config) => {
+            const result = await home(url, body, config);
+            if (String(url).endsWith('/report')) test.setMachine({ nativeOperationRef: undefined });
+            return result;
+        });
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.effects).toEqual(['reconcile', 'destroy']);
+        expect(test.nativeInputs[0]).toMatchObject({ nativeOperation: {} });
+        expect(test.nativeInputs[1]).toMatchObject({ resource: {} });
+    });
     it.each(['active', 'canceled'] as const)('deletes proven-owned pending native attachments from an %s row without a Machine id', async creationState => {
         const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
         test.setMachine({ creationState, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
@@ -2793,7 +2892,11 @@ describe('managed native intent through the accepted Action', () => {
             // Before admission this new policy request cannot replace Cancel's custody.
             if (path.endsWith('/current') && !admitted) return { status: 409, data: { code: 'request_conflict' } };
             const response = await transport(url, body, config);
-            if (path.endsWith('/admit-policy')) admitted = true;
+            if (path.endsWith('/admit-policy')) {
+                admitted = true;
+                test.setMachine({ cleanup: { disposition: 'pending', reason: 'delete_requested' } });
+                return { status: 200, data: { ...response.data, machine: test.readMachine() } };
+            }
             return response;
         });
         test.setMachine({ creationState: 'canceled', enrolledMachineId: undefined,
