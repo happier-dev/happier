@@ -1,3 +1,5 @@
+import { isRecord } from '@happier-dev/plugin-sdk';
+import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
@@ -494,9 +496,22 @@ export async function invokeCliPreflightMethod(
             environment: values, signal: preparationSignal,
             isOccurrenceCurrent: dependencies.isAgentRegistryCurrent ?? (() => false),
         });
-        preparedLaunchEnvironment = await dependencies.agentCatalogEntry.preparePreflightLaunchEnvironment({
-            environment: values, modelId, connectedAccounts: services.connectedAccounts, signal: preparationSignal,
-        });
+        try {
+            preparedLaunchEnvironment = await dependencies.agentCatalogEntry.preparePreflightLaunchEnvironment({
+                environment: values, modelId, connectedAccounts: services.connectedAccounts, signal: preparationSignal,
+            });
+        } catch (error) {
+            const cause = isRecord(error) && isRecord(error.details)
+                ? SessionRuntimeFailureCauseV1Schema.safeParse(error.details.failureCause) : null;
+            if (method !== 'probeModels' || !cause?.success || cause.data.failureReason !== 'model_selection_required') throw error;
+            // Preparation can require a model to configure a custom upstream.
+            // That is absent catalog evidence, not a failed Session launch.
+            return { ok: true, result: { agentId, availableModels: [], source: 'unavailable',
+                supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
+                refreshError: true, cacheable: false,
+                refreshErrorMessage: 'model_selection_required: Choose an explicit model; this Connected Account has no verified Agent catalog or default.',
+            } };
+        }
         materializedEnv = { ...preparedLaunchEnvironment.environment };
         for (const key of preparedLaunchEnvironment.unset ?? []) delete materializedEnv[key];
     }
@@ -596,7 +611,9 @@ export async function invokeCliPreflightMethod(
         if (!isProviderSourceModelCatalogConfidenceUsable(preparedLaunchEnvironment?.catalogConfidence)) {
           return { ok: true, result: { agentId, availableModels: [],
             supportsFreeform: modelConfig?.supportsSelection === true && modelConfig.supportsFreeform === true,
-            source: 'unavailable', refreshError: true } };
+            source: 'unavailable', refreshError: true, cacheable: false,
+            refreshErrorMessage: 'account_unverified: The Agent cannot verify model membership for this Connected Account.',
+          } };
         }
         const observation = modelConfig?.nativeCatalogObservation;
         const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);

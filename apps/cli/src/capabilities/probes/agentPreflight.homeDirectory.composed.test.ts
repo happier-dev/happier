@@ -119,6 +119,10 @@ describe('native Agent preflight home directory intent', () => {
                 ...plugin, files: { ...plugin.files,
                 'daemon.mjs': String(plugin.files['daemon.mjs']).replace('sessionRunnerFactory:', `preflightSessionControls: {
                     prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal, modelId }) => {
+                        if (modelId === undefined) throw Object.assign(new Error('credential-bearing native preparation error'), {
+                            code: 'agent_startup_model_reconciliation_failed',
+                            details: { failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
+                        });
                         const binding = await connectedAccounts.getBinding('primary', { signal });
                         const materialized = await connectedAccounts.materialize('primary', {
                             kind: 'httpHeaders', origin: 'https://preflight-account.example.test', headerNames: ['authorization'],
@@ -185,19 +189,26 @@ describe('native Agent preflight home directory intent', () => {
                         parseOutput: () => [{ id: 'ambient-native-model', name: 'Ambient native model' }] } },
                     retirementSignal: new AbortController().signal, isCurrent: () => true,
                 });
-                const models = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeModels', {
-                    cwd: root, bypassCache: true, connectedServices: { v: 2, bindingsByServiceId: {
-                        'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
-                    } },
-                }, {
-                    agentCatalogEntry: { ...entry, ...modelProjection }, agentRegistrySnapshot: runtime.registry.contributes,
-                    accountContext: { credentials: { token: 'fake-account-token', encryption: null }, accountSettings: null },
-                    createApiClient: async () => ({} as ApiClient), connectedAccountsOwner: account.owner,
-                    activatePurposeBindings: account.owner.activatePurposeBindings, isAgentRegistryCurrent: () => true,
-                    createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
-                    agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
-                }, {}));
-                expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable' } });
+                for (const modelId of [undefined, 'chosen-native-model']) {
+                    const models = await runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, 'probeModels', {
+                        ...(modelId === undefined ? {} : { modelId }),
+                        cwd: root, bypassCache: true, connectedServices: { v: 2, bindingsByServiceId: {
+                            'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+                        } },
+                    }, {
+                        agentCatalogEntry: { ...entry, ...modelProjection }, agentRegistrySnapshot: runtime.registry.contributes,
+                        accountContext: { credentials: { token: 'fake-account-token', encryption: null }, accountSettings: null },
+                        createApiClient: async () => ({} as ApiClient), connectedAccountsOwner: account.owner,
+                        activatePurposeBindings: account.owner.activatePurposeBindings, isAgentRegistryCurrent: () => true,
+                        createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
+                        agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
+                    }, {}));
+                    expect(models).toMatchObject({ ok: true, result: { availableModels: [], source: 'unavailable',
+                        refreshError: true, cacheable: false,
+                        refreshErrorMessage: expect.stringContaining(modelId === undefined ? 'model_selection_required' : 'account_unverified'),
+                    } });
+                    expect(JSON.stringify(models)).not.toContain('credential-bearing');
+                }
             }
         } finally {
             await runtime?.dispose();
