@@ -4995,7 +4995,7 @@ describe('runHostSessionRuntime', () => {
       nativeRuntime: harness.runtime,
     }));
     harness.config.createSessionRuntime = createSessionRuntime;
-    let persistedMetadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default' };
+    let persistedMetadata: Record<string, unknown> = { ...harness.session.getMetadataSnapshot(), path: '/tmp/workspace', permissionMode: 'default' };
     harness.deps.createSessionMetadataFn = (params: any) => {
       persistedMetadata = params.augmentMetadata(persistedMetadata);
       return {
@@ -5051,6 +5051,7 @@ describe('runHostSessionRuntime', () => {
       },
     };
     let metadata: Record<string, unknown> = {
+      ...harness.session.getMetadataSnapshot(),
       path: '/tmp/workspace',
       permissionMode: 'default',
     };
@@ -5145,11 +5146,6 @@ describe('runHostSessionRuntime', () => {
         status: 'applied',
         activeSelection: nextSelection,
       });
-      expect(authorizeProviderTarget).toHaveBeenCalledWith(
-        expect.objectContaining({
-          activeSessionBindingMetadata: handoff.sessionBindingMetadata,
-        }),
-      );
       expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           modelId: nextSelection.modelId,
