@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -16,6 +16,19 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { storage } from '@/sync/domains/state/storageStore';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>>;
+const previewInputs: unknown[] = [];
 
 // The Machine RPC is the process/network boundary; registration, admission and control stay real.
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -23,8 +36,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 // The OS browser is outside the owning process, as in the workspace opening testkit.
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
 
-const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'address_home', accountId: 'address_account' },
-    isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) };
+let lifetime: ServerAccountScopeLifetime;
 const previewTarget = { kind: 'localServicePreview', targetId: 'preview_address', machineId: 'machine_address',
     sessionId: 'session_address', display: { title: 'Web', addressLabel: 'localhost:5173' } } satisfies BrowserViewTargetV1;
 const service = { id: 'inventory:web', source: 'inventory_entry', machineId: 'machine_address', sessionId: 'session_address',
@@ -41,13 +53,14 @@ const projectPreviewTarget = { kind: 'localServicePreview', targetId: previewTar
     machineId: service.machineId, display: previewTarget.display,
     serviceTarget: { kind: 'managed_service', managedServiceId: declaredService.sourceClass.managedServiceId,
         machineId: service.machineId, cwd: declaredService.cwd, declaration: declaredService.declaration } } satisfies BrowserViewTargetV1;
-const context = { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId,
+const actionContext = () => ({ serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId,
     expectedAccountId: lifetime.scope.accountId, defaultSessionId: 'session_address', bypassApprovals: true,
-    authority: 'account_automation' as const, externalActionTarget: { kind: 'machine' as const, machineId: 'machine_address' } };
+    authority: 'account_automation' as const, actionCaller: { kind: 'host' as const },
+    externalActionTarget: { kind: 'machine' as const, machineId: 'machine_address' } });
 const browserFeatureDecision = { featureId: 'browser', state: 'enabled', blockedBy: null, blockerCode: 'none',
     diagnostics: [], evaluatedAt: 1_000, scope: { scopeKind: 'runtime' } } satisfies FeatureDecision;
 
-function services(cold = false, project = false) {
+async function services(cold = false, project = false) {
     const resource = { previewId: previewTarget.targetId, machineId: service.machineId,
         ...(project ? { serviceTarget: projectPreviewTarget.serviceTarget } : { sessionId: service.sessionId }),
         owner: project ? { kind: 'user', id: lifetime.scope.accountId } : { kind: 'session', id: service.sessionId },
@@ -55,35 +68,49 @@ function services(cold = false, project = false) {
         initialPath: { pathname: '/', search: '' }, display: previewTarget.display, originMode: 'host',
         browserTarget: project ? projectPreviewTarget : previewTarget };
     const preview = { previewId: previewTarget.targetId, resource, accessUrl: 'https://address.preview.test/', expiresAt: 61_000, diagnostics: [] };
-    machineRpc.mockResolvedValue({ protocolVersion: 1, status: 'existing', preview,
-        snapshot: { v: 1, machineId: service.machineId, generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } });
+    const response = { protocolVersion: 1, status: 'existing', preview,
+        snapshot: { v: 1, machineId: service.machineId, generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } };
+    await answerExternalActionAccountForHome(homes, account.serverId, { machineId: service.machineId,
+        actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0, requesterInvocation: 'credentials',
+        execute: input => { previewInputs.push(input); return response; } });
     if (cold) machineRpc.mockResolvedValueOnce({ protocolVersion: 1,
         snapshot: { v: 1, machineId: service.machineId, ...(project ? {} : { sessionId: service.sessionId }),
             updatedAt: 1_000, targets: [project ? declaredService : service] } });
-    return createLocalServicesRuntimeActionExecutor({ catalogBinding: { lifetime, credentialKey: 'address_credentials' },
+    return createLocalServicesRuntimeActionExecutor({ executeOnMachine: createUiAccountAction({ account }),
+        catalogBinding: { lifetime, credentialKey: resolveAuthCredentialsScopeKey(account.credentials) },
         fetchLauncherSnapshot: fetchLocalServiceLauncherSnapshotViaMachineRpc });
 }
 
-afterEach(() => { machineRpc.mockReset(); clearBrowserRuntimeControlRegistryForTests(); });
+beforeEach(async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Address Home', serverUrl: 'https://address.example.test',
+        accountId: 'address_account', serverIdentityId: 'srv_address_home', currentAccount: true });
+    storage.setState({ profileScope: { serverId, accountId: 'address_account' }, settingsScope: { serverId, accountId: 'address_account' } });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    account = await captureLazyActionAccountContext(serverId);
+    lifetime = account.accountLifetime;
+    previewInputs.length = 0;
+});
+afterEach(async () => { account?.dispose(); machineRpc.mockReset(); clearBrowserRuntimeControlRegistryForTests(); await homes.reset(); });
 
 it('opens an unregistered Project Service identically from Services Open and a workspace address', async () => {
     const openDetailsTab = vi.fn();
     const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'workspaceDetails', platform: 'web', openDetailsTab,
         accountLifetime: lifetime, localServiceTargets: [declaredService] }, {
-        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: services(false, true) }),
+        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: await services(false, true) }),
     });
     const openService = bindServicesOpenInBrowser({ onOpenTarget: fixture.open, platform: 'web', accountLifetime: lifetime,
-        actionExecute: (id, input, caller) => fixture.executor.execute(id, input, { ...caller, ...context, defaultSessionId: undefined }) });
+        actionExecute: (id, input, caller) => fixture.executor.execute(id, input, { ...caller, ...actionContext(), defaultSessionId: undefined }) });
     try {
         expect(await openService(declaredService)).toMatchObject({ status: 'succeeded' });
         const openedServiceTarget = openDetailsTab.mock.calls.at(-1)?.[0].resource.target;
         expect(await fixture.executor.execute('browser.workspace.open', {
             scopeId: 'workspace_1', commandId: 'project-address', target: external,
-        }, { ...context, defaultSessionId: undefined, surface: 'ui' })).toMatchObject({ ok: true });
+        }, { ...actionContext(), defaultSessionId: undefined, surface: 'ui' })).toMatchObject({ ok: true });
         expect(openDetailsTab.mock.calls.at(-1)?.[0].resource.target).toEqual(openedServiceTarget);
         expect(openedServiceTarget).toEqual(projectPreviewTarget);
-        expect(machineRpc).toHaveBeenCalledTimes(2);
-        for (const [request] of machineRpc.mock.calls) expect(request.payload).toMatchObject({
+        expect(previewInputs).toHaveLength(2);
+        for (const request of previewInputs) expect(request).toMatchObject({
             machineId: service.machineId, serviceTarget: { kind: 'managed_service', managedServiceId: 'project-web',
                 cwd: '/work/address', declaration: declaredService.declaration },
         });
@@ -160,14 +187,14 @@ it.each(['ui', 'agent', 'mcp'] as const)('resolves a workspace address through t
     const openDetailsTab = vi.fn();
     const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab,
         accountLifetime: lifetime, localServiceTargets: [service] }, {
-        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: services() }),
+        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: await services() }),
     });
     try {
         const result = await fixture.executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'address', target: external },
-            { ...context, surface });
+            { ...actionContext(), surface });
         expect(result).toMatchObject({ ok: true, result: { status: 'dispatched', outcome: 'workspaceTab' } });
         expect(openDetailsTab.mock.calls[0]?.[0].resource.target).toEqual(previewTarget);
-        expect(machineRpc).toHaveBeenCalledTimes(1);
+        expect(previewInputs).toHaveLength(1);
     } finally { fixture.dispose(); }
 });
 
@@ -175,15 +202,16 @@ it.each([false, true])('resolves a cold workspace address from its owning Machin
     const openDetailsTab = vi.fn();
     const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'workspaceDetails', platform: 'web', openDetailsTab,
         accountLifetime: lifetime, localServiceAddressScope: { machineId: service.machineId, scope: 'workspace', workspaceRoot: '/work/address' } }, {
-        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: services(true, project) }),
+        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: await services(true, project) }),
     });
     try {
         expect(await fixture.executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'cold', target: external },
-            { ...context, surface: 'agent', defaultSessionId: undefined })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+            { ...actionContext(), surface: 'agent', defaultSessionId: undefined })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
         expect(openDetailsTab.mock.calls[0]?.[0].resource.target).toEqual(project ? projectPreviewTarget : previewTarget);
         expect(machineRpc.mock.calls[0]?.[0]).toMatchObject({ machineId: service.machineId, serverId: lifetime.scope.serverId,
             payload: { machineId: service.machineId, scope: 'workspace', workspaceRoot: '/work/address' } });
-        expect(machineRpc).toHaveBeenCalledTimes(2);
+        expect(machineRpc).toHaveBeenCalledTimes(1);
+        expect(previewInputs).toHaveLength(1);
     } finally { fixture.dispose(); }
 });
 
@@ -191,12 +219,12 @@ it('leaves a non-Service address on its normal route without reading the launche
     const openDetailsTab = vi.fn();
     const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'workspaceDetails', platform: 'ios', browserFeatureDecision, openDetailsTab,
         accountLifetime: lifetime, localServiceAddressScope: { machineId: service.machineId, scope: 'workspace', workspaceRoot: '/work/address' } }, {
-        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: services() }),
+        runtimeActionExecute: createBrowserRuntimeActionExecutor({ fallback: await services() }),
     });
     const publicTarget = { ...external, url: 'https://example.com/docs' };
     try {
         expect(await fixture.executor.execute('browser.workspace.open', { scopeId: 'workspace_1', commandId: 'public', target: publicTarget },
-            { ...context, surface: 'agent' })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+            { ...actionContext(), surface: 'agent' })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
         expect(openDetailsTab.mock.calls[0]?.[0].resource.target).toEqual(publicTarget);
         expect(machineRpc).not.toHaveBeenCalled();
     } finally { fixture.dispose(); }
@@ -212,15 +240,15 @@ it.each(['ui', 'agent', 'mcp'] as const)('resolves mounted navigation before Mac
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: createBrowserRuntimeActionExecutor({
         control: { accountLifetime: lifetime, readState: () => state, readAddressFacts: () => ({ localServiceTargets: [service] }),
             applyDispatchResult: result => { state = result.state; } },
-        fallback: services(), executeOnMachine: async args => { forwarded.push(args.input); return { v: 1,
+        fallback: await services(), executeOnMachine: async args => { forwarded.push(args.input); return { v: 1,
             commandId: 'direct', status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }; },
     }) }));
     const input = { kind: 'navigate' as const, commandId: 'address', browserSessionId: 'browser_address', viewId: 'view_address', url: external.url };
-    expect(await executor.execute('browser.navigate', input, { ...context, surface })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+    expect(await executor.execute('browser.navigate', input, { ...actionContext(), surface })).toMatchObject({ ok: true, result: { status: 'dispatched' } });
     // The daemon owns this view; address intent must reach it as the resolved target,
     // rather than forwarding localhost navigation to the answering browser.
     expect(forwarded).toEqual([expect.objectContaining({ target: previewTarget })]);
-    expect(machineRpc).toHaveBeenCalledTimes(1);
-    await executor.execute('browser.navigate', { ...input, commandId: 'direct', navigationIntent: 'target' }, { ...context, surface });
-    expect(machineRpc).toHaveBeenCalledTimes(1);
+    expect(previewInputs).toHaveLength(1);
+    await executor.execute('browser.navigate', { ...input, commandId: 'direct', navigationIntent: 'target' }, { ...actionContext(), surface });
+    expect(previewInputs).toHaveLength(1);
 });
