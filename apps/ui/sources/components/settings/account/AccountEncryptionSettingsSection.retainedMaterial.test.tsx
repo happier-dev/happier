@@ -35,8 +35,8 @@ import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { Modal } from '@/modal';
+import { getActiveServerAccountScope, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { Modal, ModalProvider } from '@/modal';
 import { act } from 'react-test-renderer';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
@@ -99,7 +99,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, renderCustomModals: true }).module);
 // The native Markdown package is a rendering boundary, not part of Account custody.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 let restoreExecutorModuleLoader: (() => void) | null = null;
@@ -130,6 +130,7 @@ async function mount(params: Readonly<{
     afterCommitInventoryFails?: boolean;
     beforeRetirementCurrentness?: () => Promise<void>;
     beforeCredentialAdoption?: () => Promise<void>;
+    beforeMigrationAcknowledgement?: () => void;
     artifactRows?: ArtifactAccountEncryptionMigrationInventoryV1['items'];
     beforeArtifactInventory?: () => Promise<void>;
     promptLibraryRows?: readonly Readonly<{ key: PromptLibraryCatalogKeyV1; revision: number; content: PromptLibraryContentV1 | null }>[];
@@ -221,6 +222,9 @@ async function mount(params: Readonly<{
                         : { status: 'present', revision, content: directive.content });
                     return [[field, { revision, content: directive.content }]];
                 }));
+                params.beforeMigrationAcknowledgement?.();
+                // The browser transport rejects an aborted pending response even after the server commits.
+                if (init.signal?.aborted) throw init.signal.reason;
                 return json({ success: true, mode, accountVersion: 2, settingsVersion: 1,
                     ...d10Results,
                     ...(migration.providerConnections ? { providerConnections: { row: providerConnectionsRow ?? null } } : {}),
@@ -337,7 +341,7 @@ async function mount(params: Readonly<{
         clientEncryptionRequirementV1: 'follow_account', clientEncryptionRequirementLocalV1: 'follow_account' });
     await updateEffectiveHomeViewState(current => ({ ...current, activeTargetKind: 'server', activeTargetId: restored.home.id }), { scope: 'tab' });
     const { AccountEncryptionSettingsSection } = await import('./AccountEncryptionSettingsSection');
-    const screen = await renderSettingsView(<AccountEncryptionSettingsSection />);
+    const screen = await renderSettingsView(<ModalProvider><AccountEncryptionSettingsSection /></ModalProvider>);
     try {
         if (params.waitForControls !== false) await vi.waitFor(() => expect(screen.findAll((node) => node.props.testID === 'settings-account-encryption-mode-switch'
             && typeof node.props.onValueChange === 'function' && node.props.disabled === false && node.props.value === (mode === 'e2ee')).length).toBeGreaterThan(0), { timeout: 5000 });
@@ -348,6 +352,17 @@ async function mount(params: Readonly<{
     const request = createServerFetchAtEndpoint({ endpointUrl: restored.home.serverUrl,
         serverId: restored.home.id, credentials: initialCredentials });
     return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads, settingsHistoryReads };
+}
+
+/** Answer the carried review through its real public approval control. */
+async function convertWithReview(screen: Awaited<ReturnType<typeof mount>>['screen'], enabled: boolean): Promise<void> {
+    const toggle = screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+        && typeof node.props.onValueChange === 'function')[0]!;
+    let conversion!: Promise<void>;
+    await act(async () => { conversion = toggle.props.onValueChange(enabled); });
+    await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await act(async () => { await conversion; });
 }
 
 /** The converting device keeps its key bytes and only reclassifies them as history. */
@@ -886,12 +901,25 @@ describe('Account encryption historical material custody', () => {
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
+    it('keeps a committed conversion successful when its Account lifetime retires before the POST acknowledgement', async () => {
+        const h = await mount({ initialMode: 'plain',
+            beforeMigrationAcknowledgement: () => {
+                retireActiveServerAccountScopeLifetime();
+            } });
+        try {
+            await convertWithReview(h.screen, true);
+            expect(h.migrations).toHaveLength(1);
+            expect(h.migrations[0]?.toMode).toBe('e2ee');
+            expect(Modal.alertAsync).not.toHaveBeenCalled();
+            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && node.props.value === true).length).toBeGreaterThan(0);
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
     it('makes retained keys active again when this device re-enables end-to-end encryption', async () => {
         const h = await mount({ initialMode: 'plain' });
         try {
-            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!;
-            await act(async () => { await toggle.props.onValueChange(true); });
+            await convertWithReview(h.screen, true);
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expect(h.migrations[0]?.toMode).toBe('e2ee');
             await vi.waitFor(() => expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1));

@@ -64,7 +64,7 @@ beforeEach(async () => {
             settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0,
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-        if (path === '/v1/account/encryption/migrate' || path === '/v1/artifacts') {
+        if (path === '/v1/account/encryption/migrate' || path === '/v1/artifacts' || path === '/v1/artifacts/read') {
             return await http(url, init) ?? Response.json({ error: 'not_found' }, { status: 404 });
         }
         return Response.json({ error: 'not_found' }, { status: 404 });
@@ -159,25 +159,55 @@ describe('Account encryption migration Home binding', () => {
         }
     });
 
-    it('preserves a received mutation acknowledgement when the Home changes during body decoding', async () => {
+    it.each(['GET', 'POST'] as const)('cancels an admitted %s content read when the Account lifetime retires', async method => {
         const homeA = await activateHome('home-a');
         const captured = await captureAccountSettingsRequest({ credentials, settingsScope: homeA.scope });
         expect(captured).not.toBeNull();
-        let finishBody!: (body: unknown) => void;
-        http.mockImplementation(async (url) => {
+        let finishResponse!: () => void;
+        http.mockImplementation(async (_url, init) => await new Promise<Response>((resolve, reject) => {
+            const abort = () => reject(init?.signal?.reason);
+            init?.signal?.addEventListener('abort', abort, { once: true });
+            finishResponse = () => {
+                init?.signal?.removeEventListener('abort', abort);
+                resolve(Response.json({ privateContent: 'account-a' }));
+            };
+        }));
+        try {
+            const settled = captured!.request(method === 'GET' ? '/v1/artifacts' : '/v1/artifacts/read', { method })
+                .then(response => ({ status: 'disclosed', response }), error => ({ status: 'refused', error }));
+            await vi.waitFor(() => expect(finishResponse).toBeTypeOf('function'));
+            retireActiveServerAccountScopeLifetime();
+            finishResponse();
+            expect(await settled).toMatchObject({ status: 'refused' });
+        } finally { captured!.dispose(); }
+    });
+
+    it.each(['headers', 'body'] as const)('preserves a committed mutation acknowledgement when the Home changes before receiving its %s', async stage => {
+        const homeA = await activateHome('home-a');
+        const captured = await captureAccountSettingsRequest({ credentials, settingsScope: homeA.scope });
+        expect(captured).not.toBeNull();
+        let finishResponse!: () => void;
+        http.mockImplementation(async (url, init) => {
             if (new URL(String(url)).pathname === '/v1/artifacts') return Response.json([]);
             const response = Response.json(success);
-            response.json = () => new Promise((resolve) => { finishBody = resolve; });
+            const receive = () => new Promise<void>((resolve, reject) => {
+                const abort = () => reject(init?.signal?.reason);
+                init?.signal?.addEventListener('abort', abort, { once: true });
+                finishResponse = () => { init?.signal?.removeEventListener('abort', abort); resolve(); };
+            });
+            if (stage === 'headers') await receive();
+            else response.json = async () => { await receive(); return success; };
             return response;
         });
         try {
             const pending = migrateAccountEncryptionMode(credentials, migration, {
                 target: homeA.target, request: captured!.request, retry: 'none',
             });
-            await vi.waitFor(() => expect(finishBody).toBeTypeOf('function'));
+            const settled = pending.then(value => ({ status: 'completed', value }), error => ({ status: 'failed', error }));
+            await vi.waitFor(() => expect(finishResponse).toBeTypeOf('function'));
             await activateHome('home-b');
-            finishBody(success);
-            await expect(pending).resolves.toEqual(success);
+            finishResponse();
+            await expect(settled).resolves.toEqual({ status: 'completed', value: success });
             expect(captured!.isCurrent()).toBe(false);
             const mutations = http.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/encryption/migrate');
             expect(mutations).toHaveLength(1);

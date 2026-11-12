@@ -6,7 +6,7 @@ import {
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchAtEndpoint, isIdempotentServerRead, type ServerFetch } from '@/sync/http/client';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 
 export type CapturedAccountSettingsRequest = AccountEncryptionMigrationScope & Readonly<{
@@ -69,21 +69,24 @@ export async function captureAccountSettingsRequest(params: Readonly<{
         dispose();
         return null;
     }
-    const capturedRequest = createServerFetchAtEndpoint({
-        endpointUrl: activeServer.serverUrl,
-        ...(activeServer.runtimeOrigin ? { runtimeOrigin: activeServer.runtimeOrigin } : {}),
-        ...(homeCarrier ? { homeCarrier } : {}),
-        credentials: params.credentials,
-        serverId: params.settingsScope.serverId,
-        signal: abortController.signal,
-    });
     const request: ServerFetch = async (path, init, options) => {
         if (!isCurrent()) throw new Error('Account Settings request scope changed');
+        const readOnly = isIdempotentServerRead(init?.method ?? 'GET', path);
+        const capturedRequest = createServerFetchAtEndpoint({
+            endpointUrl: activeServer.serverUrl,
+            ...(activeServer.runtimeOrigin ? { runtimeOrigin: activeServer.runtimeOrigin } : {}),
+            ...(homeCarrier ? { homeCarrier } : {}),
+            credentials: params.credentials,
+            serverId: params.settingsScope.serverId,
+            ...(readOnly ? { signal: abortController.signal } : {}),
+        });
+        // Retirement cancels reads, but an admitted write may already have committed.
+        // Keep its acknowledgement observable on the original endpoint and bearer.
         const response = await capturedRequest(path, init, options);
         // A received mutation acknowledgement remains an external fact after
         // retirement. The one-shot writer parses it and keeps projection scoped;
         // read responses still fail closed before their content reaches callers.
-        if ((init?.method ?? 'GET').toUpperCase() !== 'POST' && !isCurrent()) {
+        if (readOnly && !isCurrent()) {
             throw new Error('Account Settings request scope changed');
         }
         return response;
