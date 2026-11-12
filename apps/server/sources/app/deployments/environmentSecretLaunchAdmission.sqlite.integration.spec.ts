@@ -1419,9 +1419,9 @@ describe('private installed Environment secret launch transport', () => {
             expect(cancelledBuilderRead.body).not.toContain(builderGrant.sealedContent);
             await db.deployment.update({ where: { id: receipt.deploymentId }, data: { cancelRequestedAt: null } });
             if (retentionOnly) return;
-            // Future-wire regression for C14. Generation admission stays RED
-            // pending an approved recovery contract that authenticates original
-            // material as well as the exact native generation.
+            // The launch protocol has no generation recovery admission. Native
+            // recovery keeps original material on the Machine; a signed unknown
+            // wire kind cannot acquire replacement material from Home.
             const generationBody = { ...body, materialization: { kind: 'generation' as const,
                 deploymentId: receipt.deploymentId } };
             const generationPayload = (input = generationBody) => ({ ...input,
@@ -1447,47 +1447,12 @@ describe('private installed Environment secret launch transport', () => {
                     if (request.model === 'SavedSecretResource' && request.action === 'findMany') generationResourceReads.push(request.args);
                 } });
                 const recovered = await readGeneration().finally(stopGenerationReads);
-                expect(recovered.statusCode, recovered.body).toBe(200);
-                expect(recovered.json()).toEqual(result);
-                expect(generationGrantReads).toEqual([expect.objectContaining({ where: {
-                    environmentId: environment.environmentId, machineId, installationId } })]);
-                expect(generationResourceReads).toMatchObject([{ where: { id: { in: [resourceId] } } }]);
+                expect(recovered.statusCode, recovered.body).toBe(400);
+                expect(recovered.json()).toEqual({ ok: false, error: 'deployment_invalid' });
+                expect(recovered.body).not.toContain(grant.sealedContent);
+                expect(generationGrantReads).toEqual([]);
+                expect(generationResourceReads).toEqual([]);
                 expect(generationWrites).toEqual([]);
-                expect((await readGeneration({ ...generationBody, materialization: {
-                    kind: 'generation', deploymentId: crypto.randomUUID() } })).json())
-                    .toMatchObject({ ok: false, error: 'deployment_unavailable' });
-                expect((await readGeneration({ ...generationBody, targetLinkId: 'substituted-link' })).statusCode).toBe(403);
-                expect((await readGeneration({ ...generationBody, installationId: 'retired-installation' })).statusCode).toBe(403);
-                // Captured build custody cannot open runtime-generation grants.
-                const builderGenerationBody = { ...generationBody, machineId: builderMachineId,
-                    installationId: builderInstallationId };
-                const builderGenerationRead = await read({ ...builderGenerationBody,
-                    proof: signMachineInstallationProof({ payload: { version: 1, machineId: builderMachineId,
-                        installationId: builderInstallationId, accountId: owner.id, deploymentSecretLaunch: {
-                            requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(
-                                builderGenerationBody as unknown as EnvironmentSecretLaunchAdmissionBodyV1),
-                        } }, privateKey: builderKeys.secretKey }) });
-                expect(builderGenerationRead.statusCode).toBe(403);
-                expect(builderGenerationRead.body).not.toContain(builderGrant.sealedContent);
-                const capture = await db.deployment.findUniqueOrThrow({ where: { id: receipt.deploymentId },
-                    select: { acceptedControllerInstallationId: true } });
-                await db.deployment.update({ where: { id: receipt.deploymentId }, data: { acceptedControllerInstallationId: null } });
-                try {
-                    const uncaptured = await readGeneration();
-                    expect(uncaptured.statusCode).toBe(403);
-                    expect(uncaptured.body).not.toContain(grant.sealedContent);
-                } finally {
-                    await db.deployment.update({ where: { id: receipt.deploymentId }, data: capture });
-                }
-                if (team) {
-                    await db.machineTeamGrant.deleteMany({ where: { machineId, teamId: team.id } });
-                    const revoked = await readGeneration();
-                    expect(revoked.json()).toMatchObject({ ok: false, error: 'machine_unavailable' });
-                    expect(revoked.body).not.toContain(grant.sealedContent);
-                    await db.machineTeamGrant.create({ data: { machineId, teamId: team.id,
-                        accessLevel: 'view', createdByAccountId: owner.id } });
-                    expect((await readGeneration()).json()).toEqual(result);
-                }
             } finally {
                 await db.deployment.update({ where: { id: receipt.deploymentId }, data: { state: 'queued' } });
             }
@@ -1531,8 +1496,9 @@ describe('private installed Environment secret launch transport', () => {
                 expect(response.statusCode, response.body).toBe(200);
                 expect(response.json()).toEqual(result);
                 expect(writes).toEqual([]);
-                expect(resourceSelections).toHaveLength(1);
-                expect(resourceSelections[0]).toMatchObject({ where: { id: { in: [resourceId] } } });
+                // Binding admission records consent; withdrawal prunes stored
+                // seals at the resource writer, so delivery does not re-admit it.
+                expect(resourceSelections).toEqual([]);
             } finally { stop(); }
             // Preparation is a current writer read, unlike runtime delivery's
             // author/revision-independent exact installation subject.
@@ -1552,7 +1518,8 @@ describe('private installed Environment secret launch transport', () => {
             expect(withdrawnAccepted.json()).toEqual({ ok: true, grants: [] });
             expect(withdrawnAccepted.body).not.toContain(grant.sealedContent);
             const withdrawnGeneration = await readGeneration();
-            expect(withdrawnGeneration.json()).toEqual({ ok: true, grants: [] });
+            expect(withdrawnGeneration.statusCode, withdrawnGeneration.body).toBe(400);
+            expect(withdrawnGeneration.json()).toEqual({ ok: false, error: 'deployment_invalid' });
             expect(withdrawnGeneration.body).not.toContain(grant.sealedContent);
             // An empty delivery read is not Source authority. Even the still-valid
             // installation proof must observe the canonical Source on each read.
