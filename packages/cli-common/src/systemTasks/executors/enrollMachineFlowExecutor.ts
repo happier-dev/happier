@@ -13,8 +13,46 @@ import type {
   EnrollMachineFlowExecutor,
 } from '../flows/enrollMachineFlow.js';
 
-const DEFAULT_DAEMON_READY_TIMEOUT_MS = 15_000;
 const DEFAULT_DAEMON_READY_POLL_MS = 500;
+
+/** One readiness observation for setup and service actions; cancellation owns standalone lifetime. */
+export async function waitForMachineOnline<T extends EnrollMachineDaemonStatus>(opts: Readonly<{
+  readStatus: () => Promise<T>;
+  signal?: AbortSignal;
+  timeoutMs?: number | null;
+  requireMachineControlReady?: boolean;
+  requireServiceInstalled?: boolean;
+  readLogHint?: () => Promise<string | null>;
+}>): Promise<T> {
+  const pollMs = readPositiveIntEnv(
+    'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS',
+    DEFAULT_DAEMON_READY_POLL_MS,
+    { min: 50, max: 5_000 },
+  );
+  const deadline = opts.timeoutMs == null ? null : Date.now() + opts.timeoutMs;
+  let sawRunning = false;
+  while (true) {
+    opts.signal?.throwIfAborted();
+    const latest = await opts.readStatus();
+    opts.signal?.throwIfAborted();
+    if ((opts.requireServiceInstalled === false || latest.serviceInstalled) && latest.daemonRunning && !latest.needsAuth
+      && (!opts.requireMachineControlReady || latest.daemonHealthy === true)) {
+      return latest;
+    }
+    if ((!latest.daemonRunning && (sawRunning || latest.daemonPid != null))
+      || (deadline !== null && Date.now() >= deadline)) {
+      let logHint: string | null = null;
+      try { logHint = await opts.readLogHint?.() ?? null; } catch { /* The log command remains available when its path cannot be read. */ }
+      opts.signal?.throwIfAborted();
+      throw new SystemTaskExecutionError(
+        'daemon_service_not_ready',
+        `The background service did not reach a ready state. Inspect ${logHint || 'happier daemon logs'} and retry.`,
+      );
+    }
+    sawRunning ||= latest.daemonRunning;
+    await waitForDelay(pollMs, opts.signal);
+  }
+}
 
 export type EnrollMachineFlowExecutorOptions = Readonly<{
   includeRelayArgsInAuthCommands?: boolean;
@@ -119,7 +157,7 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
       throw new SystemTaskExecutionError('invalid_cli_response', 'Received an invalid daemon status response.');
     }
     const record = parsed as {
-      daemon?: { running?: unknown; healthy?: unknown };
+      daemon?: { running?: unknown; healthy?: unknown; pid?: unknown };
       service?: { installed?: unknown };
       auth?: { needsAuth?: unknown; machineId?: unknown };
       server?: { activeServerId?: unknown };
@@ -127,6 +165,7 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
     return {
       serviceInstalled: record.service?.installed === true,
       daemonRunning: record.daemon?.running === true,
+      daemonPid: typeof record.daemon?.pid === 'number' ? record.daemon.pid : null,
       daemonHealthy: typeof record.daemon?.healthy === 'boolean' ? record.daemon.healthy : null,
       needsAuth: record.auth?.needsAuth === true,
       credentialState: readCredentialState(record.auth),
@@ -140,36 +179,15 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
     };
   };
 
-  const waitForReadyDaemon: NonNullable<EnrollMachineFlowExecutor['waitForReadyDaemon']> = async (opts) => {
-    const timeoutMs = opts.timeoutMs === undefined ? readPositiveIntEnv(
-      'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS',
-      DEFAULT_DAEMON_READY_TIMEOUT_MS,
-      { min: 100, max: 120_000 },
-    ) : opts.timeoutMs;
-    const pollMs = readPositiveIntEnv(
-      'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS',
-      DEFAULT_DAEMON_READY_POLL_MS,
-      { min: 50, max: 5_000 },
-    );
-
-    const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
-    let latest = await readDaemonStatus();
-
-    while (!(opts.signal?.aborted) && (deadline === null || Date.now() < deadline)) {
-      if ((opts.requireServiceInstalled === false || latest.serviceInstalled) && latest.daemonRunning && !latest.needsAuth
-        && (!opts.requireMachineControlReady || latest.daemonHealthy === true)) {
-        return latest;
-      }
-      await waitForDelay(pollMs, opts.signal);
-      latest = await readDaemonStatus();
-    }
-
-    opts.signal?.throwIfAborted();
-    if (opts.requireMachineControlReady && latest.daemonHealthy !== true) {
-      throw new SystemTaskExecutionError('daemon_service_not_ready', 'The background service has not acknowledged its Home machine-control registration.');
-    }
-    return latest;
-  };
+  const waitForReadyDaemon: NonNullable<EnrollMachineFlowExecutor['waitForReadyDaemon']> = async (opts) =>
+    await waitForMachineOnline({
+      ...opts,
+      readStatus: readDaemonStatus,
+      readLogHint: async () => {
+        const result = await executor.runHappierText(['daemon', 'logs']);
+        return result.status === 0 ? result.stdout.trim() || null : null;
+      },
+    });
 
   return {
     async configureRelay(profile: EnrollMachineRelayProfile) {

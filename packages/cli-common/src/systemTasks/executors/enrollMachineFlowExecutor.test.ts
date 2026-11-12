@@ -28,28 +28,63 @@ describe('createEnrollMachineFlowExecutorFromHappierJsonExecutor', () => {
     }
   });
 
-  it.each([false, null, undefined])('does not turn unproved machine-control readiness (%s) into managed bootstrap success', async healthy => {
+  it('keeps waiting beyond the former phase cutoff until the daemon is ready', async () => {
     vi.useFakeTimers();
+    let ready = false;
+    let reads = 0;
+    let settled = false;
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+      runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
+      runHappierJson: async () => {
+        reads += 1;
+        return { service: { installed: true }, daemon: { running: ready, healthy: ready }, auth: { needsAuth: false, machineId: 'this-machine' } };
+      },
+    } });
+    const result = executor.waitForReadyDaemon!({}).then(value => { settled = true; return value; });
     try {
-      let reads = 0;
-      const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
-        // Genuine native CLI process boundary, with a live PID but no ready RPC receipt.
-        runHappierText: async () => ({ status: 0, stdout: '', stderr: '' }),
-        runHappierJson: async () => {
-          reads++;
-          return { service: { installed: true }, daemon: { running: true, healthy }, auth: { needsAuth: false } };
-        },
-      } });
-      const result = executor.waitForReadyDaemon!({ timeoutMs: 1_000, requireMachineControlReady: true });
-      const refused = expect(result).rejects.toMatchObject({ code: 'daemon_service_not_ready' });
-      await vi.advanceTimersByTimeAsync(1_000);
-      await refused;
-      const settledReads = reads;
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect(reads).toBe(settledReads);
-      // Standalone setup keeps its released process/auth readiness contract.
-      await expect(executor.waitForReadyDaemon!({})).resolves.toMatchObject({ daemonRunning: true });
-    } finally { vi.useRealTimers(); }
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(settled).toBe(false);
+      const readsBeforeReady = reads;
+      ready = true;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(await result).toMatchObject({ daemonRunning: true, machineId: 'this-machine' });
+      expect(reads).toBe(readsBeforeReady + 1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      ready = true;
+      await vi.runOnlyPendingTimersAsync();
+      await result;
+      vi.useRealTimers();
+    }
+  });
+
+  it('settles a daemon exit before readiness with its existing log pointer', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let running = true;
+    let reads = 0;
+    const executor = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
+      runHappierText: async (args) => {
+        expect(args).toEqual(['daemon', 'logs']);
+        return { status: 0, stdout: '/tmp/this-daemon.log\n', stderr: '' };
+      },
+      runHappierJson: async () => {
+        reads += 1;
+        return { service: { installed: true }, daemon: { running, healthy: false, pid: 314 }, auth: { needsAuth: false } };
+      },
+    } });
+    const result = executor.waitForReadyDaemon!({ signal: controller.signal, timeoutMs: null, requireMachineControlReady: true });
+    // Attach the failure observer before the process-exit publication.
+    const failed = expect(result).rejects.toMatchObject({ code: 'daemon_service_not_ready', message: expect.stringContaining('/tmp/this-daemon.log') });
+    void failed.catch(() => {});
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      running = false;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(reads).toBe(2);
+      expect(vi.getTimerCount()).toBe(0);
+      await failed;
+    } finally { controller.abort(); await Promise.allSettled([result, failed]); vi.useRealTimers(); }
   });
 
   it('withdraws the managed readiness observation on cancellation without further native reads', async () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
 import {
@@ -252,75 +252,30 @@ describe('daemonServiceKinds', () => {
     });
   });
 
-  it('reports background-service naming when start does not reach ready state', async () => {
-    let statusReads = 0;
+  it('keeps service Start pending beyond the former phase cutoff and completes once', async () => {
+    vi.useFakeTimers();
+    let running = false;
+    let reads = 0;
+    const status = { serviceInstalled: true, daemonRunning: false, needsAuth: false,
+      machineId: 'machine-1', daemonServerUrl: 'https://relay.example.test',
+      daemonComparableKey: 'https://relay.example.test', daemonAccountId: 'acct_123',
+      daemonMachineRegistered: true, ...defaultDaemonServiceStatusDetails };
     const kind = createDaemonServiceStartTaskKind({
-      readStatus: async () => {
-        statusReads += 1;
-        return {
-          serviceInstalled: true,
-          daemonRunning: false,
-          needsAuth: false,
-          machineId: 'machine-1',
-          daemonServerUrl: 'https://relay.example.test',
-          daemonComparableKey: 'https://relay.example.test',
-          daemonAccountId: 'acct_123',
-          daemonMachineRegistered: true,
-          ...defaultDaemonServiceStatusDetails,
-        };
-      },
-      startService: async () => undefined,
-      stopService: async () => {
-        throw new Error('stopService should not be called');
-      },
-      restartService: async () => {
-        throw new Error('restartService should not be called');
-      },
+      readStatus: async () => { reads += 1; return { ...status, daemonRunning: running }; },
+      startService: async () => undefined, stopService: async () => undefined, restartService: async () => undefined,
     });
-
-    const previousTimeout = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS;
-    const previousPoll = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS;
-    process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS = '100';
-    process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS = '50';
-
+    const runner = createSystemTasksRunner({ kinds: { 'daemon.service.start.v1': kind } });
     try {
-      const runner = createSystemTasksRunner({
-        kinds: {
-          'daemon.service.start.v1': kind,
-        },
-      });
-
-      await runner.start({
-        taskId: 'daemon-not-ready',
-        kind: 'daemon.service.start.v1',
-        params: {
-          target: { kind: 'local' },
-          surface: 'test',
-          mode: 'user',
-        },
-      });
-
-      const finalPoll = await waitForResult(runner, { taskId: 'daemon-not-ready', cursor: 0 });
-      expect(statusReads).toBeGreaterThan(1);
-      expect(finalPoll.result).toMatchObject({
-        ok: false,
-        error: {
-          code: 'daemon_service_not_ready',
-          message: 'Background service did not reach a ready state.',
-        },
-      });
-    } finally {
-      if (previousTimeout === undefined) {
-        delete process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS;
-      } else {
-        process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS = previousTimeout;
-      }
-      if (previousPoll === undefined) {
-        delete process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS;
-      } else {
-        process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS = previousPoll;
-      }
-    }
+      await runner.start({ taskId: 'slow-start', kind: 'daemon.service.start.v1', params: { target: { kind: 'local' } } });
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect((await runner.poll({ taskId: 'slow-start', cursor: 0 })).result).toBeNull();
+      const readsBeforeReady = reads;
+      running = true;
+      await vi.advanceTimersByTimeAsync(500);
+      expect((await runner.poll({ taskId: 'slow-start', cursor: 0 })).result).toMatchObject({ ok: true, data: { daemonRunning: true } });
+      expect(reads).toBe(readsBeforeReady + 1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { running = true; await vi.runOnlyPendingTimersAsync(); vi.useRealTimers(); }
   });
 
   it('reports background-service naming when stop does not complete cleanly', async () => {

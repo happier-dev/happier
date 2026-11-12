@@ -1,6 +1,7 @@
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { type InteractiveSystemTaskContext, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 import type { LocalCliUpdateFact } from '../executors/cliUpdateFact.js';
+import { waitForMachineOnline } from '../executors/enrollMachineFlowExecutor.js';
 
 export type DaemonServiceTaskParams = Readonly<{
   target: Readonly<{
@@ -100,69 +101,6 @@ function assertDaemonInstalled(status: DaemonServiceStatusSnapshot): void {
   }
 }
 
-const DEFAULT_DAEMON_READY_TIMEOUT_MS = 15_000;
-const DEFAULT_DAEMON_READY_POLL_MS = 500;
-
-function readPositiveIntEnv(
-  envVarName: string,
-  fallback: number,
-  bounds: Readonly<{ min: number; max: number }>,
-): number {
-  const rawValue = process.env[envVarName];
-  const parsed = typeof rawValue === 'string' ? Number.parseInt(rawValue.trim(), 10) : Number.NaN;
-  if (!Number.isFinite(parsed) || parsed < bounds.min) {
-    return fallback;
-  }
-  return Math.min(parsed, bounds.max);
-}
-
-async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (ms <= 0) return;
-  if (signal?.aborted) {
-    throw new SystemTaskExecutionError('cancelled', 'System task execution was cancelled.');
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      cleanup();
-      reject(new SystemTaskExecutionError('cancelled', 'System task execution was cancelled.'));
-    };
-    const cleanup = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-async function waitForReadyDaemon(params: Readonly<{
-  readStatus: () => Promise<DaemonServiceStatusSnapshot>;
-  signal?: AbortSignal;
-}>): Promise<DaemonServiceStatusSnapshot> {
-  const timeoutMs = readPositiveIntEnv(
-    'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS',
-    DEFAULT_DAEMON_READY_TIMEOUT_MS,
-    { min: 100, max: 120_000 },
-  );
-  const pollMs = readPositiveIntEnv(
-    'HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS',
-    DEFAULT_DAEMON_READY_POLL_MS,
-    { min: 50, max: 5_000 },
-  );
-
-  const deadline = Date.now() + timeoutMs;
-  let latest = await params.readStatus();
-  while ((!latest.serviceInstalled || !latest.daemonRunning || latest.needsAuth) && Date.now() < deadline) {
-    await delay(pollMs, params.signal);
-    latest = await params.readStatus();
-  }
-  return latest;
-}
-
 export function createDaemonServiceStatusTaskKind(deps: DaemonServiceKindDeps): InteractiveSystemTaskKind<DaemonServiceTaskResult> {
   return {
     async run(ctx) {
@@ -194,16 +132,10 @@ export function createDaemonServiceStartTaskKind(deps: DaemonServiceKindDeps): I
 
       await deps.startService(parsed, ctx);
 
-      const readyStatus = await waitForReadyDaemon({
+      const readyStatus = await waitForMachineOnline({
         readStatus: async () => await deps.readStatus(parsed, ctx),
         signal: ctx.signal,
       });
-      if (!readyStatus.serviceInstalled || !readyStatus.daemonRunning || readyStatus.needsAuth) {
-        throw new SystemTaskExecutionError(
-          'daemon_service_not_ready',
-          'Background service did not reach a ready state.',
-        );
-      }
 
       ctx.emit({
         type: 'progress',
@@ -279,16 +211,10 @@ export function createDaemonServiceRestartTaskKind(deps: DaemonServiceKindDeps):
 
       await deps.restartService(parsed, ctx);
 
-      const readyStatus = await waitForReadyDaemon({
+      const readyStatus = await waitForMachineOnline({
         readStatus: async () => await deps.readStatus(parsed, ctx),
         signal: ctx.signal,
       });
-      if (!readyStatus.serviceInstalled || !readyStatus.daemonRunning || readyStatus.needsAuth) {
-        throw new SystemTaskExecutionError(
-          'daemon_service_not_ready',
-          'Background service did not reach a ready state.',
-        );
-      }
 
       ctx.emit({
         type: 'progress',

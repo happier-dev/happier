@@ -746,34 +746,22 @@ describe('hsetup local setup and repair dispatch', () => {
     });
   });
 
-  it('fails setup.thisComputer.v1 when the daemon service is not ready after setup', async () => {
-    const previousTimeoutMs = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS;
-    const previousPollMs = process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS;
-    try {
-      process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS = '150';
-      process.env.HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS = '20';
-      await withFakeHappierCli({
-        daemonStatuses: Array.from({ length: 8 }, () => ({
-          server: { serverUrl: 'https://relay.example.test', localServerUrl: null, publicServerUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' },
-          daemon: { running: false, pid: null },
-          service: { installed: false, running: false },
-          auth: { authenticated: true, machineRegistered: false, machineId: null, needsAuth: true },
-        })),
-      }, async (fakeCli) => {
-        const run = await runHsetup({ spec: SETUP_SPEC, interactiveKinds: setupKindsWithoutGuidance() });
-
-        expect(run.result).toEqual({
-          protocolVersion: 1,
-          taskId: 'task-local-1',
-          ok: false,
-          error: { code: 'daemon_service_not_ready', message: 'Background service did not reach a ready state for the selected Relay.' },
-        });
-        expect(fakeCli.readInvocations()).toContainEqual(['--server', 'relay', 'daemon', 'status', '--json']);
+  it('fails setup.thisComputer.v1 when its daemon exits after setup', async () => {
+    await withFakeHappierCli({
+      daemonStatuses: [{
+        server: { serverUrl: 'https://relay.example.test', localServerUrl: null, publicServerUrl: 'https://relay.example.test', webappUrl: 'https://app.example.test' },
+        daemon: { running: false, pid: 4321 },
+        service: { installed: true, running: false },
+        auth: { authenticated: true, machineRegistered: true, machineId: 'machine-local-1', needsAuth: false },
+      }],
+    }, async (fakeCli) => {
+      const run = await runHsetup({ spec: SETUP_SPEC, interactiveKinds: setupKindsWithoutGuidance() });
+      expect(run.result).toMatchObject({
+        protocolVersion: 1, taskId: 'task-local-1', ok: false,
+        error: { code: 'daemon_service_not_ready', message: expect.stringContaining('daemon logs') },
       });
-    } finally {
-      restoreEnvVar('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS', previousTimeoutMs);
-      restoreEnvVar('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS', previousPollMs);
-    }
+      expect(fakeCli.readInvocations()).toContainEqual(['--server', 'relay', 'daemon', 'status', '--json']);
+    });
   });
 
   it('uses the publicdev release ring when setup.thisComputer.v1 specifies channel publicdev', async () => {

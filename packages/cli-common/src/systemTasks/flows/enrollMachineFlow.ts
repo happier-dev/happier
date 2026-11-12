@@ -20,6 +20,8 @@ export type EnrollMachineAuthStatus = Readonly<{
 export type EnrollMachineDaemonStatus = Readonly<{
   serviceInstalled: boolean;
   daemonRunning: boolean;
+  /** Existing CLI process observation, retained inside the executor rather than task wire data. */
+  daemonPid?: number | null;
   /** Existing CLI observation: acknowledged Home machine-control registration. */
   daemonHealthy?: boolean | null;
   needsAuth: boolean;

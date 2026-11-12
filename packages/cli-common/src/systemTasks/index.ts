@@ -92,6 +92,7 @@ export {
 export {
   createEnrollMachineFlowExecutorFromHappierJsonExecutor,
   serverHelpSupportsExplicitHomeSetup,
+  waitForMachineOnline,
   type EnrollMachineFlowExecutorOptions,
 } from './executors/enrollMachineFlowExecutor.js';
 
