@@ -107,7 +107,9 @@ it.each(['plain', 'e2ee'] as const)('issues requester-bound Browser and Computer
         expect((await issue(guest.id, 'browser.view.open', ownerSession.id)).statusCode).toBe(409);
         expect((await issue(guest.id)).statusCode).toBe(200);
         for (const actionId of ['browser.extensions.install', 'browser.profile.logins.import', 'browser.sandbox.install']) {
-            expect((await issue(guest.id, actionId)).statusCode, actionId).toBe(409);
+            const denied = await issue(guest.id, actionId);
+            expect(denied.statusCode, actionId).toBe(403);
+            expect(denied.json()).toMatchObject({ error: 'credential_scope_denied' });
             expect((await issue(owner.id, actionId)).statusCode, actionId).toBe(200);
         }
         await db.machine.update({ where: { id: machine.id }, data: { operationProtocolCapabilities: {} } });

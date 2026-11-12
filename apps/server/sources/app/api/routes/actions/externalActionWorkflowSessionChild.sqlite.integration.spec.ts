@@ -123,8 +123,12 @@ it('admits the signed Session child only under its own active admitted Run and p
         caller: { ...origin.sessionLeaf.caller, sessionId: 'wrong-session' } } });
     expect(forgedCaller.status, await forgedCaller.clone().text()).toBe(403);
     expect(await forgedCaller.json()).toMatchObject({ error: 'credential_scope_denied' });
-    expect((await mint({ ...origin, runId: 'unadmitted-run' })).status).toBe(401);
-    expect((await mint(origin, origin, await server.createForeignAccount())).status).toBe(401);
+    const unadmitted = await mint({ ...origin, runId: 'unadmitted-run' });
+    expect(unadmitted.status).toBe(403);
+    expect(await unadmitted.json()).toMatchObject({ error: 'credential_scope_denied' });
+    const foreign = await mint(origin, origin, await server.createForeignAccount());
+    expect(foreign.status).toBe(403);
+    expect(await foreign.json()).toMatchObject({ error: 'credential_scope_denied' });
     const binding = { ...admitted.binding, accountId: 'foreign-account' };
     expect(await hasCurrentExternalActionWorkflowOriginInTx(db, binding)).toBe(false);
     // Withdrawal governs the next admission. Existing child work reads only its Run.
