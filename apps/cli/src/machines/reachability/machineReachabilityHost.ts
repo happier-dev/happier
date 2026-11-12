@@ -293,8 +293,8 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       management: { ...observation.management, publicSsh } };
     if (change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
       if (facts.status === 'unavailable') return { ok: false as const,
-        errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', details: {
-          failure: { kind: 'native_check_unavailable', phase: 'check', requiredFact: facts.requiredFact },
+        errorCode: 'native_check_unavailable', error: 'native_check_unavailable', details: {
+          failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', phase: 'check', requiredFact: facts.requiredFact },
           ...(facts.remedy ? { remedy: facts.remedy } : {}),
         } };
       const needsTransition = sshChanged || change.posture.management.publicSsh.kind === 'closed'
