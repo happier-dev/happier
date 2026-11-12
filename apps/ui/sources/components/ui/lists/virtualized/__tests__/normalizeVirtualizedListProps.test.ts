@@ -16,6 +16,10 @@ function baseProps(overrides: Partial<VirtualizedListProps<Row>> = {}): Virtuali
 }
 
 describe('normalizeVirtualizedListProps', () => {
+    it('delivers the first handled row tap with the keyboard open unless the caller opts out', () => {
+        expect(normalizeVirtualizedListProps(baseProps()).shared.keyboardShouldPersistTaps).toBe('handled');
+        expect(normalizeVirtualizedListProps(baseProps({ keyboardShouldPersistTaps: 'never' })).shared.keyboardShouldPersistTaps).toBe('never');
+    });
     it('places a row nobody sized at the collection row height, not the backend default slot', () => {
         // Legend places an unmeasured cell at its estimate; its own default (100) spaced arriving rows far apart.
         expect(normalizeVirtualizedListProps(baseProps()).virtualization.estimatedItemSize)

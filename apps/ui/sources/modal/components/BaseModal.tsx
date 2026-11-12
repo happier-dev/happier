@@ -30,6 +30,10 @@ import { MODAL_Z_INDEX, resolveModalWebPortalTarget } from '@/components/ui/over
 const BASE_MODAL_FOCUS_RETURN = { kind: 'activation-time' } as const;
 
 const isWeb = String(Platform.OS) === 'web';
+// React Native exports this static context at runtime; its TypeScript declarations omit it and RNW has none.
+const NativeScrollContext = (ScrollView as typeof ScrollView & {
+    Context?: React.Context<Readonly<{ horizontal: boolean }> | null>;
+}).Context;
 const WEB_MODAL_CARD_BOUNDARY_SELECTOR = '[data-happy-modal-card-boundary]';
 
 // On web, stop events from propagating to expo-router's modal overlay
@@ -166,6 +170,14 @@ export function BaseModal({
     const modalAccessibilityLabel = accessibilityLabel ?? t('common.dialog');
     const modalPointerEvents = resolveOverlayPointerEvents(visible ? 'auto' : 'none');
     const interactivePointerEvents = resolveOverlayPointerEvents('auto');
+    const nativeContent = (
+        <View
+            pointerEvents={interactivePointerEvents.nativePointerEvents}
+            style={[styles.scrollContentInner, placement === 'fullscreen' ? styles.contentFullscreen : null, interactivePointerEvents.webStyle]}
+        >
+            {sheetChildren}
+        </View>
+    );
 
     useWebOverlayFocusContainment({
         active: isWeb && visible && modalPresence.present,
@@ -496,12 +508,15 @@ export function BaseModal({
                                 keyboardShouldPersistTaps="handled"
                                 centerContent={placement === 'center'}
                             >
-                                <View
-                                    pointerEvents={interactivePointerEvents.nativePointerEvents}
-                                    style={[styles.scrollContentInner, placement === 'fullscreen' ? styles.contentFullscreen : null, interactivePointerEvents.webStyle]}
-                                >
-                                    {sheetChildren}
-                                </View>
+                                {/* A disabled host retains input custody without advertising a scroll ancestor to
+                                    native lists. A scrolling body below supplies its own context; an overlay keeps this one. */}
+                                {NativeScrollContext ? (
+                                    <NativeScrollContext.Consumer>{context => (
+                                        <NativeScrollContext.Provider value={scrollHost === 'overlay' ? context : null}>
+                                            {nativeContent}
+                                        </NativeScrollContext.Provider>
+                                    )}</NativeScrollContext.Consumer>
+                                ) : nativeContent}
                             </ScrollView>
                         </ModalBoundaryProvider>
                     </ModalContentFrame>

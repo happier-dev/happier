@@ -106,7 +106,7 @@ export function normalizeVirtualizedListProps<T>(
             ListFooterComponent: props.ListFooterComponent,
             ListEmptyComponent: props.ListEmptyComponent,
             ItemSeparatorComponent: props.ItemSeparatorComponent,
-            keyboardShouldPersistTaps: props.keyboardShouldPersistTaps,
+            keyboardShouldPersistTaps: props.keyboardShouldPersistTaps ?? 'handled',
             keyboardDismissMode: props.keyboardDismissMode,
             horizontal: props.horizontal,
             showsVerticalScrollIndicator: props.showsVerticalScrollIndicator,

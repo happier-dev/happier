@@ -1,11 +1,12 @@
 import React from 'react';
-import { StyleSheet as ReactNativeStyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet as ReactNativeStyleSheet, Text, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import type { CustomModalInjectedProps } from '../types';
+import { BaseModal } from './BaseModal';
 
 const reactActEnvironment = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -45,7 +46,13 @@ function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    // Native ScrollView advertises its orientation even when disabled; model this OS adapter contract.
+    const context = React.createContext<{ horizontal: boolean } | null>(null);
+    const NativeScrollView = Object.assign(React.forwardRef((props: React.PropsWithChildren<Record<string, unknown>>, ref) =>
+        React.createElement('ScrollView', { ...props, ref },
+            React.createElement(context.Provider, { value: { horizontal: false } }, props.children))), { Context: context });
     return createReactNativeWebMock({
+        ScrollView: NativeScrollView,
         Platform: {
             get OS() { return nativePlatform.os; },
             select: (options: Record<string, unknown>) => options?.[nativePlatform.os] ?? options?.native ?? options?.default,
@@ -88,9 +95,16 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('BaseModal (native)', () => {
+    it.each(['body', 'overlay'] as const)('advertises only the actual %s scroll owner to native virtualized children', async (scrollHost) => {
+        const context = (ScrollView as typeof ScrollView & { Context: React.Context<{ horizontal: boolean } | null> }).Context;
+        function CatalogProbe() {
+            return React.createElement('CatalogProbe', { scrollContext: React.useContext(context) });
+        }
+        const screen = await renderScreen(<BaseModal visible scrollHost={scrollHost}><CatalogProbe /></BaseModal>);
+        expect(screen.findByType('CatalogProbe').props.scrollContext).toEqual(scrollHost === 'body' ? null : { horizontal: false });
+    });
     it.each([['center', 0], ['fullscreen', 16]] as const)('reports the rendered %s viewport without reserving its safe area twice', async (placement, bottomInset) => {
         nativePlatform.os = 'ios';
-        const { BaseModal } = await import('./BaseModal');
         const { useModalContentViewport } = await import('../context/ModalBoundaryContext');
         function ViewportProbe() {
             const viewport = useModalContentViewport();
@@ -104,7 +118,6 @@ describe('BaseModal (native)', () => {
         expect(screen.getTextContent()).toContain(`440x480; bottom=${bottomInset}`);
     });
     it('keeps native Back and dialog custody without a motion frame for a stage', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const { OverlayMotionFrame } = await import('@/components/ui/overlays/motion/overlayMotion');
         const onClose = vi.fn();
         const screen = await renderScreen(<BaseModal visible motion="none" placement="fullscreen" showBackdrop={false} onClose={onClose}><View /></BaseModal>);
@@ -142,7 +155,6 @@ describe('BaseModal (native)', () => {
         expect(retired).toHaveBeenCalledOnce();
     });
     it('exposes a named modal-isolated dialog surface', async () => {
-        const { BaseModal } = await import('./BaseModal');
 
         const screen = await renderScreen(
             React.createElement(BaseModal, {
@@ -160,7 +172,6 @@ describe('BaseModal (native)', () => {
     it.each([['android', 120], ['android', 1200], ['ios', 120], ['ios', 1200]] as const)(
         'bottom-aligns a %s %i px phone sheet inside its keyboard-resized scroll viewport', async (platform, height) => {
         nativePlatform.os = platform;
-        const { BaseModal } = await import('./BaseModal');
         const screen = await renderScreen(
             <BaseModal visible placement="bottom"><View style={{ height }} /></BaseModal>,
         );
@@ -175,14 +186,12 @@ describe('BaseModal (native)', () => {
     });
 
     it('keeps centered cards centered instead of applying sheet placement to every modal', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const screen = await renderScreen(<BaseModal visible><View style={{ height: 120 }} /></BaseModal>);
         const scroll = screen.findAll((node) => node.props.keyboardShouldPersistTaps === 'handled' && 'contentContainerStyle' in node.props)[0];
         expect(flattenStyleProp(scroll.props.contentContainerStyle).justifyContent).toBe('center');
     });
 
     it('bottom-aligns a bounded sheet while leaving its body as the sole scroll owner', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const screen = await renderScreen(<BaseModal visible placement="bottom" scrollHost="body"><View /></BaseModal>);
         expect(screen.findAll((node) => node.props.keyboardShouldPersistTaps === 'handled')
             .every(node => node.props.scrollEnabled === false)).toBe(true);
@@ -191,7 +200,6 @@ describe('BaseModal (native)', () => {
     });
 
     it('provides a modal-local overlay portal for popovers opened inside the native modal', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const { useOverlayPortal } = await import('@/components/ui/popover');
 
         function Child() {
@@ -214,7 +222,6 @@ describe('BaseModal (native)', () => {
     });
 
     it('consumes Android hardware Back through the shared dismissal surface', async () => {
-        const { BaseModal } = await import('./BaseModal');
         const onClose = vi.fn();
 
         await renderScreen(
@@ -230,7 +237,6 @@ describe('BaseModal (native)', () => {
     });
 
     it('leaves the bounded modal body as the only enabled scroll owner', async () => {
-        const { BaseModal } = await import('./BaseModal');
 
         const screen = await renderScreen(
             React.createElement(BaseModal, {

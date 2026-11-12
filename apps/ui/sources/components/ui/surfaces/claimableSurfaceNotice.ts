@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiSurfaceNoticeContext, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
 import { SurfaceStateContentContext } from './SurfaceStateCard';
 
@@ -22,30 +22,37 @@ export function useClaimableSurfaceNotice(
   claimed: boolean;
 }> {
   const reportContent = React.useContext(SurfaceStateContentContext);
+  // A surrounding host already knows the cause and recovery (for example, no Machine can run this plugin).
+  // An inner offline notice relays that offer instead of replacing it with a generic failure.
+  const outer = React.useContext(PluginUiSurfaceNoticeContext);
+  const inherited = content === null ? null : outer;
+  const offered = content === null ? null : inherited ?? content;
   const [claimants, setClaimants] =
     React.useState<ReadonlySet<string>>(NO_CLAIMANTS);
   const claim = React.useCallback((id: string) => {
+    const releaseOuter = inherited?.claim(id);
     setClaimants((current) =>
       current.has(id) ? current : new Set(current).add(id),
     );
-    return () =>
+    return () => {
+      releaseOuter?.();
       setClaimants((current) => {
         if (!current.has(id)) return current;
         const next = new Set(current);
         next.delete(id);
         return next;
       });
-  }, []);
+    };
+  }, [inherited]);
   const notice = React.useMemo<PluginUiSurfaceNotice | null>(
     () =>
-      content === null
+      offered === null
         ? null
         : {
-            sentence: content.sentence,
+            ...offered,
             claim,
-            ...(content.action ? { action: content.action } : {}),
           },
-    [claim, content],
+    [claim, offered],
   );
   const claimed = notice !== null && claimants.size > 0;
   const [reportKey] = React.useState(() => Symbol('claimed-surface-notice'));

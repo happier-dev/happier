@@ -37,6 +37,12 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 // NATIVE-AUDIT-1109: a native ScrollView lays its content out with unbounded height. The phone Customize (Bar)
 // sheet's own row list therefore never got a height, never scrolled, and its last row (Settings) stayed clipped.
 describe('ModalCardFrame body on native', () => {
+  it('leaves a catalog as the only native scroll owner', async () => {
+    const screen = await renderScreen(<ModalCardFrame presentation="fullscreen" scrollHost="body" bodyScroll="none">
+      {React.createElement('Catalog')}
+    </ModalCardFrame>);
+    expect(screen.findAllByType('ScrollView')).toHaveLength(0);
+  });
   it.each(['body', 'bounded'] as const)(
     'hands content that owns its scrolling exactly the %s card body, so its last row is reachable',
     async (scrollHost) => {
@@ -51,7 +57,7 @@ describe('ModalCardFrame body on native', () => {
           {React.createElement('RowList')}
         </ModalCardFrame>,
       );
-      const body = () => screen.findAllByType('ScrollView')[0]!;
+      const body = () => screen.findHostByTestId('modal-card-body-viewport')!;
       act(() =>
         body().props.onLayout?.({
           nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 612 } },
@@ -59,8 +65,8 @@ describe('ModalCardFrame body on native', () => {
       );
       // The one scroller is the content's own list: the body stays still and bounds it to its own height,
       // exactly for a fixed-height body (iOS QA: under a mere cap the list stayed 1122 pt in a 522 pt body).
-      expect(body().props.scrollEnabled).toBe(false);
-      const content = flattenStyle(body().props.contentContainerStyle);
+      expect(screen.findAllByType('ScrollView')).toHaveLength(0);
+      const content = flattenStyle(screen.findHostByTestId('modal-card-body')!.props.style);
       expect(scrollHost === 'body' ? content.height : content.maxHeight).toBe(612);
     },
   );
@@ -81,7 +87,7 @@ describe('ModalCardFrame body on native', () => {
       </ModalCardFrame>,
     );
     const frame = () => screen.findByTestId('card')!;
-    const body = () => screen.findAllByType('ScrollView')[0]!;
+    const body = () => screen.findHostByTestId('modal-card-body-viewport')!;
     const frameMax = flattenStyle(frame().props.style).maxHeight as number;
     expect(frameMax).toBeGreaterThan(420);
     const layout = (height: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } });
@@ -89,13 +95,13 @@ describe('ModalCardFrame body on native', () => {
       body().props.onLayout?.(layout(300));
       frame().props.onLayout?.(layout(420));
     });
-    expect(flattenStyle(body().props.contentContainerStyle).maxHeight).toBe(300 + frameMax - 420);
+    expect(flattenStyle(screen.findHostByTestId('modal-card-body')!.props.style).maxHeight).toBe(300 + frameMax - 420);
     act(() => {
       body().props.onLayout?.(layout(300 + frameMax - 420));
       frame().props.onLayout?.(layout(frameMax));
     });
     // At its bound the card hands its content exactly the body it has, as before.
-    expect(flattenStyle(body().props.contentContainerStyle).maxHeight).toBe(300 + frameMax - 420);
+    expect(flattenStyle(screen.findHostByTestId('modal-card-body')!.props.style).maxHeight).toBe(300 + frameMax - 420);
   });
 
   it('leaves a scrolling body unbounded: there the body is the one scroller', async () => {

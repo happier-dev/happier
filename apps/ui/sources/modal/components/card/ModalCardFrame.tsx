@@ -149,7 +149,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
     const inheritedScrollSource = usePopoverScrollSourceRef();
     // A body that does not scroll hands its content exactly its own height, so content that owns its
     // scrolling (a placement list, a catalog beside its details) is the one scroller and reaches its end.
-    // Web bounds it by flex; a native ScrollView lays its content out unbounded, so the bound is measured.
+    // The viewport is a View, not a disabled ScrollView: native virtualized children must remain the only scroll owner.
     // A fixed-height body gives an exact height: under a mere cap, native flex children below it still lay
     // out at their full height (iOS QA: the Customize list stayed 1122 pt tall in a 522 pt body).
     const boundsContent = (fixedHeight || bounded) && bodyScroll !== 'auto';
@@ -194,6 +194,18 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         || props.actions != null
         || props.completion != null
         || typeof props.onClose === 'function');
+
+    const body = (
+        <PopoverScrollSourceProvider scrollSourceRef={bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
+            <ModalCardBody fill={framed && bodyScroll !== 'auto'}
+                // Native flex children need the exact fixed viewport, rather than their intrinsic content height.
+                style={[boundsContent && bodyHeight > 0
+                    ? fixedHeight ? { height: bodyHeight, flexGrow: 0, flexShrink: 0 } : { maxHeight: bodyCap }
+                    : null, props.bodyStyle]}>
+                <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
+            </ModalCardBody>
+        </PopoverScrollSourceProvider>
+    );
 
     return (
         <Animated.View
@@ -261,32 +273,22 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
 
                 {/* A card (not fullscreen) is a contained scope: page lists inside take its width (R-APP-7). */}
                 <ContainedPageScopeProvider contained={framed && !fullscreen}>
-                    {/* One body parent: chrome and scroll changes must not retire pending input custody. */}
-                    <ScrollView
+                    {boundsContent ? (
+                        <View testID="modal-card-body-viewport" style={styles.bodyBounded} onLayout={onBodyLayout}>
+                            {body}
+                        </View>
+                    ) : <ScrollView
                         ref={bodyScrollRef}
                         testID={bodyScroll === 'auto' ? 'modal-card-body-scroll' : undefined}
-                        style={bodyScroll === 'auto' ? styles.bodyScrollView
-                            // A fixed-height card whose content owns its scrolling (a catalog list beside its
-                            // details): the body takes the card's height and never grows past it.
-                            : fixedHeight || bounded ? styles.bodyBounded : styles.bodyUnscrolled}
-                        onLayout={boundsContent ? onBodyLayout : undefined}
-                        contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent
-                            : boundsContent ? [styles.bodyBounded, bodyHeight > 0 ? (fixedHeight ? { height: bodyHeight } : { maxHeight: bodyCap }) : null] : undefined}
+                        // Raw/overlay bodies keep their parent while publishing scrolling chrome, retaining pending input custody.
+                        style={bodyScroll === 'auto' ? styles.bodyScrollView : styles.bodyUnscrolled}
+                        contentContainerStyle={bodyScroll === 'auto' ? styles.bodyScrollContent : undefined}
                         scrollEnabled={bodyScroll === 'auto'}
                         keyboardShouldPersistTaps="handled"
                         nestedScrollEnabled={bodyScroll === 'auto'}
                     >
-                        <PopoverScrollSourceProvider scrollSourceRef={bodyScroll === 'auto' ? bodyScrollRef : inheritedScrollSource}>
-                            <ModalCardBody fill={framed && bodyScroll !== 'auto'}
-                                // Sized from the exact body height, never from its content: native Yoga (legacy errata)
-                                // shrank a content-sized body to the card but left its children at the content height
-                                // (iOS QA: a 1122 pt Customize list inside a 522 pt body).
-                                style={[boundsContent && fixedHeight && bodyHeight > 0 ? { height: bodyHeight, flexGrow: 0, flexShrink: 0 } : null, props.bodyStyle]}>
-                                {/* A card or sheet already draws the surface; a fullscreen page keeps the strip under its header. */}
-                                <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
-                            </ModalCardBody>
-                        </PopoverScrollSourceProvider>
-                    </ScrollView>
+                        {body}
+                    </ScrollView>}
                 </ContainedPageScopeProvider>
 
                 {framed && props.footer != null ? (

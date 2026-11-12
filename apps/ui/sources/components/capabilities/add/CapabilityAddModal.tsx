@@ -187,7 +187,7 @@ const HOST_SLOTS: HappierCapabilityAddHost<IconName> = {
     // listing page the column is the page's reading column, so the identity's action lines up with the header and
     // sections instead of the pane's edge (STORE-UI-R2 N3); in a dialog or pane the column is the body.
     <ListPresentationProvider value="page" pageInsets="contained">
-      <PageFrame content="column">{children}</PageFrame>
+      <PageFrame content="column" style={{ flexGrow: 1, minHeight: 0 }}>{children}</PageFrame>
     </ListPresentationProvider>
   ),
   useDismissDetail,
