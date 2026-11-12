@@ -1,3 +1,4 @@
+// @happier-test-preparation source
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import { once } from 'node:events';
