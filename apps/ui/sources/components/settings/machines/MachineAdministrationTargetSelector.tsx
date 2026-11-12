@@ -60,6 +60,11 @@ export type MachineAdministrationTargetSelectorProps = Readonly<{
     testIDPrefix?: string;
     /** Contextual label for the machine scope this selector presents. */
     groupTitle?: string;
+    /**
+     * A chip that chooses where one thing runs rather than scoping its page (the Connect sheet's sign-in) says so
+     * before the Machine's name: "Sign in on · Mac Studio".
+     */
+    chipLabel?: string;
     /** Contextual copy for an unselected machine scope. */
     unselectedTitle?: string;
     /** Domain-owned availability layered over the canonical Machine row. */
@@ -426,9 +431,10 @@ export function useMachineAdministrationTargetFilter(
     ), [changeTarget, groups, resolveCandidateAvailability, resolveCandidatePresentation, selectedServerId, selection, selectionPolicy, testIDPrefix]);
     return {
         id: props.filterId ?? 'machine',
-        label: groupTitle,
+        label: props.chipLabel ?? groupTitle,
         // A chip names the Machine only; the step it scopes says why a Machine can't be used and what to do.
         valueLabel: current.title,
+        ...(props.chipLabel !== undefined ? { showLabel: true } : {}),
         icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
         ...(hasTarget && presence ? { presence } : {}),
         muted: !hasTarget,

@@ -1,5 +1,5 @@
 import { Modal } from '@/modal';
-import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import { createAnchoredPickerChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
@@ -30,7 +30,7 @@ export function presentSessionAddressSelection(serverId: string, anchor?: Popove
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,
-        chrome: createAnchoredSheetChrome({ title: destination?.title ?? t('sessionGettingStarted.title.selectSession'), anchor }),
+        chrome: createAnchoredPickerChrome({ title: destination?.title ?? t('sessionGettingStarted.title.selectSession'), anchor }),
     });
     if (!modalId) close();
     else if (closed) Modal.hide(modalId);

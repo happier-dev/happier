@@ -33,12 +33,15 @@ const DEFAULT_MODAL_CARD_VIEWPORT_MARGIN = {
 
 const MODAL_CARD_MIN_VERTICAL_VIEWPORT_MARGIN = DEFAULT_MODAL_CARD_VIEWPORT_MARGIN.vertical;
 
+/** A dialog's share of the window height: a short alert or prompt, and a value picker hung from its field. */
+export const MODAL_CARD_DIALOG_HEIGHT_RATIO = 0.48;
+
 const MODAL_CARD_PRESETS: Record<ModalCardSizePreset, ModalCardDimensionPreset> = {
     dialog: {
         minWidth: 280,
         maxWidth: HAPPIER_PAGE_METRICS.dialogWidthPx.narrow,
         minHeight: 180,
-        heightRatio: 0.48,
+        heightRatio: MODAL_CARD_DIALOG_HEIGHT_RATIO,
     },
     md: {
         minWidth: 320,

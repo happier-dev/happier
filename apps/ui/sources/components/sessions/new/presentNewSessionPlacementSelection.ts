@@ -3,7 +3,7 @@ import { SelectionList, SELECTION_LIST_MODAL_MAX_HEIGHT, resolveSelectionListMod
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
-import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import { createAnchoredPickerChrome } from '@/modal/components/card/anchoredSheetChrome';
 import { t } from '@/text';
 import { createNewSessionPlacementSelectionStep } from './newSessionPlacementSelectionStep';
 import { readSessionPlacementCandidateRows } from './useSessionPlacementCandidateRows';
@@ -33,7 +33,7 @@ export function presentNewSessionPlacementSelection(
             maxHeight: SELECTION_LIST_MODAL_MAX_HEIGHT,
             heightBehavior: resolveSelectionListModalHeightBehavior(),
         },
-        chrome: createAnchoredSheetChrome({ title: t('newSession.selectWorkingDirectoryTitle'), anchor }),
+        chrome: createAnchoredPickerChrome({ title: t('newSession.selectWorkingDirectoryTitle'), anchor }),
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,

@@ -133,6 +133,28 @@ async function renderBody(
 }
 
 describe('CapabilityAddModalBody', () => {
+  it('draws an editor page in an input mode without its own header, its Save in the dialog footer', async () => {
+    const { AddDialogEditorPage } = await import('./AddDialogEditorPage');
+    const save = vi.fn();
+    const body = await renderBody(async skill => ({ itemId: skill.name }), {}, {}, {
+      initialModeKey: 'command',
+      modes: [
+        { key: 'browse', label: 'Browse', icon: 'magnifying-glass', kind: 'catalog' },
+        { key: 'command', label: 'From a command', icon: 'terminal', kind: 'input', renderBody: () => (
+          <AddDialogEditorPage footerTestID="editor:footer" header={{ testID: 'editor:header', title: 'New ACP agent',
+            details: 'Name is required', primaryAction: { testID: 'editor:save', title: 'Save', onPress: save } }}>
+            {null}
+          </AddDialogEditorPage>
+        ) },
+      ],
+    });
+    // The dialog already names the task ("Add a skill" here): no second title and Save.
+    expect(body.nodes('editor:header')).toHaveLength(0);
+    expect(body.nodes('editor:footer').length).toBeGreaterThan(0);
+    await body.press('editor:save');
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes Catalog demand only while its mode is presented outside source management', async () => {
     const { Pressable } = await import('react-native');
     const demand = vi.fn();

@@ -2493,6 +2493,7 @@ const connectedServicesSetupTranslations = { ru: {
         keyUsedElsewhereForThis: 'Уже используется для этого в другом месте',
         keySearch: 'Поиск ключей',
         signInOn: 'Вход на',
+        signInOn: 'Вход на',
         accountNew: 'Добавить аккаунт',
         accountSaved: 'Ваши аккаунты',
         keyTitle: 'Добавить ключ',

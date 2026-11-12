@@ -1,7 +1,7 @@
 import { SharedSavedSecretReferenceSelectionV1Schema, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import { Modal } from '@/modal';
-import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import { createAnchoredPickerChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { t } from '@/text';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -53,7 +53,7 @@ export function presentSavedSecretReferencePicker(input: Readonly<{
                 },
             },
             chrome: {
-                ...createAnchoredSheetChrome({
+                ...createAnchoredPickerChrome({
                     title: t('connectedServicesSettings.manualUseSavedSecret'),
                     testID: 'saved-secret-picker-sheet',
                     anchor: input.anchor,

@@ -19,6 +19,8 @@ import {
   type HappierCapabilityAddMode,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { AddDialogHostContext } from './AddDialogEditorPage';
+
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -240,7 +242,8 @@ export function CapabilityAddModalBody<Item>(
         />
         {/* A phone's modes take their own band on the body's edge, above the search (lab `mp:mcpList`). */}
         {level.kind === 'root' && onPhone ? <View style={styles.phoneModes}>{modes}</View> : null}
-        {body}
+        {/* An editor page inside the dialog (From a command, Custom endpoint) leaves the header to the dialog. */}
+        <AddDialogHostContext.Provider value>{body}</AddDialogHostContext.Provider>
       </>}
       phone={onPhone}
       labels={labels}

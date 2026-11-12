@@ -199,6 +199,21 @@ describe('MachineAdministrationTargetSelector', () => {
         expect(offline.selectTarget).not.toHaveBeenCalled();
     }));
 
+    it('says what a chip chooses before the Machine when it picks where one thing runs (Sign in on · machine)', async () => {
+        const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
+        const { selection } = createSelection();
+        const selectedTarget = selection.pickerRows[0]!.candidate.target;
+        const screen = await renderScreen(<MachineAdministrationTargetSelector
+            selection={{ ...selection, selectedTarget,
+                state: resolveMachineAdministrationTargetState({ storedTarget: selectedTarget, candidates: selection.candidates }) }}
+            presentation="chip" chipLabel="Sign in on" testIDPrefix="connect.target"
+        />);
+        const chip = screen.findHostByTestId('connect.target.chip');
+        expect(chip?.props.accessibilityLabel ?? chip?.props['aria-label']).toMatch(/^Sign in on: /);
+        // The words stand on the chip itself, before the Machine's name, not only in its accessible name.
+        expect(screen.findAll((node) => typeof node.type === 'string' && node.props.children === 'Sign in on')).not.toHaveLength(0);
+    });
+
     it('keeps the same-name distinguishing suffix in the selected chip and its machine choices', () => withPopoverWebGlobals(async () => {
         const { MachineAdministrationTargetSelector } = await import('./MachineAdministrationTargetSelector');
         const { selection } = createSelection();

@@ -33,6 +33,8 @@ export type ConnectedServicesSetupTranslation = Readonly<{
     keyInUseHere: string;
     keyUsedElsewhereForThis: string;
     keySearch: string;
+    /** The Connect sheet's Machine chip: where the sign-in runs (the account itself works on every machine). */
+    signInOn: string;
     accountNew: string;
     accountSaved: string;
     keyTitle: string;
@@ -76,6 +78,7 @@ export const connectedServicesSetupTranslationsEnglish = { en: {
         keyInUseHere: 'In use here',
         keyUsedElsewhereForThis: 'Used elsewhere for this',
         keySearch: 'Search keys',
+        signInOn: 'Sign in on',
         accountNew: 'Add account',
         accountSaved: 'Your accounts',
         keyTitle: 'Add a key',

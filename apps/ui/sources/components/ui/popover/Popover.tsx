@@ -996,11 +996,12 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
     })();
     const popoverMotionDirection = resolveOverlayMotionDirectionFromPlacement(shownPlacement);
     /**
-     * Where an open side popover first settled, as an offset from its anchor's top. Content that grows
-     * after opening (a field expands, a sub-page pushes) keeps this top and grows downward, rising only
-     * by what no longer fits; re-centring on every height change made it leap toward the window top.
+     * Where an open side popover, or a designed panel (`fit: 'shift'`) shown above its trigger, first settled, as an
+     * offset from its anchor's top. Content that grows after opening (a field expands, a sub-page pushes, a tab with
+     * more fields) keeps this top and grows downward, rising only by what no longer fits; re-centring a side popover,
+     * or pinning a panel's bottom to its trigger, moved the controls under the pointer on every height change.
      */
-    const settledSideTopRef = React.useRef<Readonly<{ placement: 'left' | 'right'; offset: number }> | null>(null);
+    const settledSideTopRef = React.useRef<Readonly<{ placement: 'left' | 'right' | 'top'; offset: number }> | null>(null);
     if (!open) settledSideTopRef.current = null;
     const isMountedRef = React.useRef(true);
     React.useLayoutEffect(() => {
@@ -1799,6 +1800,18 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                     boundaryRect.y,
                     Math.min(boundaryRect.y + boundaryRect.height - contentHeight, anchorRectState.y - contentHeight - gap),
                 );
+                if (shownPlacement === 'top' && props.fit === 'shift') {
+                    const settled = settledSideTopRef.current;
+                    const heldTopRaw = settled !== null && settled.placement === 'top' ? anchorRectState.y + settled.offset : topForTop;
+                    const fittedTop = Math.min(
+                        boundaryRect.y + boundaryRect.height - contentHeight,
+                        Math.max(boundaryRect.y, heldTopRaw),
+                    );
+                    if ((settled === null || settled.placement !== 'top') && contentRectState !== null && contentRectState.height > 0) {
+                        settledSideTopRef.current = { placement: 'top', offset: fittedTop - anchorRectState.y };
+                    }
+                    return fittedTop;
+                }
                 return shownPlacement === 'top' ? topForTop : topForBottom;
             })();
 
@@ -1814,8 +1827,9 @@ function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: Retur
                 // when its content height changes after opening (e.g. async-loaded trees/lists).
                 //
                 // For top-placed portals we can pin the bottom edge to (anchorTop - gap) using `bottom`,
-                // which avoids depending on the measured content height for vertical positioning.
-                if (shownPlacement === 'top') {
+                // which avoids depending on the measured content height for vertical positioning. A designed
+                // panel (`fit: 'shift'`) keeps its settled top instead (`settledSideTopRef`).
+                if (shownPlacement === 'top' && props.fit !== 'shift') {
                     const anchorTopInPortalSpace =
                         position === 'absolute'
                             ? (anchorRectState.y - webPortalOffsetY)

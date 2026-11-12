@@ -2471,6 +2471,7 @@ const connectedServicesSetupTranslations = { pt: {
         keyUsedElsewhereForThis: 'Já usada para isto noutro lugar',
         keySearch: 'Pesquisar chaves',
         signInOn: 'Iniciar sessão em',
+        signInOn: 'Iniciar sessão em',
         accountNew: 'Adicionar conta',
         accountSaved: 'As suas contas',
         keyTitle: 'Adicionar uma chave',

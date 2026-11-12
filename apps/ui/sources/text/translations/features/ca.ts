@@ -2471,6 +2471,7 @@ const connectedServicesSetupTranslations = { ca: {
         keyUsedElsewhereForThis: 'Ja s’utilitza per a això en un altre lloc',
         keySearch: 'Cerca claus',
         signInOn: 'Inicia la sessió a',
+        signInOn: 'Inicia la sessió a',
         accountNew: 'Afegeix un compte',
         accountSaved: 'Els teus comptes',
         keyTitle: 'Afegeix una clau',

@@ -254,6 +254,8 @@ function ConnectAccountSheetLeaf(
       resolveCandidateAvailability={model.machineAvailability}
       disabled={Boolean(purposeRequest)}
       presentation="chip"
+      // The account works on every machine; the chip only picks where this sign-in runs.
+      chipLabel={t('connectedServicesSetup.signInOn')}
       testIDPrefix="connected-service-setup-target"
     />
   ) : null, [showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);

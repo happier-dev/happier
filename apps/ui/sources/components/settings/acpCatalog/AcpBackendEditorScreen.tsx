@@ -30,6 +30,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { StringListField } from '@/components/ui/forms/StringListField';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { AddDialogEditorPage } from '@/components/capabilities/add/AddDialogEditorPage';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -384,13 +385,16 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     }));
 
     return (
-        <ItemList keyboardShouldPersistTaps="handled">
-            <PageHeader
-                testID={`${TEST_ID}.header`}
-                alwaysShowTitle
-                title={draft.title.trim() || (isNew ? t('settingsAgents.customAcp.newTitle') : existing?.name ?? '')}
-                description={t('settingsAgents.customAcp.description')}
-                details={errors.other || errors.env ? (
+        // In Add an agent → From a command the dialog is the header: Save moves to its footer (AddDialogEditorPage).
+        <AddDialogEditorPage
+            keyboardShouldPersistTaps="handled"
+            footerTestID={`${TEST_ID}.footer`}
+            header={{
+                testID: `${TEST_ID}.header`,
+                alwaysShowTitle: true,
+                title: draft.title.trim() || (isNew ? t('settingsAgents.customAcp.newTitle') : existing?.name ?? ''),
+                description: t('settingsAgents.customAcp.description'),
+                details: errors.other || errors.env ? (
                     <Text
                         testID={`${TEST_ID}.error`}
                         accessibilityRole="alert"
@@ -399,24 +403,25 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                     >
                         {errors.env ?? errors.other}
                     </Text>
-                ) : undefined}
-                leading={(
+                ) : undefined,
+                leading: (
                     <PageHeaderMarkSlot>
                         <CustomAcpMarkIcon />
                     </PageHeaderMarkSlot>
-                )}
-                primaryAction={{
+                ),
+                primaryAction: {
                     testID: `${TEST_ID}.save`,
                     title: t('common.save'),
                     disabled: !settingsLoaded || (!dirty && !isNew),
                     onPress: save,
-                }}
-                actions={(
+                },
+                actions: (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                         <PageHeaderMenu testID={`${TEST_ID}.menu`} actions={menuActions} />
                     </View>
-                )}
-            />
+                ),
+            }}
+        >
 
             <ItemGroup
                 title={t('settingsAgents.customAcp.agentSection')}
@@ -711,7 +716,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                     />
                 ))}
             </ItemGroup>
-        </ItemList>
+        </AddDialogEditorPage>
     );
 });
 

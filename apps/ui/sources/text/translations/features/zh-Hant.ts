@@ -2466,6 +2466,7 @@ const connectedServicesSetupTranslations = { 'zh-Hant': {
         keyUsedElsewhereForThis: '已在別處用於此項',
         keySearch: '搜尋金鑰',
         signInOn: '登入位置',
+        signInOn: '登入位置',
         accountNew: '新增帳戶',
         accountSaved: '你的帳戶',
         keyTitle: '新增金鑰',

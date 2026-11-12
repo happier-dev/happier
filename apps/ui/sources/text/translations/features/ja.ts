@@ -2471,6 +2471,7 @@ const connectedServicesSetupTranslations = { ja: {
         keyUsedElsewhereForThis: '別の場所でこれに使用中',
         keySearch: 'キーを検索',
         signInOn: 'サインイン先',
+        signInOn: 'サインイン先',
         accountNew: 'アカウントを追加',
         accountSaved: 'あなたのアカウント',
         keyTitle: 'キーを追加',

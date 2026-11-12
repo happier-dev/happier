@@ -313,7 +313,8 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
     );
 });
 
-function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
+/** A page's primary (or cancel) action as a button; an Add dialog's footer draws a hosted editor's Save with it. */
+export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrimaryAction; quiet?: boolean }>) {
     const { action } = props;
     const { theme } = useUnistyles();
     return (

@@ -55,6 +55,7 @@ export function areChromeConfigsEqual(
             && a.bodyScroll === b.bodyScroll
             && a.phonePresentation === b.phonePresentation
             && a.anchor === b.anchor
+            && a.anchorRole === b.anchorRole
             && areDimensionOptionsEqual(
                 (a.dimensions ?? null) as Record<string, unknown> | null,
                 (b.dimensions ?? null) as Record<string, unknown> | null,
@@ -105,6 +106,7 @@ export function mergeChromeConfig(
             bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             phonePresentation: override.phonePresentation !== undefined ? override.phonePresentation : base.phonePresentation,
             anchor: override.anchor !== undefined ? override.anchor : base.anchor,
+            anchorRole: override.anchorRole !== undefined ? override.anchorRole : base.anchorRole,
             dimensions: mergedDimensions,
         };
     }

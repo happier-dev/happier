@@ -2466,6 +2466,7 @@ const connectedServicesSetupTranslations = { 'zh-Hans': {
         keyUsedElsewhereForThis: '已在别处用于此项',
         keySearch: '搜索密钥',
         signInOn: '登录位置',
+        signInOn: '登录位置',
         accountNew: '添加账户',
         accountSaved: '你的账户',
         keyTitle: '添加密钥',

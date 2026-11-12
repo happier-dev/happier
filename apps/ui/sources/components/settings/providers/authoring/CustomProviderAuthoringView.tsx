@@ -7,11 +7,10 @@ import { CustomProviderAdvancedFields } from '@/components/settings/providers/Cu
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { AddDialogEditorPage } from '@/components/capabilities/add/AddDialogEditorPage';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { updateCustomProviderDraftAdvanced, type CustomProviderDraft } from '@/providers/authoring/state';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { t } from '@/text';
@@ -94,47 +93,54 @@ export function CustomProviderAuthoringView(props: Readonly<{
                 : !model.draftHasProbe
                     ? t('settingsProviders.detail.testOnFirstSession')
                     : null;
+    const testButton = model.draftHasProbe && !model.editing ? (
+        <RoundButton
+            testID="settings-provider-authoring-test"
+            display="secondary"
+            title={t('settingsProvidersCollection.test')}
+            accessibilityLabel={t('settingsProviders.detail.testConnection')}
+            loading={model.probeState === 'probing'}
+            disabled={saveBlocked || model.machineId === null}
+            onPress={actions.onTest}
+        />
+    ) : undefined;
     return (
-        <ItemList testID="settings-provider-authoring" keyboardShouldPersistTaps="handled">
-            {props.contextBar}
-            <PageHeader
-                testID="settings-provider-authoring-header"
-                alwaysShowTitle
-                title={draft.name.trim() || t('settingsProvidersCollection.newTitle')}
-                description={model.editing ? t('settingsProvidersCollection.editDescription') : t('settingsProviders.customFooter')}
-                leading={(
+        // In Add a provider → Custom endpoint the dialog is the header: Test and Save move to its footer.
+        <AddDialogEditorPage
+            testID="settings-provider-authoring"
+            keyboardShouldPersistTaps="handled"
+            before={props.contextBar}
+            hostedActions={testButton}
+            footerTestID="settings-provider-authoring-footer"
+            header={{
+                testID: 'settings-provider-authoring-header',
+                alwaysShowTitle: true,
+                title: draft.name.trim() || t('settingsProvidersCollection.newTitle'),
+                description: model.editing ? t('settingsProvidersCollection.editDescription') : t('settingsProviders.customFooter'),
+                leading: (
                     <PageHeaderMarkSlot>
                         <ProviderIcon icon={null} size={24} color={theme.colors.text.secondary} />
                     </PageHeaderMarkSlot>
-                )}
-                details={probeResult ? (
+                ),
+                details: probeResult ? (
                     <ProviderProbeResult testID="settings-provider-authoring-probe-result" text={probeResult} failed={false} />
-                ) : undefined}
-                primaryAction={{
+                ) : undefined,
+                primaryAction: {
                     testID: 'settings-provider-authoring-save',
                     title: t('common.save'),
                     loading: model.savePending && !model.pendingApproval,
                     disabled: saveBlocked || Boolean(model.pendingApproval),
                     onPress: actions.onSave,
-                }}
-                cancelAction={{
+                },
+                cancelAction: {
                     testID: 'settings-provider-authoring-cancel',
                     title: t('common.cancel'),
                     disabled: model.savePending,
                     onPress: actions.onDiscard,
-                }}
-                actions={model.draftHasProbe && !model.editing ? (
-                    <RoundButton
-                        testID="settings-provider-authoring-test"
-                        display="secondary"
-                        title={t('settingsProvidersCollection.test')}
-                        accessibilityLabel={t('settingsProviders.detail.testConnection')}
-                        loading={model.probeState === 'probing'}
-                        disabled={saveBlocked || model.machineId === null}
-                        onPress={actions.onTest}
-                    />
-                ) : undefined}
-            />
+                },
+                actions: testButton,
+            }}
+        >
 
             {model.pendingApproval ? (
                 <ActionApprovalPendingNotice presentation="banner" testID="settings-provider-authoring-approval"
@@ -315,7 +321,7 @@ export function CustomProviderAuthoringView(props: Readonly<{
                     />
                 </ItemGroup>
             ) : null}
-        </ItemList>
+        </AddDialogEditorPage>
     );
 }
 

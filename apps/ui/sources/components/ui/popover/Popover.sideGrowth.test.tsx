@@ -80,7 +80,8 @@ async function renderSidePopover() {
     return { layout };
 }
 
-describe('Popover: a side popover stays where it opened while its content grows', () => {
+// The first test pays the cold import of the Popover graph (over a minute on a busy worker), as in shiftFit.
+describe('Popover: a side popover stays where it opened while its content grows', { timeout: 180_000 }, () => {
     it('keeps its top beside the trigger when the taller content still fits below', async () => {
         const { layout } = await renderSidePopover();
         // Opened centred on the trigger (centre y = 414).
@@ -96,5 +97,74 @@ describe('Popover: a side popover stays where it opened while its content grows'
         // 600 tall from 314 would cross the 800 bottom: it rises just enough (800 - 600 = 200),
         // not to the re-centred 114.
         expect(await layout(600)).toBe(200);
+    });
+});
+
+/**
+ * A designed panel (`fit: 'shift'`, the Connect sheet) opened from a trigger low in the window, so it stands above
+ * it, whose content grows while it is open (a tab with more fields).
+ */
+async function renderPanelAboveTrigger() {
+    const { Popover } = await import('./Popover');
+    const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+    const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+    const portalRootNode = {
+        measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
+        measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
+    } as any;
+    const portalTarget = { rootRef: { current: portalRootNode }, layout: { width: 1000, height: 800 } } as const;
+    const screen = await renderScreen(
+        <PopoverPortalTargetContextProvider value={portalTarget}>
+            <OverlayPortalProvider>
+                <Popover
+                    open
+                    backdrop={false}
+                    anchor={{ kind: 'rect', rect: { left: 300, top: 700, width: 28, height: 28 } }}
+                    portal={{ native: true, matchAnchorWidth: false }}
+                    placement="bottom"
+                    fit="shift"
+                    gap={8}
+                    maxWidthCap={560}
+                    maxHeightCap={640}
+                    placementMinSpace={320}
+                >
+                    {() => React.createElement('ConnectPanel')}
+                </Popover>
+                <OverlayPortalHost />
+            </OverlayPortalProvider>
+        </PopoverPortalTargetContextProvider>,
+    );
+    await act(async () => {
+        await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+    });
+    const layout = async (height: number) => {
+        const view = findPopoverContentView(screen, 'ConnectPanel');
+        await act(async () => {
+            view?.props?.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 560, height: height + NATIVE_SHADOW_OUTSET_PX * 2 } } });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
+        });
+        const style = flattenStyle(findPopoverContentView(screen, 'ConnectPanel')?.props?.style);
+        // The surface's top, net of the native portal's shadow outset, whichever edge the box is pinned by.
+        if (typeof style.top === 'number') return style.top + NATIVE_SHADOW_OUTSET_PX;
+        if (typeof style.bottom === 'number') return 800 - (style.bottom + NATIVE_SHADOW_OUTSET_PX) - height;
+        throw new Error(`Expected a numeric top or bottom, got ${JSON.stringify(style)}`);
+    };
+    return { layout };
+}
+
+describe('Popover: a designed panel above its trigger stays where it opened while its content grows', { timeout: 180_000 }, () => {
+    it('keeps its top, so the controls under the pointer stay put, and grows down over the trigger', async () => {
+        const { layout } = await renderPanelAboveTrigger();
+        // 200 tall does not fit below the trigger (700 + 28 + 8 + 200 > 800): it opens above it, ending at 692.
+        const openedTop = await layout(200);
+        expect(openedTop).toBe(492);
+        // A tab with more fields: pinning its bottom would lift it to 412; it keeps its top instead.
+        expect(await layout(280)).toBe(openedTop);
+    });
+
+    it('rises only by what no longer fits inside the window', async () => {
+        const { layout } = await renderPanelAboveTrigger();
+        await layout(200);
+        expect(await layout(400)).toBe(400);
     });
 });

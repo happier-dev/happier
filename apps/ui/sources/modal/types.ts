@@ -152,6 +152,13 @@ export type CustomModalChromeCardConfig = Readonly<{
      * keeps `phonePresentation`. Without it the card stays centred.
      */
     anchor?: PopoverAnchor;
+    /**
+     * `picker`: a value picker hung from its field (a saved secret, a folder, a Session). It opens below the field,
+     * above only when that side has more room, and takes the room there with its list scrolling inside, so it never
+     * covers the field. Without it an anchored card is a designed surface that keeps its size and slides inside the
+     * window, over its trigger if it must (Share, Connect).
+     */
+    anchorRole?: 'picker';
 }>;
 
 export type CustomModalChromeStageConfig = Readonly<{

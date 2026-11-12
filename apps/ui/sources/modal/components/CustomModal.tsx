@@ -179,7 +179,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         return <RetainedModalFrame frame={frame}>{retainedFrame => {
             if (presentation.anchor) {
                 return <AnchoredModalCard anchor={presentation.anchor} visible={visible} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
-                    dimensions={chrome?.dimensions} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={retainedFrame} />;
+                    dimensions={chrome?.dimensions} picker={presentation.card?.anchorRole === 'picker'} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={retainedFrame} />;
             }
             return (
                 <BaseModal
@@ -224,6 +224,8 @@ function AnchoredModalCard(props: Readonly<{
     visible: boolean;
     accessibilityLabel: string | undefined;
     dimensions: CustomModalChromeCardConfig['dimensions'];
+    /** A value picker (`anchorRole: 'picker'`): it takes the room on its field's side instead of sliding over it. */
+    picker: boolean;
     focusReturnRef: CustomModalConfig['focusReturnRef'];
     onRequestClose: () => void;
     /** Its place in the dialog stack: a card opened from inside another dialog lays out above that dialog. */
@@ -242,7 +244,8 @@ function AnchoredModalCard(props: Readonly<{
         placementMinSpace={POPOVER_PREFERRED_ROOM_PX}
         // A designed card keeps its size: it opens below its control, above it when only that side holds it, and
         // otherwise slides inside the window rather than cramping into the leftover room and hiding its actions.
-        fit="shift"
+        // A picker is a list with nothing below it to hide: it takes the room on its field's side and scrolls there.
+        fit={props.picker ? 'shrink' : 'shift'}
         maxHeightCap={dimensions.maxHeight}
         maxWidthCap={dimensions.width + 2 * ANCHORED_CARD_EDGE_PADDING_PX}
         edgePadding={ANCHORED_CARD_EDGE_PADDING_PX}
