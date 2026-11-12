@@ -5148,6 +5148,70 @@ describe('Channels outward-delivery supervisor', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it.each(['session.transcript.get', 'session.permission.remote.pending.list', 'retained delivery', 'unbound retained delivery'] as const)(
+    'delivers another binding\'s completed replies while %s remains pending', async heldAction => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const binding = bindingRow();
+    await state.put({ ...binding, id: 'binding-2', 'binding-id': 'binding-2', 'session-id': 'session-2', payload: {
+      ...binding.payload, target: { ...binding.payload.target, sessionId: 'session-2', policy: {
+        ...binding.payload.target.policy, deliveryMode: 'repliesOnly',
+      } },
+    } }, { expectedRevision: 'absent' });
+    await state.put(createConversationSessionProjectionFrontierRow({ bindingId: 'binding-2',
+      targetSessionId: 'session-2', transcriptCursor: null, lastScannedSeq: 0, revision: 1, now: 0,
+    }), { expectedRevision: 'absent' });
+    let releaseHeld = () => {};
+    const held = new Promise<void>(resolve => { releaseHeld = resolve; });
+    const hasRetainedDelivery = heldAction === 'retained delivery' || heldAction === 'unbound retained delivery';
+    const origin = { v: 1, producer: 'pluginSession', actor: 'collaborator', sourceAuthority: {
+      mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-2',
+    } } as const;
+    const execute = vi.fn(async (action: string, input: { sessionId: string; cursor?: string | null }) => {
+      if (input.sessionId === 'session-1' && action === heldAction) await held;
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
+      if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
+      return { ok: true, projection: 'externalShareableV1', sessionId: input.sessionId,
+        scannedThroughSeq: input.sessionId === 'session-2' ? 2 : 0,
+        nextCursor: input.sessionId === 'session-2' ? '2' : '0', hasMore: false,
+        items: input.sessionId !== 'session-2' || input.cursor === '2' ? [] : [1, 2].map(seq => ({
+          kind: 'assistantText', sessionId: 'session-2', seq, itemId: `reply-${seq}`, turnId: `turn-${seq}`,
+          final: 'completed', text: `Answer ${seq}`, consumedInputs: [{ localId: `input-${seq}`, origin }],
+        })),
+      };
+    });
+    const deliver = vi.fn(async (_operation: unknown, request: { deliveryKey: string }) => {
+      if (hasRetainedDelivery && request.deliveryKey === 'channels:delivery:v1:stale-custody') await held;
+      return { result: { kind: 'delivered', providerMessageIds: ['reply'] }, executionOrigin: providerTransportOrigin };
+    });
+    const context = backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
+    if (hasRetainedDelivery) {
+      const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+        deliveriesCollection: deliveries as never, signal: context.signal, now: () => 0 });
+      const obligation: ConversationOutwardDeliveryObligation = heldAction === 'unbound retained delivery'
+        ? { ...outwardObligation(), bindingId: undefined, routeAuthority: { connectionAuthorityEpoch: 4 },
+          source: { kind: 'controlResponse', controlId: 'retained-control', controlKind: 'recovery' } }
+        : outwardObligation();
+      expect((await store.ensure(obligation)).kind).toBe('created');
+    }
+    const expectedAttempts = hasRetainedDelivery ? 3 : 2;
+    const running = runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    try {
+      await vi.waitFor(() => expect(state.rows.get('projection-frontier:binding-2')?.value.payload).toMatchObject({
+        lastScannedSeq: 2, transcriptCursor: '2',
+      }));
+      expect([...deliveries.rows.values()].filter(row => row.value.terminal === true).map(row => row.value.payload)).toEqual([
+        expect.objectContaining({ state: 'delivered', source: expect.objectContaining({ semanticItemId: 'reply-1' }) }),
+        expect.objectContaining({ state: 'delivered', source: expect.objectContaining({ semanticItemId: 'reply-2' }) }),
+      ]);
+      expect(deliver).toHaveBeenCalledTimes(expectedAttempts);
+    } finally { releaseHeld(); await running; }
+    await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
+    expect(deliver).toHaveBeenCalledTimes(expectedAttempts);
+  });
+
   it('projects the public Session transcript through custody once and retains the advanced frontier across a later wake', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();

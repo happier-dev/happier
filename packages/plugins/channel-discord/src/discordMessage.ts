@@ -369,11 +369,24 @@ export function parseDiscordMessageDispatch(input: Readonly<{
     return { ...routingEvidence, kind: 'routableNonAdmission', reason: 'unsupportedContent' };
   }
 
+  // Discord leaves its addressing markup in content. Decode a leading mention
+  // of this bot here so all commands still use the shared Channels classifier.
+  let text = content;
+  if (contentProvenance === 'original' && addressingEvidence === 'directIntegrationMention') {
+    const addressed = content.trimStart();
+    for (const mention of [`<@${input.context.botUserId}>`, `<@!${input.context.botUserId}>`]) {
+      if (addressed.startsWith(mention) && /\s/u.test(addressed.charAt(mention.length))) {
+        text = addressed.slice(mention.length).trimStart();
+        break;
+      }
+    }
+  }
+
   return {
     ...routingEvidence,
     kind: 'message',
     message: {
-      text: content,
+      text,
       ...(attachments.length === 0 ? {} : { attachments: attachments.map(attachment => ({
         attachmentId: createConversationAttachmentIdV1('discord', [input.channel.channelId, messageId, attachment.id]),
         name: attachment.name,

@@ -22,6 +22,22 @@ function message(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Discord message parser', () => {
+  it.each(['<@bot-1>', '<@!bot-1>'])('normalizes an addressed command after %s for the shared command owner', (mention) => {
+    const parsed = parseDiscordMessageDispatch({ event: 'MESSAGE_CREATE', context: { ...context, messageContentIntentEnabled: false },
+      channel: { kind: 'thread', channelId: 'thread-1', parentChannelId: 'channel-1' },
+      payload: message({ content: `  ${mention} /stop`, mentions: [{ id: context.botUserId }] }),
+    });
+    expect(parsed).toMatchObject({ kind: 'message', message: { text: '/stop', addressingEvidence: 'directIntegrationMention' } });
+  });
+
+  it('preserves mentions of other people and bot mentions inside ordinary text', () => {
+    for (const text of ['<@other-user> /stop', 'ask <@bot-1> /stop']) {
+      expect(parseDiscordMessageDispatch({ event: 'MESSAGE_CREATE', context,
+        channel: { kind: 'shared', channelId: 'channel-1' },
+        payload: message({ content: text, mentions: [{ id: context.botUserId }] }),
+      })).toMatchObject({ kind: 'message', message: { text } });
+    }
+  });
   it('retains the guild nickname as sender presentation without changing identity', () => {
     expect(parseDiscordMessageDispatch({ event: 'MESSAGE_CREATE', context,
       channel: { kind: 'shared', channelId: 'channel-1' },

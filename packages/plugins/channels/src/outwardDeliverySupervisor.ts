@@ -492,7 +492,23 @@ export async function runConversationOutwardDeliveryCycle(
     ...(nextDeliveryCursor === undefined ? {} : { nextDeliveryCursor }),
     ...(nextRetentionSweep === undefined ? {} : { nextRetentionSweep }),
   });
-  const retainedPermissionWaits = new Map<string, ConversationOutwardDeliveryRecord>();
+  const retainedPermissionWaits = new Map<string, Map<string, ConversationOutwardDeliveryRecord>>();
+  const retainedDeliveriesByBindingId = new Map<string, ConversationOutwardDeliveryRecord[]>();
+  const unboundRetainedDeliveries: ConversationOutwardDeliveryRecord[] = [];
+  const recoverRetainedDelivery = async (record: ConversationOutwardDeliveryRecord): Promise<void> => {
+    if (context.signal.aborted) return;
+    try {
+      await redriveRetainedDelivery(record);
+    } catch (error) {
+      // The durable row stays eligible for a later wake. A failed owner
+      // operation never authorizes a synthetic resend or cursor advance.
+      workFailed('delivery-operation', {
+        error,
+        connectionId: record.obligation.connectionId,
+        ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
+      });
+    }
+  };
   try {
     const scanned = await scanner.scan({
       now: now(),
@@ -511,19 +527,21 @@ export async function runConversationOutwardDeliveryCycle(
         if (record.obligation.source.kind === 'permissionWait') {
           // A permission-wait can be redriven only after the generic Permission
           // owner confirms its exact source tuple on this wake.
-          retainedPermissionWaits.set(record.custodyId, record);
+          const bindingId = record.obligation.bindingId;
+          if (bindingId !== undefined) {
+            const records = retainedPermissionWaits.get(bindingId) ?? new Map<string, ConversationOutwardDeliveryRecord>();
+            records.set(record.custodyId, record);
+            retainedPermissionWaits.set(bindingId, records);
+          }
           continue;
         }
-        try {
-          await redriveRetainedDelivery(record);
-        } catch (error) {
-          // The durable row stays eligible for a later wake. A failed owner
-          // operation never authorizes a synthetic resend or cursor advance.
-          workFailed('delivery-operation', {
-            error,
-            connectionId: record.obligation.connectionId,
-            ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
-          });
+        const bindingId = record.obligation.bindingId;
+        if (bindingId === undefined) {
+          unboundRetainedDeliveries.push(record);
+        } else {
+          const records = retainedDeliveriesByBindingId.get(bindingId) ?? [];
+          records.push(record);
+          retainedDeliveriesByBindingId.set(bindingId, records);
         }
       }
     }
@@ -540,7 +558,7 @@ export async function runConversationOutwardDeliveryCycle(
   } catch (error) {
     bindingDiscoveryFailed = true;
     workFailed('binding-discovery', { error });
-    return cycleResult();
+    bindingIds = [];
   }
 
   const permissionMediationsByBindingId = new Map<string, PermissionWaitMediationSnapshot>();
@@ -616,7 +634,7 @@ export async function runConversationOutwardDeliveryCycle(
         // Admission already supplied the exact durable record. Send through
         // the canonical claim/currentness owner now, before transcript
         // publication or another binding's unavailable Session can delay it.
-        retainedPermissionWaits.delete(accepted.custodyId);
+        retainedPermissionWaits.get(bindingId)?.delete(accepted.custodyId);
         try {
           await redriveRetainedDelivery(accepted.record);
         } catch (error) {
@@ -632,88 +650,73 @@ export async function runConversationOutwardDeliveryCycle(
       pendingRequestKeys,
     });
   };
-  // Bindings have independent Session owners. A slow or unavailable owner
-  // must not serialize another binding's pending-request notification.
-  const mediationBindingIds = new Set(bindingIds);
-  for (const record of retainedPermissionWaits.values()) {
-    if (record.obligation.bindingId !== undefined) mediationBindingIds.add(record.obligation.bindingId);
-  }
-  await Promise.all([...mediationBindingIds].map(async bindingId => {
-    try {
-      await mediateBinding(bindingId);
-    } catch (error) {
-      workFailed('permission-mediation', { error, bindingId });
-    }
-  }));
-
-  for (const record of retainedPermissionWaits.values()) {
-    if (context.signal.aborted) break;
-    const bindingId = record.obligation.bindingId;
-    const mediation = bindingId === undefined
-      ? undefined
-      : permissionMediationsByBindingId.get(bindingId);
-    if (mediation === undefined || !matchesPermissionWaitMediationSource(record, mediation.source)) {
-      continue;
-    }
-    const source = record.obligation.source;
-    if (source.kind !== 'permissionWait') continue;
-    const stillPending = mediation.pendingRequestKeys.has(permissionWaitRequestIdentityKey(source));
-    if (stillPending) {
-      // A changed summary can conflict with frozen admission content. The
-      // exact positive request still authorizes recovery of its original
-      // custody; records already driven above were removed from this map.
-      try {
-        await redriveRetainedDelivery(record);
-      } catch (error) {
-        workFailed('delivery-operation', { error, connectionId: record.obligation.connectionId,
-          ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }) });
+  const recoverBindingPermissionWaits = async (bindingId: string): Promise<void> => {
+    for (const record of retainedPermissionWaits.get(bindingId)?.values() ?? []) {
+      if (context.signal.aborted) break;
+      const mediation = permissionMediationsByBindingId.get(bindingId);
+      if (mediation === undefined || !matchesPermissionWaitMediationSource(record, mediation.source)) {
+        continue;
       }
-      continue;
-    }
-    // Snapshot admission already proved a complete exact-source read. Attempted
-    // or ambiguous effects retain their ordinary custody truth.
-    if (!isUnattemptedPermissionWait(record)
-      || !await isConversationConnectionPlacedForInvocation(context, record.obligation.connectionId)) continue;
-    try {
-      const result = await redriveConversationOutwardDelivery({
-        store: deliveryStore,
-        record,
-        attemptId: createAttemptId(),
-        now,
-        signal: context.signal,
-        authority: {
-          async checkCurrentness() {
-            return { kind: 'suppressed', reason: 'permissionNoLongerPending' };
+      const source = record.obligation.source;
+      if (source.kind !== 'permissionWait') continue;
+      const stillPending = mediation.pendingRequestKeys.has(permissionWaitRequestIdentityKey(source));
+      if (stillPending) {
+        // A changed summary can conflict with frozen admission content. The
+        // exact positive request still authorizes recovery of its original
+        // custody; records already driven above were removed from this map.
+        try {
+          await redriveRetainedDelivery(record);
+        } catch (error) {
+          workFailed('delivery-operation', { error, connectionId: record.obligation.connectionId,
+            ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }) });
+        }
+        continue;
+      }
+      // Snapshot admission already proved a complete exact-source read. Attempted
+      // or ambiguous effects retain their ordinary custody truth.
+      if (!isUnattemptedPermissionWait(record)
+        || !await isConversationConnectionPlacedForInvocation(context, record.obligation.connectionId)) continue;
+      try {
+        const result = await redriveConversationOutwardDelivery({
+          store: deliveryStore,
+          record,
+          attemptId: createAttemptId(),
+          now,
+          signal: context.signal,
+          authority: {
+            async checkCurrentness() {
+              return { kind: 'suppressed', reason: 'permissionNoLongerPending' };
+            },
           },
-        },
-        deliver: async () => {
-          throw new Error('A non-pending permission wait must not reach provider delivery.');
-        },
-      });
-      logOutwardDeliverySupervisorDeliveryOutcome(context, 'delivery-operation', {
-        connectionId: record.obligation.connectionId, bindingId: record.obligation.bindingId,
-      }, result, noteDeliveryResult(result));
-    } catch (error) {
-      workFailed('permission-mediation', {
-        error,
-        connectionId: record.obligation.connectionId,
-        ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
-      });
+          deliver: async () => {
+            throw new Error('A non-pending permission wait must not reach provider delivery.');
+          },
+        });
+        logOutwardDeliverySupervisorDeliveryOutcome(context, 'delivery-operation', {
+          connectionId: record.obligation.connectionId, bindingId: record.obligation.bindingId,
+        }, result, noteDeliveryResult(result));
+      } catch (error) {
+        workFailed('permission-mediation', {
+          error,
+          connectionId: record.obligation.connectionId,
+          ...(record.obligation.bindingId === undefined ? {} : { bindingId: record.obligation.bindingId }),
+        });
+      }
     }
-  }
+  };
 
   if (context.signal.aborted) return cycleResult();
   const projectionStore = createConversationSessionProjectionCollectionStore({
     stateCollection,
     signal: context.signal,
   });
-  for (const bindingId of bindingIds) {
-    if (context.signal.aborted) break;
+  const projectBinding = async (bindingId: string): Promise<void> => {
+    if (context.signal.aborted) return;
     let observedDeliveryOutcome = false;
     try {
       const bindingRow = asChannelStateRow(await stateCollection.get(bindingId, { signal: context.signal }));
       const connectionId = bindingRow === undefined ? undefined : bindingConnectionIdFromRow(bindingRow.value, bindingId);
-      if (bindingRow === undefined || connectionId === undefined || !await isConversationConnectionPlacedForInvocation(context, connectionId)) continue;
+      if (bindingRow === undefined || connectionId === undefined || !await isConversationConnectionPlacedForInvocation(context, connectionId)) return;
       const deliverProjection = async (projection: Pick<Parameters<typeof deliverConversationSessionProjectionOutwardDelivery>[0],
         'binding' | 'frontierRowRevision' | 'source' | 'content' | 'replyContext'>): Promise<ConversationOutwardDeliveryResult> => {
         // A content read can outlive placement changes. Both projection kinds
@@ -822,7 +825,30 @@ export async function runConversationOutwardDeliveryCycle(
       // frontier causes the canonical page to be re-read on the next wake.
       workFailed('transcript-projection', { error, bindingId });
     }
-  }
+  };
+
+  // Retained delivery, permission recovery and transcript stay ordered within
+  // each binding. An unrelated Session or provider cannot hold its replies.
+  const projectionBindingIds = new Set(bindingIds);
+  const mediationBindingIds = new Set([...projectionBindingIds, ...retainedPermissionWaits.keys()]);
+  const workBindingIds = new Set([...mediationBindingIds, ...retainedDeliveriesByBindingId.keys()]);
+  await Promise.all([
+    ...[...workBindingIds].map(async bindingId => {
+      for (const record of retainedDeliveriesByBindingId.get(bindingId) ?? []) {
+        await recoverRetainedDelivery(record);
+      }
+      if (mediationBindingIds.has(bindingId)) {
+        try {
+          await mediateBinding(bindingId);
+          await recoverBindingPermissionWaits(bindingId);
+        } catch (error) {
+          workFailed('permission-mediation', { error, bindingId });
+        }
+      }
+      if (projectionBindingIds.has(bindingId)) await projectBinding(bindingId);
+    }),
+    ...unboundRetainedDeliveries.map(recoverRetainedDelivery),
+  ]);
 
   if (context.signal.aborted) return cycleResult();
 

@@ -74,6 +74,9 @@ export type DiscordBotApi = Readonly<{
   getIdentity(options?: DiscordRequestOptions): Promise<DiscordBotIdentity | DiscordApiFailure>;
   getGatewayBot(options?: DiscordRequestOptions): Promise<DiscordGatewayBotInfo | DiscordApiFailure>;
   getChannel(input: Readonly<{ channelId: string }>, options?: DiscordRequestOptions): Promise<DiscordKnownChannel | null | DiscordApiFailure>;
+  listGuilds(options?: DiscordRequestOptions): Promise<readonly string[] | DiscordApiFailure>;
+  getGuildChannels(input: Readonly<{ guildId: string }>, options?: DiscordRequestOptions): Promise<readonly DiscordKnownChannel[] | DiscordApiFailure>;
+  getGuildActiveThreads(input: Readonly<{ guildId: string }>, options?: DiscordRequestOptions): Promise<readonly DiscordKnownChannel[] | DiscordApiFailure>;
   getMessageAttachments(
     input: Readonly<{ channelId: string; messageId: string }>,
     options?: DiscordRequestOptions,
@@ -254,7 +257,7 @@ function parsePermissionOverwrites(value: unknown): readonly DiscordPermissionOv
   return overwrites;
 }
 
-function parseKnownChannel(value: unknown, expectedChannelId: string): DiscordKnownChannel | null {
+function parseKnownChannel(value: unknown, expectedChannelId: string): DiscordKnownChannel | 'unsupported' | null {
   if (!isRecord(value)) return null;
   const channelId = nonEmptyString(value.id);
   const type = nonNegativeSafeInteger(value.type);
@@ -295,7 +298,22 @@ function parseKnownChannel(value: unknown, expectedChannelId: string): DiscordKn
       ...(guildId === undefined ? {} : { guildId }),
     };
   }
-  return null;
+  return 'unsupported';
+}
+
+function parseGuildChannels(value: unknown, guildId: string): readonly DiscordKnownChannel[] | null {
+  if (!Array.isArray(value)) return null;
+  const channels: DiscordKnownChannel[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) return null;
+    const channelId = nonEmptyString(entry.id);
+    if (channelId === null || (entry.guild_id !== undefined && entry.guild_id !== guildId)) return null;
+    // Guild-specific list responses may omit guild_id; the route owns it.
+    const channel = parseKnownChannel({ ...entry, guild_id: guildId }, channelId);
+    if (channel === null || (typeof channel === 'object' && channel.kind === 'direct')) return null;
+    if (channel !== 'unsupported') channels.push(channel);
+  }
+  return channels;
 }
 
 function parseGuildMemberRoleEvidence(
@@ -370,6 +388,16 @@ export function createDiscordBotApi(input: Readonly<{
     }
   };
 
+  const readGuildChannels = async (guildId: string, threads: boolean, options?: DiscordRequestOptions) => {
+    const response = await requestJson(`/guilds/${encodeURIComponent(guildId)}${threads ? '/threads/active' : '/channels'}`, 'GET', undefined, options);
+    if (!response) return { kind: 'notReady', reason: 'network' } as const;
+    if (response.status < 200 || response.status >= 300) return failureFromResponse(response.status, response.body);
+    const channels = threads ? (isRecord(response.body) ? response.body.threads : undefined) : response.body;
+    return parseGuildChannels(channels, guildId) ?? {
+      kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'Discord returned an invalid guild channel list.',
+    } as const;
+  };
+
   return {
     async getIdentity(options) {
       const applicationResponse = await requestJson('/oauth2/applications/@me', 'GET', undefined, options);
@@ -418,11 +446,44 @@ export function createDiscordBotApi(input: Readonly<{
       if (!response) return { kind: 'notReady', reason: 'network' };
       if (response.status === 404) return null;
       if (response.status < 200 || response.status >= 300) return failureFromResponse(response.status, response.body);
-      return parseKnownChannel(response.body, channelId) ?? {
+      const channel = parseKnownChannel(response.body, channelId);
+      return channel !== null && channel !== 'unsupported' ? channel : {
         kind: 'notReady',
         reason: 'invalidConfiguration',
         diagnostic: 'Discord returned an invalid channel response.',
       };
+    },
+
+    async listGuilds(options) {
+      const guildIds: string[] = [];
+      let after: string | undefined;
+      // Discord's Get Current User Guilds API page maximum is 200.
+      const pageSize = 200;
+      while (true) {
+        options?.signal?.throwIfAborted();
+        const query = new URLSearchParams({ limit: String(pageSize), ...(after === undefined ? {} : { after }) });
+        const response = await requestJson(`/users/@me/guilds?${query}`, 'GET', undefined, options);
+        if (!response) return { kind: 'notReady', reason: 'network' };
+        if (response.status < 200 || response.status >= 300) return failureFromResponse(response.status, response.body);
+        if (!Array.isArray(response.body)) {
+          return { kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'Discord returned an invalid guild list.' };
+        }
+        for (const entry of response.body) {
+          const guildId = isRecord(entry) ? nonEmptyString(entry.id) : null;
+          if (guildId === null) return { kind: 'notReady', reason: 'invalidConfiguration', diagnostic: 'Discord returned an invalid guild identity.' };
+          guildIds.push(guildId);
+        }
+        if (response.body.length < pageSize) return guildIds;
+        after = guildIds[guildIds.length - 1];
+      }
+    },
+
+    getGuildChannels(inputValue, options) {
+      return readGuildChannels(inputValue.guildId, false, options);
+    },
+
+    getGuildActiveThreads(inputValue, options) {
+      return readGuildChannels(inputValue.guildId, true, options);
     },
 
     async getGuildMember(inputValue, options) {

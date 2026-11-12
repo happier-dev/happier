@@ -16,6 +16,7 @@ import {
   ConversationDeliveryInputV1Schema,
   ConversationEndpointResolveInputV1Schema,
   ConversationEndpointResolveResultV1Schema,
+  MAX_CONVERSATION_RESOLUTION_CANDIDATES,
   ConversationProviderConnectionInputV1Schema,
   ConversationProviderSetupResultV1Schema,
   type ConversationConnectionTestResultV1,
@@ -33,6 +34,7 @@ import {
 import { createProtocolStoredReadSchema, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
 import { createDiscordBotApi, type DiscordApiFailure, type DiscordBotApi } from './discordApi.js';
+import { readDiscordEndpointChannels } from './discordEndpointDiscovery.js';
 import {
   createDiscordMessagePayload,
   deliverDiscordText,
@@ -48,6 +50,7 @@ import {
   verifyDiscordEndpointPermissions,
 } from './discordSetup.js';
 import {
+  createDiscordChannelEndpointId,
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BOT_TOKEN_ENVIRONMENT_KEY,
@@ -415,31 +418,42 @@ export async function resolveDiscordHostEndpoint(input: unknown, context: Plugin
   const request = ConversationEndpointResolveInputV1Schema.parse(input);
   const ready = await readyConnection(context, request);
   if ('kind' in ready) return ready;
-  const channelId = request.query.trim();
-  // A direct-message user identifier must never be guessed into a new Discord
-  // DM. Only an existing channel returned by Discord becomes a candidate.
-  if (!/^[0-9]+$/.test(channelId)) {
-    return ConversationEndpointResolveResultV1Schema.parse({ kind: 'resolved', candidates: [] });
-  }
-  const channel = await ready.api.getChannel({ channelId }, { signal: context.signal });
-  context.signal.throwIfAborted();
-  if (channel?.kind === 'notReady') return failureFromApi(channel);
-  if (channel !== null) {
+  const channels = await readDiscordEndpointChannels({
+    api: ready.api, query: request.query, signal: context.signal,
+    ...(request.kinds === undefined ? {} : { kinds: request.kinds }),
+  });
+  if ('kind' in channels) return failureFromApi(channels);
+  const channelsById = new Map(channels.map(channel => [createDiscordChannelEndpointId(channel.channelId), channel]));
+  const candidates = resolveDiscordEndpointCandidates({
+    query: request.query, knownChannels: channels,
+    ...(request.kinds === undefined ? {} : { kinds: request.kinds }),
+  });
+  const permittedCandidates: typeof candidates[number][] = [];
+  for (const candidate of candidates) {
+    const channel = channelsById.get(candidate.id)!;
     const permissionFailure = await verifyCurrentDiscordEndpointPermissions({
       api: ready.api,
       botUserId: ready.identity.botUserId,
       channel,
       signal: context.signal,
     });
-    if (permissionFailure !== null) return ConversationEndpointResolveResultV1Schema.parse(permissionFailure);
+    if (permissionFailure !== null) {
+      // A name search can match channels the bot cannot use; other matches
+      // remain selectable. Exact-ID lookup keeps its actionable refusal.
+      if (!/^[0-9]+$/.test(request.query.trim()) && permissionFailure.reason === 'permissionMissing') continue;
+      return ConversationEndpointResolveResultV1Schema.parse(permissionFailure);
+    }
+    permittedCandidates.push(candidate);
+    if (permittedCandidates.length > MAX_CONVERSATION_RESOLUTION_CANDIDATES) {
+      return {
+        kind: 'notReady', reason: 'unsupported',
+        diagnostic: 'Too many Discord channels match. Narrow your search with a channel or thread name, or use its numeric ID.',
+      };
+    }
   }
   return ConversationEndpointResolveResultV1Schema.parse({
     kind: 'resolved',
-    candidates: channel === null ? [] : resolveDiscordEndpointCandidates({
-      query: request.query,
-      knownChannels: [channel],
-      ...(request.kinds === undefined ? {} : { kinds: request.kinds }),
-    }),
+    candidates: permittedCandidates,
   });
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_MANIFEST, activate } from './plugin.js';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { ConversationAttachmentFetchResultV1Schema, createConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
+import { ConversationAttachmentFetchResultV1Schema, createConversationAttachmentIdV1, MAX_CONVERSATION_RESOLUTION_CANDIDATES } from '@happier-dev/channels-protocol/v1';
 
 import {
   deliverDiscordMessage,
@@ -692,6 +692,73 @@ describe('Discord Channels provider Actions', () => {
       expect(requests.filter((request) => request.method === 'POST' && request.url.endsWith('/messages'))).toEqual([]);
     }
   });
+
+  it('finds named guild channels and active threads without guessing a DM or returning an inaccessible match', async () => {
+    const requests: string[] = [];
+    const { context } = channelsCallerContext({ async request(input) {
+      const url = new URL(input.url);
+      requests.push(url.pathname);
+      if (url.pathname.endsWith('/users/@me/guilds')) return jsonResponse([{ id: 'guild-1' }]);
+      if (url.pathname.endsWith('/guilds/guild-1/channels')) return jsonResponse([
+        { id: '101', type: 0, name: 'QA-general', permission_overwrites: [] },
+        { id: '102', type: 0, name: 'QA-private', permission_overwrites: [{ id: 'guild-1', type: 0, allow: '0', deny: '1024' }] },
+        { id: '103', type: 2, name: 'QA-voice' },
+        { id: '104', type: 0, name: 'other', permission_overwrites: [] },
+      ]);
+      if (url.pathname.endsWith('/guilds/guild-1/threads/active')) return jsonResponse({
+        threads: [{ id: '105', type: 11, name: 'QA-review', parent_id: '104' }], members: [],
+      });
+      if (url.pathname.endsWith('/channels/104')) return jsonResponse({ id: '104', type: 0, guild_id: 'guild-1', name: 'other', permission_overwrites: [] });
+      if (url.pathname.endsWith('/guilds/guild-1/members/discord-bot-1')) return jsonResponse({ user: { id: 'discord-bot-1' }, roles: [] });
+      if (url.pathname.endsWith('/guilds/guild-1/roles')) return jsonResponse([{ id: 'guild-1', permissions: '274877975552' }]);
+      throw new Error(`Unexpected Discord request: ${url.pathname}`);
+    } });
+    await expect(resolveDiscordEndpoint({
+      v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+      providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' },
+      credentialRef, query: 'qA', kinds: ['shared', 'thread'],
+    }, context)).resolves.toEqual({ kind: 'resolved', candidates: [
+      { kind: 'shared', audience: 'shared', id: 'discord:channel:101', label: 'QA-general' },
+      { kind: 'thread', audience: 'shared', id: 'discord:channel:105', parentId: 'discord:channel:104', label: 'QA-review', parentLabel: 'other' },
+    ] });
+    expect(requests.some(path => path.endsWith('/users/@me/channels'))).toBe(false);
+    expect(requests.some(path => path.endsWith('/channels/103'))).toBe(false);
+  });
+
+  it('surfaces name-discovery rate limits instead of reporting an empty search', async () => {
+    const { context } = channelsCallerContext({ request: async () => jsonResponse({ retry_after: 3 }, 429) });
+    await expect(resolveDiscordEndpoint({
+      v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+      providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' },
+      credentialRef, query: 'review', kinds: ['thread'],
+    }, context)).resolves.toMatchObject({ kind: 'notReady', reason: 'rateLimited', retryAfterMs: 3000 });
+  });
+
+  it.each([MAX_CONVERSATION_RESOLUTION_CANDIDATES, MAX_CONVERSATION_RESOLUTION_CANDIDATES + 1])(
+    'handles %i name matches at the existing endpoint-result boundary', async count => {
+      const { context } = channelsCallerContext({ async request(input) {
+        const path = new URL(input.url).pathname;
+        if (path.endsWith('/users/@me/guilds')) return jsonResponse([{ id: 'guild-1' }]);
+        if (path.endsWith('/guilds/guild-1/channels')) return jsonResponse(Array.from({ length: count }, (_, index) => ({
+          id: String(index + 1), type: 0, name: `QA-${index}`, permission_overwrites: [],
+        })));
+        if (path.endsWith('/members/discord-bot-1')) return jsonResponse({ user: { id: 'discord-bot-1' }, roles: [] });
+        if (path.endsWith('/roles')) return jsonResponse([{ id: 'guild-1', permissions: '274877975552' }]);
+        throw new Error(`Unexpected Discord request: ${path}`);
+      } });
+      const result = await resolveDiscordEndpoint({
+        v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+        providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' },
+        credentialRef, query: 'QA', kinds: ['shared'],
+      }, context);
+      if (count > MAX_CONVERSATION_RESOLUTION_CANDIDATES) {
+        expect(result).toMatchObject({ kind: 'notReady', reason: 'unsupported', diagnostic: expect.any(String) });
+      } else {
+        expect(result.kind).toBe('resolved');
+        if (result.kind === 'resolved') expect(result.candidates).toHaveLength(count);
+      }
+    },
+  );
 
   it('refuses a guild endpoint before it can become a resolved target when the current bot lacks required effective permissions', async () => {
     const requests: Array<Readonly<{ url: string; method?: string }>> = [];

@@ -18,6 +18,40 @@ function response(value: unknown, status = 200) {
 }
 
 describe('Discord Gateway Bot snapshot', () => {
+  it('pages every bot guild and discovers supported guild channels and active threads', async () => {
+    const requests: URL[] = [];
+    const api = createDiscordBotApi({ token: 'fixture-token', http: { async request(input) {
+      const url = new URL(input.url);
+      requests.push(url);
+      if (url.pathname.endsWith('/users/@me/guilds')) {
+        return response(url.searchParams.has('after') ? [{ id: '201' }] : Array.from({ length: 200 }, (_, index) => ({ id: String(index + 1) })));
+      }
+      if (url.pathname.endsWith('/channels')) return response([
+        { id: '301', type: 0, name: 'General', permission_overwrites: [] },
+        { id: '302', type: 2, name: 'Voice' },
+      ]);
+      if (url.pathname.endsWith('/threads/active')) return response({ threads: [{ id: '303', type: 11, name: 'Review', parent_id: '301' }], members: [] });
+      throw new Error(`Unexpected Discord path: ${url.pathname}`);
+    } } });
+    await expect(api.listGuilds()).resolves.toEqual(Array.from({ length: 201 }, (_, index) => String(index + 1)));
+    expect(requests.map(url => url.search)).toEqual(['?limit=200', '?limit=200&after=200']);
+    await expect(api.getGuildChannels({ guildId: '201' })).resolves.toEqual([
+      { channelId: '301', kind: 'shared', label: 'General', guildId: '201', permissionOverwrites: [] },
+    ]);
+    await expect(api.getGuildActiveThreads({ guildId: '201' })).resolves.toEqual([
+      { channelId: '303', kind: 'thread', label: 'Review', guildId: '201', parentChannelId: '301' },
+    ]);
+  });
+
+  it.each([
+    { name: 'malformed guild list', body: {}, read: (api: ReturnType<typeof createDiscordBotApi>) => api.listGuilds() },
+    { name: 'cross-guild channel', body: [{ id: '301', type: 0, guild_id: 'another-guild' }], read: (api: ReturnType<typeof createDiscordBotApi>) => api.getGuildChannels({ guildId: 'guild-1' }) },
+    { name: 'malformed active-thread envelope', body: [], read: (api: ReturnType<typeof createDiscordBotApi>) => api.getGuildActiveThreads({ guildId: 'guild-1' }) },
+  ])('keeps $name distinct from an empty discovery result', async ({ body, read }) => {
+    const api = createDiscordBotApi({ token: 'fixture-token', http: { request: async () => response(body) } });
+    await expect(read(api)).resolves.toMatchObject({ kind: 'notReady', reason: 'invalidConfiguration' });
+  });
+
   it('creates an explicitly public thread without a starter message and verifies its parent', async () => {
     const requests: { url: string; body?: Uint8Array }[] = [];
     const api = createDiscordBotApi({ token: 'fixture-token', http: { async request(input) {
