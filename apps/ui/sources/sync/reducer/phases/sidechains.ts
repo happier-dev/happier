@@ -44,7 +44,10 @@ export function runSidechainsPhase(params: Readonly<{
 
         // Get or create the sidechain array for this Task
         const existingSidechain = state.sidechains.get(sidechainId) || [];
-        const parentMessageId = state.toolIdToMessageId.get(sidechainId) ?? null;
+        // Descendants belong to the actual nested tool, not its root permission mirror.
+        const parentMessageId = state.sidechainToolIdToMessageId.get(sidechainId)
+            ?? state.toolIdToMessageId.get(sidechainId)
+            ?? null;
 
         // Process and add new sidechain messages
         if (msg.role === 'agent' && msg.content[0]?.type === 'sidechain') {

@@ -598,11 +598,23 @@ export function reducer(
     // Sidechain children should never be emitted as top-level transcript updates. They belong to
     // sidechain state only and are rendered under the owning tool-call when that tool-call exists.
     const sidechainChildIds = new Set<string>();
-    for (const chain of state.sidechains.values()) {
+    const sidechainParentByChildId = new Map<string, string>();
+    for (const [sidechainId, chain] of state.sidechains) {
+        // A root permission mirror is not the nested tool's ancestor.
+        const parentId = state.sidechainToolIdToMessageId.get(sidechainId)
+            ?? state.toolIdToMessageId.get(sidechainId);
         for (const m of chain) {
             sidechainChildIds.add(m.id);
+            if (parentId) sidechainParentByChildId.set(m.id, parentId);
             if (changed.has(m.id)) applyIncomingObservationMetadata(m);
         }
+    }
+
+    // A descendant update must republish its root before child rows are filtered out.
+    // Iterating the Set also visits added parents, so this reaches every ancestor once.
+    for (const id of changed) {
+        const parentId = sidechainParentByChildId.get(id);
+        if (parentId) changed.add(parentId);
     }
 
     const filteredSidechainChildIds: string[] = [];
