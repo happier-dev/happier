@@ -215,6 +215,14 @@
     "./scm/hosting": {
       "happier-source": "./src/scm/hosting/index.ts",
       "types": "./dist/scm/hosting/index.d.ts",
+      "react-native": {
+        "happier-source": "./src/scm/hosting/index.browser.ts",
+        "default": "./dist/scm/hosting/index.browser.js"
+      },
+      "browser": {
+        "happier-source": "./src/scm/hosting/index.browser.ts",
+        "default": "./dist/scm/hosting/index.browser.js"
+      },
       "default": "./dist/scm/hosting/index.js"
     },
     "./secrets": {
