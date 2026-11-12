@@ -627,6 +627,11 @@ pins, environment edits and session defaults, and duplicate observations write
 nothing. A registry Agent update remains an explicitly approved
 `agents.acp.backends.installFromRegistry` Action. Plugins retain their existing
 update policy.
+Store Updates binds that Action and its installed inventory to the Store's selected
+Machine through the shared Store Machine owner. Browser extension observations
+keep their Machine, profile and extension identity. Current browser extensions
+remain visible with their installed version and do not contribute to the update
+badge; source failures remain typed, per-item unchecked results.
 The Store's passive column/phone count projects the same held Updates review
 entries only after a complete check and complete inventory coverage. Before a
 check or after an unchecked/failed result, the count is unknown. Its transient

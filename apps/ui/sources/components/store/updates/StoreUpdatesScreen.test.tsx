@@ -17,16 +17,17 @@ const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
 const { ModalProvider } = await import('@/modal');
 const { storage } = await import('@/sync/domains/state/storage');
+const { StoreMachineScopeContext } = await import('@/components/settings/plugins/model/useStoreMachineScope');
 
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
-async function renderExtensionUpdate(partial = false) {
+async function renderExtensionUpdate(partial = false, selectedMachine = false) {
     const machineId = 'extensions-machine';
     const extensionId = 'a'.repeat(32);
     const scope = await account.restore({ currentAccount: true, serverIdentityId: 'srv_store_updates',
         machines: [createMachineFixture({ id: machineId, activeAt: Date.now(), metadata: {
             ...createMachineFixture().metadata!, agentInventory: { checkedAt: 1, installedAgentIds: [] },
-        } })] });
+        } }), ...(selectedMachine ? [createMachineFixture({ id: 'other-machine', activeAt: Date.now() })] : [])] });
     const inventory = BrowserExtensionsListResultV1Schema.parse({ status: 'ready', entries: [{ profileId: 'work',
         restartRequired: false, extension: { id: extensionId, name: 'Passwords', version: '1.0', enabled: true,
             source: { kind: 'webStore', extensionId }, directory: '/browser/extensions/passwords',
@@ -41,18 +42,42 @@ async function renderExtensionUpdate(partial = false) {
             Object.keys(storage.getState().machineListByServerId).map(serverId => [serverId, 'loading' as const]),
         ) }); });
     }
+    const inventoryTargets: string[] = [];
     account.home.answer(scope.serverId, '/v1/actions/browser.extensions.list', { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+        if (envelope.target?.kind === 'machine') inventoryTargets.push(envelope.target.machineId);
         return { body: { v: 1, actionId: 'browser.extensions.list', requestId: envelope.requestId,
             execution: { ok: true, result: inventory } } };
     } });
     const screen = await renderScreen(<ModalProvider><PluginSurfaceFocusEligibilityProvider active>
-        <StoreUpdatesScreen />
+        <StoreMachineScopeContext.Provider value={selectedMachine ? { serverId: 'srv_store_updates', machineId } : undefined}>
+            <StoreUpdatesScreen />
+        </StoreMachineScopeContext.Provider>
     </PluginSurfaceFocusEligibilityProvider></ModalProvider>);
     const rowId = `store.updates.row.${serverAccountScopedResourceKey(storage.getState().settingsScope!, 'browserExtension', machineId, 'work', extensionId)}`;
     await vi.waitFor(() => expect(screen.findHostByTestId(partial ? 'store.updates.coverage.partial' : rowId)).not.toBeNull());
-    return { screen, rowId, scope, machineId, extensionId, inventory, extension };
+    return { screen, rowId, scope, machineId, extensionId, inventory, extension, inventoryTargets };
 }
+
+it('checks only the selected Store Machine and shows its current installed extension', async () => {
+    const { screen, rowId, scope, machineId, extensionId, inventory, inventoryTargets } = await renderExtensionUpdate(false, true);
+    const targets: string[] = [];
+    account.home.answer(scope.serverId, '/v1/actions/registries.updates.check', { select: body => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+        if (envelope.target?.kind !== 'machine') throw new Error('Expected a Machine update carrier');
+        targets.push(envelope.target.machineId);
+        inventory.entries[0]!.extension.upstream = { state: 'current' };
+        return { body: { v: 1, actionId: 'registries.updates.check', requestId: envelope.requestId,
+            execution: { ok: true, result: { checkedAt: 10, results: [{ kind: 'browserExtension',
+                key: JSON.stringify(['work', extensionId]), upstream: { state: 'current' } }] } } } };
+    } });
+    await screen.pressByTestIdAsync('store.updates.checkNow');
+    await vi.waitFor(() => expect(targets.length).toBeGreaterThan(0));
+    expect([...new Set(targets)]).toEqual([machineId]);
+    expect([...new Set(inventoryTargets)]).toEqual([machineId]);
+    await vi.waitFor(() => expect(screen.findHostByTestId(`${rowId}.review`)).toBeNull());
+    expect(screen.findHostByTestId(rowId)).not.toBeNull();
+});
 
 it('while inventory is still loading, says only that, never "nothing waiting" or a Retry', async () => {
     const { screen } = await renderExtensionUpdate(true);

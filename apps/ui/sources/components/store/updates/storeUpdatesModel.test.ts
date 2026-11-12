@@ -81,12 +81,15 @@ describe('buildStoreUpdates', () => {
     expect(waiting.sections).toMatchObject([{ kind: 'browserExtension', entries: [
       { key: first.key, from: '1.0', to: '2.0', state: 'available' },
       { key: second.key, from: '1.0', to: '2.0', state: 'available' },
+      { key: otherMachine.key, from: '2.0', state: 'current' },
     ] }]);
     expect(waiting.sections[0]?.entries[0]?.apply).toEqual({ actionId: 'browser.extensions.update',
       input: { machineId: 'machine-a', profileId: 'work', extensionId, expectedVersion: '2.0' } });
     const after = buildStoreUpdates([browserRow('work', '2.0', true), second, otherMachine], allResults, check);
     expect(after.count).toBe(1);
-    expect(after.sections[0]?.entries.map(entry => entry.key)).toEqual([second.key]);
+    expect(after.sections[0]?.entries.map(entry => [entry.key, entry.state])).toEqual([
+      [first.key, 'current'], [second.key, 'available'], [otherMachine.key, 'current'],
+    ]);
   });
   it('reports only successfully checked current subjects, with no freshness claim before a check', () => {
     const rows = [skill('current'), skill('gone'), skill('failed')];

@@ -30,9 +30,10 @@ export type StoreUpdateEntry = Readonly<{
   /**
    * `available`: a newer version is waiting and the person never changed theirs. `needsChoice`: they changed it and
    * the source changed too (Skills asks per file). `removed`: the source no longer lists it. `unchecked`: the last
-   * check could not reach the source and nothing recorded says a newer version is waiting.
+   * check could not reach the source and nothing recorded says a newer version is waiting. `current` keeps an
+   * installed browser extension visible after its owner confirms the installed version is up to date.
    */
-  state: 'available' | 'needsChoice' | 'removed' | 'unchecked';
+  state: 'available' | 'needsChoice' | 'removed' | 'unchecked' | 'current';
   reason?: RegistryFailureStatus;
   status?: CapabilityStatus;
   from: string | null;
@@ -224,6 +225,8 @@ export function buildStoreUpdates(
       };
     } else if (!entry && upstream?.state === 'removed_from_source') {
       entry = { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from, to: null };
+    } else if (!entry && row.kind === 'browserExtension' && upstream?.state === 'current') {
+      entry = { key: row.key, row, state: 'current', from, to: null };
     }
     if (!entry) continue;
     const list = byKind.get(item.kind);
@@ -234,7 +237,7 @@ export function buildStoreUpdates(
     byKind.has(kind) ? [{ kind, entries: byKind.get(kind)! }] : [],
   );
   return {
-    count: complete ? sections.reduce((total, section) => total + section.entries.length, 0) : null,
+    count: complete ? sections.reduce((total, section) => total + section.entries.filter(entry => entry.state !== 'current').length, 0) : null,
     sections,
     tracked,
     unchecked,

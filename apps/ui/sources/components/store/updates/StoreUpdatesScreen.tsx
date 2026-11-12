@@ -21,6 +21,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourceStatus';
 import { useRegistryUpdateCheck } from '@/registries/useRegistryUpdateCheck';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useStoreActionTarget, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
@@ -30,7 +31,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { RowMark } from '../inventory/ManagedInventoryDirectory';
 import { presentInventoryRow, type ManagedInventoryRowPresentation } from '../inventory/inventoryRows';
-import { storeKinds } from '../catalog/storeKinds';
+import { storeKinds, type StoreInstalledInput } from '../catalog/storeKinds';
 import { useInstalledScope } from '../catalog/storeAccountAdmission';
 import {
   type StoreUpdateEntry,
@@ -70,9 +71,11 @@ export function StoreUpdatesScreen(): React.ReactNode {
   const focused = useOptionalScreenIsFocused() !== false;
   const layoutPresented = useLayoutPresentationActive();
   const presented = focused && layoutPresented;
-  const query = React.useMemo(
-    () => ({ scope, machine: null, projectKey: null }),
-    [scope],
+  const selectedMachine = useStoreMachineScope();
+  const externalActionTarget = useStoreActionTarget(undefined, true, scope ?? undefined);
+  const query = React.useMemo<StoreInstalledInput>(
+    () => ({ scope, machine: selectedMachine ? { serverIdentityId: selectedMachine.serverId, machineId: selectedMachine.machineId } : null, projectKey: null }),
+    [scope, selectedMachine],
   );
   const demand = React.useMemo(() => ({ presented }), [presented]);
   const admitted = useInstalledScope(query);
@@ -85,6 +88,8 @@ export function StoreUpdatesScreen(): React.ReactNode {
   const rows = React.useMemo(() => [...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows, ...plugin.rows],
     [mcpServer.rows, agent.rows, skill.rows, browserExtension.rows, plugin.rows]);
   const execution = useMountedActionExecution(scope);
+  const executeCheck = React.useCallback<typeof execution.execute>((actionId, input, options) =>
+    execution.execute(actionId, input, { ...options, externalActionTarget }), [execution.execute, externalActionTarget]);
   const refreshSkills = skill.continuation;
   const refreshBrowserExtensions = browserExtension.continuation;
   const retry = React.useCallback(() => {
@@ -93,8 +98,8 @@ export function StoreUpdatesScreen(): React.ReactNode {
   }, [refreshSkills, refreshBrowserExtensions]);
   const captureBasis = React.useCallback(() => captureStoreUpdateBasis(rows), [rows]);
   const { check, checkNow } = useRegistryUpdateCheck({
-    scopeKey: JSON.stringify(scope),
-    execute: execution.execute,
+    scopeKey: JSON.stringify([scope, externalActionTarget]),
+    execute: executeCheck,
     isCurrent: execution.isCurrent,
     retry,
     enabled: presented,
@@ -311,10 +316,12 @@ function UpdateRow(
     (entry.state === 'available' || entry.state === 'needsChoice')
       ? SKILLS_UPDATES_ROUTE
       : presentation.home.href;
-  const version = entry.from && entry.to ? `${entry.from} → ${entry.to}` : null;
+  const version = entry.from && entry.to ? `${entry.from} → ${entry.to}` : entry.state === 'current' ? entry.from : null;
   const state =
-    entry.state === 'available'
-      ? t('capabilities.store.updates.ready')
+    entry.state === 'current'
+      ? t('capabilities.store.updates.upToDate')
+      : entry.state === 'available'
+        ? t('capabilities.store.updates.ready')
       : entry.state === 'needsChoice'
         ? t('capabilities.store.updates.needsChoice')
         : entry.state === 'removed'
