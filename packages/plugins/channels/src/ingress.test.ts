@@ -1823,7 +1823,9 @@ describe('thread router admission', () => {
       expect(createdSessions).toBe(provider === 'telegram' ? 0 : 1);
       expect(harness.execute.mock.calls.filter(([action]) => action === 'session.spawn_new')).toHaveLength(1);
       expect(harness.send.mock.calls.map(([request]) => sentUserTextRequest(request).text))
-        .toEqual([`${mention} first topic message`, `${mention} follow-up`]);
+        .toEqual(provider === 'discord'
+          ? ['first topic message', 'follow-up']
+          : [`${mention} first topic message`, `${mention} follow-up`]);
       await deliver(`${mention} unknown sender`, provider === 'telegram' ? 9 : 2, '99');
       await deliver(`${mention} unknown child sender`, provider === 'telegram' ? 8 : 1, '99');
       await kit.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate,
@@ -2670,6 +2672,55 @@ describe('Conversation provider observation ingress', () => {
       });
     } finally {
       releaseReads();
+      await Promise.allSettled(running);
+      vi.useRealTimers();
+    }
+  });
+
+  it('consumes terminal custody when a selected due row finishes before its stale snapshot is dispatched', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let releaseQuery!: () => void;
+    const queryHeld = new Promise<void>(resolve => { releaseQuery = resolve; });
+    let querySelected!: () => void;
+    const selected = new Promise<void>(resolve => { querySelected = resolve; });
+    const running: Promise<unknown>[] = [];
+    try {
+      vi.setSystemTime(1_000);
+      const harness = createIngressHarness({ connection: socketChannelConnection() });
+      const binding = harness.rows.get('binding-1')!;
+      harness.rows.set(binding.rowId, stateRow({ ...binding.value,
+        payload: { ...record(binding.value.payload), inboundDebounceMs: 750 },
+      }, binding.revision));
+      const input = observation({ transport: 'socket', messageRevision: 'stale-selected-custody' });
+      await ingestConversationProviderObservationForInvocation(input, harness.context);
+      const collection = harness.context.services.storage.account!.collection(CHANNEL_STATE_COLLECTION);
+      const query = collection.query.bind(collection);
+      let holdNextDueQuery = true;
+      vi.spyOn(collection, 'query').mockImplementation(async (request, options) => {
+        const result = await query(request, options);
+        if (request.index === CHANNEL_STATE_INDEX_ID.byIngressDue && holdNextDueQuery) {
+          holdNextDueQuery = false;
+          querySelected();
+          await queryHeld;
+        }
+        return result;
+      });
+      vi.setSystemTime(1_750);
+      const recovery = runConversationIngressDueWorkForInvocation({}, harness.context);
+      // Observe rejection immediately so RED cannot leave an unhandled promise.
+      const settled = recovery.then(value => ({ value }), error => ({ error }));
+      running.push(settled);
+      await selected;
+      await ingestConversationProviderObservationForInvocation(input, harness.context);
+      const terminal = [...harness.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation')!;
+      expect(terminal.value.payload).toMatchObject({ lifecycle: { phase: 'terminal', attemptCount: 1 }, disposition: 'admitted' });
+      releaseQuery();
+      await expect(settled).resolves.toEqual({ value: 1 });
+      expect(harness.send).toHaveBeenCalledOnce();
+      expect(harness.rows.get(terminal.rowId)).toEqual(terminal);
+      await expect(readNextConversationIngressDueAtForInvocation(harness.context)).resolves.toBeUndefined();
+    } finally {
+      releaseQuery();
       await Promise.allSettled(running);
       vi.useRealTimers();
     }

@@ -1235,7 +1235,7 @@ async function sessionSourceDisplayNameSnapshot(context: PluginInvocationContext
     // these records never change the frozen destination or its permissions.
     const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
     const connection = authority?.connection.value
-      ?? asConnection(readStateRow(await collection.get(connectionId, { signal: context.signal })))?.value;
+      ?? asConnection(readStateRow(await collection.get(connectionId, { signal: context.signal })) ?? null)?.value;
     const displayBinding = binding
       ?? asBinding(readStateRow(await collection.get(bindingId, { signal: context.signal })))?.value;
     const providerName = providerDisplayName !== undefined ? providerDisplayName
@@ -2360,14 +2360,26 @@ function blockedIngressObligationValue(input: Readonly<{
   };
 }
 
-/** Conflict diagnostics consume the Collection result; they never repair or re-authorize work. */
-async function reportIngressLifecycleConflict(input: Readonly<{
+class IngressLifecycleConflict extends PluginError {
+  readonly #terminalObligation: ReturnType<typeof asIngressObligation>;
+
+  constructor(message: string, current: ReturnType<typeof asIngressObligation>) {
+    super({ code: 'channels_ingress_lifecycle_conflict', message, retryable: true });
+    // Private custody never becomes part of the serialized boundary error.
+    this.#terminalObligation = current?.value.terminal ? current : undefined;
+  }
+
+  get terminalObligation() { return this.#terminalObligation; }
+}
+
+/** A losing transition reads settled custody once and reports content-free conflict diagnostics. */
+async function readIngressLifecycleConflict(input: Readonly<{
   context: PluginInvocationContext;
   value: JsonRecord;
   expectedRevision: number | 'absent';
   result: Extract<PluginCollectionBatchResult<JsonRecord>, { status: 'conflict' }>;
   transitionOwner: 'putIngressObligationLifecycle' | 'batchPutIngressObligation';
-}>): Promise<void> {
+}>): Promise<ReturnType<typeof asIngressObligation>> {
   const rowId = input.value[CHANNEL_STATE_FIELD.id];
   const requested = typeof rowId === 'string' ? asIngressObligation({ rowId, revision: 1, value: input.value }) : undefined;
   const base = {
@@ -2400,8 +2412,10 @@ async function reportIngressLifecycleConflict(input: Readonly<{
       connectionOwner: connection === undefined ? null
         : getConversationConnectionExecutionRouting(connection.value.payload.transportOrigin, input.context.plugin.id),
     });
+    return current;
   } catch {
     input.context.services.logger.warn('[Channels] ingress lifecycle CAS conflict', { ...base, diagnosticReadFailed: true });
+    return undefined;
   }
 }
 
@@ -2417,9 +2431,9 @@ async function putIngressObligationLifecycle(input: Readonly<{
     { kind: 'put', value: input.value, expectedRevision: input.obligation.row.revision },
   ], input.knownNoEffectCleanup === true ? undefined : { signal: input.context.signal });
   if (result.status === 'conflict') {
-    await reportIngressLifecycleConflict({ ...input, expectedRevision: input.obligation.row.revision, result,
+    const current = await readIngressLifecycleConflict({ ...input, expectedRevision: input.obligation.row.revision, result,
       transitionOwner: 'putIngressObligationLifecycle' });
-    throw pluginError('channels_ingress_lifecycle_conflict', 'The ingress lifecycle changed before its transition committed.', true);
+    throw new IngressLifecycleConflict('The ingress lifecycle changed before its transition committed.', current);
   }
   const resultRow = result.results.find((entry) => entry.rowId === input.obligation.row.rowId && !entry.deleted);
   const parsed = resultRow === undefined ? undefined : asIngressObligation({
@@ -2536,11 +2550,10 @@ async function batchPutIngressObligation(input: Readonly<{
     { kind: 'put', value: input.value, expectedRevision: input.expectedRevision },
   ], { signal: input.context.signal });
   if (result.status === 'conflict') {
-    await reportIngressLifecycleConflict({ ...input, result, transitionOwner: 'batchPutIngressObligation' });
-    throw pluginError(
-      'channels_ingress_lifecycle_conflict',
+    const current = await readIngressLifecycleConflict({ ...input, result, transitionOwner: 'batchPutIngressObligation' });
+    throw new IngressLifecycleConflict(
       'The ingress obligation changed before its transition could commit.',
-      true,
+      current,
     );
   }
   const rowId = input.value[CHANNEL_STATE_FIELD.id];
@@ -4871,6 +4884,12 @@ async function dispatchIngressObligation(input: Parameters<typeof dispatchIngres
     try {
       return await dispatchIngressObligationAttempt(input);
     } catch (error) {
+      if (error instanceof IngressLifecycleConflict && error.terminalObligation !== undefined) {
+        // Selection can predate a completed capture after its live row owner
+        // has drained. A losing CAS must consume that terminal custody rather
+        // than report lost admission to a provider and restart its transport.
+        return settleTerminalRefusalCustody({ context: input.context, obligation: error.terminalObligation });
+      }
       if (input.source.kind !== 'checkpointedPoll'
         || (isPluginError(error) && (error.code === 'channels_ingress_stale_authority'
           || error.code === 'channels_ingress_lifecycle_conflict'))) throw error;
