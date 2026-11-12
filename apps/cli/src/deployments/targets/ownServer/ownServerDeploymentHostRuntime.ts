@@ -293,7 +293,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         referenceForwards.retain(consumers.map(consumer => consumer.retirementSignal),
                             failure => { for (const consumer of consumers) consumer.reportDependencyFailure?.(failure); });
                     },
-                    currentDomainEdgeObservation: retainedLease.registry.currentDomainEdgeObservation, sourceIntent: intent,
+                    currentDomainEdgeObservation: retainedLease.registry.currentDomainEdgeObservation,
+                    readHealthAlertSource: retainedLease.registry.readHealthAlertSource, sourceIntent: intent,
                     ...(buildExecutionDirectory === undefined ? {} : { buildExecutionDirectory }),
                     source: { environmentId: environment.environment.id, environmentInstanceId,
                         deploymentId: materializationId, machineId: host.machineId, installationId: identity.installationId,

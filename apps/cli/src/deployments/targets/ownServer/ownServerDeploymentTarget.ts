@@ -15,6 +15,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { DeploymentReceiptDispatchV1 } from '@/deployments/createCliDeploymentActionDeps';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { CurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import type { DeploymentSourceAdmissionForHost } from './exactCommitRelease';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
@@ -165,6 +166,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         nativeIo: ProjectNativeToolchainIo;
         projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject' | 'listProjectServices' | 'resolveEnvironmentService' | 'machineServiceRows'>;
         currentDomainEdgeObservation?: CurrentDomainEdgeObservation;
+        readHealthAlertSource?: PluginRuntimeRegistryLease['registry']['readHealthAlertSource'];
         source: DeploymentSourceAdmissionForHost;
         secrets: Omit<Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0],
             'environmentId' | 'machineId' | 'installationId' | 'phase' | 'bindings' | 'assertCurrent'>;

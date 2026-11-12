@@ -34,7 +34,8 @@ import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accou
 import { PushNotificationClient } from '@/api/pushNotifications';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { registerDaemonCommittedServiceHealthDeliveryRpcHandler } from '@/notifications/activity/committedServiceHealthDelivery';
-import { AccountNoticeArtifactHeaderV1Schema, CommittedServiceHealthDeliveryRequestV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { AccountNoticeArtifactHeaderV1Schema, CommittedServiceHealthDeliveryRequestV1Schema,
+    createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -58,7 +59,12 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
+import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
 import { createDeploymentDataQueryActionForHost } from '../../actions/dataQuery';
 import { createMachineServicesRuntime } from '@/daemon/local/services/launch/machineServices';
@@ -133,6 +139,26 @@ afterEach(() => {
     withdrawActiveProjectAccountRowsSnapshot();
     vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
+
+async function observeNativeAction(runtime: ReturnType<typeof createHostActionOperationRuntime>,
+    result: ActionExecuteResult, accountId: string, signal: AbortSignal) {
+    const accepted = result.ok ? ActionOperationAcceptedResultSchema.safeParse(result.result) : null;
+    if (!accepted?.success) return { result, snapshot: null };
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', machineId: 'machine-a',
+        operationId: accepted.data.operationId } });
+    const snapshot = await runtime.runner.waitForTerminal({ accountId, machineId: 'machine-a' },
+        accepted.data.operationId, signal);
+    if (!snapshot) throw new Error('Expected the admitted native operation snapshot');
+    expect(snapshot).toMatchObject({ operationId: accepted.data.operationId, scope: { accountId, machineId: 'machine-a' } });
+    return { result: readActionOperationTerminalResultV1(snapshot), snapshot };
+}
+
+async function completedNativeAction(runtime: ReturnType<typeof createHostActionOperationRuntime>,
+    result: ActionExecuteResult, accountId: string, signal: AbortSignal) {
+    const observed = await observeNativeAction(runtime, result, accountId, signal);
+    if (!observed.result) throw new Error(`Expected a completed native operation: ${JSON.stringify(observed.snapshot)}`);
+    return observed.result;
+}
 
 function fixture(state: 'queued' | 'succeeded' | 'outcome_unknown' = 'queued', allowTransitions = false) {
     const environment = createDeploymentEnvironmentDetailV1();
@@ -273,7 +299,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_missing_generation', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
     ]) it(
         `native deployment admission, finite execution and retained C1 observation: ${scenario}`, async () => {
         const startedAt = Date.now();
@@ -534,6 +560,7 @@ describe('own-server target at the Action host boundary', () => {
                 return readAccessRevoked ? { status: 403, data: { error: 'forbidden' } }
                     : { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
                         environment: structuredClone(promotionSource.environment),
+                        secretScope: promotionSource.secretScope,
                         targetLinks: promotionSource.targetLinks.map(({ targetLink }) => structuredClone(targetLink)) }) };
             }
             if (httpRequest.method?.toUpperCase() === 'POST'
@@ -574,6 +601,7 @@ describe('own-server target at the Action host boundary', () => {
             && httpRequest.url?.includes(`/environments/${environment.environment.id}`)
             ? (readPageAdmissions++, forwarding && receiverEnvironmentReads++, readAccessRevoked) ? { status: 403, data: { error: 'forbidden' } }
                 : { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: structuredClone(environment.environment),
+                    secretScope: environment.secretScope,
                     targetLinks: environment.targetLinks.map(({ targetLink }) => structuredClone(targetLink)) }) }
             : { status: 200, data: { ok: true, canManage: true,
             source: { id: environment.environment.projectSourceId, revision: 1, name: 'Source', audience: [], createdByAccountId: accountId,
@@ -628,13 +656,17 @@ describe('own-server target at the Action host boundary', () => {
             writes++;
             return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
         });
+        const channel = await createRequesterCurrentnessSocketHarness();
+        onTestFinished(() => channel.close());
         const previousHome = configuration.happyHomeDir;
         const previousSettingsFile = configuration.settingsFile;
-        const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
+        const mounted = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
             controller: pluginReloadController, runtimeOptions: {
+                ...(retainedHealth ? { scopedActionRuntime: { credentials,
+                    actionsSettingsProvider: createActionSettingsProvider({ scopeKey: resolveAccountSettingsScopeKey(credentials) }) } } : {}),
                 pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
                 ...(migrationBackup || publicCopy || scenario === 'public_restore' || scenario.startsWith('standalone_public_restore')
-                    ? ['happier.backup.destinations'] : [])] } });
+                    ? ['happier.backup.destinations'] : [])] } }));
         // Each scenario is a different installed daemon lifetime. Reusing its
         // Home would collide with the preceding committed immutable release.
         Reflect.set(configuration, 'happyHomeDir', root);
@@ -894,11 +926,13 @@ describe('own-server target at the Action host boundary', () => {
                 } }),
         };
         let nativeInventoryReads = 0;
+        let readAcquiredHealthAlertSource: Awaited<ReturnType<typeof host.runtime.acquire>>['readHealthAlertSource'];
         // Measurement forwards every operation into the real owner. Its public
         // object is frozen, so a spy cannot be installed on that object itself.
         const measuredHost: OwnServerDeploymentTargetHostInput = { ...host, runtime: {
             async acquire(request, admission) {
                 const runtime = await host.runtime.acquire(request, admission);
+                if (retainedHealth) readAcquiredHealthAlertSource = runtime.readHealthAlertSource;
                 function listProjectServices(): readonly ProjectManagedServiceHandle[];
                 function listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
                 function listProjectServices(options?: Readonly<{ requireComplete: true; workspaceRoot?: string }>) {
@@ -933,7 +967,6 @@ describe('own-server target at the Action host boundary', () => {
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'queued' },
             context: { ...sourceContext, signal: caller.signal, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } },
         };
-        const channel = await createRequesterCurrentnessSocketHarness();
         const currentness = acquireRequesterAccountEncryptionCurrentness({ accountId, token, serverBaseUrl: serverHttpBaseUrl });
         try {
             if (promotionScenario) {
@@ -1071,6 +1104,7 @@ describe('own-server target at the Action host boundary', () => {
                     content: receipt.content, context: sourceContext };
                 const reviewed = await router.review(reviewRequest);
                 expect(reviewed.inputBasis.runtimeProjections?.map(value => value.machineId)).toEqual(['machine-a']);
+                expect(reviewed.inputBasis.runtimeProjections?.map(value => value.engineKind)).toEqual(['dockerDesktop']);
                 expect(routedMembers).toEqual(['machine-a']);
                 const link = environment.targetLinks[0].targetLink;
                 link.members.push({ machineId: 'machine-b', installationId: 'installation-b', state: 'active' });
@@ -1084,6 +1118,7 @@ describe('own-server target at the Action host boundary', () => {
                     content: { kind: 'secret', value: 'review-secret-value-sentinel' } }));
                 const multiReview = await router.review(reviewRequest);
                 expect(multiReview.inputBasis.runtimeProjections?.map(value => value.machineId)).toEqual(['machine-a', 'machine-b']);
+                expect(multiReview.inputBasis.runtimeProjections?.map(value => value.engineKind)).toEqual(['dockerDesktop', 'dockerDesktop']);
                 expect(routedMembers).toEqual(['machine-a', 'machine-a', 'machine-b']);
                 await expect(router.reviewMember({ request: reviewRequest, machineId: 'publish-host',
                     installationId: 'publish-installation' })).rejects.toMatchObject({ code: 'target_mismatch' });
@@ -1220,15 +1255,15 @@ describe('own-server target at the Action host boundary', () => {
                                     actionId: 'deployments.backups.test',
                                     scope: { kind: 'environment', environmentId: environment.environment.id }, surface, mode: 'waived' }) };
                             await boundary.setRepositoryConfigExitCode(0);
-                            const probe = await executor.execute('deployments.backups.test',
+                            const probe = await completedNativeAction(operations, await executor.execute('deployments.backups.test',
                                 buildDeploymentBackupActionInputV1('deployments.backups.test', targetInput),
-                                { ...probeContext, actionRequestId: `probe-success-${surface}` });
+                                { ...probeContext, actionRequestId: `probe-success-${surface}` }), accountId, caller.signal);
                             expect(probe.ok ? probe.result : probe)
                                 .toEqual({ kind: 'reachable', repositoryId: 'c'.repeat(64) });
                             await boundary.setRepositoryConfigExitCode(12);
-                            expect(await executor.execute('deployments.backups.test',
+                            expect(await completedNativeAction(operations, await executor.execute('deployments.backups.test',
                                 buildDeploymentBackupActionInputV1('deployments.backups.test', targetInput),
-                                { ...probeContext, actionRequestId: `probe-failed-${surface}` }))
+                                { ...probeContext, actionRequestId: `probe-failed-${surface}` }), accountId, caller.signal))
                                 .toMatchObject({ ok: true, result: { kind: 'failed', reason: 'repository_password_incorrect',
                                     step: 'repository', nativeExitCode: 12, remedy: 'review_credentials' } });
                         }
@@ -1632,7 +1667,7 @@ describe('own-server target at the Action host boundary', () => {
                     .toMatchObject(scenario === 'candidate_backup_configured_failure'
                         ? { ok: false, errorCode: 'deployment_failed' } : { ok: true, state: 'running' });
                 expect(receipt.content.ownServer?.preMigrationBackup).toMatchObject({ target: { database },
-                    repository: { repository: 's3:https://fixture.invalid/backup' } });
+                    repository: { repository: `s3:https://fixture.invalid/backup/${environment.content.backup!.ownership.prefix}` } });
                 expect(receipt.content.steps).toContainEqual(expect.objectContaining({ id: 'own-server-migration',
                     state: scenario === 'candidate_backup_configured_failure' ? 'failed' : 'succeeded' }));
                 const events = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n').filter(Boolean)
@@ -1970,6 +2005,7 @@ describe('own-server target at the Action host boundary', () => {
                                     ok: true, projectSourceId: template.environment.projectSourceId, sourceRevision: 1, revision: 0, content: null }) };
                                 if (method === 'GET' && path === `/v1/deployments/environments/${template.environment.id}`)
                                     return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: template.environment,
+                                        secretScope: template.secretScope,
                                         targetLinks: template.targetLinks.map(row => row.targetLink) }) };
                                 if (method === 'POST' && path === '/v1/deployments/environments/access') {
                                     const input = DeploymentEnvironmentAccessInputV1Schema.parse(http.data);
@@ -2017,6 +2053,7 @@ describe('own-server target at the Action host boundary', () => {
                                 }
                                 if (method === 'GET' && child) return { status: 200,
                                     data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true, environment: child.environment,
+                                        secretScope: child.secretScope,
                                         targetLinks: child.targetLinks.map(row => row.targetLink) }) };
                                 if (method === 'POST' && path === '/v1/deployments/environments') {
                                     const created = DeploymentEnvironmentCreateStorageInputV1Schema.parse(http.data);
@@ -2618,6 +2655,11 @@ describe('own-server target at the Action host boundary', () => {
                     const beforeDeploys = (await docker.readInvocations()).filter(call => call.args.includes('up')).length;
                     const destinationState = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
                     await writeFile(boundary.stateFile, JSON.stringify({ ...destinationState, names: [destinationDatabase] }));
+                    environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
+                        template: { templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
+                            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['app'],
+                            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                            data: { engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } } });
                     if (scenario !== 'public_restore_drill') {
                         const beforeUnconfigured = await readFile(boundary.eventsFile, 'utf8');
                         expect(await executor.execute('deployments.backups.restore', restoreInput,
@@ -2629,10 +2671,6 @@ describe('own-server target at the Action host boundary', () => {
                             || event.kind === 'restic' && event.argv?.includes('backup'))).toHaveLength(0);
                     }
                     environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
-                        template: { templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
-                            ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } }, services: ['app'],
-                            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
-                            data: { engine: 'postgres', service: 'app', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } },
                         backup: { ...recordedCapture.configuration,
                             destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
                             occurrenceId: mounted.registry.readPluginOccurrenceId('happier.backup.destinations'),
@@ -2666,7 +2704,7 @@ describe('own-server target at the Action host boundary', () => {
                             expect(event.argv).toContain(recordedCapture.repository.repository);
                             expect(event.argv).not.toContain('backup');
                         }
-                        const destinationRepository = 's3:https://fixture.invalid/destination-safety';
+                        const destinationRepository = `s3:https://fixture.invalid/destination-safety/${environment.content.backup!.ownership.prefix}`;
                         const destinationWrites = events.filter(event => event.kind === 'restic'
                             && event.argv?.includes(destinationRepository) && event.argv.includes('backup'));
                         expect(destinationWrites).toHaveLength(1);
@@ -2756,11 +2794,11 @@ describe('own-server target at the Action host boundary', () => {
                             drillTarget: { ...restoreInput, deploymentId: pointer }, restoreDestination: restoreInput.destination,
                             verificationLevel: 'manifestReadBack', dataCheck: { service: 'app', sql: 'SELECT COUNT(*) AS restored_rows FROM recovered_fixture', params: {} } };
                         expect(environment.environment.id).not.toBe(promotionSource.environment.id);
-                        const currentVerification = await drillExecutor.execute('deployments.backups.verify', {
+                        const currentVerification = await completedNativeAction(operations, await drillExecutor.execute('deployments.backups.verify', {
                             ...backupTarget, deploymentId: promotionSource.targetLinks[0].targetLink.activeDeploymentId,
                             backupOperationId: produced.operationId, snapshotId: recordedCapture.source.snapshot.snapshotId,
                             level: 'manifestReadBack',
-                        }, { ...drillContext, actionRequestId: 'verify-retained-source-on-current-generation' });
+                        }, { ...drillContext, actionRequestId: 'verify-retained-source-on-current-generation' }), accountId, caller.signal);
                         phase('drill-source-retained-verified');
                         expect(currentVerification, JSON.stringify(currentVerification)).toMatchObject({ ok: true,
                             result: { kind: 'verified', snapshotId: recordedCapture.source.snapshot.snapshotId } });
@@ -2771,7 +2809,7 @@ describe('own-server target at the Action host boundary', () => {
                                 const coordinator = createTestWorkflowCoordinator({ store,
                                     resolveWorkspace: async () => ({ ok: true, workspace: { machineId: 'machine-a', directory: root, checkoutRootPath: root } }),
                                     executeStep: async () => { throw new Error('Drills use native Actions and no agent Session'); },
-                                    action: { executor: drillExecutor, buildContext: async () => drillContext,
+                                    action: { executor: drillExecutor, buildContext: async execution => ({ ...drillContext, ...buildWorkflowActionContext(execution) }),
                                         observeRun: async () => { throw new Error('Drills do not create agent Runs'); } } });
                                 const drilled = await coordinator.run({ runId: `persistent-restore-drill-${iteration}`, definition,
                                     inputs: unavailableSnapshot ? { ...inputs, restoreSource: { ...inputs.restoreSource,
@@ -2861,6 +2899,21 @@ describe('own-server target at the Action host boundary', () => {
                 recoveryCapture.content.ownServer!.preMigrationBackup = structuredClone(capture);
                 const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
                     custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
+                const restoreEffects = new Set<Promise<unknown>>();
+                settleBackupFixture = async () => {
+                    caller.abort();
+                    const scope = { accountId, machineId: 'machine-a' };
+                    for (const operation of operations.store.list(scope).items)
+                        operations.runner.cancel(scope, operation.operationId);
+                    await Promise.allSettled([...restoreEffects]);
+                };
+                const runRestoreOperation: typeof operations.runActionOperation = value => operations.runActionOperation({ ...value,
+                    execute: context => {
+                        const effect = value.execute(context);
+                        restoreEffects.add(effect);
+                        void effect.finally(() => restoreEffects.delete(effect)).catch(() => undefined);
+                        return effect;
+                    } });
                 const nativeSnapshotOffer = {
                     managedId: 'managed-database', intentRevision: 1,
                     controller: { machineId: 'controller', installationId: 'controller-installation' },
@@ -2872,6 +2925,41 @@ describe('own-server target at the Action host boundary', () => {
                     consistency: 'running' as const,
                 };
                 let nativeSnapshots = 0;
+                if (scenario === 'standalone_public_restore_volume') {
+                    // Backup was configured after the serving release. Native
+                    // service inputs stay retained; safety uses today's backup.
+                    serving.content.ownServer!.approvedInputBasis.bindings = serving.content.ownServer!.approvedInputBasis.bindings
+                        .filter(binding => binding.purpose !== 'backupDestination');
+                    const volumeCapture = { ...capture, sourceFormat: 'volume' as const,
+                        source: { ...capture.source, kind: 'volume' as const, producerChecksumSha256: undefined,
+                            snapshot: { ...capture.source.snapshot, paths: ['/happier/source'],
+                                tags: ['happier', `env:${environment.environment.id}`, 'kind:volume', 'src:database'] } },
+                        target: { service: 'app', volume: 'shared', adapter: 'volume-v1' as const },
+                        configuration: { ...capture.configuration, sources: [{ kind: 'volume' as const, sourceId: 'database',
+                            service: 'app', volume: 'shared', consistency: 'stopDuringCopy' as const }] } };
+                    environment.content.backup = { ...volumeCapture.configuration, configRevision: 2 };
+                    const nativeState = JSON.parse(await readFile(boundary.stateFile, 'utf8'));
+                    await writeFile(boundary.stateFile, JSON.stringify({ ...nativeState,
+                        snapshot: { ...nativeState.snapshot, paths: volumeCapture.source.snapshot.paths,
+                            tags: volumeCapture.source.snapshot.tags } }));
+                    const input = { mode: 'prepare' as const, serverId: 'home', environmentId: environment.environment.id,
+                        machineId: 'machine-a', installationId: 'installation-a', targetLinkId: environment.targetLinks[0].targetLink.id,
+                        deploymentId: serving.deployment.id, expectedRevision: environment.environment.revision,
+                        source: { kind: 'repository' as const, backupOperationId: 'recorded-volume-backup',
+                            snapshotId: volumeCapture.source.snapshot.snapshotId } };
+                    const context = { ...sourceContext, operationAcceptance: { operationId: 'volume-prepare', accept() {} } };
+                    const prepared = await target.restore({ input, context,
+                        backup: { manifest: volumeCapture.source, capture: volumeCapture } });
+                    expect(prepared).toMatchObject({ kind: 'prepared', prepared: {
+                        source: volumeCapture.source, sourceFormat: 'volume', destination: { hasMeaningfulData: true },
+                        safetyBackup: { kind: 'verified', manifests: [expect.objectContaining({ configRevision: 2 })] }, repository: volumeCapture.repository,
+                    }, configuration: volumeCapture.configuration });
+                    if (prepared.kind !== 'prepared' || !('configuration' in prepared)) throw new Error('Expected recorded volume preparation');
+                    expect(await target.restore({ input: { ...input, mode: 'confirm', prepareOperationId: 'volume-prepare' }, prepared,
+                        context: { ...context, operationAcceptance: { operationId: 'volume-confirm', accept() {} } } }))
+                        .toMatchObject({ kind: 'restored', verified: true });
+                    return;
+                }
                 if (scenario === 'standalone_public_restore_upload' || uploadedVolume) {
                     const sourceBytes = uploadedVolume ? volumeTarFixture : archive;
                     environment.content.backup = { ...capture.configuration,
@@ -2918,7 +3006,7 @@ describe('own-server target at the Action host boundary', () => {
                         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
                             resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
                             deploymentRestore: restore, prepareDeploymentRestore: restore.prepare,
-                            runActionOperation: value => operations.runActionOperation(value) });
+                            runActionOperation: runRestoreOperation });
                         const context = { ...sourceContext, surface: 'agent' as const, actionCaller: { kind: 'host' as const },
                             serverId: 'home', runtimeAccountId: accountId,
                             actionsSettings: setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
@@ -2930,12 +3018,12 @@ describe('own-server target at the Action host boundary', () => {
                             destination: uploadedVolume ? { kind: 'volume' as const, service: 'app', volume: 'shared' }
                                 : { kind: 'database' as const, service: 'app', database }, expectedRevision: environment.environment.revision };
                         const beforeMissing = await readFile(boundary.eventsFile, 'utf8');
-                        expect(await executor.execute('deployments.backups.restore', { ...input,
-                            source: { kind: 'upload', transferId: 'expired-upload' } }, { ...context, actionRequestId: 'upload-missing' }))
+                        expect(await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...input,
+                            source: { kind: 'upload', transferId: 'expired-upload' } }, { ...context, actionRequestId: 'upload-missing' }), accountId, caller.signal))
                             .toMatchObject({ ok: false, errorCode: 'restore_upload_unavailable' });
                         expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeMissing);
-                        const prepared = await executor.execute('deployments.backups.restore', input,
-                            { ...context, actionRequestId: 'upload-prepare' });
+                        const prepared = await completedNativeAction(operations, await executor.execute('deployments.backups.restore', input,
+                            { ...context, actionRequestId: 'upload-prepare' }), accountId, caller.signal);
                         expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true, result: { kind: 'prepared',
                             evidence: { native: { prepared: { source: { kind: 'upload', transferId: initialized.uploadId },
                                 sourceFormat: uploadedVolume ? 'volumeTar' : 'postgresCustom' } }, snapshot: nativeSnapshotOffer } } });
@@ -2944,15 +3032,17 @@ describe('own-server target at the Action host boundary', () => {
                         if (preparation.kind !== 'prepared') throw new Error('Expected retained upload preparation');
                         const confirm = { ...input, mode: 'confirm' as const, prepareOperationId: preparation.operationId };
                         const beforeHeld = await readFile(boundary.eventsFile, 'utf8');
-                        expect(await executor.execute('deployments.backups.restore', confirm,
-                            { ...context, actionRequestId: 'upload-held' }))
-                            .toMatchObject({ ok: false, errorCode: 'restore_snapshot_not_confirmed' });
+                        const held = await observeNativeAction(operations, await executor.execute('deployments.backups.restore', confirm,
+                            { ...context, actionRequestId: 'upload-held' }), accountId, caller.signal);
+                        expect(held.snapshot).toMatchObject({ actionId: 'deployments.backups.restore',
+                            observation: { kind: 'review_required', code: 'restore_snapshot_not_confirmed',
+                                snapshot: { kind: 'unknown', code: 'provider_outcome_unknown' } } });
                         expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeHeld);
                         // A held snapshot releases read custody without consuming the
                         // finite source, so the newly reviewed continuation can reacquire it.
                         expect(await readFile(artifact.filePath)).toEqual(sourceBytes);
-                        expect(await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
-                            { ...context, actionRequestId: 'upload-continue' }))
+                        expect(await completedNativeAction(operations, await executor.execute('deployments.backups.restore', { ...confirm, snapshot: false },
+                            { ...context, actionRequestId: 'upload-continue' }), accountId, caller.signal))
                             .toMatchObject({ ok: true, result: { kind: 'restored', verified: true } });
                         expect(nativeSnapshots).toBe(1);
                         // Every Action exit relinquishes custody; expiry now deletes bytes.
@@ -2983,7 +3073,7 @@ describe('own-server target at the Action host boundary', () => {
                     approvalsCreate: async input => { latestRestoreApproval = input;
                         return { artifactId: `import-restore-review-${++approvalRequests}` }; },
                     deploymentRestore, prepareDeploymentRestore: deploymentRestore.prepare,
-                    runActionOperation: value => operations.runActionOperation(value) });
+                    runActionOperation: runRestoreOperation });
                 const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                     serverId: 'home', runtimeAccountId: accountId,
                     actionsSettings: setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
@@ -3086,20 +3176,24 @@ describe('own-server target at the Action host boundary', () => {
                 phase('standalone-confirm');
                 const stopped = await executor.execute('deployments.backups.restore', confirmInput,
                     { ...waivedAgentContext, actionRequestId: 'standalone-confirm' });
+                const stoppedObservation = await observeNativeAction(operations, stopped, accountId, caller.signal);
                 let continuedInput: typeof confirmInput & { snapshot?: boolean } = confirmInput;
-                let result = stopped;
+                let result = stoppedObservation.result;
                 if (scenario === 'standalone_public_restore_snapshot_confirmed') {
                     expect(result).toMatchObject({ ok: true, result: { kind: 'restored', evidence: { snapshot: {
                         kind: 'confirmed', snapshotId: 'native-snapshot-123', coverage: nativeSnapshotOffer.coverage,
                     } } } });
                     expect(nativeSnapshots).toBe(1);
                 } else {
-                    expect(stopped).toMatchObject({ ok: false, errorCode: 'restore_snapshot_not_confirmed',
-                        details: { snapshot: { kind: 'unknown', code: 'provider_outcome_unknown' } } });
+                    expect(stoppedObservation.snapshot).toMatchObject({ actionId: 'deployments.backups.restore',
+                        observation: { kind: 'review_required', code: 'restore_snapshot_not_confirmed',
+                            snapshot: { kind: 'unknown', code: 'provider_outcome_unknown' } } });
                     expect(nativeSnapshots).toBe(1);
                     expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeConfirmation);
-                    expect(await executor.execute('deployments.backups.restore', confirmInput,
-                        { ...waivedAgentContext, actionRequestId: 'snapshot-replay' })).toEqual({ ...stopped, requestId: 'snapshot-replay' });
+                    const replay = await executor.execute('deployments.backups.restore', confirmInput,
+                        { ...waivedAgentContext, actionRequestId: 'snapshot-replay' });
+                    expect(replay).toMatchObject({ ok: false, errorCode: 'restore_snapshot_not_confirmed',
+                        details: { steps: [], snapshot: { kind: 'unknown', code: 'provider_outcome_unknown' } } });
                     expect(nativeSnapshots).toBe(1);
                     continuedInput = { ...confirmInput, snapshot: false };
                     const continueInput = continuedInput;
@@ -3116,8 +3210,11 @@ describe('own-server target at the Action host boundary', () => {
                         { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'snapshot-new-review' }))
                         .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
                     expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeConfirmation);
-                    result = await executor.execute('deployments.backups.restore', continueInput,
+                    const continued = await executor.execute('deployments.backups.restore', continueInput,
                         { ...waivedAgentContext, actionRequestId: 'snapshot-continue' });
+                    expect(continued).toMatchObject({ ok: true, result: { status: 'accepted',
+                        operationId: stoppedObservation.snapshot!.operationId, machineId: 'machine-a' } });
+                    result = await completedNativeAction(operations, continued, accountId, caller.signal);
                     expect(nativeSnapshots).toBe(1);
                 }
                 // This fixture has only PostgreSQL. The destination observer excludes
@@ -3810,6 +3907,9 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
             }
             expect(stored.size).toBe(0);
             if (scenario !== 'runtime_stage') caller.abort();
+            if (retainedHealth) expect(await readAcquiredHealthAlertSource?.(createHealthCheckSourceInstanceIdV1({
+                kind: 'environment', environmentId: environment.environment.id,
+            })), 'the retained runtime reads Home alert configuration after its caller leaves').toEqual({ kind: 'unconfigured' });
             const service = mounted.registry.projectManagedServices.listProjectServices().find(handle => handle.kind === 'environment');
             if (!service || service.kind !== 'environment') throw new Error('Real target must produce its Environment service');
             expect(incumbentServices.has(service)).toBe(false);
@@ -4132,7 +4232,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 try { await mounted.dispose(); } finally {
                     Reflect.set(configuration, 'happyHomeDir', previousHome);
                     Reflect.set(configuration, 'settingsFile', previousSettingsFile);
-                    await currentness.dispose(); await channel.close(); await rm(root, { recursive: true, force: true });
+                    await currentness.dispose(); await rm(root, { recursive: true, force: true });
                 }
             }
         }
