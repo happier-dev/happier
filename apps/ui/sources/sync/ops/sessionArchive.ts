@@ -8,7 +8,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveServerAccountRequestContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerAccountRequestContext';
-import { createServerRequestForResolvedServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
+import { createServerRequestForResolvedServerScope, type ServerAccountRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { SessionArchiveTimeoutError, withSessionArchiveDeadline } from './sessionArchiveLifecycle';
@@ -27,18 +27,24 @@ type ArchiveRequestParams = Readonly<{
     serverId?: string | null;
     action: 'archive' | 'unarchive';
     signal?: AbortSignal;
+    authority?: Pick<ServerAccountRequestAuthority, 'scope' | 'request'>;
 }>;
 type ArchiveRequestResult<T> = Readonly<{ response: T; address: SessionAddress; release: () => Promise<void> }>;
 function archiveRequestWithContext(params: ArchiveRequestParams): Promise<ArchiveRequestResult<Response>>;
 function archiveRequestWithContext<T>(params: ArchiveRequestParams, consumeResponse: (response: Response) => Promise<T>): Promise<ArchiveRequestResult<T>>;
 async function archiveRequestWithContext<T>(params: ArchiveRequestParams, consumeResponse?: (response: Response) => Promise<T>): Promise<ArchiveRequestResult<Response | T>> {
     const address = resolveSessionArchiveAddress({
-        serverId: params.serverId ?? resolvePreferredServerIdForSessionId(params.sessionId) ?? getActiveServerSnapshot().serverId,
+        serverId: params.authority?.scope.serverId ?? params.serverId ?? resolvePreferredServerIdForSessionId(params.sessionId) ?? getActiveServerSnapshot().serverId,
         sessionId: params.sessionId,
     });
     if (!address) throw new Error('Archive requires an exact Home-qualified Session');
-    const context = await resolveServerAccountRequestContext({ serverId: address.serverId, signal: params.signal });
     const path = `/v2/sessions/${params.sessionId}/${params.action}`;
+    if (params.authority) {
+        // The enclosing Action already owns the Account request and its lifetime.
+        const response = await params.authority.request(path, { method: 'POST', ...(params.signal ? { signal: params.signal } : {}) });
+        return { response: consumeResponse ? await consumeResponse(response) : response, address, release: async () => {} };
+    }
+    const context = await resolveServerAccountRequestContext({ serverId: address.serverId, signal: params.signal });
 
     try {
         throwIfAborted(params.signal);
@@ -116,10 +122,10 @@ export async function sessionArchiveWithServerScope(
 
 export async function sessionUnarchiveWithServerScope(
     sessionId: string,
-    opts?: Readonly<{ serverId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null; authority?: Pick<ServerAccountRequestAuthority, 'scope' | 'request'> }>,
 ): Promise<SessionArchiveResponse> {
     try {
-        const request = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, action: 'unarchive' });
+        const request = await archiveRequestWithContext({ sessionId, serverId: opts?.serverId ?? null, authority: opts?.authority, action: 'unarchive' });
         try {
             const { response } = request;
             if (!response.ok) return await readArchiveFailure(response, 'Failed to unarchive session');

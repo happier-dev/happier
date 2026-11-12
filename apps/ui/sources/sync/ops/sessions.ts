@@ -1,3 +1,4 @@
+import { sessionUnarchiveWithServerScope } from './sessionArchive';
 import { t } from '@/text';
 /**
  * Session operations for remote procedure calls
@@ -1038,7 +1039,6 @@ function applySessionThinkingDecisionRecovery(
     if (!areServerProfileIdentifiersEquivalent(serverId, getActiveServerSnapshot().serverId)) return;
     const session = storage.getState().sessions[sessionId];
     storage.getState().clearSessionOptimisticThinking(sessionId);
-    storage.getState().clearSessionThinkingGrace(sessionId);
     if (!session || session.thinking !== true) return;
     storage.getState().applySessions([{ ...session, thinking: false, updatedAt: nowServerMs() }], 'projection');
 }
