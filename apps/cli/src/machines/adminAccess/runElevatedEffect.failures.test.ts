@@ -70,8 +70,7 @@ it.each([
             requiredFact: 'prepare', remedy: expect.stringContaining('prepare'),
         } : {}),
     };
-    const expected = scenario === 'partial native apply' ? { outcome: 'outcome_unknown', failure }
-        : { outcome: 'not_applied', reasonCode, failure };
+    const expected = { outcome: 'not_applied', reasonCode, failure };
     expect(result).toEqual(expected);
     expect(MachineElevatedResultV1Schema.parse(result)).toEqual(expected);
     const retained = log.mock.calls.filter(([message]) => message === '[machine-elevation] settled');

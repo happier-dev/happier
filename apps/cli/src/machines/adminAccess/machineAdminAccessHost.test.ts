@@ -189,7 +189,10 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
         await expect(readFile(MANAGED_SUDOERS_PATH, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
         const foreign = await fixture(preauthorized, none);
         await chmod(MANAGED_SUDOERS_PATH, 0o600); await writeFile(MANAGED_SUDOERS_PATH, 'foreign root grant\n'); await chmod(MANAGED_SUDOERS_PATH, 0o440);
-        expect(await createMachineAdminAccessHost(foreign.dependencies).reconcile(foreign.input)).toMatchObject({ outcome: 'not_applied', reasonCode: 'denied' });
+        expect(await createMachineAdminAccessHost(foreign.dependencies).reconcile(foreign.input)).toMatchObject({
+            outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { kind: 'native_check_unavailable', reason: 'foreign_effect_conflict' },
+        });
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe('foreign root grant\n');
     });
 
@@ -231,8 +234,10 @@ describe.runIf(process.platform !== 'win32')('administrator policy host reconcil
             if (changed === 'currentness') f.retire();
             else { await chmod(MANAGED_SUDOERS_PATH, 0o600); await writeFile(MANAGED_SUDOERS_PATH, 'foreign changed policy\n'); await chmod(MANAGED_SUDOERS_PATH, 0o440); }
         });
-        expect(await createMachineAdminAccessHost(f.dependencies).reconcile(f.input)).toMatchObject({ outcome: 'not_applied',
-            reasonCode: changed === 'currentness' ? 'plan_stale' : 'denied' });
+        expect(await createMachineAdminAccessHost(f.dependencies).reconcile(f.input)).toMatchObject(changed === 'currentness'
+            ? { outcome: 'not_applied', reasonCode: 'plan_stale' }
+            : { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+                failure: { kind: 'native_check_unavailable', reason: 'foreign_effect_conflict' } });
         expect(f.requests).toHaveLength(changed === 'facts' ? 1 : 0);
         expect(await readFile(MANAGED_SUDOERS_PATH, 'utf8')).toBe(changed === 'facts' ? 'foreign changed policy\n' : 'happier ALL=(ALL:ALL) NOPASSWD: ALL\n');
     });
