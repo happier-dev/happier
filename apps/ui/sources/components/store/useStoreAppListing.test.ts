@@ -146,10 +146,12 @@ async function createFixture(requiredDomain = false, withOtherSource = false, do
                     ? { ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable', details: { machineId: 'target' } }
                     : creating && createMode.value === 'approval'
                         ? { kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' }
-                        : creating && (createMode.value === 'deployFailed' || createMode.value === 'replyLost') || !creating && retryMode.value === 'failed'
+                        : deployIntent && (creating && (createMode.value === 'deployFailed' || createMode.value === 'replyLost') || !creating && retryMode.value === 'failed')
                             ? partial
                             : { kind: 'applied', environmentId: partial.environmentId, revision: 8,
-                                targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [] };
+                                targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [],
+                                ...(deployIntent ? { deployment: { ok: true, environmentId: partial.environmentId,
+                                    revision: 8, deploymentId: 'deployed', deploymentRevision: 11, state: 'succeeded' } } : {}) };
         },
     });
     homes.answer(serverId, 'POST /v1/actions/deployments.templates.instantiate', { select: async (body, request) => {
@@ -391,7 +393,7 @@ it('reads only the selected native App, prepares its exact pin explicitly and re
     } finally { await hook.unmount(); await fixture.dispose(); }
 });
 
-it.each(['created', 'refused', 'approval'] as const)('creates only on explicit intent through the scoped catalog owner and retains %s', async outcome => {
+it.each(['created', 'refused', 'approval', 'deployFailed'] as const)('creates only on explicit intent through the scoped catalog owner and retains %s', async outcome => {
     const fixture = await createFixture();
     const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
         lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
@@ -417,6 +419,8 @@ it.each(['created', 'refused', 'approval'] as const)('creates only on explicit i
             // The boundary supplied no optional failure requestId; preserve its authored failure exactly.
             expect(result).toEqual({ ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable',
                 details: { machineId: 'target' } });
+        } else if (outcome === 'deployFailed') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_failed', progress: fixture.partial, recovery: 'deploy' });
         } else {
             expect(result).toEqual({ kind: 'approval_request_created', artifactId: 'create-approval', actionId: 'deployments.templates.instantiate' });
         }
@@ -424,6 +428,7 @@ it.each(['created', 'refused', 'approval'] as const)('creates only on explicit i
         expect(fixture.creations[0]).toMatchObject({ serverId: fixture.account.serverIdentityId,
             projectSourceId: 'source/with space', templateRef: prepared.templateRef, machineId: prepared.machine.machineId,
             target: { kind: 'new', installationId: prepared.machine.installationId }, destination: { kind: 'stored' }, bindings: [],
+            deploy: { requestKey: expect.any(String) },
             environment: { kind: 'create', ...prepared.creationDefaults.values, ...choices,
                 purpose: 'standard', requestKey: expect.any(String) } });
         expect(fixture.preparations).toHaveLength(1);
@@ -530,6 +535,7 @@ it('retains the same create attempt across retry and refresh, and retires its ca
         await ready.create(prepared, choices);
         const first = fixture.creations[0];
         expect(first?.environment.kind === 'create' ? first.environment.requestKey : undefined).toEqual(expect.any(String));
+        expect(first?.deploy?.requestKey).toEqual(expect.any(String));
         await hook.rerender();
         await act(async () => { await ready.refresh(); });
         const current = hook.getCurrent();
@@ -541,6 +547,7 @@ it('retains the same create attempt across retry and refresh, and retires its ca
         await current.create(prepared, { ...choices, domainBindings: [{ templateDomainId: 'web', hostname: 'other.example.com' }] });
         expect(fixture.creations[2]?.environment.kind === 'create' ? fixture.creations[2].environment.requestKey : undefined).not.toBe(first?.environment.kind === 'create' ? first.environment.requestKey : undefined);
         expect(fixture.creations[2]?.domainBindings).toEqual([{ templateDomainId: 'web', hostname: 'other.example.com' }]);
+        expect(fixture.creations[2]?.deploy?.requestKey).not.toBe(first?.deploy?.requestKey);
         await current.create(prepared, { ...choices, name: 'Another Kuma' });
         expect(fixture.creations[3]?.environment.kind === 'create' ? fixture.creations[3].environment.requestKey : undefined).not.toBe(first?.environment.kind === 'create' ? first.environment.requestKey : undefined);
         await act(async () => { await homes.switchAccount(fixture.home.id, 'other', { currentAccount: true }); });
@@ -593,9 +600,7 @@ it('uses one template Action and review shape for first install and retained ret
         expect(await current.create(prepared, choices)).toMatchObject({ ok: false, errorCode: 'deployment_failed' });
         const initialCreate = fixture.creations[0]!;
         expect(initialCreate.environment.kind).toBe('create');
-        expect(readDeploymentTemplateDeployIntentV1(initialCreate)).toEqual({
-            requestKey: initialCreate.environment.kind === 'create' ? initialCreate.environment.requestKey : undefined,
-        });
+        expect(readDeploymentTemplateDeployIntentV1(initialCreate)).toEqual(initialCreate.deploy);
         expect(fixture.retries[0]).toMatchObject({ environment: { kind: 'existing', environmentId: fixture.partial.environmentId, expectedRevision: 5 },
             target: { kind: 'existing', targetLinkId: 'target-link', expectedRevision: 2, installationId: 'installed' },
             destination: fixture.partial.definition, templateRef: prepared.templateRef, domainBindings: choices.domainBindings,

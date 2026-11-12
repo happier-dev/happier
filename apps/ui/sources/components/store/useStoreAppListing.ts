@@ -124,6 +124,7 @@ export function useStoreAppListing(input: Readonly<{
                         environment: { kind: 'create', requestKey: randomUUID(), name: choices.name,
                             protection: choices.protection, deployerMode: choices.deployerMode, purpose: 'standard',
                             ...prepared.creationDefaults.values, controllerMachineId },
+                        deploy: { requestKey: randomUUID() },
                         ...(choices.domainBindings ? { domainBindings: choices.domainBindings } : {}),
                         ...(choices.volumeBindings ? { volumeBindings: choices.volumeBindings } : {}),
                         ...(choices.companions?.length ? { companions: choices.companions } : {}),

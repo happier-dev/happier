@@ -606,13 +606,12 @@ it('installs from the person’s Store confirmation without a self-approval Arti
     expect(fixture.creations, JSON.stringify(fixture.receiverOutcomes)).toHaveLength(1);
     expect(fixture.creations[0]).toMatchObject({ mode: 'apply',
       newProject: { name: 'Status', owner: { kind: 'account', accountId: 'owner' } },
-      environment: { kind: 'create', name: 'Status page' } });
+      environment: { kind: 'create', name: 'Status page' }, deploy: { requestKey: expect.any(String) } });
     // The actual Home boundary must sign first-deploy intent before the receiver
     // starts receipt-history reads, even when original UI dispatch skips preparation.
     expect(fixture.receiverAdmissions).toEqual([{ deploymentChildRoot: true,
-      preparation: expect.objectContaining({ operation: 'template', mode: 'apply', deploy: {
-        requestKey: (fixture.creations[0]?.environment as { requestKey: string }).requestKey,
-      } }) }]);
+      preparation: expect.objectContaining({ operation: 'template', mode: 'apply',
+        deploy: DeploymentTemplateInstantiateInputV1Schema.parse(fixture.creations[0]).deploy }) }]);
     expect(fixture.creations[0]).not.toHaveProperty('projectSourceId');
   } finally {
     await screen.unmount();
