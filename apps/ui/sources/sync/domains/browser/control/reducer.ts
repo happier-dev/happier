@@ -208,12 +208,17 @@ export function applyBrowserControlEvent(state: BrowserControlState, input: Brow
             const view = state.viewsById[event.viewId];
             // Re-admitting the same captured daemon view hydrates its binding facts;
             // navigation and controller continuity already belong to the live record.
+            const nativeRebind = view?.adapterKind === 'chromiumSidecar' && event.adapterKind === 'chromiumSidecar'
+                && event.target.kind !== 'streamedBrowser'
+                && (view.target.kind === 'streamedBrowser' || view.target.targetId === event.target.targetId);
             const sameStream = view?.browserSessionId === event.browserSessionId
                 && view.engineKind === 'streamedSurface' && event.engineKind === 'streamedSurface'
-                && view.target.kind === 'streamedBrowser' && event.target.kind === 'streamedBrowser'
-                && view.target.targetId === event.target.targetId;
+                && (nativeRebind || (view.target.kind === 'streamedBrowser' && event.target.kind === 'streamedBrowser'
+                    && view.target.targetId === event.target.targetId));
             const nextView = sameStream ? retainDeep(view, { ...view,
-                target: event.target, platform: event.platform, adapterKind: event.adapterKind,
+                // Native events carry the semantic URL; discovery owns the renderer source.
+                target: nativeRebind && view.target.kind === 'streamedBrowser' ? view.target : event.target,
+                platform: event.platform, adapterKind: event.adapterKind,
                 engineKind: event.engineKind, adapterCapabilities: event.adapterCapabilities,
                 openerViewId: event.openerViewId ?? null,
             }) : createViewFromOpenedEvent(event);

@@ -31,6 +31,7 @@ import { createBrowserDaemonControlRoutes } from '../control/routes';
 import { createBrowserDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
 import { createBrowserDaemonFeatureGate } from '../featureGate';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { applyBrowserControlEvent, createBrowserControlState } from '../../../../../ui/sources/sync/domains/browser/control/reducer';
 
 describe('browser live capture', () => {
     it.each([
@@ -624,7 +625,7 @@ describe('browser live capture', () => {
         const view = { browserSessionId: 'browser', viewId: 'view' };
         const sourceId = browserViewKey(view);
         const envelopes: MachineLiveStreamRelayEnvelopeV1[] = [];
-        let observerController: Extract<BrowserEventBatchV1['events'][number], { kind: 'controllerChanged' }>['state'] | undefined;
+        let observerState = createBrowserControlState();
         const browserEvents = () => envelopes.flatMap(envelope => envelope.message.kind === 'frame'
             && envelope.message.frame.payloadKind === 'metadata'
             ? BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8'))).events : []);
@@ -634,9 +635,7 @@ describe('browser live capture', () => {
                 if (envelope.message.kind === 'frame' && envelope.message.frame.streamId === 'late-human'
                     && envelope.message.frame.payloadKind === 'metadata') {
                     const batch = BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')));
-                    for (const event of batch.events) {
-                        if (event.kind === 'controllerChanged') observerController = event.state;
-                    }
+                    for (const event of batch.events) observerState = applyBrowserControlEvent(observerState, event);
                 }
                 if (envelope.message.kind === 'frame') relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
                     message: { kind: 'control', control: { v: 1, streamId: envelope.message.frame.streamId, kind: 'ack', nextSequence: envelope.message.frame.sequence + 1 } } });
@@ -644,6 +643,7 @@ describe('browser live capture', () => {
         try {
             await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
                 target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            for (const event of adapter.listViews(view.browserSessionId)[0].events) observerState = applyBrowserControlEvent(observerState, event);
             const source = registry.resolve({ sourceId, streamFamily: 'browser.streamed' });
             expect(source.ok).toBe(true);
             if (!source.ok) return;
@@ -791,11 +791,9 @@ describe('browser live capture', () => {
             expect(['stream', 'late-human', 'observation'].map(id => imagesFor(id).length))
                 .toEqual(imageCounts.map(count => count + 1));
             const presenceBefore = browserEvents().length;
-            // Native-page reopen retains daemon custody. Assert the observer's delivered
-            // controller fact here; UI discovery projects raw externalUrl openings into
-            // streamedBrowser targets before its reducer consumes them.
-            expect(automation.getStatus(view)).toMatchObject({ controller: 'human', controlEpoch: 1 });
-            expect(observerController).toMatchObject({ controller: 'human', controlEpoch: 1 });
+            // The existing observer keeps its navigation record across a native-page reopen.
+            // Controller custody is view-scoped: its release must reach that real reader too.
+            expect(observerState.viewsById[view.viewId].automationController).toMatchObject({ controller: 'human', controlEpoch: 1 });
             const metadataBeforeClose = metadataFor('late-human').length;
             expect(relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
                 message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'stop', reasonCode: 'viewer_closed' } },
@@ -807,7 +805,7 @@ describe('browser live capture', () => {
             });
             expect(released).toContainEqual(expect.objectContaining({ viewerInput: { controlling: false, controlEpoch: 2 },
                 events: [expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'none', controlEpoch: 2 }) })] }));
-            expect(observerController).toMatchObject({ controller: 'none', controlEpoch: 2 });
+            expect(observerState.viewsById[view.viewId].automationController).toMatchObject({ controller: 'none', controlEpoch: 2 });
             expect(await automation.handBack({ ...view, authority: 'present_user' })).toEqual({ ok: true });
             expect(browserEvents().slice(presenceBefore)).toEqual(expect.arrayContaining([
                 expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'none' }) }),

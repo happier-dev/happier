@@ -124,8 +124,13 @@ describe('browser control reducer', () => {
         expect(hydrated.viewsById.view_2).toBe(state.viewsById.view_2);
         expect(hydrated.viewsById.view_1?.automationController).toBe(before?.automationController);
         expect(applyBrowserControlEvent(hydrated, structuredClone(authoritative))).toBe(hydrated);
-        const reopened = applyBrowserControlEvent(hydrated, { ...authoritative, target: externalTarget });
-        expect(reopened.viewsById.view_1).toMatchObject({ target: externalTarget, canGoBack: false, navigationGeneration: 0 });
+        // The sidecar emits its semantic URL, while discovery supplies the renderer's source.
+        const rebound = applyBrowserControlEvent(hydrated, { ...authoritative, target: externalTarget });
+        expect(rebound.viewsById.view_1?.target).toEqual(streamedTarget);
+        expect(rebound.viewsById.view_1?.automationController).toBe(before?.automationController);
+        const reopened = applyBrowserControlEvent(hydrated, { ...authoritative,
+            target: { ...streamedTarget, targetId: 'another-source', streamId: 'another-source' } });
+        expect(reopened.viewsById.view_1).toMatchObject({ canGoBack: false, navigationGeneration: 0 });
         expect(reopened.viewsById.view_1?.automationController).toBeUndefined();
     });
 
