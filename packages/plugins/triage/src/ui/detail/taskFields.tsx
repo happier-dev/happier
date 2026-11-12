@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginUiActionBinding, PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -103,8 +104,9 @@ const TASK_PLACE_GROUP_ID = 'place';
  * task's current state checked. The current state is the transition whose target is where the task already is (its
  * word or its exact state), so choosing it again is not a write.
  */
-function taskStatusMenu(transitions: readonly Readonly<{ id: string; label: string; state?: TriageEntryStateV1 }>[],
-  current: Readonly<{ label: string | null; state?: TriageEntryStateV1 }>, groupLabel: string) {
+function taskStatusMenu(transitions: readonly TaskTransition[],
+  current: Readonly<{ label: string | null; state?: TriageEntryStateV1 }>, groupLabel: string,
+  action: (transition: TaskTransition) => PluginUiActionBinding<string>) {
   const currentId = transitions.find(transition => (current.label !== null && transition.label === current.label)
     || (transition.state !== undefined && current.state !== undefined && pluginJsonValuesEqual(transition.state, current.state)))?.id ?? null;
   return {
@@ -112,6 +114,7 @@ function taskStatusMenu(transitions: readonly Readonly<{ id: string; label: stri
     items: transitions.map((transition) => {
       const category = transition.state === undefined ? null : triageTaskStatusCategoryV1(transition.state);
       return { id: transition.id, label: transition.label, kind: 'radio' as const, radioGroupId: TASK_STATUS_GROUP_ID,
+        ...(transition.id === currentId || (transition.requiredFields?.length ?? 0) > 0 ? {} : { action: action(transition) }),
         ...(category === null ? {} : { taskStatus: category }) };
     }),
     radioGroups: [{ id: TASK_STATUS_GROUP_ID, accessibilityLabel: groupLabel, selectedId: currentId }],
@@ -128,15 +131,23 @@ function useTaskTransitionFields(write: ReturnType<typeof useTriageTaskCommit>, 
   const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<TaskTransition | null>(null);
   const [draft, setDraft] = React.useState<Record<string, unknown>>({});
-  const commit = async (transition: TaskTransition, fieldValues?: ReturnType<typeof TriageTaskTransitionFieldValuesV1Schema.parse>) => {
-    if (disabled || address === null) return;
-    const result = await write.commit(TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, { v: 1, ...address, transitionId: transition.id,
+  const prepare = (transition: TaskTransition, fieldValues?: ReturnType<typeof TriageTaskTransitionFieldValuesV1Schema.parse>) => {
+    if (disabled || address === null) return null;
+    return write.prepare(TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, { v: 1, ...address, transitionId: transition.id,
       ...(fieldValues === undefined ? {} : { fieldValues }) }, { label: transition.label, state: transition.state });
+  };
+  const settle = (execution: PluginUiActionControlExecution, target: string) => {
+    const result = write.settle(execution);
     if (result !== undefined) setSelected(null);
     if (result !== undefined && result.kind !== 'applied') {
-      void host.notify(taskWriteMessage(text, result, { sourceName, operation: 'edit', target: transition.label }), { severity: 'warning' }).catch(() => {});
+      void host.notify(taskWriteMessage(text, result, { sourceName, operation: 'edit', target }), { severity: 'warning' }).catch(() => {});
     }
+    return result;
   };
+  const action = <Value,>(transition: TaskTransition): PluginUiActionBinding<Value> => ({
+    action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1,
+    prepare: () => prepare(transition), onSettled: execution => settle(execution, transition.label),
+  });
   const fields = selected?.requiredFields ?? [];
   const unsupported = fields.some(field => field.kind === 'unsupported');
   const form = selected === null ? null : <Popover open onOpenChange={open => { if (!open && !write.busy) setSelected(null); }}
@@ -152,15 +163,14 @@ function useTaskTransitionFields(write: ReturnType<typeof useTriageTaskCommit>, 
         path: `field${index}`, title: field.label, required: true,
         widget: field.kind === 'choice' ? 'select' : field.kind === 'choices' ? 'multiselect' : field.kind === 'number' ? 'number' : 'text',
         ...(field.kind === 'choice' || field.kind === 'choices' ? { options: field.options.map(option => ({ value: option.id, label: option.label })) } : {}),
-      })) }} onSubmit={async value => {
+      })) }} action={{ action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, prepare: value => {
         const parsed = TriageTaskTransitionFieldValuesV1Schema.safeParse(fields.map((field, index) => ({ fieldId: field.id, value: value[`field${index}`] })));
-        if (parsed.success) await commit(selected, parsed.data);
-      }} />}
+        return parsed.success ? prepare(selected, parsed.data) : null;
+      }, onSettled: execution => settle(execution, selected.label) }} />}
   </Popover>;
-  return { form, select: (transition: TaskTransition) => {
+  return { form, action, select: (transition: TaskTransition) => {
     if (disabled) return;
     if ((transition.requiredFields?.length ?? 0) > 0) { setDraft({}); setSelected(transition); }
-    else void commit(transition);
   } };
 }
 
@@ -214,20 +224,20 @@ export function TriageTaskRowStatusControl(props: Readonly<{
   </Popover>;
   // The row's line already says "Moving to Done…"; the glyph stays the status it leaves, dimmed, as the lab draws it.
   // A busy spinner here is the dotted Happier mark, which reads as a drag handle in a row that can be dragged.
-  if (write.busy) return <IconButton icon={<TaskStatusGlyph category={category} />} disabled
-    onPress={() => undefined}
-    accessibilityLabel={text('plugins.triage.tasks.write.moving', 'Moving to {status}…', { status: write.progress ?? statusWord })} />;
+  const movingLabel = write.busy ? text('plugins.triage.tasks.write.moving', 'Moving to {status}…', { status: write.progress ?? statusWord }) : undefined;
+  // Keep the host control mounted while its preparation publishes the shared busy state.
   if (workflow.form !== null) return workflow.form;
   if (completing !== undefined && transitions.length === 1) {
     const transition = transitions.find(candidate => candidate.id === completing);
-    return <IconButton icon={<TaskStatusGlyph category={category} />} busy={write.busy} disabled={disabled}
-      accessibilityLabel={`${text('plugins.triage.tasks.complete', 'Mark as done')}, ${statusWord}`}
-      onPress={() => { if (transition !== undefined) workflow.select(transition); }} />;
+    return <IconButton icon={<TaskStatusGlyph category={category} />} disabled={disabled}
+      accessibilityLabel={movingLabel ?? `${text('plugins.triage.tasks.complete', 'Mark as done')}, ${statusWord}`}
+      {...(transition === undefined ? { onPress: () => undefined } : (transition.requiredFields?.length ?? 0) > 0
+        ? { onPress: () => workflow.select(transition) } : { action: workflow.action<void>(transition) })} />;
   }
   const transitionLabel = text('plugins.triage.tasks.transition', 'Change status');
-  const menu = taskStatusMenu(transitions, { label: task.statusLabel }, transitionLabel);
+  const menu = taskStatusMenu(transitions, { label: task.statusLabel }, transitionLabel, workflow.action<string>);
   return <Menu open={open && !disabled} onOpenChange={(next) => setOpen(next && !disabled)} disabled={disabled}
-    trigger={statusWord} triggerTaskStatus={category} triggerAccessibilityLabel={`${transitionLabel}, ${statusWord}`}
+    trigger={statusWord} triggerTaskStatus={category} triggerAccessibilityLabel={movingLabel ?? `${transitionLabel}, ${statusWord}`}
     items={menu.items} radioGroups={menu.radioGroups}
     onSelect={(id) => { const transition = transitions.find(candidate => candidate.id === id);
       if (transition !== undefined && id !== menu.currentId) workflow.select(transition); }} />;
@@ -578,14 +588,15 @@ export function TriageEditTaskScope(props: Readonly<{
   const disabled = pending || (write.result?.kind === 'uncertain' && rebaseFields === null);
   const statusDisabled = pending || write.result?.kind === 'uncertain';
   /** One deliberate change, one `tasks/edit-v1` carrying only the changed fields; the source decides it. */
-  const commitFields = async (fields: TriageTaskFieldsV1) => {
-    if (!canEdit || disabled || values === null) return;
+  const prepareFields = (fields: TriageTaskFieldsV1) => {
+    if (!canEdit || disabled || values === null) return null;
     const changed = Object.fromEntries(Object.entries(fields).filter(([field, value]) => editable.includes(field as TriageTaskFieldV1)
       && !pluginJsonValuesEqual(value, values[field as TriageTaskFieldV1])));
     const parsed = TriageTaskFieldsV1Schema.safeParse(changed);
-    if (!parsed.success || Object.keys(parsed.data).length === 0) return;
-    await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: parsed.data });
+    if (!parsed.success || Object.keys(parsed.data).length === 0) return null;
+    return write.prepare(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: parsed.data });
   };
+  const fieldAction = { action: TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, prepare: prepareFields, onSettled: write.settle };
   const textFields = editable.filter((field): field is (typeof TASK_TEXT_FIELDS)[number] => (TASK_TEXT_FIELDS as readonly string[]).includes(field));
   const openEditor = async () => {
     if (disabled || !canEdit) return;
@@ -605,7 +616,7 @@ export function TriageEditTaskScope(props: Readonly<{
   const transitionLabel = text('plugins.triage.tasks.transition', 'Change status');
   const transitionTrigger = currentStatus ?? transitionLabel;
   const transitionAccessibilityLabel = currentStatus === null ? transitionLabel : `${transitionLabel}, ${currentStatus}`;
-  const statusMenu = taskStatusMenu(transitions, { label: currentStatus, state: snapshot.state }, transitionLabel);
+  const statusMenu = taskStatusMenu(transitions, { label: currentStatus, state: snapshot.state }, transitionLabel, workflow.action<string>);
   const valuesNotice = readFailed ? <Banner tone="warning" title={text('plugins.triage.tasks.editValuesUnavailable',
     'Some current task values could not be loaded. Only fully loaded fields can be edited.')} /> : null;
   const canEditText = canEdit && textFields.length > 0;
@@ -628,9 +639,9 @@ export function TriageEditTaskScope(props: Readonly<{
     ...(assigneeDirectory === undefined ? {} : { assigneeDirectory }),
     ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
     ...(labelTones === null ? {} : { labelTones }),
-    commit: commitFields, text, locale: context.locale, busy: write.busy });
+    action: fieldAction, text, locale: context.locale, busy: write.busy });
   const blockers = editable.includes('blockedBy') && Object.hasOwn(propertyValues, 'blockedBy')
-    ? projectTriageTaskBlockersV1({ blockedBy: propertyValues.blockedBy ?? [], self: props.row.entryRef, candidates, text, commit: commitFields })
+    ? projectTriageTaskBlockersV1({ blockedBy: propertyValues.blockedBy ?? [], self: props.row.entryRef, candidates, text, action: fieldAction })
     : (snapshot.relations?.blockedBy?.length ?? 0) > 0
       ? projectTriageTaskBlockersV1({ blockedBy: snapshot.relations?.blockedBy ?? [], candidates, text }) : null;
   const subTasks = snapshot.relations?.children;
@@ -656,7 +667,7 @@ export function TriageEditTaskScope(props: Readonly<{
         {...(placement === 'section' ? { emptyLabel: text('plugins.triage.tasks.relations.none', 'None yet') } : {})} disabled={disabled}
         testID={TRIAGE_TASK_BLOCKERS_TEST_ID_V1}
         {...(editable.includes('blockedBy') ? { add: { label: text('plugins.triage.tasks.relations.addBlocker', 'Add a blocker'),
-          choices: blockers.choices, onAdd: blockers.add } } : {})} />,
+          choices: blockers.choices, ...(blockers.addAction === undefined ? { onAdd: blockers.add } : { action: blockers.addAction }) } } : {})} />,
     },
     subTasks: subTasks === undefined || subTasks.total === 0 ? null : {
       ...(subTasks.completed === undefined ? {} : { summary: text('plugins.triage.tasks.relations.done', '{completed} of {total} done',
@@ -739,7 +750,7 @@ function useTriageTaskLabelTones(
   const host = usePluginHostApi();
   const text = usePluginTranslation();
   const scope = useSurfaceContext().accountScope;
-  return React.useMemo(() => {
+  return React.useMemo<Readonly<{ tones: PropertyNameTones }> | null>(() => {
     if (colors === undefined || scope === undefined) return null;
     const tokenOf = (name: string) => colors.find((color) => color.name === name)?.colorToken ?? null;
     const choices = TRIAGE_TASK_LABEL_TONES_V1.map((choice) => ({ id: choice.id, tone: choice.tone, label: text(choice.key, choice.fallback) }));
@@ -747,16 +758,23 @@ function useTriageTaskLabelTones(
       tones: {
         choices,
         valueOf: tokenOf,
-        onCommit: async (name: string, colorToken: (typeof TRIAGE_TASK_LABEL_TONES_V1)[number]['id'] | null) => {
-          const target = { scope: { serverId: scope.serverId, accountId: scope.accountId }, name };
-          const result = await (colorToken === null
-            ? host.executeAction('tasks.internal.labels.clearColor', target)
-            : host.executeAction('tasks.internal.labels.setColor', { ...target, colorToken }));
-          if (result.status === 'applied') void Promise.resolve().then(onApplied).catch(() => {
-            host.diagnostic({ code: 'triage_task_reread_unavailable', severity: 'warning',
-              message: 'The label colour was saved, but its aggregate reread was unavailable.' });
-          });
-          return result;
+        action: {
+          actions: { clear: 'tasks.internal.labels.clearColor', set: 'tasks.internal.labels.setColor' },
+          prepare: ({ name, colorToken }) => {
+            const target = { scope: { serverId: scope.serverId, accountId: scope.accountId }, name };
+            return colorToken === null ? { action: 'clear', input: target }
+              : { action: 'set', input: { ...target, colorToken } };
+          },
+          onSettled: execution => {
+            const result = execution.ok ? execution.result : execution;
+            if (execution.ok && result !== null && typeof result === 'object' && 'status' in result && result.status === 'applied') {
+              void Promise.resolve().then(onApplied).catch(() => {
+                host.diagnostic({ code: 'triage_task_reread_unavailable', severity: 'warning',
+                  message: 'The label colour was saved, but its aggregate reread was unavailable.' });
+              });
+            }
+            return result;
+          },
         },
       },
     };

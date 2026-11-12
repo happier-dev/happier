@@ -15,8 +15,17 @@ export function usePropertyCommit() {
     setBusy(true);
     try {
       const result = await apply();
+      if (result === false) {
+        setIssue({ unknown: false });
+        return false;
+      }
       if (result !== null && typeof result === 'object') {
-        const status: unknown = Reflect.get(result, 'status');
+        if (Reflect.get(result, 'ok') === false) {
+          const code: unknown = Reflect.get(result, 'errorCode');
+          setIssue({ unknown: code === 'action_outcome_unknown', ...(typeof code === 'string' ? { code } : {}) });
+          return false;
+        }
+        const status: unknown = Reflect.get(result, 'status') ?? Reflect.get(result, 'kind');
         if (status === 'refused' || status === 'failed' || status === 'uncertain') {
           const reason: unknown = Reflect.get(result, 'reason');
           setIssue({ unknown: status === 'uncertain', ...(typeof reason === 'string' ? { code: reason } : {}) });

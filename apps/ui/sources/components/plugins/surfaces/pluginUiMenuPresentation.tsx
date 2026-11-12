@@ -1,3 +1,4 @@
+import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import * as React from 'react';
 import { View } from 'react-native';
 import type { MenuItem } from '@happier-dev/plugin-ui/components';
@@ -11,7 +12,7 @@ type PopoverInput = Parameters<PluginUiPresentationHost['renderPopover']>[0];
 type MenuInput = PopoverInput & Readonly<{ menu: NonNullable<PopoverInput['menu']> }>;
 
 /** Data projection only: DropdownMenu retains all submenu interaction, dismissal and phone push state. */
-export function PluginUiMenuPresentation({ input }: Readonly<{ input: MenuInput }>): React.ReactElement {
+export function PluginUiMenuPresentation({ input, controls }: Readonly<{ input: MenuInput; controls?: PluginSurfaceActionControls }>): React.ReactElement {
     const theme = useHappierUiTheme();
     const menu = input.menu;
     const source = resolveHappierMenuContent(menu);
@@ -29,7 +30,7 @@ export function PluginUiMenuPresentation({ input }: Readonly<{ input: MenuInput 
         id: item.id,
         title: item.label,
         subtitle: item.subtitle,
-        disabled: item.disabled,
+        disabled: item.disabled || Boolean(item.action && !controls),
         destructive: item.destructive,
         category,
         ...(item.taskStatus !== undefined ? { icon: <TaskStatusGlyph category={item.taskStatus} /> }
@@ -41,8 +42,9 @@ export function PluginUiMenuPresentation({ input }: Readonly<{ input: MenuInput 
         ...(item.kind === 'checkbox' ? { checked: item.checked, multiSelect: true }
             : item.kind === 'radio' ? { checked: radioGroups.get(item.radioGroupId)?.selectedId === item.id } : {}),
         ...(menu.keepOpen || item.kind === 'checkbox' ? { keepMenuOpen: true } : {}),
+        ...(item.action?.accessibilityLabel === undefined ? {} : { accessibilityLabel: item.action.accessibilityLabel }),
         ...(item.meta === undefined ? {} : {
-            accessibilityLabel: [item.label, item.subtitle, item.meta].filter(Boolean).join(' · '),
+            accessibilityLabel: item.action?.accessibilityLabel ?? [item.label, item.subtitle, item.meta].filter(Boolean).join(' · '),
             rightElement: <Text variant="meta" tone="secondary" value={item.meta} numberOfLines={1} />,
         }),
         ...(item.submenu ? { submenu: { items: item.submenu.items.map(child => project(child)), title: item.submenu.title } } : {}),
@@ -59,5 +61,15 @@ export function PluginUiMenuPresentation({ input }: Readonly<{ input: MenuInput 
         popoverSheetHeader={input.sheet?.header} popoverSheetFooter={input.sheet?.footer}
         {...(input.sheet ? { popoverPhonePresentation: 'sheet' as const } : {})}
         showCategoryTitles={menu.showGroupLabels}
-        onSelect={id => menu.onSelect(id, { anchorRef: input.anchorRef })} />;
+        onSelect={id => {
+            const item = allItems.find(item => item.id === id);
+            if (item?.action) {
+                if (controls) {
+                    const signal = menu.getPreparationSignal?.();
+                    void controls.commit(item.action, id, signal === undefined ? undefined : { signal });
+                }
+                return;
+            }
+            menu.onSelect(id, { anchorRef: input.anchorRef });
+        }} />;
 }

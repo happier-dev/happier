@@ -29,7 +29,7 @@ import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
 import { toTriageWireObservation } from '../../projection/listWindowWire.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 
-import { createTaskActionControlTestkit as createPluginUiTestkit } from './taskActionControl.test-support.js';
+import { commitTaskWriteForTest, createTaskActionControlTestkit as createPluginUiTestkit } from './taskActionControl.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -77,7 +77,7 @@ it('creates once from an error and repairs only its failed origin link before op
     surfaceContext: createSurfaceContextFixture({
       targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
     }),
-    adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+    adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
     handlers: { executeAction: ({ action, input }) => {
       actions.push(action);
       if (action === 'tasks/create-v1') {
@@ -111,7 +111,7 @@ it('keeps an uncertain creation at its named source and opens its observed locat
       onApplied={async () => undefined} onClose={() => undefined} />),
     surfaceContext: createSurfaceContextFixture({
       targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
-    }), adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+    }), adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
     handlers: { openExternalLink: async ({ url }) => { opened.push(url); }, executeAction: ({ action }) => {
       expect(action).toBe('tasks/create-v1'); creates++;
       return { kind: 'uncertain', observation: source.getResult };
@@ -158,7 +158,7 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
         onApplied={async () => undefined} onClose={() => undefined} />;
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         physicalFocus: target => { target.focus(); return true; } }),
       handlers: { executeAction: ({ action, input }) => {
         expect(action).toBe('tasks/create-v1');
@@ -216,7 +216,7 @@ it('lists places by what they create, names a connection only among several, nar
           configured, sourceInstanceId: configured.instance.sourceInstanceId, displayLabel: configured.locator!.displayLabel!,
         }))} sourcesLoaded sourcesUnavailableReason={null} onApplied={async () => undefined} onClose={() => { closed += 1; }} />),
         surfaceContext: createSurfaceContextFixture({ targetedContributions: own }),
-        adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+        adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
         handlers: {},
       }));
     });
@@ -262,7 +262,7 @@ it.each([false, true])('submits a create through the Account aggregate without a
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
         machineConnectionPending: true, machineExecutionReady: false }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         physicalFocus: target => { target.focus(); return true; } }),
       handlers: { executeAction: ({ action, input }) => {
         expect(action).toBe('tasks/create-v1');
@@ -320,7 +320,7 @@ it('creates with the typed properties the chosen place accepts, in one write', a
         draft={{ title: 'Write the replay runbook' }} onApplied={async () => undefined} onClose={() => undefined} />),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create',
         false, ['title', 'body', 'labelIds', 'dueDate']) }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
       handlers: { executeAction: ({ input }) => { saved.push(TriageCreateTaskActionInputV1Schema.parse(input)); return { kind: 'refused', reason: 'unavailable' }; } },
     });
   });
@@ -355,7 +355,7 @@ async function mountAssigneeDraft(options: Readonly<{ internal: boolean;
       surfaceContext: createSurfaceContextFixture({ accountScope: { serverId: 'fixture-home', accountId: 'viewer-account' },
         targetedContributions: targetedTaskSource(configured.instance.source, options.internal ? 'task' : 'issue', 'create', false, ['title', 'assigneeIds'],
           [], undefined, options.internal ? undefined : true) }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         ...(options.directory === undefined ? {} : { peopleDirectory: options.directory }) }),
       handlers: { executeAction: ({ input }) => { saved.push(TriageCreateTaskActionInputV1Schema.parse(input)); return { kind: 'refused', reason: 'unavailable' }; } },
     });
@@ -417,7 +417,7 @@ it('opens the created task before a mounted aggregate reread settles and preserv
         targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, 'issue', 'create'),
         machineConnectionPending: true, machineExecutionReady: false,
       }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, ephemeralSharedScope: scope }),
       // The SDK host request is the genuine boundary. Commit, form and mounted
       // refresh/coalescing owners are real; only the aggregate transport is held.
       handlers: { executeAction: ({ action, input }) => {
@@ -483,7 +483,7 @@ it('keeps message context and an optional Session link through create, and shows
           onApplied={async () => {}} onClose={() => {}} onCreated={() => setCreated(true)} />;
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(entryRef.source, entryRef.kindId, 'create') }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
       handlers: { executeAction: ({ action, input }) => {
         if (action === 'session.open') { opened.push(input); return { status: 'opened' } as never; }
         expect(action).toBe('tasks/create-v1');
@@ -563,7 +563,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
       }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targeted,
         ...(options.viewerAccountId === undefined ? {} : { accountScope: { serverId: 'fixture-home', accountId: options.viewerAccountId } }) }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: scope }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: scope }),
       // Host Action transport is the genuine boundary; field drafts and capability decisions stay real.
       handlers: { openExternalLink: async ({ url }) => { opened.push(url); },
         notify: async ({ message }) => { notifications.push(message); }, executeAction: ({ action, input }) => {
@@ -1050,14 +1050,15 @@ it('does not report an unsettled commit when its authoritative reread fails', as
     }));
   });
   await act(async () => {
-    const commit = write!.commit;
+    const currentWrite = write!;
+    const commit = (...args: Parameters<typeof currentWrite.prepare>) => commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, currentWrite, ...args);
     await expect(commit('tasks/edit-v1', {})).resolves.toMatchObject({ kind: 'uncertain' });
     // A second activation can still hold the preceding render's callback.
     await commit('tasks/edit-v1', {});
   });
   expect(write!.result).toEqual({ kind: 'uncertain' });
   expect(write!.busy).toBe(false);
-  await act(async () => { await write!.commit('tasks/edit-v1', {}); });
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write!, 'tasks/edit-v1', {}); });
   expect(calls).toBe(1);
 });
 
@@ -1077,7 +1078,7 @@ async function mountRowStatus(task: React.ComponentProps<typeof TriageTaskRowSta
       surface: defineUiSurface(() => <TriageTaskRowStatusControl task={task} onApplied={async () => { rereads++; }}
         address={{ entryRef, sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator }} />),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targetedTaskSource(entryRef.source, entryRef.kindId, 'edit', false, ['title'], transitions) }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true, ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
       // Host Action transport is the genuine boundary.
       handlers: { executeAction: ({ input }) => { transitioned.push(input); return { kind: 'refused', reason: 'unavailable' }; } },
     });

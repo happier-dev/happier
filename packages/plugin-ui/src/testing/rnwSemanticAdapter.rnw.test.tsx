@@ -1,5 +1,6 @@
 import {
   createPluginUiTestkit,
+  createPluginUiActionControlTestHost,
   createSurfaceContextFixture,
   SURFACE_CONTEXT_THEME_FIXTURE,
 } from '@happier-dev/plugin-sdk/testing';
@@ -8,9 +9,12 @@ import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-
 import { act, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Button } from '../components/Button.js';
+import { Button, IconButton } from '../components/Button.js';
+import { Menu } from '../components/Overlay.js';
 import { usePluginUiFocusTarget } from '../components/Focus.js';
 import { Divider } from '../components/Foundation.js';
+import { ChangedFilesReview } from '../components/ChangedFilesReview.js';
+import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
 import { Form, Select, TextField } from '../components/Form.js';
 import { Image } from '../components/Image.js';
 import { List } from '../components/List.js';
@@ -70,6 +74,32 @@ describe('ephemeral shared scope test host binding', () => {
 });
 
 describe('plugin-ui RNW semantic fixture adapter', () => {
+  it('observes the actual changed-files host request while preserving the semantic review', async () => {
+    const requests: HappierChangedFilesReviewRequest[] = [];
+    const files = [{ path: 'src/review.ts', status: 'modified' as const }];
+    const options = {
+      changedFilesReview: true as const,
+      observeChangedFilesReview: (request: HappierChangedFilesReviewRequest) => { requests.push(request); },
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'review-observer', mountNonce: 'review-observer' },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(() => <ChangedFilesReview identity="review@head" label="Review files" files={files}
+        fileViewed={null} loadDiff={async () => ({ state: 'available', unifiedDiff: '+reviewed' })} />),
+      surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(options),
+    });
+    try {
+      expect(requests.at(-1)).toMatchObject({ identity: 'review@head', label: 'Review files', active: true, fileViewed: null });
+      expect(requests.at(-1)?.files).toBe(files);
+      await fixture.getByRole('group', { name: 'Review files' });
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open src/review.ts' })); });
+      await fixture.getByText('+reviewed');
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('keeps targeted child presentation unavailable when its Account-only context has no runtime target', async () => {
     function AccountOnlySurface() {
       return <TargetedSurface surface={{ point: { pointId: 'sources', protocol: { id: 'review-sources', version: 1 } },
@@ -865,5 +895,101 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+
+describe('inline Action bindings through the public RNW adapter', () => {
+  it.each(['icon', 'menu'] as const)('commits a physical %s press through the SDK Action host, never a context update', async kind => {
+    const effects: unknown[] = [];
+    const host = createPluginUiActionControlTestHost(async request => {
+      effects.push(request);
+      return { ok: true, result: null };
+    });
+    const prepare = vi.fn((value: unknown) => ({ input: { value: value ?? null } }));
+    const onSettled = vi.fn();
+    const binding = { action: 'projects.compute.exec' as const, prepare, onSettled };
+    function AuthorSurface() {
+      const [open, setOpen] = useState(false);
+      const { locale } = useSurfaceContext();
+      return kind === 'icon'
+        ? <IconButton icon={null} accessibilityLabel={`Complete task (${locale})`} action={binding} />
+        : <Menu trigger="Status" triggerAccessibilityLabel="Status" open={open} onOpenChange={setOpen}
+            items={[{ id: 'done', label: 'Done', action: binding }]} onSelect={() => { throw new Error('Bound items must use host admission'); }} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `inline-${kind}`, mountNonce: `inline-${kind}-mount` },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(AuthorSurface), surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, actionBindings: host }),
+    });
+    try {
+      await fixture.updateSurface(createSurfaceContext({ locale: 'fr-CH' }));
+      expect(effects).toHaveLength(0);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(onSettled).not.toHaveBeenCalled();
+      if (kind === 'menu') await fixture.press(await fixture.getByRole('button', { name: 'Status' }));
+      await fixture.press(await fixture.getByRole(kind === 'icon' ? 'button' : 'menuitem', {
+        name: kind === 'icon' ? 'Complete task (fr-CH)' : 'Done',
+      }));
+      await vi.waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(prepare.mock.calls[0]?.[0]).toBe(kind === 'icon' ? undefined : 'done');
+      expect(effects).toHaveLength(1);
+      expect(effects[0]).toMatchObject({ action: 'projects.compute.exec', input: { value: kind === 'icon' ? null : 'done' } });
+      expect(onSettled).toHaveBeenCalledWith({ ok: true, result: null });
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each([false, true])('shows a refused Menu settlement for grouped=%s rows', async grouped => {
+    const host = createPluginUiActionControlTestHost(async () => ({ ok: true, result: null }));
+    const onSettled = vi.fn(() => false);
+    const binding = { action: 'projects.compute.exec' as const, prepare: () => ({ input: {} }), onSettled };
+    const items = [{ id: 'done', label: 'Done', action: binding }];
+    function AuthorSurface() {
+      const [open, setOpen] = useState(false);
+      return <Menu trigger="Status" triggerAccessibilityLabel="Status" open={open} onOpenChange={setOpen}
+        {...(grouped ? { groups: [{ id: 'status', accessibilityLabel: 'Task status', items }] } : { items })}
+        onSelect={() => { throw new Error('Bound items must use host admission'); }} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `refused-menu-${grouped}`, mountNonce: `refused-menu-${grouped}-mount` },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(AuthorSurface), surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, actionBindings: host }),
+    });
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Status' }));
+      await fixture.press(await fixture.getByRole('menuitem', { name: 'Done' }));
+      await vi.waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+      await vi.waitFor(async () => expect(await fixture.getByText('Change not applied')).toBeDefined());
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each(['icon', 'menu'] as const)('keeps bound %s controls disabled without an explicit Action host', async kind => {
+    const prepare = vi.fn(() => ({ input: {} }));
+    const binding = { action: 'projects.compute.exec' as const, prepare, onSettled() {} };
+    function AuthorSurface() {
+      const [open, setOpen] = useState(false);
+      return kind === 'icon'
+        ? <IconButton icon={null} accessibilityLabel="Complete task" action={binding} />
+        : <Menu trigger="Status" triggerAccessibilityLabel="Status" open={open} onOpenChange={setOpen}
+            items={[{ id: 'done', label: 'Done', action: binding }]} onSelect={() => {}} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `unavailable-${kind}`, mountNonce: `unavailable-${kind}-mount` },
+      authorPlugin: { id: 'com.acme.semantic-rnw', version: '1.0.0' },
+      surface: defineUiSurface(AuthorSurface), surfaceContext: createSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    });
+    try {
+      if (kind === 'menu') await fixture.press(await fixture.getByRole('button', { name: 'Status' }));
+      const disabled = await fixture.getByRole(kind === 'icon' ? 'button' : 'menuitem', {
+        name: kind === 'icon' ? 'Complete task' : 'Done', state: { disabled: true },
+      });
+      if (kind === 'menu') expect(document.querySelector('[role="menuitem"][aria-label="Done"]')?.getAttribute('tabindex')).toBe('-1');
+      await expect(fixture.press(disabled)).rejects.toMatchObject({ code: 'stale_surface' });
+      expect(prepare).not.toHaveBeenCalled();
+    } finally { await fixture.dispose(); }
   });
 });

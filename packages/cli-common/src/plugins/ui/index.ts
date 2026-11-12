@@ -1,3 +1,5 @@
+export { invokePluginUiActionBinding } from './actionBinding.js';
+export type { PluginUiActionBinding } from './actionBinding.js';
 export { createPluginUiActionControlBinding } from './actionControl.js';
 export type {
     PluginUiActionControl,

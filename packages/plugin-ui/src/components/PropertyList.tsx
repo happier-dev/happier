@@ -1,3 +1,5 @@
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
+import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { useState, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 
@@ -14,6 +16,7 @@ import { Text } from './Text.js';
 import { Badge } from './Foundation.js';
 import type { HappierMarkColor } from '../presentation/semantics.js';
 import { usePropertyCommit } from './propertyCommit.js';
+import { mapActionBindingValue } from './actionBindingValue.js';
 import { HappierTextActionEdgeContext } from '../presentation/interaction/textActionEdge.js';
 
 /** One choice a property can take: a stable id the author maps back to its value, and the words people read. */
@@ -58,45 +61,44 @@ export type PropertyChoiceDirectory = Readonly<{
  * change: a choice commits when it is picked, typed values when Save is pressed. Nothing commits per keystroke.
  * `null` (or an empty list) means "not set"; a property offers it only when `clearable` is not false.
  */
+type PropertyCommit<Value> = Readonly<{ onCommit(value: Value): unknown; action?: never }>
+  | Readonly<{ action: PluginUiActionBinding<Value>; onCommit?: never }>;
+
 export type PropertyEditor =
   | Readonly<{
       kind: 'text';
       value: string | null;
       multiline?: boolean;
       placeholder?: string;
-      onCommit(next: string | null): unknown;
-    }>
+    }> & PropertyCommit<string | null>
   | Readonly<{
       kind: 'number';
       value: number | null;
       integer?: boolean;
-      onCommit(next: number | null): unknown;
-    }>
+    }> & PropertyCommit<number | null>
   /** A calendar day, `YYYY-MM-DD`, never an instant: no timezone is invented for it. */
   | Readonly<{
       kind: 'date';
       value: string | null;
-      onCommit(next: string | null): unknown;
-    }>
+    }> & PropertyCommit<string | null>
   /** Free names (labels, people by handle) typed as one comma-separated line. */
   | Readonly<{
       kind: 'list';
       value: readonly string[];
       placeholder?: string;
-      onCommit(next: readonly string[]): unknown;
+
       /** Each saved name's colour, chosen beside it in the editor (a label's theme colour). Absent: names have none. */
       tones?: PropertyNameTones;
       /** Say the saved names as chips instead of joined words (labels), with or without colours. */
       chips?: boolean;
-    }>
+    }> & PropertyCommit<readonly string[]>
   | Readonly<{
       kind: 'choice';
       value: string | null;
       choices: readonly PropertyChoice[];
       /** Find choices by their name or supporting identity. */
       searchable?: boolean;
-      onCommit(next: string | null): unknown;
-    }>
+    }> & PropertyCommit<string | null>
   | Readonly<{
       kind: 'choices';
       value: readonly string[];
@@ -107,20 +109,21 @@ export type PropertyEditor =
       chips?: boolean;
       /** The choices are read from a directory (people): its state is said in the picker. */
       directory?: PropertyChoiceDirectory;
-      onCommit(next: readonly string[]): unknown;
-    }>;
+    }> & PropertyCommit<readonly string[]>;
 
 /** The colours a name can take, by theme tone, and the one change that sets or clears a name's colour. */
 export type PropertyNameTones = Readonly<{
   choices: readonly Readonly<{ id: string; label: string; tone: HappierMarkColor }>[];
   valueOf(name: string): string | null;
-  onCommit(name: string, choiceId: string | null): unknown;
-}>;
+}> & (Readonly<{ action: PluginUiActionBinding<Readonly<{ name: string; colorToken: string | null }>>; onCommit?: never }>
+  | Readonly<{ action?: never; onCommit(name: string, choiceId: string | null): unknown }>);
 
 export type PropertyListItem = Readonly<{
   /** Stable within the list; also the row's test id suffix. */
   id: string;
   label: string;
+  /** Accessible identity of the committing control, independent of its visible value. */
+  accessibilityLabel?: string;
   /** The value as people read it. `null` reads as the list's "None". */
   value: string | null;
   /** A mark before the value (a person's `Avatar` beside their name). The value's words stay its accessible name. */
@@ -172,6 +175,13 @@ function validCalendarDay(text: string): boolean {
  */
 export function PropertyList(props: PropertyListProps): ReactElement {
   const theme = usePluginTheme();
+  const translate = usePluginTranslation();
+  const host = useOptionalPluginUiPresentationHost();
+  if (props.items.some(item => item.editor?.action)) {
+    if (host?.renderActionPropertyList) return host.renderActionPropertyList(props);
+    return <Stack gap="small"><PropertyList {...props} items={props.items.map(item => item.editor?.action
+      ? { ...item, editor: undefined } : item)} /><Text value={translate('happier.plugin-ui.actions.inlineUnavailable', 'Inline actions are unavailable on this host.')} /></Stack>;
+  }
   return (
     <View
       accessibilityLabel={props.accessibilityLabel}
@@ -245,7 +255,7 @@ function PropertyValue(
     return (
       <Text variant="body" tone={toneOfValue} value={shown} numberOfLines={1} />
     );
-  const triggerAccessibilityLabel = `${item.label}, ${shown}`;
+  const triggerAccessibilityLabel = item.accessibilityLabel ?? `${item.label}, ${shown}`;
   if (editor.kind === 'choice' || editor.kind === 'choices') {
     return (
       <PropertyChoiceMenu
@@ -365,14 +375,14 @@ function PropertyChoiceMenu(
           const next = selected.has(id)
             ? editor.value.filter((value) => value !== id)
             : [...editor.value, id];
-          void write.commit(() => editor.onCommit(next));
+          void write.commit(() => editor.onCommit!(next));
           return;
         }
         if (id === CLEAR_ID) {
-          void write.commit(() => editor.onCommit(null));
+          void write.commit(() => editor.onCommit!(null));
           return;
         }
-        if (id !== editor.value) void write.commit(() => editor.onCommit(id));
+        if (id !== editor.value) void write.commit(() => editor.onCommit!(id));
       }}
     />{write.notice}</Stack>
   );
@@ -518,6 +528,7 @@ function PropertyFieldPopover(
               size="small"
               busy={saving}
               disabled={saving || !changed}
+              accessibilityLabel={item.accessibilityLabel}
               onPress={save}
               {...(props.testID === undefined
                 ? {}
@@ -571,6 +582,12 @@ function PropertyNameTone(
   const none = translate('happier.plugin-ui.propertyList.noColour', 'No colour');
   const shown = current?.label ?? none;
   const groupId = 'tone';
+  const boundTone = (colorToken: string | null): Pick<MenuItem, 'action'> => tones.action ? {
+    action: mapActionBindingValue(tones.action, () => {
+      setOpen(false);
+      return colorToken === (current?.id ?? null) ? null : { name, colorToken };
+    }),
+  } : {};
   return (
     <Stack gap="small"><Row gap="small" align="center">
       <View style={{ flex: 1, minWidth: 0, flexDirection: 'row' }}>
@@ -585,14 +602,14 @@ function PropertyNameTone(
         triggerAccessibilityLabel={`${translate('happier.plugin-ui.propertyList.colourOf', 'Colour of {name}', { name })}, ${shown}`}
         sheet={{ title: name }}
         items={[
-          ...tones.choices.map((choice): MenuItem => ({ id: choice.id, label: choice.label, swatch: choice.tone, kind: 'radio', radioGroupId: groupId })),
-          { id: NO_TONE_ID, label: none, kind: 'radio', radioGroupId: groupId },
+          ...tones.choices.map((choice): MenuItem => ({ ...boundTone(choice.id), id: choice.id, label: choice.label, swatch: choice.tone, kind: 'radio', radioGroupId: groupId })),
+          { ...boundTone(null), id: NO_TONE_ID, label: none, kind: 'radio', radioGroupId: groupId },
         ]}
         radioGroups={[{ id: groupId, accessibilityLabel: name, selectedId: current?.id ?? NO_TONE_ID }]}
         onSelect={(id) => {
           setOpen(false);
           const next = id === NO_TONE_ID ? null : id;
-          if (next !== (current?.id ?? null)) void write.commit(() => tones.onCommit(name, next));
+          if (next !== (current?.id ?? null)) void write.commit(() => tones.onCommit?.(name, next));
         }}
       />
     </Row>{write.notice}</Stack>

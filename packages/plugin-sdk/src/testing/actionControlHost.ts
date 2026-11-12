@@ -1,5 +1,6 @@
 import type { PluginUiTestkitHostHandlers } from './uiHost.js';
-import type { PluginUiActionControlExecution } from '../ui/index.js';
+import type { PluginUiActionBinding, PluginUiActionControlExecution } from '../ui/index.js';
+import { invokePluginUiActionBinding } from '@happier-dev/cli-common/plugins/ui';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 
 type Handler = NonNullable<PluginUiTestkitHostHandlers['actionControl']>;
@@ -12,6 +13,7 @@ type Binding = { action: Bind['action']; presentation: Bind['presentation']; pub
 /** Installed host gesture/executor boundary; the SDK transport and author controller remain real. */
 export function createPluginUiActionControlTestHost(execute: (request: Readonly<{
   action: Bind['action']; input: NonNullable<Extract<HostInput['request'], { kind: 'prepared' }>['preparation']>['input'];
+  signal?: AbortSignal;
 }>) => Promise<PluginUiActionControlExecution>) {
   const bindings = new Map<string, Binding>();
   const listeners = new Set<() => void>();
@@ -20,6 +22,13 @@ export function createPluginUiActionControlTestHost(execute: (request: Readonly<
     snapshot = Object.freeze([...bindings].map(([id, binding]) => Object.freeze({ id, presentation: binding.presentation })));
     for (const listener of listeners) listener();
   };
+  const lifetime = new AbortController();
+  const commit = <Value>(binding: PluginUiActionBinding<Value>, value: Value, options?: Readonly<{ signal?: AbortSignal }>) =>
+    invokePluginUiActionBinding(binding, value, {
+      signal: lifetime.signal, preparationSignal: options?.signal, available: true,
+      isCurrent: () => true, captureCurrentBinding: () => () => true,
+      execute: (action, preparation, signal) => execute({ action, input: preparation.input, signal }),
+    });
   let gestures = 0;
   const handler: Handler = async ({ request, publish }) => {
     if (request.kind === 'bind') {
@@ -55,7 +64,7 @@ export function createPluginUiActionControlTestHost(execute: (request: Readonly<
       binding.publish({ kind: 'prepare', requestId: 'host-gesture-' + ++gestures });
     });
   };
-  return { handler, getSnapshot: () => snapshot,
+  return { handler, commit, getSnapshot: () => snapshot,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     presentation(title: string) { return find(title)?.[1].presentation; },
     async press(title: string) {

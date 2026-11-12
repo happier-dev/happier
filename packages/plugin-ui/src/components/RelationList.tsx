@@ -1,7 +1,9 @@
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import { useState, type ReactElement } from 'react';
 import { View } from 'react-native';
 
 import { IconButton } from './Button.js';
+import { mapActionBindingValue } from './actionBindingValue.js';
 import { Icon } from './Icon.js';
 import { Row, Stack } from './Layout.js';
 import { Item, ItemGroup } from './List.js';
@@ -25,8 +27,8 @@ export type RelationListEntry = Readonly<{
   /** Opens the related thing. */
   onOpen?(): void;
   /** Removes this relation; one deliberate write. */
-  onRemove?(): unknown;
-}>;
+}> & (Readonly<{ onRemove?(): unknown; removeAction?: never }>
+  | Readonly<{ onRemove?: never; removeAction: PluginUiActionBinding<string> }>);
 
 export type RelationListProps = Readonly<{
   /**
@@ -51,8 +53,8 @@ export type RelationListProps = Readonly<{
   add?: Readonly<{
     label: string;
     choices: readonly PropertyChoice[];
-    onAdd(id: string): unknown;
-  }>;
+  }> & (Readonly<{ action: PluginUiActionBinding<string>; onAdd?: never }>
+    | Readonly<{ action?: never; onAdd(id: string): unknown }>);
   /** Holds the add and remove controls while a write is in flight. */
   disabled?: boolean;
   testID?: string;
@@ -84,11 +86,11 @@ export function RelationList(props: RelationListProps): ReactElement {
         }
         triggerAccessibilityLabel={add.label}
         sheet={{ title: add.label }}
-        items={add.choices.map(propertyChoiceMenuItem)}
+        items={add.choices.map(choice => ({ ...propertyChoiceMenuItem(choice), ...(add.action ? { action: add.action } : {}) }))}
         // The same picker as the Parent and Blocked by values: find an entry by its title or designation.
         search={{ value: query, onValueChange: setQuery }}
         onSelect={(id) => {
-          void add.onAdd(id);
+          void add.onAdd?.(id);
         }}
         {...(props.testID === undefined
           ? {}
@@ -127,7 +129,7 @@ export function RelationList(props: RelationListProps): ReactElement {
             ? {}
             : { icon: <TaskStatusGlyph category={entry.status} /> })}
           {...(entry.onOpen === undefined ? {} : { onPress: entry.onOpen })}
-          {...(entry.onRemove === undefined
+          {...(entry.onRemove === undefined && entry.removeAction === undefined
             ? {}
             : {
                 accessoryOutsidePressable: true,
@@ -136,9 +138,8 @@ export function RelationList(props: RelationListProps): ReactElement {
                     icon={<Icon name="close" size="small" />}
                     disabled={props.disabled === true}
                     accessibilityLabel={`${removeLabel}, ${entry.title}`}
-                    onPress={() => {
-                      void entry.onRemove?.();
-                    }}
+                    {...(entry.removeAction ? { action: mapActionBindingValue(entry.removeAction, () => entry.id) }
+                      : { onPress: () => entry.onRemove?.() })}
                     {...(props.testID === undefined
                       ? {}
                       : { testID: `${props.testID}.${entry.id}.remove` })}

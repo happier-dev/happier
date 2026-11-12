@@ -9,6 +9,7 @@ const Id = z.string().check(z.trim(), z.minLength(1));
 /** Closed V1 presentation; it grants neither execution nor gesture authority. */
 export const PluginUiActionControlPresentationV1Schema = lazyZodSchema(() => z.strictObject({
   title: Id,
+  accessibilityLabel: z.optional(Id),
   disabled: z.optional(z.boolean()),
   variant: z.optional(z.enum(['primary', 'secondary', 'plain', 'destructive'])),
 }));

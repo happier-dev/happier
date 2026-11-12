@@ -46,7 +46,6 @@ type TaskWriteSnapshot = Readonly<{
   createdEntryRef: TriageEntryRefV1 | null;
 }>;
 const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originError: null, createdEntryRef: null });
-const UNAVAILABLE = Object.freeze({ kind: 'refused', reason: 'unavailable' } as const);
 
 /** This is the mounted commit's state, shared by entry rather than by its row or detail renderer. */
 function createTaskWriteOperation() {
@@ -76,8 +75,6 @@ function createTaskWriteOperation() {
     prepare(action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) {
       if (retired || snapshot.busy || snapshot.checking
         || (snapshot.result?.kind === 'uncertain' && (action !== TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1 || snapshot.rebaseFields === null))) return null;
-      const controller = new AbortController();
-      active = controller;
       intent = { action, input, ...(transition?.state === undefined ? {} : { state: transition.state }) };
       publish({ ...snapshot, result: null, busy: true, checking: false, rebaseFields: null, progress: transition?.label ?? null });
       return { input };
@@ -123,16 +120,6 @@ function createTaskWriteOperation() {
           message: 'The task write settled, but its authoritative reread was unavailable.' });
       });
       return result;
-    },
-    async commit(host: Pick<PluginUiHostApi, 'executeAction' | 'diagnostic'>, onApplied: () => Promise<void>,
-      action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) {
-      if (this.prepare(action, input, transition) === null) return;
-      try {
-        const result = await host.executeAction(action, input, { signal: active!.signal });
-        return this.settle(host, onApplied, { ok: true, result });
-      } catch (error) {
-        return this.settle(host, onApplied, { ok: false, error });
-      }
     },
     prepareOriginRepair() {
       const { result, originError, createdEntryRef } = snapshot;
@@ -273,13 +260,6 @@ export function useTriageTaskCommit(onApplied: () => Promise<void>, address?: Ta
       if (owner === null) return;
       const result = owner.settle(host, onApplied, hostTaskExecution(execution));
       adoptCreated(owner);
-      return result;
-    },
-    commit: async (action: TaskAction, input: JsonValue, transition?: Readonly<{ label: string; state?: TriageEntryStateV1 }>) => {
-      const owner = operation();
-      if (owner === null) return UNAVAILABLE;
-      const result = await owner.commit(host, onApplied, action, input, transition);
-      if (action === TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1) adoptCreated(owner);
       return result;
     },
     prepareOriginRepair: () => {

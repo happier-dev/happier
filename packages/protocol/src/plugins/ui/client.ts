@@ -22,7 +22,7 @@ export { PluginUiSetPageNavigationRequestV1Schema } from './pageNavigation.js';
 export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from './pageNavigation.js';
 export * from './storedImage.js';
 export { PluginUiSetUnsavedChangesRequestV1Schema } from './hostApiRequests.js';
-export type { PluginUiOpenSurfaceRequestV1, PluginUiNewSessionActionDefaultV1 } from './hostApiRequests.js';
+export type { PluginUiOpenSurfaceRequestV1, PluginUiNewSessionActionDefaultV1, PluginUiMountedActionReferenceV1 } from './hostApiRequests.js';
 export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';
 export * from './actionControl.js';
@@ -369,3 +369,5 @@ export type {
 } from './surfaceContext.js';
 export * from './liveStream.js';
 export * from './widgetArea.js';
+
+export { PluginUiResourceContentV1Schema, type PluginUiResourceContentV1 } from './resourceContent.js';

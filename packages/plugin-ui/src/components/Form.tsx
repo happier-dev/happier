@@ -1,5 +1,6 @@
 import { useState, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 
 import {
   actionInputOptionValueKey,
@@ -300,15 +301,36 @@ function CommittingFieldTextField(props: Omit<TextFieldProps, 'dictation' | 'lab
   );
 }
 
-export type ToggleProps = Readonly<{
+type ToggleCommonProps = Readonly<{
   label: string;
+  accessibilityLabel?: string;
   value: boolean;
-  onChange: (value: boolean) => void;
   disabled?: boolean;
   testID?: string;
 }>;
 
+type ToggleLocalProps = ToggleCommonProps & Readonly<{
+  onChange: (value: boolean) => void;
+}>;
+
+export type ToggleProps = ToggleCommonProps & (
+  | Readonly<{ onChange: ToggleLocalProps['onChange']; action?: never }>
+  | Readonly<{ action: PluginUiActionBinding<boolean>; onChange?: never }>
+);
+
 export function Toggle(props: ToggleProps): ReactElement {
+  const host = useOptionalPluginUiPresentationHost();
+  if (props.action !== undefined) {
+    if (host?.renderActionToggle) return <>{host.renderActionToggle(props)}</>;
+    const { action, ...local } = props;
+    return <ToggleLocal {...local}
+      accessibilityLabel={action.accessibilityLabel ?? local.accessibilityLabel}
+      disabled onChange={() => undefined} />;
+  }
+  return <ToggleLocal {...props} />;
+}
+
+function ToggleLocal(props: ToggleLocalProps): ReactElement {
   return <HappierToggle {...props} theme={usePluginTheme()} />;
 }
 
@@ -590,14 +612,13 @@ function FormActions({ children, trailing, footnote, footnoteKey, footnoteTone, 
   );
 }
 
-export type FormProps = Readonly<{
+type FormCommonProps = Readonly<{
   // Custom-entry hints belong to the host's shared input controls, rather than author Form fields.
   hints: Omit<ActionFormHints, 'fields'> & Readonly<{
     fields: readonly Omit<ActionFormHints['fields'][number], 'allowCustomValue'>[];
   }>;
   value: Readonly<Record<string, unknown>>;
   onChange: (value: Record<string, unknown>) => void;
-  onSubmit: (value: Record<string, unknown>) => unknown;
   onCancel?: () => unknown;
   /** Author override for the host-localized default Cancel label. */
   cancelLabel?: string;
@@ -607,9 +628,20 @@ export type FormProps = Readonly<{
   submitDisabled?: boolean;
   /** `secondary`: a form opened under an action row that already holds the view's one filled action. */
   submitVariant?: 'primary' | 'secondary';
+  /** Accessible name of the physical submit control, when different from its visible label. */
+  submitAccessibilityLabel?: string;
   busy?: boolean;
   testID?: string;
 }>;
+
+type FormLocalProps = FormCommonProps & Readonly<{
+  onSubmit: (value: Record<string, unknown>) => unknown;
+}>;
+
+export type FormProps = FormCommonProps & (
+  | Readonly<{ onSubmit: FormLocalProps['onSubmit']; action?: never }>
+  | Readonly<{ action: PluginUiActionBinding<Record<string, unknown>>; onSubmit?: never }>
+);
 
 function readActionInputSelectionForPresentation(
   field: Pick<ActionFormHints['fields'][number], 'widget'>,
@@ -628,6 +660,18 @@ function readActionInputSelectionForPresentation(
 }
 
 function FormRoot(props: FormProps): ReactElement {
+  const host = useOptionalPluginUiPresentationHost();
+  if (props.action !== undefined) {
+    if (host?.renderActionForm) return <>{host.renderActionForm(props)}</>;
+    const { action, ...local } = props;
+    return <FormLocal {...local}
+      submitAccessibilityLabel={action.accessibilityLabel ?? local.submitAccessibilityLabel}
+      submitDisabled onSubmit={() => undefined} />;
+  }
+  return <FormLocal {...props} />;
+}
+
+function FormLocal(props: FormLocalProps): ReactElement {
   const hints = props.hints;
   const spec = { inputHints: hints };
   // Defaults describe the opening draft. Later author replacements, including
@@ -682,6 +726,7 @@ function FormRoot(props: FormProps): ReactElement {
       <FormActions>
         <Button
           title={submitLabel}
+          accessibilityLabel={props.submitAccessibilityLabel}
           {...(props.submitVariant === undefined ? {} : { variant: props.submitVariant })}
           busy={submission.pending}
           disabled={formDisabled || props.submitDisabled === true}

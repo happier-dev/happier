@@ -1,3 +1,8 @@
+import type { PluginUiActionBindingCommit } from './actionBindingPresentation.js';
+import type { IconButtonProps } from '../components/Button.js';
+import type { ToggleProps } from '../components/Form.js';
+import type { FormProps } from '../components/Form.js';
+import type { PropertyListProps } from '../components/PropertyList.js';
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
@@ -47,6 +52,8 @@ export type PluginUiMenuPresentation = Pick<MenuProps, 'items' | 'groups' | 'rad
   accessibilityLabel: string;
   /** A SheetMenu applies choices in place until its explicit close control is used. */
   keepOpen: boolean;
+  /** Captured on selection from the author Menu lifetime, which survives popup closure. */
+  getPreparationSignal?(): AbortSignal;
 }>;
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
@@ -60,6 +67,8 @@ export type PluginUiMenuSelection = Readonly<{ anchorRef?: RefObject<unknown> }>
  */
 export type PluginUiPopoverContentControls = PluginUiMenuSelection & Readonly<{
   requestClose(reason: 'selection' | 'escape'): void;
+  /** Host-only physical Menu row commit; never supplied to author callbacks. */
+  commitActionBinding?: PluginUiActionBindingCommit;
   /** Current viewport height computed by the incumbent host Popover. */
   maxHeight: number;
   /**
@@ -209,6 +218,11 @@ export type PluginUiPaneHeaderHost = Readonly<{
  * navigation roots, or modal/portal infrastructure.
  */
 export type PluginUiPresentationHost = Readonly<{
+  /** Host-created editors retain the package's existing drafts and notice owner. Absent in hosted HTML. */
+  renderActionPropertyList?(props: PropertyListProps): ReactElement;
+  renderActionIconButton?(props: IconButtonProps): ReactElement;
+  renderActionForm?(props: FormProps): ReactElement;
+  renderActionToggle?(props: ToggleProps): ReactElement;
   /** Host-private synchronous press scope; never carried by public Host API requests. */
   runPress?(event: unknown, invoke: () => unknown): unknown;
   /** Same-realm presentation capability; task reads and grants remain with the incumbent ShareSheet. */

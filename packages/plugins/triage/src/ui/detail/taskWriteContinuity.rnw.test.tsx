@@ -12,6 +12,7 @@ import { createPluginClientTestkit, type PluginClientTestkit } from '@happier-de
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { activate } from '../../actions/mountedUi.js';
 import { checkTriageTaskWrite } from './taskWrite.js';
+import { commitTaskWriteForTest } from './taskActionControl.test-support.js';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -47,14 +48,14 @@ it.each([
         } },
       }));
     });
-    await act(async () => { await write.commit(action, {}); });
+    await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, action, {}); });
     expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
     // A deliberate retry is available after a proven refusal; no automatic replay occurs.
     expect(attempts).toBe(1);
     notStarted = false;
-    await act(async () => { await write.commit(action, {}); });
+    await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, action, {}); });
     expect(write.result).toEqual({ kind: 'uncertain', failure: { class: 'unknown', code: responseCode } });
-    await act(async () => { await write.commit(action, {}); });
+    await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, action, {}); });
     expect(attempts).toBe(2);
   },
 );
@@ -81,10 +82,10 @@ it('permits a deliberate retry after the mounted host confirms the handler did n
       } },
     }));
   });
-  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, 'tasks/create-v1', {}); });
   expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
   expect(attempts).toBe(1);
-  await act(async () => { await write.commit('tasks/create-v1', {}); });
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, 'tasks/create-v1', {}); });
   expect(attempts).toBe(2);
 });
 
@@ -113,12 +114,12 @@ it('holds a lost create response across remounts of the same scoped draft withou
       handlers: { executeAction: () => { mutations++; return { kind: 'uncertain' }; } },
     }));
   });
-  await act(async () => { await write.commit('tasks/create-v1', create); });
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, 'tasks/create-v1', create); });
   expect(write.result?.kind).toBe('uncertain');
   await act(async () => { showDraft(false); });
   await act(async () => { showDraft(true); });
   expect(write.result?.kind).toBe('uncertain');
-  await act(async () => { await write.commit('tasks/create-v1', create); });
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, 'tasks/create-v1', create); });
   expect(mutations).toBe(1);
 });
 
@@ -157,7 +158,7 @@ it('retains an uncertain move target across remounts until a source reread confi
       } },
     }); mounted.push(fixture);
   });
-  await act(async () => { await write.commit('tasks/transition-v1', { v: 1, ...address, transitionId: 'review' },
+  await act(async () => { await commitTaskWriteForTest(mounted.at(-1)!.context.hostApi, write, 'tasks/transition-v1', { v: 1, ...address, transitionId: 'review' },
     { label: 'Review queue', state: target }); });
   expect(write.progress).toBe('Review queue');
   await act(async () => { show(false); });
@@ -231,7 +232,7 @@ it('shares in-flight work and lets a fresh differing read rebase a new edit with
   const before = unrelatedRenders();
   let pending!: Promise<unknown>;
   await act(async () => {
-    pending = writes.get('detail')!.commit('tasks/edit-v1', { v: 1, ...address, fields: { title: 'Confirmed title' } });
+    pending = commitTaskWriteForTest(fixture.context.hostApi, writes.get('detail')!, 'tasks/edit-v1', { v: 1, ...address, fields: { title: 'Confirmed title' } });
   });
   expect(writes.get('row')!.busy).toBe(true);
   expect(writes.get('detail')!.busy).toBe(true);
@@ -243,7 +244,7 @@ it('shares in-flight work and lets a fresh differing read rebase a new edit with
   await act(async () => { showTask(false); });
   await act(async () => { showTask(true); });
   expect(writes.get('detail')!.result?.kind).toBe('uncertain');
-  await act(async () => { await writes.get('row')!.commit('tasks/edit-v1', { v: 1, ...address, fields: { title: 'Duplicate' } }); });
+  await act(async () => { await commitTaskWriteForTest(fixture.context.hostApi, writes.get('row')!, 'tasks/edit-v1', { v: 1, ...address, fields: { title: 'Duplicate' } }); });
   expect(mutations).toBe(1);
   await act(async () => { await writes.get('row')!.checkAgain(); });
   expect(writes.get('detail')!.result?.kind).toBe('uncertain');
@@ -253,17 +254,17 @@ it('shares in-flight work and lets a fresh differing read rebase a new edit with
   expect(writes.get('row')!.result?.kind).toBe('uncertain');
   // A fresh differing value cannot prove the old write applied, but must allow new intent.
   await act(async () => {
-    expect(await writes.get('row')!.commit('tasks/transition-v1', { v: 1, ...address, transitionId: 'done' })).toBeUndefined();
+    expect(await commitTaskWriteForTest(fixture.context.hostApi, writes.get('row')!, 'tasks/transition-v1', { v: 1, ...address, transitionId: 'done' })).toBeUndefined();
   });
   await act(async () => { showTask(false); });
   await act(async () => { showTask(true); });
   const beforeReplacement = unrelatedRenders();
   await act(async () => {
-    pending = writes.get('detail')!.commit('tasks/edit-v1', { v: 1, ...address, fields: { title: 'New deliberate title' } });
+    pending = commitTaskWriteForTest(fixture.context.hostApi, writes.get('detail')!, 'tasks/edit-v1', { v: 1, ...address, fields: { title: 'New deliberate title' } });
   });
   expect(mutations).toBe(2);
   await act(async () => {
-    await writes.get('row')!.commit('tasks/edit-v1', { v: 1, ...address, fields: { title: 'Concurrent duplicate' } });
+    await commitTaskWriteForTest(fixture.context.hostApi, writes.get('row')!, 'tasks/edit-v1', { v: 1, ...address, fields: { title: 'Concurrent duplicate' } });
   });
   expect(mutations).toBe(2);
   await act(async () => { finishWrite({ kind: 'uncertain' }); await pending; });
@@ -310,9 +311,7 @@ it('settles the host control press without replaying it through raw plugin execu
   await vi.waitFor(() => expect(write.result?.kind).toBe('applied'));
   expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', preparation: { input } }));
   expect(raw).not.toHaveBeenCalled();
-  await act(async () => { await write.commit('tasks/transition-v1', input); });
-  expect(write.result).toMatchObject({ kind: 'refused', reason: 'plugin_action_current_intent_unavailable' });
-  expect(raw).toHaveBeenCalledOnce();
+
 });
 
 it('settles the prepared task after the detail switches to another task', async () => {

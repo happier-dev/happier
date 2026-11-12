@@ -318,6 +318,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
             () => params.handleRequest(envelope, options),
         );
         const response = await (subscriptionEstablishmentMethods.has(method)
+            && (method !== 'actionControl' || options?.actionControlSubscription !== undefined)
             ? settlement
             : settleWithCallerCancellation(settlement, options?.signal));
         // Admission (`assertActive` above, then the mounted owner) is the one
@@ -970,7 +971,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const { createPluginUiActionControlBinding } = await loadPluginUiHostSupport();
             assertActive(options?.signal);
             const binding = await createPluginUiActionControlBinding({ controller,
-                signal: options?.signal, lifetimeSignal: lifetime.signal,
+                signal: options?.signal, withdrawalSignal: options?.withdrawalSignal, lifetimeSignal: lifetime.signal,
                 subscribe: (listener, onRetire, signal) => transport.actionControl(bind, listener, onRetire, { signal }),
                 request: (request, signal) => transport.request('actionControl', request, { signal }),
             });

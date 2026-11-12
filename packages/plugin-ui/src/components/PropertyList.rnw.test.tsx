@@ -264,6 +264,18 @@ describe('public PropertyList', () => {
     } finally { mount.unmount(); }
   });
 
+  it('retains the typed draft when settlement authoritatively reports not applied', async () => {
+    const mount = mountWithPopoverHost(<PluginUi.PropertyList testID="props" items={[{
+      id: 'due', label: 'Due date', value: null, editor: { kind: 'date', value: null, onCommit: () => false },
+    }]} />);
+    try {
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.due.value"]')!.click(); });
+      await act(async () => { typeInto(mount.container.querySelector<HTMLInputElement>('[data-testid="props.due.value.input"]')!, '2026-11-12'); });
+      await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="props.due.value.save"]')!.click(); });
+      expect(mount.container.querySelector<HTMLInputElement>('[data-testid="props.due.value.input"]')?.value).toBe('2026-11-12');
+      expect(mount.container.textContent).toContain('not applied');
+    } finally { mount.unmount(); }
+  });
   it('commits one typed property per deliberate change and keeps read-only values plain', async () => {
     const commits: unknown[] = [];
     const { PropertyList } = PluginUi as typeof PluginUi & {
@@ -427,6 +439,17 @@ describe('public PropertyList names', () => {
 });
 
 describe('public RelationList', () => {
+  it('keeps a bound relation removal visible but unavailable without the host gesture bridge', () => {
+    let prepared = 0;
+    const mount = mountWithPopoverHost(<PluginUi.RelationList testID="rel" entries={[{
+      id: 'blocker', title: 'Fix totals', removeAction: { action: 'projects.compute.exec',
+        prepare() { prepared++; return null; }, onSettled() {} },
+    }]} />);
+    try {
+      expect(mount.container.querySelector('[data-testid="rel.blocker.remove"]')?.getAttribute('aria-disabled')).toBe('true');
+      expect(prepared).toBe(0);
+    } finally { mount.unmount(); }
+  });
   it('draws the add as a row of the sheet, not a filled control beneath it', () => {
     const mount = mountWithPopoverHost(
       <PluginUi.RelationList accessibilityLabel="Blocked by" testID="rel" entries={[]}

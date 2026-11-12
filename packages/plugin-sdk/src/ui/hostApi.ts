@@ -289,14 +289,8 @@ export const ComposerControlStateV1Schema: PluginUiSchema<ComposerControlStateV1
     canonicalComposerControlStateV1Schema;
 
 /**
- * The bounded invalidation/retirement signal a resource subscription delivers
- * (§3.6). It is deliberately not a payload channel: `readResource` remains the
- * single snapshot authority, so an author re-reads after an `invalidated`
- * event.
- *
- * Dynamic Resource producers now own `invalidated` emission; this public type
- * describes their level-triggered signal without creating a second payload or
- * snapshot channel.
+ * Rereadable Resources invalidate their current bytes. A non-replayable producer
+ * may instead deliver finite Resource pages on this same subscription lifetime.
  */
 export type ResourceSubscriptionEvent = PluginUiResourceSubscriptionEventV1;
 
@@ -509,7 +503,10 @@ export interface PluginUiHostApi {
     actionControl(
         control: Readonly<{ action: PluginReference; presentation: PluginUiActionControlPresentation }>,
         controller: PluginUiActionControlController,
-        options?: PluginCancellationOptions,
+        options?: PluginCancellationOptions & Readonly<{
+            /** Withdraw the control without cancelling an already-admitted execution. */
+            withdrawalSignal?: AbortSignal;
+        }>,
     ): Promise<PluginUiActionControl>;
     /**
      * Native/declarative page areas use this shared host binding; the host stamps identity and

@@ -12,6 +12,7 @@ export function MountedPluginActionControls({ controls }: Readonly<{ controls: P
     // A press at the surface's end, its own width: never a bar across the pane.
     return <View style={BAND_STYLE}>{snapshot.map(control => <View key={control.id}>
         <RoundButton size="small" title={control.presentation.title}
+            accessibilityLabel={control.presentation.accessibilityLabel}
             display={DISPLAY[control.presentation.variant ?? 'secondary']}
             disabled={control.busy || control.presentation.disabled}
             loading={control.busy}

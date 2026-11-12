@@ -1,3 +1,5 @@
+import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
+import { createPluginUiActionBindingPresentation } from '@happier-dev/plugin-ui/advanced';
 import {
     PluginUiMarkdown, PluginUiPrivateDiffViewer, PluginUiPrivateChangedFilesReview, PluginUiPrivateMarkdownEditor, CodeBlockView, ProseDiffViewer, QRCode,
     PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript,
@@ -201,6 +203,7 @@ export type PluginDestinationRowInput = NavigationListDestination & Readonly<{
 const PLUGIN_UI_COLLECTION_ROW_NEEDS_YOU = { useFacts: useCollectionRowNeedsYouHostFacts };
 
 export type PluginUiPrivatePresentationHostOptions = Readonly<{
+    actionControls?: PluginSurfaceActionControls;
     runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
     /** Canonical mounted plugin identity, supplied by the physical host. */
     pluginId?: string;
@@ -529,6 +532,10 @@ const PLUGIN_UI_PANE_HEADER_SCROLL = Object.freeze({
 
 export type PluginUiPrivatePresentationHost = Readonly<
     typeof PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS & {
+        renderActionPropertyList?: PluginUiPresentationHost['renderActionPropertyList'];
+        renderActionIconButton?: PluginUiPresentationHost['renderActionIconButton'];
+        renderActionForm?: PluginUiPresentationHost['renderActionForm'];
+        renderActionToggle?: PluginUiPresentationHost['renderActionToggle'];
         runPress?: import('@happier-dev/plugin-ui/advanced').PluginUiPresentationHost['runPress'];
         createScrollActivityTracker(scrollRef: React.RefObject<unknown>, horizontal: boolean): PluginUiScrollActivityTracker;
         paneHeaderScroll: typeof PLUGIN_UI_PANE_HEADER_SCROLL;
@@ -724,6 +731,12 @@ export function createPluginUiPrivatePresentationHost(
         ...(options?.renderLiveStream ? { renderLiveStream: options.renderLiveStream } : {}),
         ...(options?.mediaStage ? { mediaStage: options.mediaStage } : {}),
         ...(options?.runPress ? { runPress: options.runPress } : {}),
+        ...(options?.actionControls ? {
+            ...createPluginUiActionBindingPresentation(options.actionControls.commit),
+            renderPopover: (input: Parameters<PluginUiPresentationHost['renderPopover']>[0]) => input.menu
+                ? <PluginUiMenuPresentation input={{ ...input, menu: input.menu }} controls={options.actionControls} />
+                : PLUGIN_UI_PRIVATE_PRESENTATION_RENDERERS.renderPopover(input),
+        } : {}),
         typography: readPluginUiHostTypography(),
         ...(options?.palette === undefined ? {} : { palette: options.palette }),
         ...(options?.resolveMaterialColor === undefined ? {} : { resolveMaterialColor: options.resolveMaterialColor }),

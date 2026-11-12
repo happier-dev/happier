@@ -1,3 +1,5 @@
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
+import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
 import { View } from 'react-native';
 import { HappierSurfaceGradientLayer } from '../presentation/layout/SurfaceGradientLayer.js';
@@ -284,8 +286,8 @@ export type IconButtonProps = Readonly<{
   /** Logical focus target transferred by the mounted host after author state changes. */
   focusTarget?: PluginUiFocusTarget;
   testID?: string;
-  onPress: () => unknown;
-}>;
+
+}> & (Readonly<{ action: PluginUiActionBinding<void>; onPress?: never }> | Readonly<{ action?: never; onPress: () => unknown }>);
 
 /**
  * An icon button's fills (a well's rest, and every button's hover, press and open state): the control fill painted
@@ -301,7 +303,17 @@ export function usePluginIconButtonColors() {
 }
 
 /** The public icon-only adapter over the same press/pending owner as core. */
-export function IconButton({
+export function IconButton(props: IconButtonProps): ReactElement {
+  const host = useOptionalPluginUiPresentationHost();
+  if (props.action) {
+    if (host?.renderActionIconButton) return host.renderActionIconButton(props);
+    const { action, ...local } = props;
+    return <IconButtonLocal {...local} disabled onPress={() => undefined} />;
+  }
+  return <IconButtonLocal {...props} />;
+}
+
+function IconButtonLocal({
   accessibilityLabel,
   accessibilityLabelKey,
   icon,
@@ -312,7 +324,7 @@ export function IconButton({
   focusTarget,
   testID,
   onPress,
-}: IconButtonProps): ReactElement {
+}: Omit<IconButtonProps, 'action' | 'onPress'> & Readonly<{ onPress: () => unknown }>): ReactElement {
   const theme = usePluginTheme();
   const accessibleName = requireAccessibleButtonName(
     resolveAuthorText(usePluginTranslation(), accessibilityLabel, accessibilityLabelKey),

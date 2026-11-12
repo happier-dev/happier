@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import type {
   PropertyChoice,
   PropertyChoiceDirectory,
@@ -25,6 +26,27 @@ import type { HostTaskShareRef } from '@happier-dev/plugin-ui/hostApi';
 import { internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from '../../internalTasks/identity.js';
 
 type Text = ReturnType<typeof usePluginTranslation>;
+
+type TaskFieldCommit = Readonly<{ commit(fields: TriageTaskFieldsV1): unknown; action?: never }>
+  | Readonly<{ action: Extract<PluginUiActionBinding<TriageTaskFieldsV1>, { action: unknown }>; commit?: never }>;
+
+/** Map a physical editor's value once, for either a local draft or the host-owned edit Action. */
+function fieldCommit<Value>(input: Readonly<{
+  commit?: (fields: TriageTaskFieldsV1) => unknown;
+  action?: Extract<PluginUiActionBinding<TriageTaskFieldsV1>, { action: unknown }>;
+}>, fields: (value: Value) => TriageTaskFieldsV1 | null) {
+  if (input.action !== undefined) {
+    const binding = input.action;
+    return { action: { ...binding, prepare(value: Value, options: Parameters<typeof binding.prepare>[1]) {
+      const next = fields(value);
+      return next === null ? null : binding.prepare(next, options);
+    } } };
+  }
+  return { onCommit(value: Value) {
+    const next = fields(value);
+    return next === null ? undefined : input.commit?.(next);
+  } };
+}
 
 /** The fields a task's property list carries; title and notes are its text, blockers its relation list. */
 export const TRIAGE_TASK_PROPERTY_FIELDS_V1 = [
@@ -179,11 +201,10 @@ export type TriageTaskPropertyInputV1 = Readonly<{
   assigneeDirectory?: Readonly<{ choices: readonly PropertyChoice[]; state: PropertyChoiceDirectory }>;
   /** The labels' colours, when the source keeps them (personal tasks): chosen in the Labels editor, drawn as each chip's dot. */
   labelTones?: Readonly<{ tones: PropertyNameTones }>;
-  commit(fields: TriageTaskFieldsV1): unknown;
   text: Text;
   locale?: string;
   busy?: boolean;
-}>;
+}> & TaskFieldCommit;
 
 /** The task's typed properties, one per declared field with a known value; each change commits only its field. */
 export function projectTriageTaskPropertiesV1(
@@ -228,7 +249,7 @@ export function projectTriageTaskPropertiesV1(
             .map(choice => ({ ...choice, person: choice.label })),
           ...(directory !== undefined ? {} : { directory: input.assigneeDirectory?.state ?? { status: 'unavailable',
             unavailableLabel: text('plugins.triage.tasks.assignees.unlisted', 'This source\u2019s people can\u2019t be listed here') } }),
-          onCommit: (next) => input.commit({ assigneeIds: [...next] }),
+          ...fieldCommit(input, (next: readonly string[]) => ({ assigneeIds: [...next] })),
         },
       });
     } else if (field === 'labelIds') {
@@ -247,11 +268,11 @@ export function projectTriageTaskPropertiesV1(
           // A label the directory no longer lists can still be removed from this task.
           choices: [...directory, ...current.filter(id => !directory.some(choice => choice.id === id)).map(id => ({ id, label: id }))],
           chips: true,
-          onCommit: (next) => input.commit({ labelIds: [...next] }),
+          ...fieldCommit(input, (next: readonly string[]) => ({ labelIds: [...next] })),
         } : {
           kind: 'list',
           value: current,
-          onCommit: (next) => input.commit({ labelIds: [...next] }),
+          ...fieldCommit(input, (next: readonly string[]) => ({ labelIds: [...next] })),
           chips: true,
           ...(input.labelTones !== undefined ? { tones: input.labelTones.tones } : {}),
         },
@@ -267,8 +288,7 @@ export function projectTriageTaskPropertiesV1(
         editor: {
           kind: 'text',
           value: current,
-          onCommit: (next) =>
-            next === null ? undefined : input.commit({ scopeId: next.trim() }),
+          ...fieldCommit(input, (next: string | null) => next === null ? null : { scopeId: next.trim() }),
         },
       });
     } else if (field === 'projectId') {
@@ -281,8 +301,7 @@ export function projectTriageTaskPropertiesV1(
         editor: {
           kind: 'text',
           value: current,
-          onCommit: (next) =>
-            input.commit({ projectId: next === null ? null : next.trim() }),
+          ...fieldCommit(input, (next: string | null) => ({ projectId: next === null ? null : next.trim() })),
         },
       });
     } else if (field === 'priority') {
@@ -297,16 +316,13 @@ export function projectTriageTaskPropertiesV1(
             ? {
                 kind: 'text',
                 value: current,
-                onCommit: (next) =>
-                  input.commit({
-                    priority: next === null ? null : next.trim(),
-                  }),
+                ...fieldCommit(input, (next: string | null) => ({ priority: next === null ? null : next.trim() })),
               }
             : {
                 kind: 'number',
                 value: current,
                 integer: true,
-                onCommit: (next) => input.commit({ priority: next }),
+                ...fieldCommit(input, (next: number | null) => ({ priority: next })),
               },
       });
     } else if (field === 'estimate') {
@@ -319,7 +335,7 @@ export function projectTriageTaskPropertiesV1(
         editor: {
           kind: 'number',
           value: current,
-          onCommit: (next) => input.commit({ estimate: next }),
+          ...fieldCommit(input, (next: number | null) => ({ estimate: next })),
         },
       });
     } else if (field === 'dueDate') {
@@ -336,7 +352,7 @@ export function projectTriageTaskPropertiesV1(
         editor: {
           kind: 'date',
           value: current,
-          onCommit: (next) => input.commit({ dueDate: next }),
+          ...fieldCommit(input, (next: string | null) => ({ dueDate: next })),
         },
       });
     } else if (field === 'parent') {
@@ -373,13 +389,11 @@ export function projectTriageTaskPropertiesV1(
           searchable: true,
           value: current?.key ?? null,
           choices: choices.map(choice),
-          onCommit: (next) => {
-            if (next === null) return input.commit({ parent: null });
+          ...fieldCommit(input, (next: string | null) => {
+            if (next === null) return { parent: null };
             const chosen = choices.find((candidate) => candidate.key === next);
-            return chosen === undefined
-              ? undefined
-              : input.commit({ parent: chosen.ref });
-          },
+            return chosen === undefined ? null : { parent: chosen.ref };
+          }),
         },
       });
     }
@@ -394,12 +408,12 @@ export function projectTriageTaskBlockersV1(
     self?: TriageEntryRefV1;
     candidates: ReadonlyMap<string, TriageTaskRelationCandidateV1>;
     text: Text;
-    commit?(fields: TriageTaskFieldsV1): unknown;
-  }>,
+  }> & (TaskFieldCommit | Readonly<{ commit?: never; action?: never }>),
 ): Readonly<{
   entries: RelationListEntry[];
   choices: PropertyChoice[];
   add(id: string): unknown;
+  addAction?: PluginUiActionBinding<string>;
   /** The same blockers as one property, where they are a value rather than a chapter (a draft before it exists). */
   property: PropertyListItem;
 }> {
@@ -411,43 +425,43 @@ export function projectTriageTaskBlockersV1(
   const choices = [...input.candidates.values()].filter(
     (candidate) => candidate.key !== self && !held.has(candidate.key),
   );
+  const mutable = input.commit !== undefined || input.action !== undefined;
+  const add = fieldCommit(input, (id: string) => {
+    const chosen = choices.find(candidate => candidate.key === id);
+    return chosen === undefined ? null : { blockedBy: [...input.blockedBy, chosen.ref] };
+  });
   return {
-    entries: current.map((candidate, index) => ({
-      id: candidate.key,
-      title: candidate.title,
-      ...(candidate.designation === undefined
-        ? {}
-        : { designation: candidate.designation }),
-      ...(candidate.status === null ? {} : { status: candidate.status }),
-      ...(input.commit === undefined
-        ? {}
-        : {
-            onRemove: () =>
-              input.commit!({
-                blockedBy: input.blockedBy.filter((_, at) => at !== index),
-              }),
-          }),
-    })),
+    entries: current.map((candidate, index) => {
+      const remove = fieldCommit(input, (_id: string) => ({
+        blockedBy: input.blockedBy.filter((_, at) => at !== index),
+      }));
+      return {
+        id: candidate.key,
+        title: candidate.title,
+        ...(candidate.designation === undefined
+          ? {}
+          : { designation: candidate.designation }),
+        ...(candidate.status === null ? {} : { status: candidate.status }),
+        ...(!mutable ? {} : remove.action === undefined
+          ? { onRemove: () => remove.onCommit(candidate.key) } : { removeAction: remove.action }),
+      };
+    }),
     choices: choices.map(choice),
-    add: (id) => {
-      const chosen = choices.find((candidate) => candidate.key === id);
-      return chosen === undefined || input.commit === undefined
-        ? undefined
-        : input.commit({ blockedBy: [...input.blockedBy, chosen.ref] });
-    },
+    add: id => add.onCommit?.(id),
+    ...(add.action === undefined ? {} : { addAction: add.action }),
     property: {
       id: 'blockedBy',
       label: triageTaskFieldTitleV1(input.text, 'blockedBy'),
       value: current.length === 0 ? null : current.map((candidate) => candidate.title).join(', '),
-      ...(input.commit === undefined ? {} : { editor: {
+      ...(!mutable ? {} : { editor: {
         kind: 'choices' as const,
         searchable: true,
         value: current.map((candidate) => candidate.key),
         choices: [...current, ...choices].map(choice),
-        onCommit: (next: readonly string[]) => input.commit!({ blockedBy: next.flatMap((key) => {
+        ...fieldCommit(input, (next: readonly string[]) => ({ blockedBy: next.flatMap((key) => {
           const chosen = [...current, ...choices].find((candidate) => candidate.key === key);
           return chosen === undefined ? [] : [chosen.ref];
-        }) }),
+        }) })),
       } }),
     },
   };

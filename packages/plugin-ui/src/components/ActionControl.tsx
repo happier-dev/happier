@@ -16,6 +16,7 @@ export type ActionControlProps = Readonly<{
   controller: PluginUiActionControlController;
   title?: string;
   titleKey?: string;
+  accessibilityLabel?: string;
   variant?: PluginUiActionControlPresentation['variant'];
   disabled?: boolean;
   signal?: PluginCancellationOptions['signal'];
@@ -34,11 +35,12 @@ export function ActionControl(props: ActionControlProps): ReactNode {
   const translate = usePluginTranslation();
   const title = resolveAuthorText(translate, props.title, props.titleKey)
     ?? translate('happier.plugin-ui.action.execute', 'Run');
-  const { disabled, variant, signal } = props;
+  const { accessibilityLabel, disabled, variant, signal } = props;
   const actionKey = typeof props.action === 'string' ? JSON.stringify(props.action)
     : JSON.stringify([props.action.pluginId, props.action.localId]);
   const nextPresentation: PluginUiActionControlPresentation = {
     title,
+    ...(accessibilityLabel === undefined ? {} : { accessibilityLabel }),
     ...(disabled === undefined ? {} : { disabled }),
     ...(variant === undefined ? {} : { variant }),
   };
@@ -76,7 +78,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
         return preparing.prepare(options);
       },
       onSettled(execution) { preparing.onSettled(execution); },
-    }, { signal: lifetime.signal }).then(control => {
+    }, { signal, withdrawalSignal: lifetime.signal }).then(control => {
       if (lifetime.signal.aborted) { control.dispose(); return; }
       mounted = control;
       binding.current = control;
@@ -104,7 +106,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
       latest.current.onUnavailable?.(error);
     });
     return () => { active = false; };
-  }, [host, actionKey, signal, title, disabled, variant]);
+  }, [host, actionKey, signal, title, accessibilityLabel, disabled, variant]);
 
   return unavailable ? props.fallback ?? null : null;
 }

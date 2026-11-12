@@ -5,8 +5,8 @@ import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersion
 
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiWatchLiveStreamRequestV1Schema, PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiApplyComposerResultV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiInspectComposerContentResultV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiMountedActionReferenceV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiFocusComposerResultV1Schema, PluginUiHostApiDiagnosticV1Schema, PluginUiHostApiOpenExternalLinkRequestV1Schema, PluginUiHostApiWriteClipboardRequestV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiHostApiWireIdentityV1Schema, PluginUiJsonValueV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiOpenSurfaceRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPickComposerMediaResultV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiReadComposerResultV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiSetComposerDecorationsResultV1Schema, PluginUiInstanceKeyV1Schema, PluginUiResourceSubscriptionTargetV1Schema, PluginUiSelectedActionInputCarrierV1Schema, pluginUiSelectedActionInputsEqual, pluginUiTargetedContributionOperationKey, PluginUiSubPathV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadSessionResultV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
-import { PluginUiActionControlRequestV1Schema, PluginUiActionControlEventV1Schema,
-    type PluginUiActionControlRequestV1, type PluginUiActionControlEventV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiActionControlRequestV1Schema, PluginUiActionControlEventV1Schema, PluginUiActionControlExecutionV1Schema,
+    type PluginUiActionControlRequestV1, type PluginUiActionControlEventV1, type PluginUiActionControlExecutionV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
@@ -404,6 +404,8 @@ export function readPluginUiTestkitTargetedSurfaceAdmission(input: Readonly<{
 }
 
 export type PluginUiTestkitExecuteActionInput = Readonly<{
+    /** The already-issued native envelope identity observed at the host boundary. */
+    requestId: string;
     action: PluginReference;
     input?: JsonValue;
     /**
@@ -560,7 +562,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         request: PluginUiActionControlRequestV1;
         signal: AbortSignal;
         publish(event: PluginUiActionControlEventV1): void;
-    }>) => void | Disposable | Promise<void | Disposable>;
+    }>) => void | Disposable | PluginUiActionControlExecutionV1 | Promise<void | Disposable | PluginUiActionControlExecutionV1>;
     watchEntityDragDrop?: (input: Readonly<{ request: import('../entityDragDrop.js').PluginUiWatchEntityDragDropRequestV1; publish: (state: import('../entityDragDrop.js').PluginUiEntityDragDropStateV1) => void; signal: AbortSignal }>) => void | Disposable | Promise<void | Disposable>;
     readEntityDragItem?: (input: Readonly<{ request: import('../ui/hostApi.js').PluginUiReadEntityDragItemRequestV1; signal: AbortSignal }>) => import('../entityDragDrop.js').EntityDragItemV1 | null | Promise<import('../entityDragDrop.js').EntityDragItemV1 | null>;
     updateEntityDragDrop?: (input: Readonly<{ request: import('../ui/hostApi.js').PluginUiUpdateEntityDragDropRequestV1; signal: AbortSignal }>) => import('../ui/hostApi.js').PluginUiUpdateEntityDragDropResultV1 | Promise<import('../ui/hostApi.js').PluginUiUpdateEntityDragDropResultV1>;
@@ -1041,9 +1043,9 @@ function sameReference(left: PluginUiResourceWatchReference, right: PluginUiReso
     return key(left) === key(right);
 }
 
-function readComposerHostResourceRelease(value: void | Disposable): Disposable | undefined {
+function readComposerHostResourceRelease(value: void | Disposable | PluginUiActionControlExecutionV1): Disposable | undefined {
     if (value === undefined) return undefined;
-    if (typeof value.dispose !== 'function') {
+    if (!('dispose' in value) || typeof value.dispose !== 'function') {
         throw fixtureError('invalid_payload', 'A Composer resource release must expose dispose().');
     }
     return value;
@@ -1296,9 +1298,10 @@ async function createPluginUiTestkitInternal<TSurface>(
                 const payload = parsed.data;
                 const resource = composerHostResources.get(payload.subscriptionId);
                 if (resource?.method !== 'actionControl' || resource.controller.signal.aborted) throw fixtureError('stale_surface', 'Action control is retired.');
-                await handlers.actionControl({ request: payload, signal,
+                const result = await handlers.actionControl({ request: payload, signal,
                     publish: event => publishActionControlEvent(payload.subscriptionId, resource.controller, event) });
-                return undefined;
+                return payload.kind === 'prepared' && result !== undefined
+                    ? projectNativeJsonValueForTransport(PluginUiActionControlExecutionV1Schema.parse(result)) : undefined;
             }
             case 'context':
                 return renderContextSnapshot();
@@ -1338,6 +1341,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                     throw fixtureError('invalid_payload', 'executeAction selected Action input is not active.');
                 }
                 return await handlers.executeAction({
+                    requestId: message.requestId,
                     action: payload.data.action,
                     input: payload.data.input,
                     ...(activeSelectedActionInput === undefined || activeSelectedActionInput === null

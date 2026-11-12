@@ -75,3 +75,8 @@ export {
   type PluginUiResourceEntry,
   type PluginUiResourceStore,
 } from '../hostApi/resourceStore.js';
+
+export {
+  createPluginUiActionBindingPresentation,
+  type PluginUiActionBindingCommit,
+} from '../presentationHost/actionBindingPresentation.js';

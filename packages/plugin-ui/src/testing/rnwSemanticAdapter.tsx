@@ -22,6 +22,7 @@ import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSu
 import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
 
 import { Text } from '../components/Text.js';
+import { createPluginUiActionBindingPresentation, type PluginUiActionBindingCommit } from '../presentationHost/actionBindingPresentation.js';
 import {
   PluginUiPresentationHostProviderInternal,
   type PluginUiDetailsPaneHost,
@@ -45,6 +46,8 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    * host renders only the trigger.
    */
   overlays?: boolean;
+  /** Explicit host gesture boundary shared with the SDK Action-control test host. */
+  actionBindings?: Readonly<{ commit: PluginUiActionBindingCommit }>;
   /** Test-environment physical focus owner used by public logical focus targets. */
   physicalFocus?: (target: HappierFocusable) => boolean;
   /**
@@ -72,6 +75,8 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    * never runs here. Omitted, the component renders its author fallback (the paths only).
    */
   changedFilesReview?: boolean;
+  /** Observe the actual host request when the semantic changed-files review is enabled. */
+  observeChangedFilesReview?: (request: HappierChangedFilesReviewRequest) => void;
   /** Optional host-owned scope shared by the artifact mounts under test. */
   ephemeralSharedScope?: PluginUiEphemeralSharedScope;
   /** Existing host Find registration boundary; the fixture supplies no parallel registry. */
@@ -161,10 +166,14 @@ function createSemanticPresentationHost(input: Readonly<{
   paneHeader?: PluginUiPaneHeaderHost;
 }>): PluginUiPresentationHost {
   return Object.freeze({
+    ...(input.options.actionBindings === undefined ? {} : createPluginUiActionBindingPresentation(input.options.actionBindings.commit)),
     ...(input.options.find === undefined ? {} : { find: input.options.find }),
     ...(input.options.scmFileViewed === undefined ? {} : { useScmFileViewed: input.options.scmFileViewed }),
     ...(input.options.peopleDirectory === undefined ? {} : { usePeopleDirectory: input.options.peopleDirectory }),
-    ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => <SemanticChangedFilesReview request={request} /> } : {}),
+    ...(input.options.changedFilesReview === true ? { renderChangedFilesReview: (request: HappierChangedFilesReviewRequest) => {
+      input.options.observeChangedFilesReview?.(request);
+      return <SemanticChangedFilesReview request={request} />;
+    } } : {}),
     ...(input.detailsPane === undefined ? {} : {
       detailsPane: input.detailsPane,
       // The host's shared Open as page control, as a plain host-drawn button the test presses by name.
@@ -185,7 +194,9 @@ function createSemanticPresentationHost(input: Readonly<{
     renderCodeBlock: () => null,
     renderPopover: input.options.overlays === true
       ? (popover: Parameters<PluginUiPresentationHost['renderPopover']>[0]) => (popover.open
-        ? popover.content({ requestClose: () => popover.onRequestClose(), maxHeight: 10_000 })
+        ? popover.content({ requestClose: () => popover.onRequestClose(), maxHeight: 10_000,
+            ...(input.options.actionBindings === undefined ? {} : { commitActionBinding: input.options.actionBindings.commit }),
+          })
         : null)
       : () => null,
     renderIcon: () => null,
@@ -581,6 +592,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
         && options.changedFilesReview !== true
         && options.find === undefined
         && options.physicalFocus === undefined
+        && options.actionBindings === undefined
         && options.overlays !== true
         && options.sessions !== true
         && detailsPane === undefined

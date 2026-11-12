@@ -1,3 +1,6 @@
+import { invokePluginUiActionBinding } from '@happier-dev/cli-common/plugins/ui';
+import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import {
     PluginUiActionControlRequestV1Schema,
     PluginUiActionControlExecutionV1Schema,
@@ -24,6 +27,8 @@ export type PluginSurfaceActionControls = Readonly<{
     getSnapshot(): readonly MountedPluginActionControl[];
     subscribe(listener: () => void): () => void;
     press(id: string): Promise<void>;
+    /** Private entry used only by host-created inline controls. */
+    commit<Value>(binding: PluginUiActionBinding<Value>, value: Value, options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown>;
     invalidatePreparations(): void;
     handleRequest: PluginSurfaceHostApiMethodHandler;
     dispose(): void;
@@ -37,7 +42,7 @@ type Binding = {
     pending?: {
         requestId: string;
         isCurrent(): boolean;
-        resolve(preparation: PluginUiActionControlPreparationV1 | null): void;
+        resolve(preparation: PluginUiActionControlPreparationV1 | null, signal?: AbortSignal): Promise<PluginUiActionControlExecutionV1 | null>;
     };
 };
 
@@ -105,7 +110,8 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         if (!binding || !live(payload.subscriptionId, binding)) return createPluginSurfaceHostApiError('stale_surface');
         if (payload.kind === 'update') {
             const previous = binding.view.presentation;
-            if (previous.title !== payload.presentation.title || previous.disabled !== payload.presentation.disabled
+            if (previous.title !== payload.presentation.title || previous.accessibilityLabel !== payload.presentation.accessibilityLabel
+                || previous.disabled !== payload.presentation.disabled
                 || previous.variant !== payload.presentation.variant) {
                 binding.view = Object.freeze({ ...binding.view, presentation: payload.presentation });
                 publish();
@@ -121,10 +127,35 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         // Consume before resolving: a duplicate reply cannot be applied to this
         // invocation or a later physical press, even while execution is pending.
         binding.pending = undefined;
-        pending.resolve(payload.preparation);
-        return null;
+        return pending.resolve(payload.preparation, options?.signal);
     };
 
+    // The one person-admission path, shared by slot buttons and host inline editors.
+    const execute = async (action: PluginUiMountedActionReferenceV1, preparation: PluginUiActionControlPreparationV1,
+        signal: AbortSignal, requestId: string): Promise<PluginUiActionControlExecutionV1> => {
+        const hostId = typeof action === 'string' ? PluginInvocableActionIdSchema.safeParse(action) : null;
+        const contributed = hostId?.success ? null : normalizePluginUiMountedContributedActionReferenceV1({
+            callerPluginId: input.pluginId, action,
+        });
+        let execution: PluginUiActionControlExecutionV1;
+        if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
+        else {
+            const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
+                surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+                bypassApprovals: false };
+            const result = await input.hostAction.execute(hostId?.success ? hostId.data : 'action.invoke',
+                hostId?.success ? preparation.input : { action: contributed!, ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
+            execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
+        }
+        return execution;
+    };
+    const commit = <Value>(binding: PluginUiActionBinding<Value>, value: Value,
+        options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown> => invokePluginUiActionBinding(binding, value, {
+        signal: input.signal, preparationSignal: options?.signal,
+        available: input.isActionAvailable?.() !== false, isCurrent: current,
+        captureCurrentBinding: input.captureCurrentBinding,
+        execute: (action, preparation, signal) => execute(action, preparation, signal, input.surfaceId + ':inline:' + ++sequence),
+    });
     const press = async (id: string): Promise<void> => {
         const binding = controls.get(id);
         if (input.isActionAvailable?.() === false || !binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
@@ -134,9 +165,19 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         const isCurrentBinding = input.captureCurrentBinding();
         binding.view = Object.freeze({ ...binding.view, busy: true });
         publish();
+        let executionSignal = input.signal;
+        let releaseExecutionSignal = () => {};
+        let complete!: (execution: PluginUiActionControlExecutionV1 | null) => void;
+        const completion = new Promise<PluginUiActionControlExecutionV1 | null>(resolve => { complete = resolve; });
         try {
             const preparation = await new Promise<PluginUiActionControlPreparationV1 | null>(resolve => {
-                binding.pending = { requestId, isCurrent: isCurrentBinding, resolve };
+                binding.pending = { requestId, isCurrent: isCurrentBinding, resolve: (preparation, signal) => {
+                    const merged = mergeAbortSignals([input.signal, signal]);
+                    executionSignal = merged.signal;
+                    releaseExecutionSignal = merged.dispose;
+                    resolve(preparation);
+                    return completion;
+                } };
                 binding.publish({ kind: 'prepare', requestId });
             });
             if (!preparation || !live(id, binding)) return;
@@ -145,29 +186,21 @@ export function createPluginSurfaceActionControls(input: Readonly<{
                     execution: { ok: false, errorCode: 'stale_surface', error: 'stale_surface' } });
                 return;
             }
-            const hostId = typeof binding.action === 'string' ? PluginInvocableActionIdSchema.safeParse(binding.action) : null;
-            const contributed = hostId?.success ? null : normalizePluginUiMountedContributedActionReferenceV1({
-                callerPluginId: input.pluginId, action: binding.action,
-            });
-            let execution: PluginUiActionControlExecutionV1;
-            if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
-            else {
-                const context = { ...input.hostAction.context, signal: binding.abort.signal, actionRequestId: requestId,
-                    surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
-                    bypassApprovals: false };
-                const result = await input.hostAction.execute(hostId?.success ? hostId.data : 'action.invoke',
-                    hostId?.success ? preparation.input : { action: contributed!, ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
-                execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
-            }
+            const execution = await execute(binding.action, preparation, executionSignal, requestId);
+            complete(execution);
             if (live(id, binding)) binding.publish({ kind: 'settled', requestId, execution });
         } catch (error) {
             // An exception after dispatch does not establish that no effect ran.
             // Preserve a typed producer code; an untyped lost receipt is unknown.
             const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-            if (live(id, binding)) binding.publish({ kind: 'settled', requestId,
-                execution: { ok: false, errorCode: typeof code === 'string' ? code : 'action_outcome_unknown',
-                    error: typeof code === 'string' ? code : 'action_outcome_unknown' } });
+            const execution: PluginUiActionControlExecutionV1 = { ok: false,
+                errorCode: typeof code === 'string' ? code : 'action_outcome_unknown',
+                error: typeof code === 'string' ? code : 'action_outcome_unknown' };
+            complete(execution);
+            if (live(id, binding)) binding.publish({ kind: 'settled', requestId, execution });
         } finally {
+            releaseExecutionSignal();
+            complete(null);
             if (controls.get(id) === binding) {
                 binding.pending = undefined;
                 binding.view = Object.freeze({ ...binding.view, busy: false });
@@ -186,7 +219,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     return Object.freeze({ getSnapshot: () => input.isActionAvailable?.() === false ? emptySnapshot : snapshot, subscribe: (listener: () => void) => {
         listeners.add(listener);
         return () => { listeners.delete(listener); };
-    }, handleRequest, press, invalidatePreparations: () => {
+    }, handleRequest, press, commit, invalidatePreparations: () => {
         for (const binding of controls.values()) invalidatePreparation(binding);
     }, dispose });
 }

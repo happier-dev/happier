@@ -1,11 +1,13 @@
 import {
     PluginUiActionControlEventV1Schema,
+    PluginUiActionControlExecutionV1Schema,
     PluginUiActionControlPreparationV1Schema,
     PluginUiActionControlPresentationV1Schema,
     type PluginUiActionControlPreparationV1,
     type PluginUiActionControlRequestV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import { isPluginError, PluginError } from '../errors.js';
+import { mergeAbortSignals } from '../http/service.js';
 import type { Disposable } from '../registration/contracts.js';
 import type { PluginUiActionControlExecutionV1, PluginUiActionControlPresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 
@@ -24,6 +26,7 @@ export type PluginUiActionControl = Disposable & Readonly<{
 export async function createPluginUiActionControlBinding(params: Readonly<{
     controller: PluginUiActionControlController;
     signal?: AbortSignal;
+    withdrawalSignal?: AbortSignal;
     lifetimeSignal: AbortSignal;
     subscribe(
         listener: (event: unknown, subscriptionId: string) => void,
@@ -35,7 +38,7 @@ export async function createPluginUiActionControlBinding(params: Readonly<{
     const lifetime = new AbortController();
     let subscription: (Disposable & Readonly<{ subscriptionId: string }>) | undefined;
     let pending: { requestId: string; abort: AbortController; settled: boolean } | undefined;
-    const signals = [params.signal, params.lifetimeSignal];
+    const signals = [params.signal, params.withdrawalSignal, params.lifetimeSignal];
     const retire = () => {
         if (lifetime.signal.aborted) return;
         lifetime.abort();
@@ -76,7 +79,8 @@ export async function createPluginUiActionControlBinding(params: Readonly<{
             pending?.abort.abort();
             const preparation = { requestId: event.requestId, abort: new AbortController(), settled: false };
             pending = preparation;
-            const current = () => !lifetime.signal.aborted && pending === preparation && !preparation.settled;
+            const unsettled = () => pending === preparation && !preparation.settled;
+            const current = () => !lifetime.signal.aborted && unsettled();
             void (async () => {
                 let input: PluginUiActionControlPreparationV1 | null;
                 try {
@@ -93,14 +97,26 @@ export async function createPluginUiActionControlBinding(params: Readonly<{
                     return;
                 }
                 if (!current()) return;
+                const executionCancellation = mergeAbortSignals([params.lifetimeSignal, params.signal]);
                 try {
-                    await params.request({ kind: 'prepared', subscriptionId, requestId: event.requestId, preparation: input }, lifetime.signal);
-                } catch (error) {
-                    if (!current()) return;
+                    // Once submitted, the request owns settlement independently of
+                    // the control subscription. Withdrawal removes the button but
+                    // cannot discard the result of an already-admitted mutation.
+                    const result = await params.request({ kind: 'prepared', subscriptionId, requestId: event.requestId, preparation: input }, executionCancellation.signal ?? params.lifetimeSignal);
+                    if (!unsettled() || result === null || result === undefined) return;
+                    const execution = PluginUiActionControlExecutionV1Schema.parse(result);
                     preparation.settled = true;
                     preparation.abort.abort();
-                    settle({ ok: false, errorCode: isPluginError(error) ? error.code : 'action_outcome_unknown',
-                        error: error instanceof Error ? error.message || 'action_outcome_unknown' : 'action_outcome_unknown' });
+                    settle(execution);
+                } catch (error) {
+                    if (!unsettled()) return;
+                    preparation.settled = true;
+                    preparation.abort.abort();
+                    const aborted = executionCancellation.signal?.aborted === true;
+                    settle({ ok: false, errorCode: aborted ? 'aborted' : isPluginError(error) ? error.code : 'action_outcome_unknown',
+                        error: aborted ? 'aborted' : error instanceof Error ? error.message || 'action_outcome_unknown' : 'action_outcome_unknown' });
+                } finally {
+                    executionCancellation.dispose();
                 }
             })();
         }, retire, lifetime.signal);

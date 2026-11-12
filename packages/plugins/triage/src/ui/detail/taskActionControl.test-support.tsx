@@ -1,10 +1,34 @@
 import * as React from 'react';
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, type PluginUiTestkitOptions } from '@happier-dev/plugin-sdk/testing';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import type { useTriageTaskCommit } from './taskWrite.js';
 import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 
+/** Exercise write-state continuity with the real SDK transport as the external host boundary. */
+export async function commitTaskWriteForTest(host: Pick<PluginUiHostApi, 'executeAction'>,
+  write: ReturnType<typeof useTriageTaskCommit>, ...args: Parameters<ReturnType<typeof useTriageTaskCommit>['prepare']>) {
+  const prepared = write.prepare(...args);
+  if (prepared === null) return;
+  try {
+    return write.settle({ ok: true, result: await host.executeAction(args[0], prepared.input) });
+  } catch (error) {
+    const known = isPluginError(error);
+    const errorCode = known ? error.code : 'internal_error';
+    return write.settle({ ok: false, errorCode, error: errorCode,
+      ...(known && isPluginActionHandlerInvocationNotStartedAdvisory(error) ? { effectAttempted: false } : {}),
+      ...(known && error.data.details !== undefined ? { details: error.data.details } : {}) });
+  }
+}
+
 /** The real SDK transport/controller, with only the physical host and Action executor replaced. */
-export async function createTaskActionControlTestkit(options: PluginUiTestkitOptions<ReturnType<typeof defineUiSurface>>) {
+type TestkitOptions = PluginUiTestkitOptions<ReturnType<typeof defineUiSurface>>;
+type ActionControlHost = ReturnType<typeof createPluginUiActionControlTestHost>;
+export async function createTaskActionControlTestkit(options: Omit<TestkitOptions, 'adapter'> & Readonly<{
+  adapter: TestkitOptions['adapter'] | ((controls: ActionControlHost) => TestkitOptions['adapter']);
+}>) {
   const rawTaskWrites: string[] = [];
   // This external executor fixture does not simulate cancellation or request correlation.
   const executorSignal = new AbortController().signal;
@@ -25,6 +49,7 @@ export async function createTaskActionControlTestkit(options: PluginUiTestkitOpt
       onPress={() => controls.pressById(id)} />)}</>;
   }
   const fixture = await createPluginUiTestkit({ ...options,
+    adapter: typeof options.adapter === 'function' ? options.adapter(controls) : options.adapter,
     surface: context => {
       const root = options.surface(context);
       if (!React.isValidElement<{ children?: React.ReactNode }>(root)) throw new Error('Expected the public UI surface provider.');

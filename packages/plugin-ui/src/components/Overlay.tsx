@@ -1,3 +1,5 @@
+import { usePropertyCommit } from './propertyCommit.js';
+import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import { Avatar } from './Avatar.js';
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { View } from 'react-native';
@@ -455,6 +457,8 @@ export function Popover(props: PopoverProps): ReactElement {
 }
 
 type MenuItemBase = Readonly<{
+  /** Executed by the host menu on selection; no raw onSelect execution fallback. */
+  action?: PluginUiActionBinding<string>;
   id: string;
   label: string;
   /** A consequential operation uses the theme's danger tone. */
@@ -577,6 +581,7 @@ type MenuRowsProps = Readonly<{
   open: boolean;
   triggerAccessibilityLabel: string;
   controls: PluginUiPopoverContentControls;
+  getPreparationSignal?(): AbortSignal;
   initialFocusRef: MutableRefObject<View | null>;
   search?: MenuProps['search'];
   testID?: string;
@@ -597,6 +602,7 @@ function MenuRows({
   open,
   triggerAccessibilityLabel,
   controls,
+  getPreparationSignal,
   initialFocusRef,
   search,
   testID,
@@ -659,14 +665,22 @@ function MenuRows({
     getItemLabel,
     onKeyboardSelectionChange: focusItem,
   });
-  const onItemKey = useCallback((key: string, currentIndex: number) => {
-    return handleKeyPress(key, (item) => {
+  const selectItem = useCallback((item: MenuItem) => {
+    if (item.action) {
+      const commit = controls.commitActionBinding;
+      if (commit === undefined) return;
+      const signal = getPreparationSignal?.();
+      void commit(item.action, item.id, signal === undefined ? undefined : { signal });
+    } else {
       onSelect(item.id);
-      // Toggling a checkbox row is one of several choices, so the menu stays
-      // open for the next; an action or a radio choice completes the menu.
-      if (item.kind !== 'checkbox') controls.requestClose('selection');
-    }, currentIndex);
-  }, [controls, handleKeyPress, onSelect]);
+    }
+    // Toggling a checkbox row is one of several choices, so the menu stays
+    // open for the next; an action or a radio choice completes the menu.
+    if (item.kind !== 'checkbox') controls.requestClose('selection');
+  }, [controls, getPreparationSignal, onSelect]);
+  const onItemKey = useCallback((key: string, currentIndex: number) => {
+    return handleKeyPress(key, selectItem, currentIndex);
+  }, [handleKeyPress, selectItem]);
   const activeItemId = items[selectedIndex]?.id;
   const registerItemRef = useCallback((id: string, node: View | null) => {
     if (node) itemRefs.current.set(id, node);
@@ -699,10 +713,10 @@ function MenuRows({
           : item.kind === 'radio'
             ? 'menuitemradio'
             : undefined}
-        accessibilityLabel={[item.label, item.subtitle, item.meta].filter(Boolean).join(' · ')}
+        accessibilityLabel={item.action?.accessibilityLabel ?? [item.label, item.subtitle, item.meta].filter(Boolean).join(' · ')}
         checked={checked}
         highlighted={restingHighlight && index === selectedIndex}
-        disabled={item.disabled}
+        disabled={item.disabled || (item.action !== undefined && controls.commitActionBinding === undefined)}
         tabIndex={!item.disabled && index === selectedIndex ? 0 : -1}
         onKeyDown={(key) => onItemKey(key, index)}
         // Rows touch their neighbours and span the clipping menu surface: the row is its own hit area.
@@ -710,8 +724,7 @@ function MenuRows({
         onPress={() => {
           if (item.disabled) return;
           setSelectedIndex(index);
-          onSelect(item.id);
-          if (item.kind !== 'checkbox') controls.requestClose('selection');
+          selectItem(item);
         }}
         style={(state) => ({
           minHeight: HAPPIER_MENU_ROW_METRICS.minHeightPx,
@@ -835,6 +848,26 @@ function MenuPresentation({
   triggerCount,
   ...popover
 }: MenuProps & MenuSheetProps & Readonly<{ kind: MenuPresentationKind }>): ReactElement {
+  const write = usePropertyCommit();
+  const preparationLifetime = useRef<AbortController | null>(null);
+  useLayoutEffect(() => () => {
+    preparationLifetime.current?.abort();
+    preparationLifetime.current = null;
+  }, []);
+  const getPreparationSignal = useCallback(() => {
+    preparationLifetime.current ??= new AbortController();
+    return preparationLifetime.current.signal;
+  }, []);
+  const bindItems = (items: readonly MenuItem[]): MenuItem[] => items.map((item): MenuItem => {
+    const binding = item.action;
+    const bound: MenuItem = binding ? { ...item, action: { ...binding,
+      onSettled: execution => write.commit(async () => await binding.onSettled(execution) ?? execution),
+    } } : item;
+    if (bound.submenu) return { ...bound, submenu: { ...bound.submenu, items: bindItems(bound.submenu.items) } };
+    return bound;
+  });
+  const boundItems = bindItems(ungroupedItems);
+  const boundGroups = groups.map(group => ({ ...group, items: bindItems(group.items) }));
   const initialFocusRef = useRef<View | null>(null);
   const placement = kind === 'dropdown' && popover.placement === undefined
     ? 'bottom'
@@ -844,7 +877,7 @@ function MenuPresentation({
   const search = requestedSearch?.when === 'long' && rowCount <= COLLECTION_ADD_MENU_SEARCH_THRESHOLD ? undefined : requestedSearch;
 
   return (
-    <PopoverPresentation
+    <><PopoverPresentation
       {...popover}
       placement={placement}
       onOpenChange={onOpenChange}
@@ -852,16 +885,17 @@ function MenuPresentation({
       triggerMode={triggerMode}
       // One menu owner: a host draws every menu (its material, rows, search, keyboard and phone panel) from these
       // semantic rows. The package's own rows below are only for a host without a menu.
-      menu={{ items: ungroupedItems, groups, radioGroups, showGroupLabels, search, onSelect,
-        accessibilityLabel: popover.triggerAccessibilityLabel, keepOpen: sheet !== undefined }}
+      menu={{ items: boundItems, groups: boundGroups, radioGroups, showGroupLabels, search, onSelect,
+        accessibilityLabel: popover.triggerAccessibilityLabel, keepOpen: sheet !== undefined, getPreparationSignal }}
       presentation={kind}
       initialFocusRef={initialFocusRef}
       {...(sheet === undefined ? {} : { sheet })}
       {...(triggerCount === undefined ? {} : { triggerCount })}
       renderContent={(controls) => (
         <MenuRows
-          ungroupedItems={ungroupedItems}
-          groups={groups}
+          ungroupedItems={boundItems}
+          getPreparationSignal={getPreparationSignal}
+          groups={boundGroups}
           radioGroups={radioGroups}
           {...(search === undefined ? {} : { search })}
           {...(popover.testID === undefined ? {} : { testID: popover.testID })}
@@ -880,7 +914,7 @@ function MenuPresentation({
           restingHighlight={controls.presentation !== 'sheet'}
         />
       )}
-    />
+    />{write.notice}</>
   );
 }
 
