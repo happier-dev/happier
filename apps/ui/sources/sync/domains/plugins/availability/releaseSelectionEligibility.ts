@@ -19,11 +19,15 @@ export function readPluginAccountReleaseSelectionEligibility(input: Readonly<{
     const inventory = reader?.readMaterializations();
     // An absent census does not remove the existing direct immutable-release read.
     if (!reader || inventory?.kind !== 'available' || input.version === null) return eligible;
-    const candidates = inventory.materializations.filter(materialization =>
+    const observed = inventory.materializations.filter(materialization =>
         materialization.pluginId === input.pluginId
-        && materialization.version === input.version
-        && (input.serverIdentityId === null || materialization.serverIdentityId === input.serverIdentityId)
+        && materialization.version === input.version);
+    const selected = observed.filter(materialization =>
+        (input.serverIdentityId === null || materialization.serverIdentityId === input.serverIdentityId)
         && (input.machineId === null || materialization.machineId === input.machineId));
+    // Installed can display an Account-observed release absent from the selected
+    // machine. Classify that observation while preferring an exact local copy.
+    const candidates = selected.length > 0 ? selected : observed;
     return candidates.length > 0 && candidates.every(materialization => {
         const { validation } = reader.classifyRelease(materialization);
         return validation.kind === 'rejected' && validation.reason === 'non_portable';

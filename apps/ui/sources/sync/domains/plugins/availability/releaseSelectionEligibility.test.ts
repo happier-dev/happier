@@ -30,6 +30,17 @@ describe('Account release selection eligibility', () => {
         expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate, ...origin,
             reader: reader([materialization('versionedArchive')]) })).toEqual({ kind: 'eligible' });
     });
+    it('classifies the observed release when Installed is opened on a Machine without that plugin', () => {
+        const availability = reader([materialization('localPath')]);
+        expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate,
+            serverIdentityId: origin.serverIdentityId, machineId: 'machine-without-plugin', reader: availability }))
+            .toEqual({ kind: 'ineligible', reason: 'non_portable' });
+    });
+    it('keeps a portable observed release selectable from a Machine without that plugin', () => {
+        expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate,
+            serverIdentityId: origin.serverIdentityId, machineId: 'machine-without-plugin',
+            reader: reader([materialization('versionedArchive')]) })).toEqual({ kind: 'eligible' });
+    });
     it('does not let another Machine’s portable copy change the selected local installation', () => {
         const availability = reader([materialization('localPath'), materialization('versionedArchive', 'machine-other')]);
         expect(readPluginAccountReleaseSelectionEligibility({ ...coordinate, ...origin, reader: availability }))
