@@ -18,6 +18,7 @@ import {
   waitForTestEvent,
 } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import {
   createHomeGovernanceHarness,
@@ -2337,6 +2338,9 @@ describe('Environment → Variables: secrets linked into a Team Environment', ()
 
 
 it('Variables presents only this Environment’s pending ref-only secret request and retires it when settled', async () => {
+  await homes.reset();
+  await initializeRealAppRuntimeForTests();
+  installHomeGovernanceBoundaries(homes);
   const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
   const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
   const { storage } = await import('@/sync/domains/state/storage');
@@ -2373,5 +2377,5 @@ it('Variables presents only this Environment’s pending ref-only secret request
       body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2 }); });
     expect(screen.findByTestId('project-deployments.environment.secret-request.selected-secret')).toBeNull();
     expect(screen.findByTestId('approvals.in-place')).toBeNull();
-  } finally { await screen.unmount(); controller.retire(); account.dispose(); }
+  } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
 });

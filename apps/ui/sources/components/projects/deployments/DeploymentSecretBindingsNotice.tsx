@@ -8,16 +8,19 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
+import { DeploymentWithdrawnSecretControl, type DeploymentSecretControlTarget } from './DeploymentWithdrawnSecretControl';
 
 /** Overview and Variables consume the catalog's same metadata-only withdrawal result. */
 export function DeploymentSecretBindingsNotice(props: Readonly<{
     bindings: readonly EnvironmentSecretBindingV1[];
     scope: AccountSettingsScope | null;
+    controlTarget?: DeploymentSecretControlTarget;
 }>) {
     const router = useRouter();
     const reader = useSavedSecretReferenceResolver({ scope: props.scope, includeMaterial: false });
     const seen = new Set<string>();
-    return <>{props.bindings.map(binding => {
+    let withdrawn = false;
+    const notices = props.bindings.map(binding => {
         if (binding.purpose !== 'variable' || binding.source.kind !== 'secret' || !props.scope) return null;
         const ref = binding.source.ref;
         const key = JSON.stringify([binding.name, ref]);
@@ -26,11 +29,14 @@ export function DeploymentSecretBindingsNotice(props: Readonly<{
         const resolution = reader.resolve(ref);
         const status = resolution.displayStatus ?? resolution.status;
         if (status === 'ready') return null;
+        if (resolution.status === 'access_removed' || resolution.status === 'deleted') withdrawn = true;
         const id = `project-deployments.environment.variable.${binding.name}.unavailable`;
         return <SurfaceStateCard key={key} testID={id} size="line" kind="warning"
             title={binding.name} reason={sharedSecretStatusLabel(status)} diagnosticCode={status}
             note={t('projects.deployments.factSecretsValue')}
             action={{ label: t('settings.secrets'), testID: `${id}.repair`,
                 onPress: () => router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } }) }} />;
-    })}</>;
+    });
+    return <>{notices}{withdrawn && props.controlTarget
+        ? <DeploymentWithdrawnSecretControl target={props.controlTarget} /> : null}</>;
 }

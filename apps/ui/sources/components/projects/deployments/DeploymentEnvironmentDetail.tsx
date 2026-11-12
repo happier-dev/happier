@@ -1,3 +1,4 @@
+import { showDeploymentMoveSheet } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
@@ -11,6 +12,7 @@ import type {
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
@@ -56,6 +58,7 @@ import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { DeploymentSecretRequests } from './DeploymentSecretRequests';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 import { showDeploymentCiTokenSheet, type DeploymentCiInput } from './DeploymentCiToken';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -275,6 +278,14 @@ export const DeploymentEnvironmentDetail = React.memo(
     const platform = platforms.state.status === 'ready' && platformRef
       ? platforms.state.targets.find(target => target.pluginId === platformRef.pluginId
         && target.targetId === platformRef.localId) : undefined;
+    const platformRuntime = React.useMemo<Extract<PluginUiHostReadReferenceV1, { hostRead: 'deployments.logs' }> | undefined>(() => {
+      const receipt = active.snapshot.value;
+      const providerDeploymentId = receipt?.content.platform?.observation.providerDeploymentId;
+      const reference = receipt?.facts.logs[0]?.reference;
+      if (!platform?.runtimeLogs || !providerDeploymentId || !reference) return undefined;
+      return { hostRead: 'deployments.logs', sourceRevision: providerDeploymentId,
+        input: { ...reference, kind: 'runtime', serverId: props.serverId } };
+    }, [active.snapshot.value, platform?.runtimeLogs, props.serverId]);
     const [selectedMethod, setSourceMethod] = React.useState<Readonly<{ targetLinkId: string; value: DeploymentSourceMethodV1 }> | null>(null);
     const sourceMethod = platform?.sourceMethods.includes('upload')
       ? selectedMethod?.targetLinkId === runtime?.id && platform.sourceMethods.includes(selectedMethod.value)
@@ -635,6 +646,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     const environmentMenu = (
       <EnvironmentMenu
         onDuplicate={props.onDuplicate ? () => props.onDuplicate?.(detail) : undefined}
+        onMove={lifetime && runtime?.targetKind === 'ownServer' && activeReceipt
+          && detail.environment.capabilities.manageTargets && detail.environment.capabilities.manageBindings
+          && detail.environment.capabilities.deploy ? () => showDeploymentMoveSheet({
+            lifetime, detail, sourceLink: runtime, receipt: activeReceipt,
+          }) : undefined}
         onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && receipt.state === 'succeeded')
           ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
@@ -852,7 +868,9 @@ export const DeploymentEnvironmentDetail = React.memo(
           {tab === 'overview' ? (
             <>
               {deploymentAttentionLeaves(attention, 'secretWithdrawn') ? (
-                <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null} />
+                <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null}
+                  controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
+                    active: props.demand.mounted && props.demand.visible && props.demand.focused }} />
               ) : null}
               {sourceMethod && platform && runtime ? <ItemGroup header="none">
                 <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
@@ -1092,7 +1110,12 @@ export const DeploymentEnvironmentDetail = React.memo(
               onOpen={openReceipt}
             />
           ) : tab === 'variables' ? (
+            <>
+            <DeploymentSecretRequests environmentId={props.environmentId} scope={props.lifetime?.scope ?? null}
+              active={props.demand.mounted && props.demand.visible && props.demand.focused} />
             <DeploymentVariablesPanel
+              controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
+                active: props.demand.mounted && props.demand.visible && props.demand.focused }}
               draft={bindings}
               phone={props.phone}
               environmentName={props.environmentTitle ?? noEnvironmentName}
@@ -1111,6 +1134,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               referenceTargets={referenceTargets}
               domainRead={{ controller: props.controller, demand: props.demand }}
             />
+            </>
           ) : tab === 'domains' ? (
             <DeploymentDomainsPanel
               controller={props.controller}
@@ -1182,6 +1206,7 @@ export const DeploymentEnvironmentDetail = React.memo(
           deploymentId={buildDeploymentId}
           demand={props.demand}
           readLogs={props.readLogs ?? null}
+          platformRuntime={platformRuntime}
         />
         {props.phone && deployButton ? (
           <KeyboardStickyFooter>
@@ -1736,6 +1761,7 @@ function EnvironmentMenu(
     onOpenHistory?: () => void;
     onOpenSettings: () => void;
     onDuplicate?: () => void;
+    onMove?: () => void;
     /** The Logs companion beside the page: checked while it shows, and pressing again closes it. */
     logs?: Readonly<{ open: boolean; toggle: () => void }>;
     /** "Delete Staging…", last and destructive; null where this viewer cannot delete it. */
@@ -1750,6 +1776,9 @@ function EnvironmentMenu(
       ...(props.onDuplicate ? [{ id: 'duplicate', testID: 'project-deployments.environment.menu.duplicate',
         title: t('projects.deployments.copy.menu'),
         icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} /> }] : []),
+      ...(props.onMove ? [{ id: 'move', testID: 'project-deployments.environment.menu.move',
+        title: t('projects.deployments.move.menu'),
+        icon: <Icon name="arrow-right" size={16} color={theme.colors.text.secondary} /> }] : []),
       ...(props.logs ? [{ id: 'logs', testID: 'project-deployments.environment.menu.logs',
         title: t('projects.deployments.overviewStatus.logsTitle'), checked: props.logs.open,
         icon: <Icon name="article" size={16} color={theme.colors.text.secondary} /> }] : []),
@@ -1788,7 +1817,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [props.deleteTitle, props.onDuplicate, props.onOpenHistory, props.logs?.open, Boolean(props.logs), theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1801,6 +1830,7 @@ function EnvironmentMenu(
       onSelect={(id) => {
         if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
+        else if (id === 'move') props.onMove?.();
         else if (id === 'logs') props.logs?.toggle();
         else if (id === 'settings') props.onOpenSettings();
         else if (id === 'delete') props.onDelete();

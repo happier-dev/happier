@@ -43,6 +43,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { MachineServicesTab } = await import('./MachineServicesTab');
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 let serverId: string;
 const accountId = 'account';
@@ -1161,15 +1162,28 @@ it('withdrawn secret notice stops the admitted generation and offers Start only 
             : { ok: true, result: { kind: 'accepted', operation: { operationId: 'control' } } };
     });
     const target = { serverId, environmentId, machineIds: [machineId], active: true };
-    const screen = await renderScreen(<DeploymentSecretBindingsNotice scope={scope} bindings={[{
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    let credentialScope: ReturnType<typeof useServerCredentialAccountScopeBinding> | undefined;
+    function Notice() {
+        credentialScope = useServerCredentialAccountScopeBinding(serverId);
+        return <DeploymentSecretBindingsNotice scope={scope} bindings={[{
         purpose: 'variable', name: 'TOKEN', phase: 'runtime', source: { kind: 'secret',
             ref: formatSharedSavedSecretRefV1('withdrawn'), resourceRevision: 1 },
-    }]} {...{ controlTarget: target }} />);
+    }]} controlTarget={target} />;
+    }
+    const screen = await renderScreen(<Notice />);
+    await vi.waitFor(() => expect(credentialScope?.binding?.isCurrent()).toBe(true));
+    const { areServerProfileIdentifiersEquivalent } = await import('@/sync/domains/server/serverProfiles');
+    expect(areServerProfileIdentifiersEquivalent(credentialScope!.binding!.scope.serverId, serverId)).toBe(true);
+    expect(credentialScope?.binding?.scope.accountId).toBe(accountId);
+    expect(row.generation).toBe('generation-a');
     const id = 'project-deployments.environment.secret-control.machine.instance/web';
     await vi.waitFor(() => expect(screen.findHostByTestId(id + '.stop')).not.toBeNull());
     expect(screen.findHostByTestId(id + '.stop')!.props.accessibilityLabel).toBe(t('machineServices.control.stop'));
+    await vi.dynamicImportSettled();
     await screen.pressByTestIdAsync(id + '.stop');
-    await vi.waitFor(() => expect(operations).toHaveLength(1));
+    await vi.dynamicImportSettled();
+    await vi.waitFor(() => expect({ operations, outcome: screen.findByTestId(id + '.outcome') ? textOf(screen.findByTestId(id + '.outcome')!) : null }).toMatchObject({ operations: [expect.anything()], outcome: null }));
     expect(operations[0]).toMatchObject({ serverId, machineId, serviceId: row.serviceId,
         expectedGeneration: row.generation, operation: 'stop' });
     expect(screen.findHostByTestId(id + '.start')).toBeNull();

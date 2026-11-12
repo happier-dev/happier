@@ -1,4 +1,3 @@
-import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -31,6 +30,7 @@ import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage
 import type { MachineServicesReadError } from './useMachineServices';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
+import { MachineServiceControlOutcomeNotice } from './MachineServiceControlOutcomeNotice';
 import { showServiceCommandSheet } from './command/ServiceCommandSheet';
 import { canAdoptMachineService } from './adoption/machineServiceAdoptionPresentation';
 import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionSheet';
@@ -51,7 +51,6 @@ import {
 import {
   useMachineServiceControl,
   useMachineServiceDetail,
-  type MachineServiceControlOutcome,
   type MachineServiceDetailFacts,
 } from './useMachineServiceDetail';
 import { useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
@@ -325,25 +324,8 @@ function MachineServicePresent(props: Readonly<{
         <View style={styles.facts}>
           <FactStrip facts={facts} testID="machine-service-facts" />
         </View>
-        {control.outcome?.kind === 'unavailable' || control.outcome?.kind === 'failed' ? (
-          <SurfaceStateCard
-            testID="machine-service-control-outcome"
-            kind={control.outcome.kind === 'unavailable' ? 'unavailable' : 'error'}
-            size="line"
-            title={control.outcome.failure && control.outcome.failure.error !== control.outcome.errorCode
-              ? presentActionExecutionFailure({ ...control.outcome.failure, message: control.outcome.failure.error }).reason
-              : controlOutcomeCopy(control.outcome, serviceName, machineName)}
-            reason={control.outcome.kind === 'unavailable' ? t('machineServices.control.unavailableRemedy') : undefined}
-            diagnosticCode={control.outcome.errorCode}
-            diagnosticDetail={control.outcome.failure ? presentActionExecutionFailure(control.outcome.failure).technicalDetails
-              .filter(line => line.key !== 'code').map(line => `${line.label}: ${line.value}`).join('\n') : undefined}
-          />
-        ) : control.outcome ? (
-          <Text variant="meta" testID="machine-service-control-outcome"
-            style={[styles.outcome, control.outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.foreground }]}>
-            {controlOutcomeCopy(control.outcome, serviceName, machineName)}
-          </Text>
-        ) : null}
+        {control.outcome ? <MachineServiceControlOutcomeNotice outcome={control.outcome}
+          service={serviceName} machine={machineName} testID="machine-service-control-outcome" style={styles.outcome} /> : null}
       </ItemGroup>
       {usage && detail ? (
         // Usage (lab `services/usage`): each replica's usage from the detail's one sample, measured on open
@@ -460,15 +442,6 @@ function ServiceMoreMenu(props: Readonly<{
   );
 }
 
-function controlOutcomeCopy(outcome: MachineServiceControlOutcome, service: string, machine: string): string {
-  switch (outcome.kind) {
-    case 'approval': return t('machineServices.control.approval');
-    case 'unknown': return t('machineServices.control.unknown', { machine });
-    case 'unsupported': return t('machineServices.control.unsupported', { machine, service });
-    case 'unavailable': return t('machineServices.control.unavailable');
-    case 'failed': return t('machineServices.control.failed', { service });
-  }
-}
 
 /**
  * The service's facts (lab `fc-facts`), each only when its producer supplies it: health from the native source,

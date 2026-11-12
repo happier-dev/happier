@@ -2,6 +2,7 @@ import * as React from 'react';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBindingsPatchInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { deriveApprovalArtifactListFactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -29,8 +30,7 @@ export function useEnvironmentBindingApprovalChoice(input: EnvironmentBindingApp
         ? approval.decision.narrowedInput : original;
     const needsSelection = React.useMemo(() => {
         if (approval?.status !== 'open' || approval.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) return false;
-        const parsed = DeploymentBindingsPatchInputV1Schema.safeParse(original);
-        return parsed.success && parsed.data.set.some(row => row.source.kind === 'secret' && row.source.ref === 'person_selects');
+        return deriveApprovalArtifactListFactsV1(approval).environmentSecretRequest !== undefined;
     }, [approval?.actionId, approval?.status, original]);
     const ownerRef = React.useRef({ artifactId: input.artifactId, original, origin,
         serverId: input.serverId, actionId: approval?.actionId, status: approval?.status });

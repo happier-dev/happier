@@ -50,6 +50,7 @@ import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecre
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import type { DeploymentSecretControlTarget } from './DeploymentWithdrawnSecretControl';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 import { DeploymentEnvironmentDomainSelect } from './DeploymentEnvironmentDomainSelect';
 import { useDeploymentProviderVariables } from './useDeploymentProviderVariables';
@@ -115,6 +116,7 @@ export const DeploymentVariablesPanel = React.memo(
       providerVariablesActive?: boolean;
       /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
       scope: AccountSettingsScope | null;
+      controlTarget?: DeploymentSecretControlTarget;
       /** The same Home/Account's lifetime: "Use a saved secret…" picks only while it is current. */
       lifetime: ServerAccountScopeLifetime | null;
       /**
@@ -654,7 +656,7 @@ export const DeploymentVariablesPanel = React.memo(
           </CoreCollectionScope>
         )}
         {mode === 'table' ? <DeploymentSecretBindingsNotice
-          bindings={editor.rows.map(row => row.binding)} scope={props.scope} /> : null}
+          bindings={editor.rows.map(row => row.binding)} scope={props.scope} controlTarget={props.controlTarget} /> : null}
         {mode === 'table' && disclosedRow && disclosedEntry && props.scope ? (
           <ItemGroup title={disclosedRow.name} action={<SectionActionButton
             testID={`project-deployments.environment.variable.${disclosedRow.name}.value.close`}
