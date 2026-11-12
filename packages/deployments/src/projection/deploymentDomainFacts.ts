@@ -32,8 +32,9 @@ export function projectDeploymentDomainFactsV1(domain: DeploymentDomainHeaderV1,
 /** Ingress placement, rather than controller role, establishes the observer's vantage. */
 export function deploymentDomainProbeVantageV1(environment: DeploymentEnvironmentHeaderV1,
     targetLink: DeploymentTargetLinkHeaderV1, observerMachineId: string): 'sameMachine' | 'outside' {
-    return (environment.ingress?.kind === 'edgeCaddy' && environment.ingress.edgeMachineId === observerMachineId
-        || targetLink.members.some(member => member.state === 'active' && member.machineId === observerMachineId))
+    return (environment.ingress?.kind === 'edgeCaddy'
+        ? environment.ingress.edgeMachineId === observerMachineId
+        : targetLink.members.some(member => member.state === 'active' && member.machineId === observerMachineId))
         ? 'sameMachine' : 'outside';
 }
 

@@ -197,6 +197,9 @@ DNS result and returns typed certificate and Needs-you facts for both people and
 agents. Outside evidence remains distinct from a check on the serving Machine;
 a local success cannot establish outside reachability. Missing checks and an
 unreachable controller remain explicit rather than implying a healthy Domain.
+For edge Caddy ingress, the edge Machine is the serving Machine: a different
+runtime member can supply outside evidence. Without a separate edge, active
+runtime members supply same-Machine evidence.
 
 Custom certificates become due for replacement at two thirds of their observed
 lifetime. Known validity dates can advance the projected state when read, without

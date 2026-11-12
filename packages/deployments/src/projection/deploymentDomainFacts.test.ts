@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1 } from './deploymentDomainFacts';
+import { deploymentDomainProbeVantageV1, projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1 } from './deploymentDomainFacts';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const domain: DeploymentDomainHeaderV1 = { v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'link',
     state: 'removing', revision: 2, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 2,
@@ -12,6 +13,16 @@ const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'removal
     title: 'Remove Domain', createdAt: 1, startedAt: 2, cancellation: 'supported' };
 
 describe('Domain lifecycle projection', () => {
+    it('uses the serving edge for vantage even when the observer is an active runtime member', () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ ingress: { kind: 'edgeCaddy', edgeMachineId: 'edge' } });
+        const targetLink = createDeploymentTargetLinkHeaderV1({ machines: ['runtime'], members: [
+            { machineId: 'runtime', installationId: 'installation-runtime', state: 'active' },
+        ] });
+        expect(deploymentDomainProbeVantageV1(environment, targetLink, 'runtime')).toBe('outside');
+        expect(deploymentDomainProbeVantageV1(environment, targetLink, 'edge')).toBe('sameMachine');
+        expect(deploymentDomainProbeVantageV1({ ...environment, ingress: undefined }, targetLink, 'runtime')).toBe('sameMachine');
+    });
+
     it('makes typed not_found recoverable without claiming native removal or changing persisted intent', () => {
         const result = projectDeploymentDomainFactsV1(domain, 'account', ActionOperationGetV1ResponseSchema.parse({ kind: 'not_found' }));
         expect(result).toMatchObject({ state: 'outcome_unknown', retryRemoval: true, failure: { errorCode: 'not_found' } });

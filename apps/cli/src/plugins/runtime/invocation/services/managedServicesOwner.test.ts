@@ -2318,7 +2318,9 @@ describe('managed-services SVC09 owner', () => {
             expect(owner.resolveProjectService({ ...target, managedServiceId: input.serviceId })).toEqual({ status: 'unknown' });
             expect(owner.resolveProjectService({ ...target, machineId: 'other-machine' })).toEqual({ status: 'mismatch' });
             expect(owner.resolveProjectService({ ...target, cwd: `${workspace.rootPath}/other` })).toEqual({ status: 'mismatch' });
-            expect(owner.resolveProjectService({ ...target, declaration: undefined })).toEqual({ status: 'mismatch' });
+            // b15b25302c9: omitted qualifiers use the retained instance's binding;
+            // explicit conflicting declarations below must still refuse.
+            expect(owner.resolveProjectService({ ...target, declaration: undefined })).toEqual({ status: 'found', handle });
             expect(owner.resolveProjectService({ ...target, declaration: {
                 ...declaration, selection: { kind: 'manifest', name: 'other' },
             } })).toEqual({ status: 'mismatch' });
