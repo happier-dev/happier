@@ -27,10 +27,13 @@ export type MachineSetupAcceptedAppRunV1 = Readonly<{
 export type MachineSetupSourceFactsMapV1 = Record<string, Readonly<{
   firstPresence?: Record<string, FirstPresence>;
   acceptedAppRuns?: MachineSetupAcceptedAppRunV1[];
+  /** Unfinished original script indices after a confirmed partial Apply. */
+  pendingScripts?: number[];
 }>>;
 /** Native target facts belong to this Machine, never to Home-certified copies. */
 export const MachineSetupSourceFactsMapV1Schema: z.ZodMiniType<MachineSetupSourceFactsMapV1> = lazyZodSchema(() => z.record(id(), z.strictObject({
   firstPresence: z.optional(z.record(id(), firstPresence)),
+  pendingScripts: z.optional(z.array(revision())),
   acceptedAppRuns: z.optional(z.array(z.strictObject({
     intent: StoredAppPresetInputV1Schema, authoredKey: z.optional(id()), homeId: id(), runId: WorkflowRunIdV1Schema,
     sourceKey: id(), blockId: id(), actionId: z.enum(['deployments.deploy', 'deployments.templates.instantiate']),
@@ -109,23 +112,48 @@ export function readMachineSetupFirstPresentV1(sources: MachineSetupSourceV1,
   return values;
 }
 
-/** Full copies remain saved; only changed operands execute on a reviewed Update. */
+/** Confirmed script completion is target-owned and bound to its ordered inputs. */
+function projectMachineSetupScriptExecution(currentSources: MachineSetupSourceV1,
+  proposedSources: MachineSetupSourceV1, sourceFacts: MachineSetupSourceFactsMapV1 | undefined,
+  changedOnly: boolean): MachineSetupV1[] {
+  const pending = new Map(Object.entries(sourceFacts ?? {}).map(([origin, facts]) => [origin, new Set(facts.pendingScripts)]));
+  const recovering = [...pending.values()].some(indices => indices.size > 0);
+  if (!changedOnly && !recovering) return proposedSources.map(source => source.setup);
+  const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
+  const proposed = mergeMachineSetupsV1(proposedSources.map(source => source.setup));
+  const sameToolchain = current.ok && proposed.ok && sameStrictJsonValue(current.setup.toolchain, proposed.setup.toolchain);
+  const previous = new Map(currentSources.map(source => [machineSetupSourceOriginKeyV1(source), source.setup]));
+  return proposedSources.map(source => {
+    const origin = machineSetupSourceOriginKeyV1(source);
+    const saved = previous.get(origin);
+    return { ...source.setup, ...(source.setup.scripts ? { scripts: source.setup.scripts.map((script, index) => {
+      const completed = sameToolchain && sameStrictJsonValue(saved?.secretRefs, source.setup.secretRefs)
+        && sameStrictJsonValue(saved?.scripts?.[index], script)
+        && (!recovering || !pending.get(origin)?.has(index));
+      // Keep the full source coordinates used by finiteCommand failure.step.
+      return completed && script.body ? { ...script, body: '' } : script;
+    }) } : {}) };
+  });
+}
+
+/** Full copies remain saved; Update and partial recovery share one execution projection. */
 export function projectMachineSetupSourceChangeExecutionV1(currentSources: MachineSetupSourceV1,
-  proposedSources: MachineSetupSourceV1, mergedSetup: MachineSetupV1, currentExclusions: readonly MachineSetupExclusionV1[]):
+  proposedSources: MachineSetupSourceV1, mergedSetup: MachineSetupV1, currentExclusions: readonly MachineSetupExclusionV1[],
+  options: Readonly<{ currentSourceFacts?: MachineSetupSourceFactsMapV1; mode?: 'update' | 'recovery' }> = {}):
   Readonly<{ ok: true; sources: MachineSetupV1[]; setup: MachineSetupV1 }>
   | Extract<ReturnType<typeof mergeMachineSetupsV1>, { ok: false }> {
   const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
   if (!current.ok) return current;
+  const scriptSources = projectMachineSetupScriptExecution(currentSources, proposedSources, options.currentSourceFacts, options.mode !== 'recovery');
+  if (options.mode === 'recovery') return { ok: true, sources: scriptSources,
+    setup: { ...mergedSetup, scripts: scriptSources.flatMap(source => source.scripts ?? []) } };
   const unchangedToolchain = sameStrictJsonValue(current.setup.toolchain, mergedSetup.toolchain);
   const oldItems = new Set(selectMachineSetupRecipeItemsV1(currentSources.map(source => source.setup), currentExclusions)
     .map(({ item }) => machineSetupItemKeyV1(item)));
-  const previous = new Map(currentSources.map(source => [machineSetupSourceOriginKeyV1(source), source]));
-  const sources = proposedSources.map(source => {
-    const saved = previous.get(machineSetupSourceOriginKeyV1(source));
-    const { toolchain, ...setup } = source.setup;
+  const sources = proposedSources.map((source, index) => {
+    const { toolchain, ...setup } = scriptSources[index]!;
     return { ...setup, ...(!unchangedToolchain && toolchain ? { toolchain } : {}),
       ...(source.setup.items ? { items: source.setup.items.filter(item => item.kind === 'app' || !oldItems.has(machineSetupItemKeyV1(item))) } : {}),
-      ...(source.setup.scripts ? { scripts: source.setup.scripts.filter((script, index) => !sameStrictJsonValue(script, saved?.setup.scripts?.[index])) } : {}),
     };
   });
   const { toolchain, ...setup } = mergedSetup;
@@ -288,7 +316,9 @@ function mergeMachineSetupSourceFacts(current: MachineSetupDesiredV1, sources: M
   observed: MachineSetupSourceFactsMapV1 = {}): MachineSetupSourceFactsMapV1 | undefined {
   const incumbent = readMachineSetupFirstPresentV1(current.sources, current.sourceFacts);
   const facts: MachineSetupSourceFactsMapV1 = {};
-  for (const source of sources) {
+  const recovering = Object.values(current.sourceFacts ?? {}).some(facts => facts.pendingScripts?.length);
+  let execution: MachineSetupV1[] | undefined;
+  for (const [sourceIndex, source] of sources.entries()) {
     const origin = machineSetupSourceOriginKeyV1(source);
     const firstPresence: Record<string, FirstPresence> = {};
     for (const item of source.setup.items ?? []) {
@@ -314,9 +344,15 @@ function mergeMachineSetupSourceFacts(current: MachineSetupDesiredV1, sources: M
       for (const reference of candidates) if (!acceptedAppRuns.some(retained => sameStrictJsonValue(retained, reference)))
         acceptedAppRuns.push(reference);
     }
-    if (Object.keys(firstPresence).length || acceptedAppRuns.length) facts[origin] = {
+    let pendingScripts = observed[origin]?.pendingScripts;
+    if (pendingScripts === undefined && recovering) {
+      execution ??= projectMachineSetupScriptExecution(current.sources, sources, current.sourceFacts, false);
+      pendingScripts = execution[sourceIndex]?.scripts?.flatMap((script, index) => script.body ? [index] : []);
+    }
+    if (Object.keys(firstPresence).length || acceptedAppRuns.length || pendingScripts?.length) facts[origin] = {
       ...(Object.keys(firstPresence).length ? { firstPresence } : {}),
       ...(acceptedAppRuns.length ? { acceptedAppRuns } : {}),
+      ...(pendingScripts?.length ? { pendingScripts } : {}),
     };
   }
   return Object.keys(facts).length ? facts : undefined;

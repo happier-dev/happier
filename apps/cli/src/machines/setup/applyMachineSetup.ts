@@ -10,7 +10,7 @@ import type { MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/ma
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { selectMachineSetupRecipeItemsV1,
   machineSetupItemKeyV1, projectMachineSetupSourceChangeExecutionV1,
-  type MachineSetupExclusionV1, type MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+  type MachineSetupExclusionV1, type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { resolveMachineSetupNativeEffects } from './machineSetupNativeEffects';
 import { createSetupOperationSnapshot } from './setupOperationSnapshot';
@@ -52,7 +52,8 @@ export type ApplyMachineSetupInput = Readonly<{
   removalPlans?: NonNullable<MachineSetupPlanResultV1['removalPlans']>;
   exclusions?: readonly MachineSetupExclusionV1[];
   /** Captured by the receiving target, never supplied as caller authority. */
-  sourceChange?: Readonly<{ currentSources: MachineSetupSourceV1; currentExclusions: readonly MachineSetupExclusionV1[]; sources: MachineSetupSourceV1 }>;
+  sourceChange?: Readonly<{ currentSources: MachineSetupSourceV1; currentSourceFacts?: MachineSetupSourceFactsMapV1;
+    currentExclusions: readonly MachineSetupExclusionV1[]; sources: MachineSetupSourceV1; mode?: 'update' | 'recovery' }>;
   elevation?: MachineElevationDependencies;
   groupRefreshNative?: DaemonGroupRefreshNative;
   operation: ProjectSetupOperationContext;
@@ -74,6 +75,8 @@ export type ApplyMachineSetupInput = Readonly<{
   onAdmitted?: () => Promise<void>;
   /** Native first-presence belongs to the executor that observed it before mutation. */
   onSetupApplied?: (plans: readonly MachineSetupEffectPlanV1[], result: MachineSetupApplyResultV1) => void;
+  /** Receiving metadata publication retains these confirmed completions if a later script fails. */
+  onScriptCompleted?: (index: number) => void;
   isCurrent(): Promise<boolean>;
 }>;
 type AdmittedMachineSetupInput = Omit<ApplyMachineSetupInput, 'setup'> & Readonly<{
@@ -102,7 +105,8 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
     ok: false, errorCode: 'plan_changed', error: 'plan_changed',
   };
   const execution = sourceChange ? projectMachineSetupSourceChangeExecutionV1(sourceChange.currentSources,
-    sourceChange.sources, merged.setup, sourceChange.currentExclusions) : { ok: true as const, setup: merged.setup, sources };
+    sourceChange.sources, merged.setup, sourceChange.currentExclusions,
+    { currentSourceFacts: sourceChange.currentSourceFacts, mode: sourceChange.mode }) : { ok: true as const, setup: merged.setup, sources };
   if (!execution.ok) return execution;
   if (recipePlans === undefined && sources.some(setup => setup.items?.length)) return {
     ok: false, errorCode: 'machine_setup_items_unsupported', error: 'machine_setup_items_unsupported',
@@ -381,7 +385,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     if (observe) {
       const observed = await observe();
       if (signal.aborted) return fail('cancelled');
-      if (observed.status === 'satisfied') continue;
+      if (observed.status === 'satisfied') { input.onScriptCompleted?.(index); continue; }
       if (observed.status !== 'drifted') return fail('machine_setup_script_check_unavailable');
     }
     const shell = resolveFiniteTerminalShell(script.body, hostEnv, platform);
@@ -393,6 +397,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       if (verified.status !== 'satisfied') return fail(verified.status === 'drifted'
         ? 'machine_setup_script_check_failed' : 'machine_setup_script_check_unavailable');
     }
+    input.onScriptCompleted?.(index);
   }
   if (refreshDaemonGroups) {
     input.operation.operationProgress.update({ phase: 'setup', label:

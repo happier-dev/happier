@@ -753,6 +753,14 @@ the response's completeness fact, including genuinely partial answers.
 
 ## Explicit session creation targets (0.3 development)
 
+Fresh Workflow Session birth requires the installed startup Action context and
+prepares `session.spawn_new` once before creating the Session. Discussion model
+birth reuses its reservation's Workflow context. Missing admission context is
+refused as `approval_context_unavailable`; it cannot fall through to direct
+creation. Recovery observes an already admitted startup operation without
+admitting or launching another birth. Resuming an existing inactive Session
+continues through its existing Session-resume owner.
+
 Session creation and spawn-nonce recovery use the exact-machine RPC transport.
 An unavailable explicit target cannot redirect a new launch or its recovery to a
 replacement machine. Existing Session operations that follow a recorded Machine
@@ -1475,6 +1483,43 @@ those too (each item carries `listed`), and hidden Projects are omitted unless
 keys, and incomplete or explicitly limited results report their coverage.
 The Projects renderer opens full checkout addresses and does not enroll folders;
 folder selection goes through the admitted Open workflow.
+
+### Workspace source (0.3 development)
+
+Every reader and writer of a Session's workspace reaches files, metadata,
+commands, tools and change events through one port, `WorkspaceSource`
+(`apps/cli/src/workspaces/source/`). The source is chosen once per admitted
+request by `selectWorkspaceSource`: this Machine's disk (`localWorkspaceSource`,
+today's native leaves) or, when the Session placement owner supplies
+`resolveWorkspaceTarget` to `createFilesystemEffectAdmission`, the Session's
+execution target. The filesystem RPC registrar, the daemon filesystem Action
+executor, the SCM registrar and the native-transfer registrar bind that decision;
+Session runtime work reads the hosted Session scope's `workspaceSource`
+(`bindHostedSessionWorkspaceSource`). Consumers read `currentWorkspaceSource()`.
+
+The binding uses AsyncLocalStorage because the canonical Action dispatcher
+rebuilds the admitted context into the protocol-owned `ActionExecutorContext`,
+which must not carry host-private objects; other host-private request facts
+(server URL, requester credentials, SCM command runner) ride the same mechanism.
+Work outside a request or Session is Machine-level and reads this Machine's
+disk. Deferred work captures its source: upload finalize uses the source chosen
+at init, a workspace watch keeps its source for its lifetime, and watch
+subscriptions and the SCM status-snapshot cache are keyed by source id plus path.
+Tests replace the unbound default with a failing source
+(`replaceUnboundWorkspaceSource`), so a consumer that escapes its captured source
+fails instead of reading this Machine.
+
+Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
+facts only for the local source; a target confines each operation to its root
+with its own facts (`confineWorkspaceTargetPath`) and never falls back to this
+Machine's disk. Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
+destination, swap, restore on failure); folder ZIP download, prepared entry
+exports and prepared entry imports stage through host temp space and reuse the
+existing ZIP and confined capture/apply owners. Language intelligence answers
+`unsupported` for a target until language servers can be started inside it, and
+the requester-isolated native channel refuses a target (requester isolation is a
+host OS-user boundary). No target source ships yet; the session host's holder
+implements the port.
 
 ### Project definitions and guarded files (0.3 development)
 
@@ -2971,7 +3016,16 @@ Target observations live in the optional `MachineSetupDesiredV1.sourceFacts`
 sibling map, not inside Home-certified source copies. The owning Machine is the
 target; map entries use the canonical source-origin key. Each entry can carry
 `firstPresence` keyed by the canonical setup/software item and `acceptedAppRuns`
-for exact app intent/accepted Run-child correspondence. Setup Workflow leaves
+for exact app intent/accepted Run-child correspondence. After a confirmed partial
+script Apply, `pendingScripts` retains unfinished original script indices through
+the same desired-field CAS, outside the full certified copies. Plan and receiving
+Apply use the source-change execution projection to skip confirmed completion;
+changed script operands/positions, secret references and toolchain changes
+invalidate the corresponding completion. Execution retains the original coordinates used
+by finite-command failure details, and successful completion clears the pending
+facts. An explicit full Reapply after success still runs the scripts. Unconfirmed
+native outcomes retain their existing recovery refusal. Literal scripts have no
+live per-step progress producer; recipe progress remains on its existing owner. Setup Workflow leaves
 carrying app children use the existing sealed requester Account path, also used
 by deployment leaves, so the native correspondence reader retains the
 requester's custody rather than borrowing the installation custodian's Account.
@@ -6667,6 +6721,53 @@ helper-held custody. Once a runner holder dies, the Job name can disappear while
 members live; owner-tag and captured-tree evidence then feed the same remainder and
 Left-behind paths. Job absence is not evidence that all its former members exited.
 
+#### Per-Session Agent holder (0.3 development source)
+
+Long-lived Agent processes are started by a tiny native holder
+(`happier-session-holder`, see [binary runtime](binary-runtime.md)) instead of
+directly by the runner. The holder owns the Agent's stdio pipes and makes the
+Agent the leader of its own process group; the runner talks to it over a
+same-user local socket (Unix socket created 0600 in a 0700 per-user directory under
+`XDG_RUNTIME_DIR` or the OS temp dir; on Windows a local named pipe with an
+owner-only DACL that rejects remote clients). No network port is opened.
+`happier-session-holder attach --socket <path>` bridges a holder to stdio for exec
+channels and exits when the holder closes that connection.
+
+- One decision: `resolveAgentSessionHolderLaunch`
+  (`src/subprocess/supervision/sessionHolder.ts`) decides whether a launch is held.
+  The Exec owner (`spawnAuthorizedHostExecLaunchForHost`) asks it for Agent launches
+  (`nativeLaunch` qualifier on a long-lived spawn or protocol client, not finite runs,
+  managed services or native-tool handoffs). The ACP transport asks it for
+  host-finalized launches. A missing holder executable is the typed launch refusal
+  `session_holder_unavailable`; there is no direct-spawn path. A Windows verbatim
+  command line is passed with `serve --windows-verbatim` and appended unquoted.
+- One spawn owner: the ACP transport (`AcpBackend`) starts its Agent through
+  `spawnSupervisedPluginProcess` like every Exec launch (detached POSIX group,
+  stdout/stderr read by ACP and not retained by the supervisor), and Stop and
+  recovery dispose that supervised handle instead of a separate tree kill.
+- `SessionHolderChild` is a `ChildProcess` whose pipes run over the holder socket,
+  so the process supervisor, protocol clients, Stop and tree termination are
+  unchanged. Its `pid` is the Agent's pid.
+- Replay: holder output frames carry a sequence number and stay in the holder until
+  the runner acknowledges them; the runner acknowledges once the bytes left its
+  stream buffers for their consumers, which hand Agent output to the Session's own
+  durable outbox. While no runner is attached the holder stops reading the Agent
+  (pipe backpressure). A new attachment replaces the previous connection and
+  receives every unacknowledged frame; delivery is at-least-once only for frames
+  delivered but not yet acknowledged when a runner died.
+- State: a dropped channel is "state unknown, reattach" (`holderDisconnected`);
+  only the holder's exit frame means the Agent exited. The one local exception is
+  that the holder and the Agent are both observed gone.
+- Custody: the holder inherits the runner's custody unit (the Linux session scope,
+  the Windows session Job), and neither ends when the runner dies, so the Session's
+  Agent tree stays in the same unit. Agent isolation is unchanged: the holder runs
+  the finalized `sudo … happier agent-launch` tuple and its stdin preamble.
+- Adoption: `attachSessionHolderChild(socketPath)` plus
+  `spawnSupervisedPluginProcess({ sessionHolder: { kind: 'adopt', child } })` gives a
+  replacement runner the same supervised handle over the running Agent. Wiring the
+  daemon's runner respawn to adopt instead of starting a new Agent is not done yet
+  (see the P03-HOLDER report).
+
 ### Runner start graph
 
 Every runner evaluates the static import graph of
@@ -6682,6 +6783,38 @@ for the whole catalog: `ActionSpec.contextualDefaults` derives from the input
 schema, so reading it for every spec builds every Action input schema.
 `runHostSessionRuntime.importGraph.test.ts` and
 `listBuiltInHappierTools.lazySchemas.test.ts` hold these contracts.
+
+### Sessions hosted in one process
+
+A runner is a host with one Session; the code path is the same for several.
+[`hostedSessionScope.ts`](../apps/cli/src/agent/runtime/lifecycle/hostedSessionScope.ts)
+gives each Session an async scope that `runHostSessionRuntime` and the CLI runner
+command enter. The scope carries the Session's process environment: the daemon
+handoff keys (runner bootstrap, daemon-service authority, attach file, requester
+credential custody), the `HAPPIER_PROCESS_OWNER` tag and policy overlays. Session
+code reads and writes `sessionProcessEnvironment()`, never `process.env`, so a
+child inherits only its own Session's owner and credentials. Today's runner passes
+the live `process.env`, which keeps its behaviour unchanged.
+[`runnerTerminationHandlers.ts`](../apps/cli/src/agent/runtime/lifecycle/runnerTerminationHandlers.ts)
+owns process signals, fatal errors and exit for every Session in the process: one
+listener set, signals end every Session, a fatal error raised inside one Session's
+async work ends only that Session, an error no Session can be named for is logged
+and ends none while several run, and the process exits after its last Session.
+The scope also carries the Session id and working directory once the runtime
+knows them: log lines written inside a Session end with `[session <id>]` (one
+process logger and file, no sink swap), and working-directory fallbacks use
+`sessionWorkingDirectory()` instead of the process cwd (never `process.chdir`).
+Session-owned async work must be awaited by the Session's root task or own its
+failure at its start site (`.catch`); every detached start in `runHostSessionRuntime`
+and the session loop lifecycle does, so attribution of that work does not depend on
+the runtime. Only a promise nobody handles reaches the process handler:
+Node attributes it to the scope, Bun 1.4.4 cannot (it attributes thrown errors in
+timers and I/O callbacks only), so on Bun such a rejection in a multi-Session host
+is logged and ends no Session; the fix belongs at the producer that dropped it.
+Start-up failures are typed errors (`StartupMachineIdMissingError`), not
+`process.exit`. Still process-wide, owned elsewhere: the Windows Job cache (holder)
+and the PID-keyed Session registry (local channel), and the active Account
+settings snapshot (one Account per host).
 
 ### One tree terminator and owner-end recovery
 
@@ -8984,6 +9117,30 @@ RPC is used to send commands over the Socket.IO connection:
 - The daemon registers a spawn-session handler so the server/mobile client can ask it to start a local session.
 
 This mechanism allows the server and mobile clients to drive local actions without exposing a broad REST surface.
+
+### Same-machine Session RPC channel (0.3 development)
+
+`callSessionRpc` (`src/session/transport/rpc/sessionRpc.ts`) is the one router for Session RPCs, with about 25 production callers. Only the **daemon** process takes the same-machine local channel (`enableLocalSessionRpcCalls()` at daemon start), and only when all of these hold:
+- the platform is not Windows;
+- the method's Session context is mintable from the Session id alone (`resolveSocketRpcSameAccountSessionAuthorizationV1`);
+- the caller's credential kind is `account`, `account_directory` or `terminal` (a routing filter for honest callers, not a security control);
+- an owner-only descriptor for the sessionId names the caller's Account and an owner-only endpoint directory whose parent is sticky or owner-only.
+
+Every other caller, and every other case, uses the server path.
+
+**The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. The daemon is identified by its pid in the daemon's own published state, which also covers a daemon restart or adoption.
+
+Any other same-user process gets `403 local_session_peer_refused` before dispatch; for example, a sandboxed agent shell posting directly to the socket. This holds even for a sandbox that can read the descriptor. No secret exists in files, env or argv. The router treats that refusal, connect-refused and 404 as "not dispatched" and uses the server.
+
+Endpoint: a 0600 unix socket in a 0700 directory. Its root is `$XDG_RUNTIME_DIR` if present, else the Happier home's private `run/` when the path fits the socket-path limit, else the user temp dir.
+
+The local hop carries the plain codec. Both ends hold the Session key, the hop never leaves the machine, and only the daemon is admitted. Callers therefore read no Session record (`{ mode: 'deferred' }` via `deferSessionRpcEncryption` / `withTrackedSessionRpcContext`). Server-path packets stay sealed.
+
+The host re-mints the Session context, stamps `callerAuthority` = min(host credential, caller), refuses server-only fields and enforces the relay's packet budget (413). Handlers keep the Session's real content mode.
+
+Session marker removal (the daemon's runner-liveness owner) calls `retireGoneLocalSessionRpcHost`. It deletes the descriptor only if it still names that runner's pid, and ends this process's in-flight calls to that pid.
+
+Pre-existing, not changed here: the runner→daemon control path is loopback TCP authenticated by the `controlToken` in the daemon state file. A same-user process that can read `~/.happier` and reach loopback can call it. The proposed fix is to move it to the same owner-only unix socket with peer-identity admission.
 
 ### Session-log RPC scopes (0.3 development)
 

@@ -74,6 +74,46 @@ describe('admitted Machine setup snapshot lifetime', () => {
       desiredRevision: 3, sources: [{ kind: 'direct', setup: { items: [replacement] } }],
     });
   });
+  it.each([['plain', false], ['plain', true], ['e2ee', false], ['e2ee', true]] as const)('recovers only unfinished scripts after a confirmed failed step (%s, update %s)', async (accountEncryptionMode, update) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    nativeTerminal.onLaunch = () => {
+      const body = nativeTerminal.launches.at(-1)?.args.at(-1);
+      queueMicrotask(() => nativeTerminal.exit?.(body === 'exit 23' ? 23 : 0));
+    };
+    const scripts = [{ body: 'printf FIRST', affects: 'none' as const },
+      { body: 'exit 23', affects: 'none' as const }, { body: 'printf THIRD', affects: 'none' as const }];
+    const sources = [{ kind: 'direct' as const, setup: { scripts } }];
+    const apply = async (next: typeof sources, requestId: string) => {
+      const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+        input: { ...target, sources: next, mode: 'effects', ...(update && requestId !== 'first-failure' ? { removeItemKeys: [] } : {}) },
+        context: fixture.context('machines.setup.plan'),
+      }));
+      return fixture.apply({ input: { ...target, desiredRevision: plan.desiredRevision,
+        sources: plan.sources, exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [],
+        ...(plan.removeItemKeys === undefined ? {} : { removeItemKeys: plan.removeItemKeys }) },
+        context: fixture.context('machines.setup.apply', requestId) });
+    };
+    expect(await apply(sources, 'first-failure')).toMatchObject({ ok: false,
+      errorCode: 'machine_setup_setup_failed', details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23 } });
+    expect(await apply(sources, 'unchanged-recovery')).toMatchObject({ ok: false,
+      errorCode: 'machine_setup_setup_failed', details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23 } });
+    expect(nativeTerminal.launches.map(launch => launch.args.at(-1))).toEqual(['printf FIRST', 'exit 23', 'exit 23']);
+    const corrected = [{ kind: 'direct' as const, setup: { scripts: [scripts[0]!, { body: 'printf FIXED', affects: 'none' as const }, scripts[2]!] } }];
+    expect(await apply(corrected, 'corrected-recovery')).toMatchObject({ operationId: expect.any(String) });
+    expect(nativeTerminal.launches.map(launch => launch.args.at(-1)))
+      .toEqual(['printf FIRST', 'exit 23', 'exit 23', 'printf FIXED', 'printf THIRD']);
+    const saved = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: target, context: fixture.context('machines.setup.plan'),
+    }));
+    expect(saved.sources).toEqual(corrected);
+    expect(saved.sourceFacts?.direct?.pendingScripts).toBeUndefined();
+    if (!update) {
+      expect(await apply(corrected, 'explicit-full-reapply')).toMatchObject({ operationId: expect.any(String) });
+      expect(nativeTerminal.launches.slice(-3).map(launch => launch.args.at(-1)))
+        .toEqual(['printf FIRST', 'printf FIXED', 'printf THIRD']);
+    }
+  });
   it('publishes successful Apply inventory once and reuses it on inert current-copy reads', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({

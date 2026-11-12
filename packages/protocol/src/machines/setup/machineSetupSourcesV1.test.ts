@@ -7,8 +7,10 @@ import {
   MachineSetupDesiredV1Schema,
   MachineSetupSourceV1Schema,
   mutateMachineSetupDesiredV1,
-  machineSetupItemKeyV1,
+  machineSetupItemKeyV1, machineSetupSourceOriginKeyV1, projectMachineSetupSourceChangeExecutionV1,
+  type MachineSetupSourceEntryV1, type MachineSetupSourceV1,
 } from './machineSetupSourcesV1.js';
+import { mergeMachineSetupsV1 } from '../managed/machineSetupV1.js';
 
 function publicationPort(initial: unknown) {
   // Raw persisted transport is the boundary; the field reader/CAS policy stays real.
@@ -30,6 +32,71 @@ function publicationPort(initial: unknown) {
 }
 
 describe('Machine setup saved-copy publication', () => {
+  it.each(['direct', 'accountPreset', 'bundledPreset'] as const)('projects confirmed script recovery for %s without changing saved copies', kind => {
+    const setup = { scripts: [{ body: 'printf FIRST' }, { body: 'exit 23' }, { body: 'printf THIRD' }] };
+    const source: MachineSetupSourceEntryV1 = kind === 'direct' ? { kind, setup }
+      : kind === 'accountPreset' ? { kind, presetId: 'preset', presetRevision: 1, setup }
+        : { kind, ref: { pluginId: 'fixture.scripts', localId: 'scripts', revision: '1' }, setup };
+    const sources: MachineSetupSourceV1 = kind === 'direct' ? [source] : [source, { kind: 'direct', setup: {} }];
+    const currentSourceFacts = { [machineSetupSourceOriginKeyV1(source)]: { pendingScripts: [1, 2] } };
+    const project = (proposed: MachineSetupSourceV1, mode: 'update' | 'recovery') => {
+      const merged = mergeMachineSetupsV1(proposed.map(source => source.setup));
+      if (!merged.ok) throw new Error(merged.errorCode);
+      const result = projectMachineSetupSourceChangeExecutionV1(sources, proposed, merged.setup, [], { currentSourceFacts, mode });
+      if (!result.ok) throw new Error(result.errorCode);
+      return result.sources[0]!.scripts?.map(script => script.body);
+    };
+    for (const mode of ['update', 'recovery'] as const) {
+      expect(project(sources, mode)).toEqual(['', 'exit 23', 'printf THIRD']);
+      expect(project(sources.map((source, index) => index ? source : { ...source, setup: { scripts: [
+        setup.scripts[0]!, { body: 'printf FIXED' }, setup.scripts[2]!,
+      ] } }), mode)).toEqual(['', 'printf FIXED', 'printf THIRD']);
+      expect(project(sources.map((source, index) => index ? source : { ...source, setup: { scripts: [
+        { body: 'printf CHANGED-FIRST' }, ...setup.scripts.slice(1),
+      ] } }), mode)).toEqual(['printf CHANGED-FIRST', 'exit 23', 'printf THIRD']);
+      expect(project(sources.map((source, index) => index ? source : { ...source, setup: { ...source.setup,
+        toolchain: { adapterId: 'mise', config: '[tools]\nnode = "22"' },
+      } }), mode)).toEqual(setup.scripts.map(script => script.body));
+    }
+    const fixed = sources.map((source, index) => index ? source : { ...source, setup: { scripts: [
+      setup.scripts[0]!, { body: 'printf FIXED' }, setup.scripts[2]!,
+    ] } });
+    const fixedMerged = mergeMachineSetupsV1(fixed.map(source => source.setup));
+    if (!fixedMerged.ok) throw new Error(fixedMerged.errorCode);
+    // A previously completed later step remains complete when only the failed step is repaired.
+    const settledLaterStep = projectMachineSetupSourceChangeExecutionV1(sources, fixed, fixedMerged.setup, [], {
+      currentSourceFacts: { [machineSetupSourceOriginKeyV1(source)]: { pendingScripts: [1] } }, mode: 'recovery',
+    });
+    expect(settledLaterStep).toMatchObject({ ok: true, sources: [{ scripts: [
+      { body: '' }, { body: 'printf FIXED' }, { body: '' },
+    ] }, ...sources.slice(1).map(source => source.setup)] });
+    expect(sources[0]!.setup).toEqual(setup);
+    const merged = mergeMachineSetupsV1(sources.map(source => source.setup));
+    if (!merged.ok) throw new Error(merged.errorCode);
+    expect(projectMachineSetupSourceChangeExecutionV1(sources, sources, merged.setup, [], { mode: 'recovery' }))
+      .toMatchObject({ ok: true, sources: sources.map(source => source.setup) });
+  });
+  it('retains target-authored unfinished scripts outside full saved copies', async () => {
+    const sources = [{ kind: 'direct' as const, setup: { scripts: [
+      { body: 'printf FIRST' }, { body: 'exit 23' }, { body: 'printf THIRD' },
+    ] } }];
+    const boundary = publicationPort(createEmptyMachineSetupDesiredV1());
+    const observedSourceFacts = { direct: { firstPresence: {}, pendingScripts: [1, 2] } };
+    expect(await mutateMachineSetupDesiredV1({ expectedDesiredRevision: 0, sources, exclusions: [],
+      observedSourceFacts }, boundary.port)).toMatchObject({ status: 'applied', policy: {
+        sources, sourceFacts: { direct: { pendingScripts: [1, 2] } },
+      } });
+    expect(await getMachineSetupDesiredV1(boundary.port)).toMatchObject({ status: 'ready', policy: {
+      sources, sourceFacts: { direct: { pendingScripts: [1, 2] } },
+    } });
+    expect(MachineSetupApplyInputV1Schema.safeParse({ homeId: 'home', machineId: 'machine',
+      desiredRevision: 1, sources, exclusions: [], recipePlans: [], sourceFacts: observedSourceFacts }).success).toBe(false);
+    const completed = await mutateMachineSetupDesiredV1({ expectedDesiredRevision: 1, sources, exclusions: [],
+      observedSourceFacts: { direct: { pendingScripts: [] } } }, boundary.port);
+    expect(completed).toMatchObject({ status: 'applied', policy: { revision: 2, sources } });
+    if (completed.status !== 'applied') throw new Error('Expected completed script facts to settle');
+    expect(completed.policy.sourceFacts).toBeUndefined();
+  });
   it('retains native app correspondence across a catalog pin edit without treating the pin as app identity', async () => {
     const intent = { name: 'Dashboard', project: { kind: 'existing' as const, projectSourceId: 'project' }, bindings: [],
       definition: { from: 'catalogApp' as const, templateRef: { sourceId: 'catalog', itemId: 'dashboard', version: '1',

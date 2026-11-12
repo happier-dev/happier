@@ -58,14 +58,13 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   if (reviewing) {
     const merged = mergeMachineSetupsV1(sources.map(source => source.setup));
     if (!merged.ok) return merged;
-    if (input.removeItemKeys !== undefined) {
-      if (params.executionSources) executionSources = params.executionSources;
-      else {
-        const execution = projectMachineSetupSourceChangeExecutionV1(current.policy.sources, sources,
-          merged.setup, current.policy.exclusions);
-        if (!execution.ok) return execution;
-        executionSources = execution.sources;
-      }
+    if (params.executionSources) executionSources = params.executionSources;
+    else {
+      const execution = projectMachineSetupSourceChangeExecutionV1(current.policy.sources, sources,
+        merged.setup, current.policy.exclusions, { currentSourceFacts: current.policy.sourceFacts,
+          mode: input.removeItemKeys === undefined ? 'recovery' : 'update' });
+      if (!execution.ok) return execution;
+      executionSources = execution.sources;
     }
   }
   // Retention belongs to an exact item in the same canonical source identity,
