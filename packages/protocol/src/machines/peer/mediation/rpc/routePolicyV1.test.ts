@@ -24,6 +24,21 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('retains the exact model-list requester on selected-account catalog discovery', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'models-root', binding: {
+      accountId: 'member', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'agents.models.list', requestId: 'models', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    const method = RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION;
+    expect(resolve(method, binding)).toBe('agents.models.list');
+    expect(resolve(method)).toBeNull();
+    expect(resolve(method, { ...binding, actionId: 'agents.config_options.list' })).toBeNull();
+    expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'other' } })).toBeNull();
+    expect(resolve(method, binding, { machineId: 'machine', installationId: 'other' })).toBeNull();
+  });
   it('spends only the exact fresh-spawn root on its private directory preflight', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'spawn-root', binding: {
@@ -467,6 +482,25 @@ describe('MachineRpcRoutePolicyV1', () => {
       { ...reviewer, authentication: { kind: 'terminal' } }]) {
       expect(resolve(method, unsafe)).toBeNull();
     }
+  });
+  it('admits terminal withdrawal roots without granting approval or changing their requester', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'withdraw-root', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'terminal', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'approval.request.decide', requestId: 'withdraw', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    const method = RPC_METHODS.APPROVAL_REQUEST_DECIDE;
+    for (const decision of ['reject', 'cancel'] as const) {
+      const withdrawal = { ...binding, approvalDecisionAdmission: { artifactId: 'own-pending', decision } };
+      expect(resolve(method, withdrawal)).toBe('approval.request.decide');
+      expect(resolve(RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, withdrawal)).toBeNull();
+      expect(resolve(method, { ...withdrawal, workflowActionOrigin: { runId: 'run', requestId: 'withdraw' } })).toBeNull();
+      expect(resolve(method, { ...withdrawal, target: { kind: 'machine', machineId: 'another-machine' } })).toBeNull();
+    }
+    expect(resolve(method, binding)).toBeNull();
+    expect(resolve(method, { ...binding, approvalDecisionAdmission: { artifactId: 'own-pending', decision: 'approve' } })).toBeNull();
   });
   it('maps private handoff resume and custody observation only with the captured target continuation', async () => {
     const protocol = await import('./routePolicyV1');
@@ -2045,12 +2079,13 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol).toHaveProperty('validateMachineRpcRoutePolicies');
     if ('importError' in protocol) throw protocol.importError;
 
-    const unsafeVoiceRelayPolicy = {
+    const voiceRelayPolicy = {
       method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
       routeClass: 'direct_ephemeral',
-      rationale: 'fixture unsafe voice relay row',
+      rationale: 'fixture voice relay row',
       ownerPacket: 'PMS-5',
       rpcClassification: 'internal_only',
+      sharedMachineAccess: 'use',
       scope: {
         accountRequired: true,
         machineRequired: true,
@@ -2058,19 +2093,29 @@ describe('MachineRpcRoutePolicyV1', () => {
       },
       relayFallback: {
         flowKind: 'daemon_voice_audio',
-        defaultSharedServerMode: 'enabled',
-        authorizationRequired: false,
-        relayCapsRequired: false,
-        meteringRequired: false,
-        lifecycleReceiptRequired: false,
+        defaultSharedServerMode: 'disabled',
+        authorizationRequired: true,
+        relayCapsRequired: true,
+        meteringRequired: true,
+        lifecycleReceiptRequired: true,
         capProfile: 'machine_live_stream_relay_caps_v1',
       },
     } as const;
 
-    const result = protocol.validateMachineRpcRoutePolicies([unsafeVoiceRelayPolicy]);
-
-    expect(result.ok).toBe(false);
-    expect(result.invalidMethods).toContain(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK);
+    expect(protocol.validateMachineRpcRoutePolicies([voiceRelayPolicy]).invalidMethods).toEqual([]);
+    for (const invalid of [
+      { defaultSharedServerMode: 'enabled' },
+      { authorizationRequired: false },
+      { relayCapsRequired: false },
+      { meteringRequired: false },
+      { lifecycleReceiptRequired: false },
+    ] as const) {
+      const result = protocol.validateMachineRpcRoutePolicies([{
+        // @ts-expect-error Deliberately exercise an unsupported runtime relay mode.
+        ...voiceRelayPolicy, relayFallback: { ...voiceRelayPolicy.relayFallback, ...invalid },
+      }]);
+      expect(result.invalidMethods).toContain(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK);
+    }
   });
 
   it('rejects daemon voice relay fallback metadata on non-voice direct methods', async () => {

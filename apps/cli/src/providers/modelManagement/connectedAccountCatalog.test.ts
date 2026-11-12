@@ -96,8 +96,9 @@ it('replaces static membership with one exact current account observation across
   models = [{ id: 'source-model', name: 'Managed model' }];
   const managedInput = { ...input,
     request: { ...request, sourceCatalog: undefined },
-    managedPurpose: { provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      purpose: 'openai-upstream', modelIdPrefix: 'managed/' },
+    agentPurpose: { purpose: 'inference', service, managedProviderEndpoint: {
+      provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+      purpose: 'openai-upstream', modelIdPrefix: 'managed/' } },
   };
   const managed = await projectConnectedAccountCatalog(managedInput);
   // One Agent binding consumes the first accepted endpoint, as launch does.
@@ -112,6 +113,14 @@ it('replaces static membership with one exact current account observation across
   expect(managedEmpty.groups[0]?.rows).toEqual([]);
   expect(await managedEmpty.isCurrent()).toBe(true);
   expect(nativeReads).toBe(7);
+  models = [{ id: 'source-model', name: 'Native namespaced model' }];
+  const namespaced = await projectConnectedAccountCatalog({ ...input,
+    request: { ...request, sourceCatalog: undefined },
+    agentPurpose: { purpose: 'native-inference', service, nativeModelIdPrefix: 'vendor/' },
+  });
+  expect(namespaced.groups.flatMap(group => group.rows).map(row => ({ ref: row.ref, id: row.descriptor.id }))).toEqual([
+    { ref: { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'vendor/source-model' }, id: 'source-model' },
+  ]);
   } finally { await fixture.cleanup(); }
 });
 

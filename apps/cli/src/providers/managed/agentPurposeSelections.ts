@@ -2,23 +2,29 @@ import type { ConnectedServiceBindingsV2, SessionModelSelectionV1 } from '@happi
 import { resolveAgentSpawnPurposeDeclarations, type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 
-/** The selected declaration-managed sources shared by launch and model discovery. */
-export function resolveAgentManagedPurposeSelections(input: Readonly<{
+/** Exact declared Account sources shared by launch and model discovery. */
+export function resolveAgentPurposeSelections(input: Readonly<{
   contributions: AgentSpawnPurposeContributions;
   agentId: string;
   connectedServices: ConnectedServiceBindingsV2 | null;
-  selection?: SessionModelSelectionV1;
 }>) {
   const declarations = resolveAgentSpawnPurposeDeclarations(input);
   if (!declarations || !input.connectedServices) return [];
   const selected = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({ consumer: declarations.consumer,
     declarations: declarations.declarations, bindings: input.connectedServices });
   return declarations.declarations.flatMap(declaration => {
-    if (!declaration.managedProviderEndpoint) return [];
     const binding = selected?.bindings.find(binding => binding.purpose.purpose === declaration.purpose);
     if (!binding || binding.target.kind !== 'account' && binding.target.kind !== 'group') return [];
-    const prefix = declaration.managedProviderEndpoint.modelIdPrefix;
-    if (input.selection && prefix && !input.selection.ref.modelId.startsWith(prefix)) return [];
     return [{ declaration, binding }];
+  });
+}
+
+/** Managed launch consumes only purposes that delegate endpoint acquisition. */
+export function resolveAgentManagedPurposeSelections(input: Parameters<typeof resolveAgentPurposeSelections>[0] & Readonly<{
+  selection?: SessionModelSelectionV1;
+}>) {
+  return resolveAgentPurposeSelections(input).filter(({ declaration }) => {
+    const route = declaration.managedProviderEndpoint;
+    return route !== undefined && (!input.selection || !route.modelIdPrefix || input.selection.ref.modelId.startsWith(route.modelIdPrefix));
   });
 }

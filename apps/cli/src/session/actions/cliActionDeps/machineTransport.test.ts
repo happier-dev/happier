@@ -50,6 +50,8 @@ describe('Machine capability observation during unsigned approval replay', () =>
   it.each([
     ['machines.agents.list', RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, true],
     ['machines.agents.list', RPC_METHODS.CAPABILITIES_DETECT, true],
+    ['agents.models.list', RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, true],
+    ['agents.config_options.list', RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, false],
     ['machines.agents.signIn.status', AGENT_SIGN_IN_STATUS_RPC_METHOD, true],
     ['machines.command.run', RPC_METHODS.BASH, true],
     ['machines.agents.list', 'undeclared.fixture.read', false],

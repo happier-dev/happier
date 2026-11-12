@@ -5,7 +5,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
-import { providerDeclarationContext, readAccountAgentManagedConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { providerDeclarationContext, readAccountAgentCatalogConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
@@ -241,12 +241,12 @@ export type SessionModelPickerProps = Readonly<{
  */
 export function SessionModelPicker(props: SessionModelPickerProps) {
     return props.connectedServices && props.sourceBrowse
-        ? <SessionManagedPurposeModelPicker picker={props} connectedServices={props.connectedServices} sourceBrowse={props.sourceBrowse} />
+        ? <SessionAccountModelPicker picker={props} connectedServices={props.connectedServices} sourceBrowse={props.sourceBrowse} />
         : <SessionModelPickerContent {...props} />;
 }
 
-/** Managed Account catalogs use the same Provider projection and picker presentation. */
-function SessionManagedPurposeModelPicker({ picker, connectedServices, sourceBrowse }: Readonly<{
+/** Selected Account catalogs use the shared Provider projection and picker presentation. */
+function SessionAccountModelPicker({ picker, connectedServices, sourceBrowse }: Readonly<{
     picker: SessionModelPickerProps;
     connectedServices: ConnectedServiceBindingsV2;
     sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
@@ -256,11 +256,11 @@ function SessionManagedPurposeModelPicker({ picker, connectedServices, sourceBro
         enabled: picker.declarationContext === undefined && Boolean(sourceBrowse.machineId) });
     const context = picker.declarationContext ?? providerDeclarationContext(sourceBrowse.machineId,
         declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 : null);
-    const managed = readAccountAgentManagedConnectedServices(picker.agentTargetKey, context, connectedServices);
-    const projection = useProviderModelProjection({ enabled: managed !== null, ...sourceBrowse,
-        agentTargetKey: picker.agentTargetKey, ...(managed ? { connectedServices: managed } : {}),
+    const accountSources = readAccountAgentCatalogConnectedServices(picker.agentTargetKey, context, connectedServices);
+    const projection = useProviderModelProjection({ enabled: accountSources !== null, ...sourceBrowse,
+        agentTargetKey: picker.agentTargetKey, ...(accountSources ? { connectedServices: accountSources } : {}),
         ...(picker.selected ? { currentSelection: picker.selected } : {}) });
-    if (!managed) return <SessionModelPickerContent {...picker} declarationContext={context} />;
+    if (!accountSources) return <SessionModelPickerContent {...picker} declarationContext={context} />;
     return <SessionModelPickerContent {...picker} declarationContext={context}
         providerGroups={[...picker.providerGroups, ...(projection.data?.groups ?? EMPTY_PROJECTION_GROUPS)]}
         providerProjectionAuthoritative={picker.providerProjectionAuthoritative && projection.status === 'success'}

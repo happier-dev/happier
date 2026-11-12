@@ -1140,6 +1140,13 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
     return readiness === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
       || readiness === SESSION_AGENT_READINESS_CHILDREN_V1.status.action && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? readiness : null;
   }
+  if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION && binding?.actionId === 'agents.models.list') {
+    // Account membership discovery is a read phase of this admitted inventory
+    // Action. Preserve its requester and exact installed Machine.
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
   if (binding?.actionId === 'machines.agents.list'
     && (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       || method === RPC_METHODS.CAPABILITIES_DETECT)) {

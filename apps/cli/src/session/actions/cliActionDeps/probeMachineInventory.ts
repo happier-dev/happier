@@ -1,9 +1,10 @@
 import type { ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readCapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { z } from 'zod/mini';
+import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
 
 /** The selected Machine, not the calling MCP process, owns native inventory. */
@@ -26,6 +27,37 @@ export function createMachineInventoryProbe(params: Pick<Parameters<typeof creat
         ...(failure?.retryable === undefined ? {} : { details: { retryable: failure.retryable } }) };
     };
     try {
+      // Selected Accounts use the same catalog owner as the shared picker.
+      // Native preparation may require a model before it can create config;
+      // the source observation already owns membership independently of that config.
+      if (input.method === 'probeModels' && probe.connectedServices && !probe.runtimeDescriptorV1) {
+        try {
+          const agentTargetKey = input.args.backendTargetKey || buildBackendTargetKeyV2({
+            kind: 'backend', backendId: input.agentId, sourceKind: 'built_in',
+          });
+          const projected = DaemonProviderModelProjectionResponseV1Schema.safeParse(await params.callMachineAction({
+            machineId: input.args.machineId, serverId: input.args.serverId ?? input.context?.serverId ?? params.serverId,
+            method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+            request: { machineId: input.args.machineId, agentTargetKey, connectedServices: probe.connectedServices,
+              ...(probe.currentOnly ? { refreshPolicy: 'current_only' } : probe.bypassCache ? { forceRefresh: true } : {}), mode: 'picker' },
+            context: input.context, effectActionId: 'agents.models.list', ...(signal ? { signal } : {}),
+            ...(transportTimeoutMs === undefined ? {} : { timeoutMs: transportTimeoutMs }),
+          }));
+          signal?.throwIfAborted();
+          if (projected.success && projected.data.status === 'success' && projected.data.agentTargetKey === agentTargetKey
+            && projected.data.groups.length > 0 && projected.data.groups.every(group => group.catalogObserved === true)) {
+            const models = new Map(projected.data.groups.flatMap(group => group.rows
+              .filter(row => row.ref.providerConnectionId === null && row.compatibility.confirmed)
+              .map(row => [row.ref.modelId, { ...row.descriptor, id: row.ref.modelId }] as const)));
+            const observation = input.schema.safeParse({ agentId: input.agentId, source: 'dynamic',
+              availableModels: [...models.values()], supportsFreeform: projected.data.groups.some(group => group.supportsFreeformModelIds) });
+            if (observation.success) return observation.data;
+          }
+        } catch {
+          signal?.throwIfAborted();
+          // Keep the native observer's typed refusal when no source catalog is available.
+        }
+      }
       const response = await params.callMachineAction({ machineId: input.args.machineId,
         serverId: input.args.serverId ?? input.context?.serverId ?? params.serverId, method: RPC_METHODS.CAPABILITIES_INVOKE,
         request: { id: `cli.${input.agentId}`, method: input.method, params: {

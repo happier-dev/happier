@@ -118,6 +118,8 @@ export const PluginConnectedAccountMaterializationKindsSchema = lazyZodSchema(()
 export const ConnectedAccountPurposeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionReferenceV2Schema),
+  /** Native selector namespace applied to observed Account model ids. */
+  nativeModelIdPrefix: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Use the selected binding through this Provider's existing managed endpoint owner. */
   managedProviderEndpoint: z.optional(z.strictObject({
     provider: asProtocolZod(PluginContributionIdentityV1Schema),

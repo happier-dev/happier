@@ -147,12 +147,11 @@ export function readAccountAgentQualifiedConnectedAccounts(agentTargetKey: strin
         })) : resolved.declaration.connectedAccounts ?? [];
 }
 
-/** Only selected sources whose Agent declaration delegates its endpoint to a Provider. */
-export function readAccountAgentManagedConnectedServices(agentTargetKey: string, context: ProviderDeclarationContext,
+/** Selected Account sources declared by this exact Agent; the catalog owner decides usable membership. */
+export function readAccountAgentCatalogConnectedServices(agentTargetKey: string, context: ProviderDeclarationContext,
     bindings: ConnectedServiceBindingsV2): ConnectedServiceBindingsV2 | null {
     const bindingsByServiceId: ConnectedServiceBindingsV2['bindingsByServiceId'] = {};
     for (const purpose of readAccountAgentQualifiedConnectedAccounts(agentTargetKey, context) ?? []) {
-        if (!purpose.managedProviderEndpoint) continue;
         const serviceKey = buildQualifiedPluginContributionKey(purpose.service);
         const binding = bindings.bindingsByServiceId[serviceKey];
         if (binding?.source === 'connected') bindingsByServiceId[serviceKey] = binding;

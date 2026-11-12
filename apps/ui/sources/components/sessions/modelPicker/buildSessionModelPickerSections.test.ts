@@ -67,6 +67,18 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('shows one exact native ref when the observed Account catalog also supplies it', () => {
+        const group = providerGroup({ connectionId: 'connected-source:account', modelId: 'observed-model' });
+        const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'observed-model' };
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: selected.agentTargetKey, nativeModels: [{ value: 'observed-model', label: 'Native observed model' }],
+            providerGroups: [{ ...group, rows: group.rows.map(row => ({ ...row, ref: selected })) }],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected,
+        });
+        const options = sections.flatMap(section => section.options);
+        expect(options.filter(option => sessionModelSelectionKey(option.value) === sessionModelSelectionKey(selected)))
+            .toMatchObject([{ label: 'Provider observed-model' }]);
+    });
     it('keeps a selected native default in the available Agent catalog', () => {
         const selected = { agentTargetKey: 'agent:happier.agent.grok/grok', providerConnectionId: null, modelId: 'default' };
         const nativeModels = [{ value: 'default', label: 'Agent default' }, { value: 'grok-4.7', label: 'Grok 4.7' }];
@@ -150,8 +162,12 @@ describe('buildSessionModelPickerSections', () => {
     it.each(['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'])(
         'excludes unsupported tool models from Team and Provider rows for %s while keeping unknown chat models', (agentTargetKey) => {
         const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.id === 'cliproxyapi')!;
-        const models = declaration.definition.managedRuntime?.connectedAccounts?.find(family => family.purpose === 'openai-upstream')?.staticModels ?? [];
-        const group = providerGroup({ connectionId: 'pc_work', modelId: 'gpt-5.5' });
+        const models = [
+            { id: 'chat-model', name: 'Chat model' },
+            { id: 'image-model-a', name: 'Image A', capabilities: { toolRoundTrips: 'unsupported' as const } },
+            { id: 'image-model-b', name: 'Image B', capabilities: { toolRoundTrips: 'unsupported' as const } },
+        ];
+        const group = providerGroup({ connectionId: 'pc_work', modelId: 'chat-model' });
         const projected = projectAccountProviderModelsV1({
             catalog: { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
                 modelPickerVisibilityByConnectionId: { [group.connectionId]: true }, connections: [ProviderConnectionV1Schema.parse({
@@ -167,15 +183,15 @@ describe('buildSessionModelPickerSections', () => {
         expect(projected.status).toBe('success');
         if (projected.status !== 'success') throw new Error('Expected Account projection');
         const projectedIds = projected.groups.flatMap(group => group.rows.map(row => row.ref.modelId));
-        expect(projectedIds).toContain('gpt-5.5');
-        expect(projectedIds).not.toContain('gpt-image-1.5');
-        expect(projectedIds).not.toContain('gpt-image-2');
+        expect(projectedIds).toContain('chat-model');
+        expect(projectedIds).not.toContain('image-model-a');
+        expect(projectedIds).not.toContain('image-model-b');
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'resource-1', teamId: 'team-1', displayName: 'Connected Pool', resourceRevision: 3,
             readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
-            providerModels: ['gpt-image-1.5', 'gpt-image-2', 'gpt-5.5'].map(modelId => ({
+            providerModels: ['image-model-a', 'image-model-b', 'chat-model'].map(modelId => ({
                 selection: { kind: 'team_credential_provider_model', resourceId: 'resource-1', teamId: 'team-1',
                     expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey, modelId },
                 descriptor: models.find(model => model.id === modelId),
@@ -183,13 +199,13 @@ describe('buildSessionModelPickerSections', () => {
                     implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
                     endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' },
                 sourceRevision: 'source-v1',
-                compatibility: modelId.startsWith('gpt-image') ? {
+                compatibility: modelId.startsWith('image-model') ? {
                     ...group.rows[0]!.compatibility,
                     result: { status: 'incompatible', reasons: ['model_capability_toolRoundTrips_unsupported'] },
                     confirmed: false,
                 } : group.rows[0]!.compatibility,
-                availability: modelId.startsWith('gpt-image') ? 'policy_denied' : 'available',
-                ...(modelId.startsWith('gpt-image') ? { deliveryUnavailableReason: 'provider_incompatible_with_agent' } : {}),
+                availability: modelId.startsWith('image-model') ? 'policy_denied' : 'available',
+                ...(modelId.startsWith('image-model') ? { deliveryUnavailableReason: 'provider_incompatible_with_agent' } : {}),
             })),
             sourcePresentation: { kind: 'provider', provider: {
                 identity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, definitionRevision: 1,
@@ -199,13 +215,13 @@ describe('buildSessionModelPickerSections', () => {
             agentTargetKey, nativeModels: [], hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
             teamCredentialResources: [resource],
             providerGroups: [{ ...group, rows: projected.groups.flatMap(group => group.rows)
-                .filter(row => row.ref.modelId === 'gpt-5.5').map(row => ({ ...row,
+                .filter(row => row.ref.modelId === 'chat-model').map(row => ({ ...row,
                     compatibility: group.rows[0]!.compatibility, endpointHealth: 'available' as const,
                 })) }],
         });
         expect(sections.map(section => section.options.map(option => option.value?.modelId)))
-            .toEqual([['gpt-5.5'], ['gpt-5.5']]);
-        const selectedTeam = resource.providerModels.find(model => model.descriptor.id === 'gpt-5.5')!;
+            .toEqual([['chat-model'], ['chat-model']]);
+        const selectedTeam = resource.providerModels.find(model => model.descriptor.id === 'chat-model')!;
         const triggerInput = { agentTargetKey, nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
             providerProjectionAuthoritative: true, selected: null, selectedTeamCredentialModel: selectedTeam.selection,
             teamCredentialResources: [resource], fallbackLabel: 'Choose', fieldLabel: 'Model' };

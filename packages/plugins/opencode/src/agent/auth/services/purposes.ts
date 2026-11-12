@@ -136,7 +136,10 @@ export const OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS = Object.freeze(
 );
 
 export const OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS = Object.freeze(
-  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ declaration }) => declaration),
+  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ declaration, provider }) => ({
+    ...declaration,
+    ...('managedProviderEndpoint' in declaration ? {} : { nativeModelIdPrefix: provider + '/' }),
+  })),
 );
 export const OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS = Object.freeze(
   OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.map(({ service }) => buildQualifiedPluginContributionKey(service)),

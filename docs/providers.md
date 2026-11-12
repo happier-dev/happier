@@ -1071,8 +1071,13 @@ multiple refused Review Agents and composed live acceptance remain unverified.
 In 0.3 development, a retained Team model selection keeps its Team source through
 prompt dispatch, turn failure, runtime model readback and startup attach. A carried
 V1 model projection or a newer process-default timestamp cannot replace that
-source. Explicit model changes still replace the intent and clear its accepted
-Team binding when switching to native authentication. Resume with a Team intent
+source. An ambient brokered model-only change with `next_prompt` preserves the
+Team intent and reports `intent_updated`. The next ordinary prompt reopens the
+same accepted resource and revision for the requested exact model through the
+existing runtime replacement path. Child inheritance then reads that runtime
+generation's applied model. Immediate, explicit source and vendor-native changes
+retain `restart_required`. Explicit changes to native authentication still replace
+the intent and clear its accepted Team binding. Resume with a Team intent
 but no matching admitted binding refuses with
 `team_credential_provider_binding_unavailable`; native launches without a selected
 route retain the native sign-in check. A Session whose Team intent and binding
@@ -1248,13 +1253,19 @@ Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplie
 the Muse client identity. The adopted source is omitted from native credential
 materialization and follows the existing managed endpoint custody lifecycle.
 
-The shared Session model picker sends selected managed-purpose Account or Pool
-bindings through `providers.models.projection` using `connectedServices`. The
-Provider catalog owner resolves the exact declared upstream and publishes model
-refs in the Agent declaration's namespace, while descriptors and compatibility
-confirmation scopes retain the source model id. No native preflight listing or
-saved gateway connection is required. An Agent without a selected managed
-purpose retains its existing model discovery path.
+In unreleased 0.3 development, the shared Session model picker and
+`agents.models.list` send selected Account or Pool bindings through
+`providers.models.projection` using `connectedServices`. The existing Account
+model observer supplies membership; the Provider catalog owner intersects it
+with the Agent adapter's declared protocols. Managed-purpose refs use the Agent
+declaration's namespace. Native custom refs apply the purpose's optional
+`nativeModelIdPrefix` (for example OpenCode's provider namespace); consumers
+without a namespace retain raw source model ids.
+Descriptors and compatibility confirmation scopes retain the source model id.
+No saved gateway connection or second observer is required. Static source models
+do not establish custom upstream membership. An account kind without an observed
+catalog retains its typed native refusal; a verified empty catalog stays empty.
+Agents without a selected source retain their existing model discovery path.
 
 In 0.3 development, managed Provider and plugin Fetch transports project headers
 for the decoded response body. Standard compressed responses omit their wire
@@ -1808,24 +1819,20 @@ Its `[provider-broker-release]` record ends with `released` after HTTP 204,
 `target_gone` when the authenticated endpoint differs from the signed target,
 or `abandoned` with a closed reason when the remote attempt fails. Each outcome
 settles that binding, so retained Session/daemon cleanup never redials it.
-An unacknowledged cleanup is not proof of remote retirement: Home still admits
-each effect. In 0.3 development, private Team V1 and personal Account V2 claims
-retain consumer authorization through the existing Home admission owner. Session
-stop, publisher expiry, archive and deletion publish the existing Team change only
-to custodians named by accepted brokered Team bindings. Ordinary Sessions publish
-no broker wake. Home records no personal V2 broker claim, so those claims use the
-existing stream-close recheck. Team resource/grant withdrawal uses that same
-feed. The broker's retained-currentness pass retires claims whose authority ended
-and re-enters the existing cleanup path for a previously failed retirement.
-Closing an application stream also runs one currentness pass for its exact
-claim, even if that stream closed before opening a source, independently of the
-closed stream's cancellation. Explicit release directly retires the exact claim
-without an additional authorization read. A still-authorized live consumer
-keeps its claim, and an unreadable Home retains custody until a later deciding
-change. A failed source read refuses the request through the typed application
-failure writer and preserves shared custody; an open-time failure also releases
-that caller's joined projection. Only a definite stale source ends custody. Account-change facts scope retained
-checks to relevant sources and Connected Services. Saved Secret and Provider
+An unacknowledged cleanup is not proof of remote retirement: Home still checks
+each effect. In 0.3 development, broker source acquisition captures the admitted
+resource, account selection and catalog before managed startup. The resulting
+operation carries that admission through later requests; neither dispatch nor
+an Account-change notification re-evaluates those source facts. In particular,
+a publication after startup cannot invalidate the capture that admitted it.
+Home's request owner checks whether the admitted job remains active. Personal
+Gateway requests consume the same Home activity lookup at each new request;
+an inactive answer refuses dispatch without aborting a response already open.
+Local cancellation releases the caller's join, while explicit release retires the exact
+operation without an additional authorization read. A new acquisition admits
+the then-current source and refuses unavailable source reads through the typed
+application failure writer. Retained-currentness checks for other consumers
+remain scoped to their relevant sources and Connected Services. Saved Secret and Provider
 material changes reach direct delivery once through its snapshot subscription;
 Team authority, service and recovery facts use the existing Account-change subscription.
 Direct-material delivery and withdrawal publish `account/team-credential-material`
@@ -1834,24 +1841,26 @@ list/detail/catalog views consume this fact, including the custodian's other cli
 It does not change source authority and therefore starts no source census. Its
 separate coalescing identity preserves any pending `account/teams` authority fact.
 These checks add no idle timer or release retry loop.
-Run currentness uses Home's existing daemon attestation when a pass runs. Home
-has no Run-end publication with the Run's broker custodian, by decision: Home
-does not record which custodian a Run used, and stream closure supplies the
-revalidation wake for an ended Run. The accepted residual is a race where the
-Run's stream closes before Home records the Run as ended; that claim then lives
-until the next deciding change, an explicit retirement or broker restart.
+Home checks an admitted Run through its existing daemon attestation on the next
+request. It has no Run-end publication to the broker custodian: Home does not
+record which custodian a Run used. Stream closure releases its join without
+re-evaluating source authority. An unreleased in-memory claim can remain until
+an explicit retirement or broker restart; it cannot authorize a later request
+for an ended job.
 Broker restart loses its in-memory claims; native runtime shutdown retains
 responsibility for failed private control closers.
 Team catalog admission and the first fresh Home grant finish before the native
 connection is acquired. The carrier
 consumes that verified grant once, rechecking its expiry after dial; subsequent
-streams refresh their own grants under the containing operation's lifetime.
+streams renew the transport proof for the same admitted job under the containing
+operation's lifetime. Renewal checks job activity and carries the admitted
+resource, source and application; it does not re-evaluate their currentness.
 Endpoint discovery then sends the first stream without another Home read in
 between: native's pre-application custody window
 owns connections that have not sent any application stream. The Account and Team
 adapters publish the captured binding without a post-discovery Home or catalog
-read. The target still authorizes each subsequent HTTP request, so withdrawal
-refuses the next request. Direct delivery similarly finishes from its admitted
+read. The target checks that the admitted job remains active on each subsequent
+HTTP request. Direct delivery similarly finishes from its admitted
 material after disclosure; a new open requires fresh admission. Account/Home
 identity, exact destination and local cancellation remain enforced.
 In 0.3 development, selected-resource revalidation passes the exact resource id
@@ -2688,12 +2697,19 @@ Resource access therefore has three distinct delivery/privacy contracts:
   Session-binding owner admitted at turn begin). Each later request reads only whether that job
   is still active (signed credential epoch, resource row and revision, the Session with its admitted
   turn, or the Run occurrence) and admits its usage and limits. The custodian's source and member are
-  not re-read per request: a replaced source withdraws the route and the next acquisition re-admits; the broker then
-  performs the Provider request. Revoking a member or grant wakes the custodian, whose retained
-  revalidation withdraws the route, so the next request cannot reach the source; the next open or
-  turn is refused at admission. Tightening the Team sign-in policy (or removing the factor that
+  not re-read per request or on a source-change notification: the admitted operation
+  retains its capture, and the next acquisition re-admits against the current source.
+  Grant withdrawal advances the resource revision in the same transaction. The
+  admitted resource revision is bound by the existing signed broker admission
+  fingerprint. The cheap active-job lookup refuses a changed revision on the
+  next request or new stream. A fresh Start admits a new job. Already-open response
+  bodies finish. This deliberately also interrupts
+  unaffected recipients at their next request: they re-admit at their next Start,
+  an accepted rare, visible and recoverable glitch. Connected Account catalog
+  publication does not change the Team resource revision. Tightening the Team sign-in policy (or removing the factor that
   qualified the credential) is decided at admission only: admitted routes run to their natural end,
-  and the next open, grant refresh or turn re-qualifies. Signing the credential out ends the route on
+  and the next fresh open or turn re-qualifies. Renewing an admitted job's transport
+  proof checks job activity without repeating qualification. Signing the credential out ends the route on
   its next request. A source that needs reconnecting is refused by the broker's own source owner
   before it asks the Home. Recipients do
   not receive credential bytes, the private Pool roster, or Pool-management authority.

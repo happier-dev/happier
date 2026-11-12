@@ -3,6 +3,7 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contribut
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { buildSessionModelPickerSections } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import {
+    readAccountAgentCatalogConnectedServices,
     readAccountAgentProviderDeclarations,
     readAccountAgentProviderRequirements,
     readAccountAgentConnectedAccountServiceKeys,
@@ -14,6 +15,20 @@ import {
 } from './accountProviderDeclarations';
 
 describe('admitted Provider declarations', () => {
+    it('requests selected custom-upstream account catalogs only for the exact Agent declarations', () => {
+        const connected = { source: 'connected' as const, profileId: 'selected-account' };
+        const selected = readAccountAgentCatalogConnectedServices('agent:happier.agent.copilot/copilot', { kind: 'account' }, {
+            v: 2, bindingsByServiceId: {
+                'happier.agent.codex/openai-codex': connected,
+                'happier.voice.openai/openai': connected,
+                'foreign.plugin/undeclared': connected,
+            },
+        });
+        expect(selected?.bindingsByServiceId['happier.agent.codex/openai-codex']).toEqual(connected);
+        expect(selected?.bindingsByServiceId['foreign.plugin/undeclared']).toBeUndefined();
+        expect(readAccountAgentCatalogConnectedServices('agent:happier.agent.copilot/copilot', { kind: 'machine', projection: null },
+            { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': connected } })).toBeNull();
+    });
     it.each(['ohMyPi', 'ohmypi', 'oh-my-pi', 'omp'])('resolves connected services for legacy bundled routing id %s through its declared identity', (agentId) => {
         expect(readAccountAgentConnectedAccountServiceKeys(`backend:${agentId}`, { kind: 'account' }))
             .toContain('happier.agent.claude/anthropic');

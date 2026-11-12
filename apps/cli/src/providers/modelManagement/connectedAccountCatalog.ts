@@ -85,7 +85,7 @@ type ConnectedAccountCatalogInput = Readonly<{
   observeModels?: ObserveConnectedAccountModels;
   provider?: ResolvedProviderContribution;
   purpose?: string;
-  managedPurpose?: NonNullable<ConnectedAccountPurposeDeclarationV1['managedProviderEndpoint']>;
+  agentPurpose?: ConnectedAccountPurposeDeclarationV1;
   signal?: AbortSignal;
 }>;
 
@@ -196,6 +196,9 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
 }>> {
   const source = await readConnectedAccountModelCatalog(input);
   const groups: DaemonProviderModelProjectionGroupV1[] = source.groups.flatMap(group => {
+    // A custom native upstream cannot turn gateway compatibility declarations
+    // into account membership. Only the source owner's observation admits rows.
+    if (input.agentPurpose && !input.agentPurpose.managedProviderEndpoint && !group.catalogObserved) return [];
     if (input.support && !input.support.acceptsProtocols.includes(group.application.protocol)) return [];
     const brokerCredential = input.support ? providerBrokerLocalCredentialRequirement(group.application.protocol, input.support) : undefined;
     if (input.support && !brokerCredential) return [];
@@ -208,10 +211,11 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
         : row.compatibility;
       return [{ ...row, descriptor: input.support ? projectProviderModelReasoningForAgent(row.descriptor, input.support) : row.descriptor,
         application: { ...row.application, agentTargetKey: input.request.agentTargetKey },
-        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: input.managedPurpose ? null : group.connectionId,
-          modelId: input.managedPurpose ? (input.managedPurpose.modelIdPrefix ?? '') + row.descriptor.id : row.descriptor.id },
-        compatibility: input.managedPurpose ? resolveProviderCompatibilityConfirmation({ compatibility,
-          declaredManagedModel: group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
+        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: input.agentPurpose ? null : group.connectionId,
+          modelId: input.agentPurpose ? (input.agentPurpose.managedProviderEndpoint?.modelIdPrefix ?? input.agentPurpose.nativeModelIdPrefix ?? '') + row.descriptor.id : row.descriptor.id },
+        compatibility: input.agentPurpose ? resolveProviderCompatibilityConfirmation({ compatibility,
+          declaredManagedModel: input.agentPurpose.managedProviderEndpoint
+            ? group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true : group.catalogObserved === true,
           providerSettings: input.providerSettings, confirmationSource: row.confirmationSource!,
           agentTargetKey: input.request.agentTargetKey, modelId: row.descriptor.id,
         }) : { ...compatibility, confirmed: !input.request.sourceCatalog && compatibility.result.status === 'experimental'
@@ -224,8 +228,8 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
     const { application: _sourceApplication, source: _source, ...presentation } = group;
     return [{ ...presentation, rows, suppressedConnectedServiceIds: input.support?.authIsolation.suppressConnectedServiceIds ?? [] }];
   });
-  if (!input.managedPurpose) return { ...source, groups };
-  // A managed Agent selection consumes one endpoint. Keep declaration order
+  if (!input.agentPurpose) return { ...source, groups };
+  // An Agent selection consumes one endpoint. Keep declaration order
   // among equally admitted rows, as launch does, without duplicating model refs.
   const selected = new Map<string, DaemonProviderModelProjectionGroupV1['rows'][number]>();
   for (const group of groups) {

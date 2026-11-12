@@ -193,8 +193,11 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 : model
         ))
         : input.nativeModels;
+    const projectedModelKeys = new Set(input.providerGroups.flatMap(group =>
+        group.rows.map(row => sessionModelSelectionKey(row.ref))));
     const nativeOptions = nativeModels.flatMap((model): SessionModelPickerOption[] => {
         const value = nativeModelRef(input.agentTargetKey, model.value);
+        if (value !== null && projectedModelKeys.has(sessionModelSelectionKey(value))) return [];
         if (value === null && input.allowAutomatic === false) return [];
         const hidden = value !== null && input.hiddenNativeModelKeys.has(serializeModelVisibilityRefV1({
             scope: 'agent',

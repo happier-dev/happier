@@ -1,7 +1,7 @@
 import type { z } from 'zod/mini';
 import { randomUUID } from 'node:crypto';
 import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
-import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { isConnectedAccountSourceReconnectRequiredError, preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
@@ -96,7 +96,7 @@ import {
   resolveTeamCredentialBrokerEligibility,
   resolveTeamCredentialResourceTestCandidate,
 } from '@/providers/broker/resourceTestCandidate';
-import { resolveAgentManagedPurposeSelections } from '@/providers/managed/agentPurposeSelections';
+import { resolveAgentPurposeSelections } from '@/providers/managed/agentPurposeSelections';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc/providers';
 import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog, readConnectedAccountCatalogSources, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
@@ -364,55 +364,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       : {}),
     ...(input.openTeamDirect ? { openTeamDirect: input.openTeamDirect } : {}),
     modelLoadEnabled: () => input.featureGate.isEnabled('providers.localModelManagement'),
-    readManagedSourceModels: async ({ connection, registry, scope, modelLoadAction }) => {
-      const identity = { connectionId: connection.connectionId, machineId: connection.machineId };
-      const unavailable = () => ({ status: 'error' as const,
-        error: createProviderErrorV1('provider_catalog_unavailable', identity) });
-      if (connection.deployment.kind !== 'managedLocal' || connection.source.kind !== 'contribution') return unavailable();
-      const provider = getProviderContribution(registry, connection.source.contributionKey);
-      const resolveSelection = scope.resolveManagedPurposeBindingIntentSelection
-        ?? (scope.getAccountSettingsSnapshot ? undefined : input.resolveManagedPurposeBindingIntentSelection);
-      if (!provider || !resolveSelection) return unavailable();
-      const invoke = scope.getAccountSettingsSnapshot ? scope.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
-      const observe = scope.getAccountSettingsSnapshot ? scope.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
-      const sourceCatalogs = [];
-      const selectableModels = new Map<string, import('../probe/rpc').ProviderSavedModelsRpcRow>();
-      try {
-        for (const binding of connection.deployment.purposeBindingIntents.bindings) {
-          const projection = await awaitWithinProviderOperation(readConnectedAccountModelCatalog({
-            registry, provider, purpose: binding.purpose.purpose, resolveSelection,
-            request: { machineId: connection.machineId, connectedAccountTarget: binding.target,
-              sourceCatalog: true, ...(scope.forceRefresh ? { forceRefresh: true } : { refreshPolicy: 'current_only' }) }, signal: scope.lifetime.signal,
-            ...(invoke || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke, observe,
-              resolveContributedCatalogParsers: scope.resolveContributedCatalogParsers }) } : {}),
-          }), scope.lifetime);
-          if (projection.error) return { status: 'error', error: projection.error };
-          if (!await awaitWithinProviderOperation(projection.isCurrent(), scope.lifetime)) return unavailable();
-          const current = projectCurrentProviderSourceModelCatalogs(projection.groups.flatMap(group => group.sourceRevision
-            ? [{ application: group.application, sourceRevision: group.sourceRevision, rows: group.rows }] : []));
-          if (current.status !== 'success') return current;
-          // The same descriptor can occur in several protocol applications. This
-          // display projection does not choose an execution application.
-          const models = new Map<string, import('../probe/rpc').ProviderSavedModelsRpcRow>();
-          for (const row of current.catalogs.flatMap(catalog => catalog.rows)) {
-            const model = { id: row.descriptor.id, name: row.descriptor.name, descriptor: row.descriptor,
-              source: 'probe' as const, stale: false, loadState: row.loadState, visibility: row.visibility };
-            if (!models.has(model.id)) models.set(model.id, model);
-            if (!selectableModels.has(model.id)) selectableModels.set(model.id, model);
-          }
-          sourceCatalogs.push({ purpose: binding.purpose.purpose,
-            catalogObserved: projection.groups.length > 0 && projection.groups.every(group => group.catalogObserved === true),
-            models: [...models.values()] });
-        }
-        return { status: 'success', connectionId: identity.connectionId, connectionRevision: connection.connection.revision,
-          manualModelPolicy: connection.source.definition.catalog.manualModelPolicy, modelLoadAction,
-          sourceCatalogs, models: [...selectableModels.values()] };
-      } catch (error) {
-        if (isConnectedAccountSourceReconnectRequiredError(error)) return { status: 'error',
-          error: createProviderErrorV1(CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired, identity) };
-        throw error;
-      }
-    },
+
   });
   const resolveManagementRegistry = async (): Promise<ProviderContributionRegistryView> => {
     if (input.registry) return input.registry;
@@ -698,19 +650,20 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
         const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
         const sources = request.connectedServices
-          ? resolveAgentManagedPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
+          ? resolveAgentPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
               connectedServices: request.connectedServices }).map(candidate => ({ target: candidate.binding.target,
-                managedPurpose: candidate.declaration.managedProviderEndpoint }))
-          : [{ target: request.connectedAccountTarget!, managedPurpose: undefined }];
+                agentPurpose: candidate.declaration }))
+          : [{ target: request.connectedAccountTarget!, agentPurpose: undefined }];
         const groups: DaemonProviderModelProjectionGroupV1[] = [];
         const { connectedServices: _selectedServices, ...sourceRequest } = request;
         for (const source of sources) {
-          const route = source.managedPurpose;
+          const route = source.agentPurpose?.managedProviderEndpoint;
           const provider = route ? getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider)) : undefined;
           if (route && !provider) return unavailable();
           const projection = await awaitWithinProviderOperation(projectConnectedAccountCatalog({
             request: { ...sourceRequest, connectedAccountTarget: source.target }, registry,
-            ...(route && provider ? { provider, purpose: route.purpose, managedPurpose: route } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
+            ...(source.agentPurpose ? { agentPurpose: source.agentPurpose } : {}),
+            ...(route && provider ? { provider, purpose: route.purpose } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
             providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
             resolveSelection, signal: operationLifetime.signal,
             ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
@@ -1376,13 +1329,27 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     const sourceSelection = input.resolveManagedPurposeBindingIntentSelection;
     const result = 'scope' in request
       ? await (async () => {
-          const snapshot = request.source.kind === 'provider_connection' ? await observeSnapshot(signal) : null;
-          if (request.source.kind === 'provider_connection' && !snapshot) {
-            return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
-          }
-          const lease = await (input.acquireRuntimeLease ? input.acquireRuntimeLease()
-            : acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir }));
+          let lease: PluginRuntimeRegistryLease | undefined;
           try {
+            if (request.scope === 'action_purpose') {
+              if (request.source.kind === 'provider_connection' || !sourceSelection) {
+                return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
+              }
+              const target = request.source.target;
+              const service = target.kind === 'account' ? target.account.service : target.service;
+              const selection = await sourceSelection({ purpose: request.purpose, target,
+                serviceRefs: [service], signal: signal ?? new AbortController().signal })
+                .catch(preserveConnectedAccountSourceHealthFailure);
+              return selection && await selection.isCurrent(signal)
+                ? { status: 'eligible' as const }
+                : { status: 'unavailable' as const, reason: 'source_unavailable' as const };
+            }
+            const snapshot = request.source.kind === 'provider_connection' ? await observeSnapshot(signal) : null;
+            if (request.source.kind === 'provider_connection' && !snapshot) {
+              return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
+            }
+            lease = await (input.acquireRuntimeLease ? input.acquireRuntimeLease()
+              : acquireAuthoritativePluginRuntimeRegistryLease({ happyHomeDir: input.happyHomeDir ?? configuration.happyHomeDir }));
             if (typeof lease.registry.generation !== 'number') return { status: 'unavailable' as const, reason: 'source_unavailable' as const };
             const registry = resolveProviderContributionRegistryView(lease.registry.contributes, lease.registry.generation, lease.registry.readPluginOccurrenceId);
             if (request.source.kind === 'provider_connection') {
@@ -1406,7 +1373,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
             if (isConnectedAccountSourceReconnectRequiredError(error)) return { status: 'unavailable' as const,
               reason: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired };
             throw error;
-          } finally { await lease.release(); }
+          } finally { await lease?.release(); }
         })()
       : await resolveTeamCredentialBrokerEligibility({
           ...request,
