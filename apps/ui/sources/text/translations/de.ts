@@ -19206,6 +19206,7 @@ settingsSession: {
             deployFailedTitle: "Bereitstellen fehlgeschlagen",
             deployNeedsBuild: ({ machine }: { machine: string }) => `Diese Umgebung baut ihre Images, und Happier kann sie noch nicht bauen. Bereitstellungen nutzen Images, die schon auf ${machine} liegen.`,
             nothingChanged: "Nichts wurde geändert.",
+            refusedBeforeLogs: "Es wurde nichts bereitgestellt, daher gibt es noch keine Logs zum Prüfen.",
             machineAway: "Antwortet nicht",
             saveEnvironment: "Umgebung speichern",
             newEnvironment: "Neue Umgebung",

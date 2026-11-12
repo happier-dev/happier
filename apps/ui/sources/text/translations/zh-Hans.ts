@@ -18717,6 +18717,7 @@ settingsSession: {
         deployFailedTitle: "无法部署",
         deployNeedsBuild: ({ machine }: { machine: string }) => `此环境需要构建镜像，而 Happier 还无法构建。部署会使用 ${machine} 上已有的镜像。`,
         nothingChanged: "没有任何更改。",
+        refusedBeforeLogs: "尚未部署任何内容，因此还没有可查看的日志。",
         machineAway: "无响应",
         saveEnvironment: "保存环境",
         newEnvironment: "新环境",

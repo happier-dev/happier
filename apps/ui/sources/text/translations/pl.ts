@@ -18923,6 +18923,7 @@ settingsSession: {
         deployFailedTitle: "Nie udało się wdrożyć",
         deployNeedsBuild: ({ machine }: { machine: string }) => `To środowisko buduje swoje obrazy, a Happier jeszcze tego nie potrafi. Wdrożenia używają obrazów, które już są na ${machine}.`,
         nothingChanged: "Nic się nie zmieniło.",
+        refusedBeforeLogs: "Nic nie zostało wdrożone, więc nie ma jeszcze logów do sprawdzenia.",
         machineAway: "Nie odpowiada",
         saveEnvironment: "Zapisz środowisko",
         newEnvironment: "Nowe środowisko",

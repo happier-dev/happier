@@ -208,9 +208,6 @@ export const DeploymentEnvironmentDetail = React.memo(
   ) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const {
-      running: deploying, outcome, reviewPending, press, banner,
-    } = useDeploymentPress(props.review, props.onOpenReceipt);
     const environment = useDeploymentEnvironment(
       props.controller,
       props.environmentId,
@@ -290,6 +287,12 @@ export const DeploymentEnvironmentDetail = React.memo(
     const navigationScope = React.useMemo(() => ({ serverId: props.serverId, accountId: props.accountId }), [props.serverId, props.accountId]);
     const buildDeploymentId = history.result.items[0]?.id ?? activeId;
     const logsOffered = detail !== null && (buildDeploymentId !== null || (machineIds.length === 1 && runtime?.source.kind === 'host'));
+    // A refusal before any deploy leaves no logs: every press on this page leaves "Inspect failed step" out.
+    const review = React.useMemo(() => logsOffered || !props.review ? props.review
+      : { ...props.review, unavailableRecovery: LOGS_RECOVERY }, [logsOffered, props.review]);
+    const {
+      running: deploying, outcome, reviewPending, press, banner,
+    } = useDeploymentPress(review, props.onOpenReceipt);
     const navigation = useEnvironmentNavigation({ scope: navigationScope, environmentId: props.environmentId,
       companions: logsOffered ? LOGS_COMPANION : NO_COMPANION,
       destination: props.destination ?? ownDestination, phone: props.phone,
@@ -436,13 +439,13 @@ export const DeploymentEnvironmentDetail = React.memo(
     const environmentEditing: DeploymentEnvironmentEditing | null = props.environmentActions ? {
       actions: props.environmentActions,
       serverId: props.serverId,
-      review: props.review,
+      review,
       onChanged: () => { void environment.refresh(); },
     } : null;
     const availability = deploymentDeployAvailability(detail);
     const ready = availability.kind === 'ready' && props.deploy !== null;
     const offline = ready && machineOnline === false;
-    const { deploy, review, environmentId } = props;
+    const { deploy, environmentId } = props;
     const pressDeploy = async () => {
       if (!deploy || availability.kind !== 'ready') return;
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(sourceMethod ? { sourceMethod } : {}) }));
@@ -604,14 +607,14 @@ export const DeploymentEnvironmentDetail = React.memo(
 
     // P10: the Add sheet opens over the Environment, in place; it never leaves for Store. Settings › Backups reuses it.
     const openAddDatabase = lifetime ? () => {
-      showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
+      showDeploymentAddSheet({ detail, lifetime, review, machineName, catalogFilters: DEPLOYMENT_DATABASE_CATALOG_FILTER,
         onNavigate: (destination) => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}) });
     } : null;
     const templateRef = detail.content.template?.templateRef;
     const openTemplateUpdate = lifetime && templateRef && detail.environment.capabilities.manage
       && detail.environment.capabilities.manageBindings ? () => showDeploymentTemplateUpdateSheet({
-        detail, lifetime, review: props.review, machineName, catalogFilters: {}, template: templateRef,
+        detail, lifetime, review, machineName, catalogFilters: {}, template: templateRef,
         onNavigate: destination => openTab(destination.tab),
         ...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {}),
       }) : null;
@@ -1184,6 +1187,8 @@ export type DeploymentReviewHandle = Readonly<{
   open: () => void;
   /** Shared with every press and modal sheet; the page owns destination navigation. */
   openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+  /** Destinations with nothing behind them yet; the Environment page sets logs here until a deploy leaves some. */
+  unavailableRecovery?: readonly DeploymentFailureRecoveryDestinationV1[];
 }>;
 
 /**
@@ -1251,7 +1256,10 @@ export function DeployOutcomeBanner(
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
   // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
-  const recovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
+  const typedRecovery = readDeploymentRefusalRecoveryV1(outcome.code, outcome.failure?.details);
+  // Its way forward leads nowhere yet (logs before any deploy): no action, and the sentence says why instead.
+  const leadsNowhere = typedRecovery !== null && controller.unavailableRecovery.includes(typedRecovery.nextAction.destination);
+  const recovery = leadsNowhere ? null : typedRecovery;
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
   const canonicalReason = failure && failure.reason !== storedRemedy ? failure.reason : null;
   const { openRecovery } = controller;
@@ -1294,6 +1302,7 @@ export function DeployOutcomeBanner(
               ? t('projects.deployments.deployNeedsBuild', {
                   machine: props.machine,
                 })
+              : leadsNowhere ? t('projects.deployments.refusedBeforeLogs')
               : recovery?.remedy ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
       {...(recovery?.nextAction.destination === 'review'
@@ -1360,6 +1369,7 @@ const styles = StyleSheet.create((theme) => ({
 type DeploymentService = Readonly<{ name: string; reference: string | null }>;
 const NO_SERVICES: readonly DeploymentService[] = [];
 const LOGS_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze(['logs']);
+const LOGS_RECOVERY: readonly DeploymentFailureRecoveryDestinationV1[] = Object.freeze(['logs']);
 const NO_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze([]);
 
 /**

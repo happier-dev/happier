@@ -19012,6 +19012,7 @@ settingsSession: {
         deployFailedTitle: "デプロイできませんでした",
         deployNeedsBuild: ({ machine }: { machine: string }) => `この環境はイメージをビルドしますが、Happier はまだビルドできません。デプロイには ${machine} にすでにあるイメージを使います。`,
         nothingChanged: "何も変更されていません。",
+        refusedBeforeLogs: "まだ何もデプロイされていないため、確認できるログはありません。",
         machineAway: "応答なし",
         saveEnvironment: "環境を保存",
         newEnvironment: "新しい環境",

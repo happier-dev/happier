@@ -19051,6 +19051,7 @@ settingsSession: {
         deployFailedTitle: "Не удалось развернуть",
         deployNeedsBuild: ({ machine }: { machine: string }) => `Это окружение собирает свои образы, а Happier пока не умеет их собирать. Развёртывания используют образы, которые уже есть на ${machine}.`,
         nothingChanged: "Ничего не изменилось.",
+        refusedBeforeLogs: "Ничего не развернуто, поэтому журналов для проверки пока нет.",
         machineAway: "Не отвечает",
         saveEnvironment: "Сохранить окружение",
         newEnvironment: "Новое окружение",

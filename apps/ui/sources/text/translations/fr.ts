@@ -18972,6 +18972,7 @@ settingsSession: {
         deployFailedTitle: "Déploiement impossible",
         deployNeedsBuild: ({ machine }: { machine: string }) => `Cet environnement construit ses images, ce que Happier ne sait pas encore faire. Les déploiements utilisent des images déjà présentes sur ${machine}.`,
         nothingChanged: "Rien n’a changé.",
+        refusedBeforeLogs: "Rien n’a été déployé, il n’y a donc pas encore de journaux à consulter.",
         machineAway: "Ne répond pas",
         saveEnvironment: "Enregistrer l’environnement",
         newEnvironment: "Nouvel environnement",

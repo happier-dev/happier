@@ -19100,6 +19100,7 @@ settingsSession: {
         deployFailedTitle: "Deploy non riuscito",
         deployNeedsBuild: ({ machine }: { machine: string }) => `Questo ambiente costruisce le sue immagini e Happier non può ancora farlo. I deploy usano immagini già presenti su ${machine}.`,
         nothingChanged: "Non è cambiato nulla.",
+        refusedBeforeLogs: "Non è stato distribuito nulla, quindi non ci sono ancora log da esaminare.",
         machineAway: "Non risponde",
         saveEnvironment: "Salva ambiente",
         newEnvironment: "Nuovo ambiente",

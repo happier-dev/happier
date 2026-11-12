@@ -14,6 +14,8 @@ type DeploymentPressReview = Readonly<{
   pendingId?: string | null;
   open?: () => void;
   openRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+  /** Destinations the pressing page has nothing behind yet (logs before any deploy); a refusal never offers them. */
+  unavailableRecovery?: readonly DeploymentFailureRecoveryDestinationV1[];
 }>;
 
 export type DeploymentOutcomeController = Readonly<{
@@ -22,12 +24,16 @@ export type DeploymentOutcomeController = Readonly<{
   openReview: (() => void) | null;
   retry: () => Promise<void>;
   openRecovery: ((destination: DeploymentFailureRecoveryDestinationV1) => void) | null;
+  unavailableRecovery: readonly DeploymentFailureRecoveryDestinationV1[];
 }>;
+
+const NO_UNAVAILABLE_RECOVERY: readonly DeploymentFailureRecoveryDestinationV1[] = Object.freeze([]);
 
 function createDeploymentOutcomeController(outcome: DeploymentActionOutcome | null, review: DeploymentPressReview | null,
   retry: () => Promise<void>): DeploymentOutcomeController {
   return { outcome, pending: outcome?.kind === 'approval' && review?.pendingId === outcome.artifactId,
-    openReview: review?.open ?? null, retry, openRecovery: review?.openRecovery ?? null };
+    openReview: review?.open ?? null, retry, openRecovery: review?.openRecovery ?? null,
+    unavailableRecovery: review?.unavailableRecovery ?? NO_UNAVAILABLE_RECOVERY };
 }
 
 /**

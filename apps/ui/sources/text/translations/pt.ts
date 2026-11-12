@@ -19204,6 +19204,7 @@ settingsSession: {
         deployFailedTitle: "Não foi possível implantar",
         deployNeedsBuild: ({ machine }: { machine: string }) => `Este ambiente constrói suas imagens, e o Happier ainda não consegue construí-las. As implantações usam imagens que já estão em ${machine}.`,
         nothingChanged: "Nada mudou.",
+        refusedBeforeLogs: "Nada foi implantado, então ainda não há logs para inspecionar.",
         machineAway: "Não está respondendo",
         saveEnvironment: "Salvar ambiente",
         newEnvironment: "Novo ambiente",

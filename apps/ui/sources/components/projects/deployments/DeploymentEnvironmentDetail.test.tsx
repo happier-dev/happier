@@ -1637,6 +1637,41 @@ describe('Project deployments page', () => {
     second.controller.retire();
   });
 
+  it.each([['no receipt yet', false], ['a retained receipt', true]] as const)(
+    'offers "Inspect failed step" after a refused Deploy only when logs exist (%s)', async (_name, retained) => {
+    const base = environmentDetailForHome();
+    // A platform target with nothing serving: only a retained receipt gives this Environment logs to open.
+    const platform = environmentDetailForHome({
+      targetLinks: base.targetLinks.map(({ targetLink: { activeDeploymentId: _serving, ...targetLink }, ...link }) => ({ ...link, targetLink: { ...targetLink,
+        source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
+        targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a' } })),
+    });
+    const { controller } = controllerFor({ detail: platform, history: retained ? [createDeploymentReceiptDetailV1()] : [] });
+    const opened: string[] = [];
+    const review = { ...noReview, openRecovery: (destination: string) => { opened.push(destination); } };
+    const deploy = vi.fn(async () => { throw Object.assign(new Error('native_failed'), { code: 'native_failed' }); });
+    const { t } = await import('@/text');
+    try {
+      const screen = await renderScreen(
+        <DeploymentEnvironmentDetail controller={controller} environmentId={platform.environment.id} demand={shown}
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={review} onOpenReceipt={() => {}} />,
+      );
+      if (retained) await waitForContent(screen, 'project-deployments.receipt.row.deployment-a');
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      const banner = 'project-deployments.outcome.refused.other';
+      await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      if (retained) {
+        await screen.pressByTestIdAsync(`${banner}.action`);
+        expect(opened).toEqual(['logs']);
+      } else {
+        // Nothing deployed, so there is nothing to inspect: no dead control, and the banner says why.
+        expect(screen.findByTestId(`${banner}.action`)).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Open the deployment logs');
+        expect(screen.getTextContent()).toContain(t('projects.deployments.refusedBeforeLogs'));
+      }
+    } finally { controller.retire(); }
+  });
+
   it('says a failed read failed and offers Retry: the serving receipt and the first History page', async () => {
     const { controller: base, detail } = controllerFor({});
     base.retire();

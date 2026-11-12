@@ -19098,6 +19098,7 @@ settingsSession: {
         deployFailedTitle: "No se pudo desplegar",
         deployNeedsBuild: ({ machine }: { machine: string }) => `Este entorno construye sus imágenes y Happier aún no puede hacerlo. Los despliegues usan imágenes que ya están en ${machine}.`,
         nothingChanged: "No cambió nada.",
+        refusedBeforeLogs: "No se ha desplegado nada, así que aún no hay registros que revisar.",
         machineAway: "No responde",
         saveEnvironment: "Guardar entorno",
         newEnvironment: "Nuevo entorno",

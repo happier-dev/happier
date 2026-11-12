@@ -22562,6 +22562,7 @@ const enProjects = {
       deployFailedTitle: "Couldn’t deploy",
       deployNeedsBuild: ({ machine }: { machine: string }) => `This environment builds its images, and Happier can’t build them yet. Deploys use images already on ${machine}.`,
       nothingChanged: "Nothing changed.",
+      refusedBeforeLogs: "Nothing deployed, so there are no logs to inspect yet.",
       machineAway: "Not answering",
       saveEnvironment: "Save environment",
       newEnvironment: "New environment",
