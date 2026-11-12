@@ -335,6 +335,8 @@ export type VoiceRealtimeCanonicalEvent =
             | 'provider_response_invalid'
             | 'voice_session_expired'
             | 'voice_transcription_failed'
+            | 'voice_tool_result_delivery_unrecoverable'
+            | 'voice_service_unavailable'
             | 'voice_response_incomplete';
         /** Content-free provider diagnostic code; never a message or payload. */
         providerCode?: string;
