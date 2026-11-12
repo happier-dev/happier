@@ -3115,10 +3115,15 @@ export class ConnectedServiceRefreshCoordinator {
     const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId)
       ?? (legacyIngress.success ? legacyIngress.data : null);
     const binding = { serviceId: input.serviceId, profileId };
+    const changedTargets = this.runtimeRegistry.listRefreshTargets().filter((target) => target.activeBindings.some((candidate) =>
+      candidate.profileId === profileId
+      && (candidate.serviceId === input.serviceId || (legacyServiceId !== null
+        && resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(candidate.serviceId) === legacyServiceId))
+      && candidate.credentialRevision !== input.credentialPresence.credentialRevision));
+    if (changedTargets.length === 0) return;
     const affectedTargets = legacyServiceId
-      ? (await this.rematerializeTargetsForBindingDetailed({ serviceId: legacyServiceId, profileId })).rematerializedTargets
-      : this.runtimeRegistry.listRefreshTargets().filter((target) => target.bindings.some((candidate) =>
-          candidate.serviceId === input.serviceId && candidate.profileId === profileId));
+      ? (await this.rematerializeTargetsForBindingDetailed({ serviceId: legacyServiceId, profileId }, undefined, changedTargets)).rematerializedTargets
+      : changedTargets;
     if (affectedTargets.length === 0) return;
     await this.runCurrentAccountOperation(async () => this.params.onAuthUpdated?.({
       binding,
@@ -3177,10 +3182,12 @@ export class ConnectedServiceRefreshCoordinator {
     }
   }
 
-  private async rematerializeTargetsForBindingDetailed(binding: BoundProfile, signal?: AbortSignal): Promise<RematerializedTargetsResult> {
+  private async rematerializeTargetsForBindingDetailed(
+    binding: BoundProfile, signal?: AbortSignal, targets = this.runtimeRegistry.listRefreshTargets(),
+  ): Promise<RematerializedTargetsResult> {
     signal?.throwIfAborted();
     await this.assertAccountRuntimeCurrent(signal);
-    const affected = this.runtimeRegistry.listRefreshTargets().filter((target) =>
+    const affected = targets.filter((target) =>
       this.resolveBoundProfiles(target).some((candidate) =>
         candidate.serviceId === binding.serviceId && candidate.profileId === binding.profileId,
       ),

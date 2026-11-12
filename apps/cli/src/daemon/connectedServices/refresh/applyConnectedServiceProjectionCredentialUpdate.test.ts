@@ -118,6 +118,57 @@ describe('applyConnectedServiceProjectionCredentialUpdate', () => {
     expect(applications[0]?.affectedTargets.map((target) => target.sessionId).sort()).toEqual(['session-42', 'session-43']);
   });
 
+  it.each(['openai-codex', 'acme.plugin/novel-service'] as const)(
+    'applies %s revisions only to targets whose applied credential changed', async (serviceId) => {
+      const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+      const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+      const staleRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+      for (let pid = 1; pid <= 53; pid++) {
+        runtimeRegistry.registerTarget({
+          pid, agentId: 'codex', sessionId: `session-${pid}`, materializationKey: `materialization-${pid}`,
+          connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+            [serviceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
+          } },
+          connectedServiceSelectionsEnvRaw: JSON.stringify([{ kind: 'profile', serviceId,
+            profileId: 'work', credentialRevision: revision }]),
+        });
+      }
+      type AuthUpdate = Parameters<NonNullable<ConstructorParameters<typeof ConnectedServiceRefreshCoordinator>[0]['onAuthUpdated']>>[0];
+      const applications: AuthUpdate[] = [];
+      let credentialReads = 0;
+      const coordinator = new ConnectedServiceRefreshCoordinator({
+        // HTTP is a system boundary; unchanged targets must not reacquire credentials.
+        api: { getAccountEncryptionMode: async () => {
+          credentialReads++;
+          throw new Error('Already-applied credentials were reacquired');
+        } } as unknown as ApiClient, credentials: { token: 'token', encryption: null },
+        machineIdProvider: () => 'machine', activeServerDir: '/tmp/current-projection', baseDir: '/tmp/current-projection',
+        refreshWindowMs: 60_000, refreshLeaseMs: 30_000, now: () => 1_000,
+        runtimeRegistry, onAuthUpdated: (event) => { applications.push(event); },
+      });
+      const input = { serviceId, profileId: 'work',
+        credentialPresence: { status: 'present', credentialRevision: revision },
+        executionAuthority: 'passive_projection' } as const;
+      const apply = () => applyConnectedServiceProjectionCredentialUpdate({
+        input, listRuntimeTargets: () => runtimeRegistry.listRefreshTargets(),
+        stopSession: async () => { throw new Error('Present credential must not stop the lifecycle'); },
+        getRefreshCoordinator: () => coordinator,
+      });
+      const outcomes = await Promise.allSettled([apply(), apply()]);
+      expect(credentialReads).toBe(0);
+      expect(applications).toEqual([]);
+      expect(outcomes.every(outcome => outcome.status === 'fulfilled')).toBe(true);
+      if (serviceId === 'acme.plugin/novel-service') {
+        const target = runtimeRegistry.getBySessionId('session-53')!;
+        runtimeRegistry.adoptExactCredentialRevisionForTarget({ target, serviceId,
+          expectedCredentialRevision: revision, credentialRevision: staleRevision });
+        await apply();
+        expect(applications.flatMap(event => event.affectedTargets.map(target => target.sessionId)))
+          .toEqual(['session-53']);
+      }
+    },
+  );
+
   it('leaves a legacy-unfenced projection untouched', async () => {
     const stopSession = vi.fn();
     await expect(applyConnectedServiceProjectionCredentialUpdate({
