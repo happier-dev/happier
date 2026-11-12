@@ -686,6 +686,11 @@ it('applies admitted Project defaults and preserves Team content audience throug
     expect(workflowRequests).toBe(0);
     expect(mutationRequests).toBe(0);
     expect(proposed).toHaveLength(0);
+    const approvalDeps = createDaemonDeploymentActionDeps({
+        resolveRequesterIdentity: async () => requesterIdentity,
+        credentials, serverId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
+        machineId: 'target', savedSecretOperationContext: operation, readMachineVitals: () => { sampleReads += 1; return sample; },
+        runtime: { async acquire() { throw new Error('Preview cannot acquire native custody'); } } });
     // The confirming person approves these exact observed facts, including the
     // Project defaults owner's revision even when its effective value is equal.
     for (const path of ['prepared', 'durableAsk'] as const) for (const changed of ['capacity', 'defaultsRevision', 'observationTime'] as const) {
@@ -702,7 +707,7 @@ it('applies admitted Project defaults and preserves Team content audience throug
             approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true as const }; },
             isApprovalExecutionOriginCurrent: async () => true,
         } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate' | 'isApprovalExecutionOriginCurrent'>;
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps, ...approvalStorage });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...approvalDeps, ...approvalStorage });
         phase = `approval_prepare:${path}:${changed}`;
         const prepared = await executor.prepare('deployments.templates.instantiate', input, {
             surface: path === 'prepared' ? 'ui' : 'cli', authority: path === 'prepared' ? 'present_user' : 'account_automation',
