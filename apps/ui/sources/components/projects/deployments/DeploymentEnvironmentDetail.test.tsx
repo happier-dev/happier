@@ -706,8 +706,9 @@ describe('Project deployments page', () => {
   it.each(['review', 'refusal', 'receipt', 'retained'] as const)(
     'opens promotion from the native stored receipt and preserves the destination controller’s %s', async response => {
     // Designed confirmation binds the real current Account and stable Home identity.
+    const serverIdentityId = `srv_${'8'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Promotion', serverUrl: 'https://promotion-navigation.test',
-      accountId: scope.accountId, currentAccount: true, serverIdentityId: `srv_${'8'.repeat(32)}` });
+      accountId: scope.accountId, currentAccount: true, serverIdentityId });
     const previousPromotionRequests = homes.requestsFor('/v1/actions/deployments.promote').length;
     const promotionInputs: unknown[] = [];
     const { Modal, ModalProvider } = await import('@/modal');
@@ -761,7 +762,7 @@ describe('Project deployments page', () => {
       const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
       await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/deployments.promote'),
         screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).filter(Boolean).join(', ')).toHaveLength(previousPromotionRequests + 1));
-      await waitForHomeGovernance(() => expect(promotionInputs).toEqual([{ serverId: scope.serverId, environmentId: 'production',
+      await waitForHomeGovernance(() => expect(promotionInputs).toEqual([{ serverId: serverIdentityId, environmentId: 'production',
         sourceEnvironmentId: detail.environment.id, sourceDeploymentId: receipt.deployment.id, artifact: 'image' }]));
       if (response === 'review') {
         await waitForHomeGovernance(() => expect(request, screen.getTextContent()).toHaveBeenCalledWith('promotion-review'));
