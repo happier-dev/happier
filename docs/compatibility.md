@@ -8749,7 +8749,9 @@ On a subsequent admitted Domain setup, a stopped owned Caddy container whose
 Docker state reports a deleted primary network is recreated on the admitted
 route network. This uses the existing publication reconciliation after ownership
 and mount checks, retaining its mounted data, configuration, autosave and surviving
-network attachments. Public listener additions run against the resumed container.
+network attachments. Before replacement, Docker's network inventory filters out
+deleted attachments; an unavailable inventory leaves the existing container intact.
+Public listener additions run against the resumed container.
 The correction is daemon-side, introduces no timer or automatic retry, and does
 not remove the mounted state directories.
 

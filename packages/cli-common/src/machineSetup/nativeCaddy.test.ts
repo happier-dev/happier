@@ -213,6 +213,7 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
             if (loseCreateResponse) throw new Error('lost Docker response');
             return ok(container.Id);
         }
+        if (args[0] === 'network' && args[1] === 'ls') return ok([...new Set(['routed-a', 'routed-b', ...Object.keys(container?.NetworkSettings.Networks ?? {})])].join('\n'));
         if (args[0] === 'network' && args[1] === 'connect') { container!.NetworkSettings.Networks[args[2]!] = { IPAddress: '172.19.0.2' }; return ok(); }
         if (args[0] === 'network' && args[1] === 'disconnect') {
             const attachment = Object.entries(container?.NetworkSettings.Networks ?? {})
@@ -735,13 +736,27 @@ it.each([false, true])('reconciles an owned Caddy whose primary network was dele
     await f.closeAdmin();
     const retained = f.readContainer();
     retained.HostConfig.NetworkMode = 'deleted-app_default';
+    retained.NetworkSettings.Networks['deleted-app_default'] = { NetworkID: 'deleted-network-id' };
     retained.NetworkSettings.Networks['incumbent-draining'] = {};
     retained.State = { Running: false, Status: 'created', ExitCode: 128,
         Error: 'failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found' };
     const autosave = join(input.stateDirectory, 'config', 'caddy', 'autosave.json');
     const saved = '{"retainedDomain":"other-app.example"}';
     await writeFile(autosave, saved);
-    expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
+    const options = { ...f.options(), run: async (command: MachineSetupNativeCommand) => {
+        const args = command.args.slice(2);
+        if (args[0] === 'network' && args[1] === 'ls') return ok('routed-a\nrouted-b\nincumbent-draining\n');
+        if (args[0] === 'network' && args[1] === 'connect' && args[2] === 'deleted-app_default') {
+            return { code: 1, stdout: '', stderr: 'Error response from daemon: network deleted-app_default not found' };
+        }
+        return f.run(command);
+    } };
+    expect(await ensureNativeCaddyContainer(input, { ...options, run: async command => {
+        if (command.args[2] === 'network' && command.args[3] === 'ls') return { code: 1, stdout: '', stderr: 'permission denied' };
+        return options.run(command);
+    } })).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable', details: { requiredFact: 'caddyRoutedNetworks' } });
+    expect(f.readContainer()).toBe(retained);
+    expect(await ensureNativeCaddyContainer(input, options)).toMatchObject({ status: 'ready' });
     expect(f.readContainer()).not.toBe(retained);
     expect(f.readContainer().HostConfig.NetworkMode).toBe('routed-a');
     expect(f.readContainer().HostConfig.Mounts).toEqual(retained.HostConfig.Mounts);
@@ -915,4 +930,21 @@ it('treats a failed Docker observation as unavailable rather than absent', async
         failure: { requiredFact: 'caddyContainer' },
     } });
     expect(reads.every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
+});
+
+it.skipIf(process.platform === 'win32')('settles a Docker missing-network start as a typed Domain failure with a remedy', async () => {
+    const f = await fixture(false); await f.setup();
+    const result = await ensureNativeCaddyContainer(f.input, { ...f.options(), run: async command => {
+        if (command.args.includes('start')) return { code: 1, stdout: '',
+            stderr: 'Error response from daemon: network deleted-app_default not found' };
+        if (command.args.includes('{{json .State}}')) return ok(JSON.stringify({ ExitCode: 128,
+            Error: 'failed to set up container networking: network deleted-app_default not found' }));
+        return f.run(command);
+    } });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'native_effect_failed', details: {
+        failure: { kind: 'native_effect_failed', stepId: 'caddy-container-start', containerExitCode: 128,
+            nativeCommand: { command: 'docker', phase: 'start', exitCode: 1 }, containerError: 'container_start_failed' },
+        remedy: expect.any(String),
+    } });
+    expect(f.commands.some(command => command.args.includes('wait'))).toBe(false);
 });

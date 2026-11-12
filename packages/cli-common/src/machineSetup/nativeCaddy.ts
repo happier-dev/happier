@@ -661,6 +661,12 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
         networks = container.networks;
         await options.settleBindings?.();
         if (!bindingsMatch || container.missingPrimaryNetwork) {
+            // Docker can retain deleted attachments in container inspection.
+            // Only restore surviving networks; never reconnect retired ones.
+            const listed = await run(['network', 'ls', '--format', '{{.Name}}']);
+            if (listed.code !== 0) return caddyFactUnavailable('caddyRoutedNetworks');
+            const existing = new Set(listed.stdout.trim().split('\n'));
+            networks = Object.fromEntries(Object.entries(networks).filter(([name]) => existing.has(name)));
             // Docker publications and the primary network mode are immutable.
             // A deleted primary network prevents even an attached replacement
             // network from starting this container. Retain its durable mounts
