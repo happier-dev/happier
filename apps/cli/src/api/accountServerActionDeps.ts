@@ -90,7 +90,7 @@ import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Sche
 import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY, type UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { ActionExecuteFailureSchema, parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, parseActionExecuteFailure, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 export type AccountServerActionDeps = Pick<
@@ -932,7 +932,8 @@ export function createAccountServerActionDeps(input: Readonly<{
               if (!dispatch.ok) throw new ManagedMachineControllerError(dispatch.errorCode ?? 'managed_request_failed');
               if (dispatch.response.status < 200 || dispatch.response.status >= 300) {
                 const refusal = ManagedErrorV1Schema.safeParse(dispatch.response.data);
-                throw new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed');
+                throw Object.assign(new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed'),
+                  { status: dispatch.response.status });
               }
               return schema.parse(dispatch.response.data);
             } };
@@ -940,7 +941,8 @@ export function createAccountServerActionDeps(input: Readonly<{
             ? await executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
             : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
-          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code };
+          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code,
+            failureCause: projectActionFailureCauseV1(error, actionId) };
           throw error;
         }
       }

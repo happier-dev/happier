@@ -49,7 +49,7 @@ function requireManagedPresentUser(request: FastifyRequest): void {
     if (!isManagedPresentUser(request)) throw new ManagedMachineError('permission_denied');
 }
 
-/** Row-bound signed execution or present-user custody; domain mutations retain their actor-access owner. */
+/** Intent admission uses Account roles; native execution keeps row-bound proof or present-user custody. */
 async function requireManagedOperationRequest(request: FastifyRequest, input: Readonly<{
     homeId: string; managedId: string; requestId?: string; controller?: { machineId: string; installationId: string };
 }>, allowedEffects: readonly string[], options: Readonly<{ admission?: boolean; submittedReport?: boolean;
@@ -83,6 +83,13 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
             const proof = requireManagedControllerProof(request, executionMachineId, allowedEffects);
             if (proof.custodianAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
             return { ...proof, requestAuthority: managedRequestAuthority(request) };
+        }
+        // Home owns retained intent admission, including approved automation.
+        // admitManagedControl checks this actor's Manage role; a controller
+        // signature belongs to later native submission, not this Account write.
+        if (options.admission && request.authTokenKind === 'account' && request.authTokenLegacy === false) {
+            if (!input.requestId) throw new ManagedMachineError('request_conflict');
+            return { requestId: input.requestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'intent' as const };
         }
         requireManagedPresentUser(request);
         // Pair-present recovery keeps its domain actor-access check after credential admission.
