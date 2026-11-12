@@ -50,6 +50,15 @@ describe('Vercel native credential replacement', () => {
     const client = createVercelNativeClient(scope, request);
     await expect(client.check()).rejects.toBe(refusal);
   });
+  it('preserves an authored transport failure during native file delivery', async () => {
+    const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
+      details: { phase: 'activation' } });
+    const { client } = fixture(url => {
+      if (url.pathname.endsWith('/cmd')) throw refusal;
+      return json({ sandbox: named(), session });
+    });
+    await expect(client.putFile({ resource, guestPath: '/payload', bytesBase64: 'YQ==' })).rejects.toBe(refusal);
+  });
   it.each([401, 403])('keeps the resource HTTP %s cause before credential policy writes', async status => {
     const { client, calls } = fixture(() => json({ private: 'vendor body' }, status));
     expect(await client.applyNativeCredentials(credentialInput(), materializeHeaders)).toEqual({

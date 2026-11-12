@@ -159,7 +159,7 @@ async function vendor(home?: string, status: { project?: number; team?: number; 
 describe('public Vercel provisioner composition', () => {
   it('admits the complete HTTP bootstrap recipe on a browser host', () => {
     expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: MACHINE_PROVISIONER }))
-      .toEqual({ available: true });
+      .toEqual({ available: true, executionTarget: 'account' });
   });
 
   it('round-trips nonsecret Account scope through retained acquisition and inspection without a Machine', async () => {

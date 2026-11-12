@@ -71,7 +71,8 @@ describe('Fly through the shared managed native recipe', () => {
     const invoke: ManagedNativeInvocation = async (role, body) => {
       const localId = role === 'putFile' ? MACHINE_PROVISIONER.bootstrapTransport.putFile
         : role === 'exec' ? MACHINE_PROVISIONER.bootstrapTransport.exec
-          : role === 'bootstrap' ? MACHINE_PROVISIONER.actions.bootstrap : undefined;
+          : role === 'bootstrap' ? MACHINE_PROVISIONER.actions.bootstrap
+            : role === 'inspect' ? MACHINE_PROVISIONER.actions.inspect : undefined;
       if (!localId) throw new Error(`Unexpected managed role ${role}`);
       // The public testkit validates this shared-port input through the real Action schema.
       return await kit.invokeAction(localId, body as JsonValue, { surface: 'plugin' });
@@ -84,13 +85,19 @@ describe('Fly through the shared managed native recipe', () => {
       expect(await readFile(path)).toEqual(Buffer.from([0, 255, 128]));
       expect(await io.exec({ command: 'cat', input: '\uFEFF秘密\n' })).toMatchObject({ stdout: '\uFEFF秘密\n', status: 0 });
       let admissionReads = 0;
+      const reports: unknown[] = [];
       const result = await reconcileManagedMachine({ machine, action: 'machines.managed.bootstrap.retry', requestId: correlation.requestId,
         provisioner: { id: 'fly', ...MACHINE_PROVISIONER },
-        home: { correlation: () => correlation, row: unexpected, submit: unexpected,
+        home: { correlation: () => correlation, async row(path, body) {
+          expect(path).toBe('report');
+          reports.push(body);
+          return machine;
+        }, submit: unexpected,
           reportIssuedAcquireFact: unexpected, preparePendingAcquireBoundReport: unexpected },
         createNative: () => ({ prepareRoles: unexpected, invoke }), waitForObservation: unexpected,
         bootstrap: { preflight: unexpected, prepareCredential: unexpected, readCredential: unexpected,
           async enroll(input) {
+            expect(reports[0]).toMatchObject({ observation: { availability: 'unavailable', reason: 'bootstrap.incomplete' } });
             const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: machine.homeId,
               canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] },
               authority: 'trusted_enrollment' });
@@ -102,6 +109,7 @@ describe('Fly through the shared managed native recipe', () => {
           } },
       });
       expect(result).toEqual(machine);
+      expect(reports.at(-1)).toMatchObject({ observation: { availability: 'present', power: 'running' } });
       expect(admissionReads).toBe(1);
       expect(native).toMatchObject({ id: resource.value.machineId, state: 'started', config: {
         env: { HOME: FLY_GUEST_BOOT.homeDir, HAPPIER_HOME_DIR: FLY_GUEST_BOOT.happyHomeDir },

@@ -327,7 +327,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try { await put(await running(parsed.resource), parsed.guestPath, decodeBase64(parsed.bytesBase64), parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return projectMachineProvisionerActionFailure(error, () => caughtNativeFailure(error, 'vercel_file_unconfirmed')); }
+    catch (error) { return caughtNativeFailure(error, 'vercel_file_unconfirmed'); }
   }
   async function applyNativeCredentials(input: MachineProvisionerNativeCredentialApplyInputV1,
     materializeHeaders: PluginInvocationContext['services']['machineProvisioners']['materializeNativeCredentialHeaders']): Promise<MachineProvisionerNativeCredentialApplyResultV1> {

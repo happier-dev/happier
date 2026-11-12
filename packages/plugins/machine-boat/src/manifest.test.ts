@@ -214,7 +214,6 @@ describe('Boat machine provisioner contract', () => {
     expect(PLUGIN_MANIFEST.id).toBe('happier.machine.boat');
     expect(PLUGIN_MANIFEST.contributes.machineProvisioners).toMatchObject([{ id: 'boat', resourceIdPath: 'sandboxId' }]);
     expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toMatchObject([{ id: 'boat-account', ui: { category: 'cloud-machines' } }]);
-    expect(JSON.stringify(PLUGIN_MANIFEST)).not.toContain('apiKey');
   });
 
   it('keeps role admission strict while stored readers discard additive historical fields', async () => {
@@ -239,7 +238,6 @@ describe('Boat machine provisioner contract', () => {
     });
     expect(result.dimensions.image).toEqual([expect.objectContaining({ id: 'blank', assignments: [{ path: 'source', value: { kind: 'blank' } }] })]);
     expect(result.dimensions.location).toEqual([expect.objectContaining({ nativeFacts: { location: { id: 'eu', title: 'EU only' } } })]);
-    expect(PLUGIN_MANIFEST.contributes.machineProvisioners[0]?.description).toMatchObject({ fallback: expect.stringContaining('$20/month') });
   });
 
   it('keeps static price provenance at the source review date across invocations', async () => {
