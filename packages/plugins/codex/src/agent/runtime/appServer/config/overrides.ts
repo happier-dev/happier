@@ -18,7 +18,12 @@ export type CodexAppServerMcpServerConfig = Readonly<{
 
 type CodexToolRestrictionConfiguration = Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
 
-export const CODEX_HOST_FUNCTION_NAMESPACE = 'happier_host';
+export function resolveCodexHostFunctionNamespace(configuration?: CodexToolRestrictionConfiguration): string | null {
+    // Restricted recipes exclude native `functions` (including MCP resource readers).
+    // Otherwise advertise flat functions: OpenAI-compatible providers can flatten a
+    // custom namespace into a dotted name that Codex cannot dispatch.
+    return configuration?.unlistedTools === 'deny' ? 'happier_host' : null;
+}
 
 export function listCodexAppServerMcpServerNames(
     mcpServers: Readonly<Record<string, CodexAppServerMcpServerConfig>>,
@@ -137,7 +142,7 @@ export function buildCodexAppServerConfigOverrides(
     // Code-mode-only models hide ordinary dynamic functions from the direct
     // catalog. Host callbacks must stay callable independently of native policy.
     if (options.functionTools?.length || options.unlistedTools === 'deny') {
-        overrides.push(`features.code_mode.direct_only_tool_namespaces=[${quoteTomlString(CODEX_HOST_FUNCTION_NAMESPACE)}]`);
+        overrides.push(`features.code_mode.direct_only_tool_namespaces=[${quoteTomlString(resolveCodexHostFunctionNamespace(options) ?? 'functions')}]`);
     }
     if (options.skills?.nativeDisables.length) {
         const disables = options.skills.nativeDisables.map(({ path }) => `{path=${quoteTomlString(path)},enabled=false}`);

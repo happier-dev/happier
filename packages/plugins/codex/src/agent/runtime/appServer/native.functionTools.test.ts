@@ -8,25 +8,27 @@ describe('Codex native host function tools', () => {
   it.each([undefined, { allowedTools: [], unlistedTools: 'deny' as const }])('advertises directly callable host functions independently of native tool restrictions (%j)', async (toolRestriction) => {
     const calls: JsonValue[] = [];
     const descriptor = getVoiceActionFunctionTool();
+    const namespace = toolRestriction?.unlistedTools === 'deny' ? 'happier_host' : null;
     const action = { t: getActionSpec('servers.list').bindings?.voiceClientToolName, args: {} };
     await withCodexNativeAttachFixture(async fixture => {
       const session = await fixture.openConfiguredSession();
-      expect(fixture.requests.find(request => request.method === 'thread/start')?.params.dynamicTools).toEqual([
-        { type: 'namespace', name: 'happier_host', description: expect.any(String), tools: [{ type: 'function', ...descriptor }] },
-      ]);
+      expect(fixture.requests.find(request => request.method === 'thread/start')?.params.dynamicTools).toEqual(namespace ? [{
+        type: 'namespace', name: namespace, description: 'Host functions supplied for this conversation.',
+        tools: [{ type: 'function', ...descriptor }],
+      }] : [{ type: 'function', ...descriptor }]);
       expect(session.functionToolsDelivered).toBe(true);
       expect(fixture.nativeLaunches.some(argv => argv.includes(
-        'features.code_mode.direct_only_tool_namespaces=["happier_host"]',
+        `features.code_mode.direct_only_tool_namespaces=["${namespace ?? 'functions'}"]`,
       ))).toBe(true);
       const response = await fixture.requestNativeTool({ threadId: 'fresh-thread', turnId: 'turn-1',
-        callId: 'call-1', namespace: 'happier_host', tool: descriptor.name, arguments: action });
+        callId: 'call-1', namespace, tool: descriptor.name, arguments: action });
       expect(calls).toEqual([action]);
       expect(response.result).toEqual({ contentItems: [{ type: 'inputText', text: '{"ok":true,"sessionId":"created"}' }], success: true });
       for (const invalid of [
-        { threadId: 'another-thread', tool: descriptor.name, namespace: 'happier_host' },
-        { threadId: 'fresh-thread', tool: 'unknown', namespace: 'happier_host' },
+        { threadId: 'another-thread', tool: descriptor.name, namespace },
+        { threadId: 'fresh-thread', tool: 'unknown', namespace },
         { threadId: 'fresh-thread', tool: descriptor.name, namespace: 'other' },
-        { threadId: 'fresh-thread', tool: descriptor.name, namespace: null },
+        { threadId: 'fresh-thread', tool: descriptor.name, namespace: namespace ? null : 'happier_host' },
       ]) {
         const rejected = await fixture.requestNativeTool({ ...invalid, turnId: 'turn-1', callId: 'call-2', arguments: {} });
         expect(rejected.result).toMatchObject({ success: false });
@@ -57,7 +59,7 @@ describe('Codex native host function tools', () => {
     await withCodexNativeAttachFixture(async fixture => {
       await fixture.openConfiguredSession();
       const response = await fixture.requestNativeTool({ threadId: 'fresh-thread', turnId: 'turn-1',
-        callId: 'call-1', namespace: 'happier_host', tool: 'voice_action', arguments: null });
+        callId: 'call-1', namespace: null, tool: 'voice_action', arguments: null });
       expect(response.result).toMatchObject({ success: false });
       expect(JSON.stringify(response)).not.toContain('PRIVATE_HOST_ERROR');
     }, { functionTools: [{ name: 'voice_action', description: 'Apply a Voice output', inputSchema: { type: 'object' },

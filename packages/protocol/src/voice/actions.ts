@@ -179,7 +179,12 @@ function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | A
     return parsed.success ? parsed.data : actionInputValidationFailure(parsed.error);
   }
 
-  const rawArgs = (rawAction as { args?: unknown }).args;
+  let rawArgs = (rawAction as { args?: unknown }).args;
+  // Some model providers JSON-encode the argument object inside the host call.
+  // Decode only this transport value; the canonical Action schema still admits it.
+  if (typeof rawArgs === 'string') {
+    try { rawArgs = JSON.parse(rawArgs) as unknown; } catch { /* Keep the normal content-free validation failure. */ }
+  }
   const direct = inputSchema.safeParse(rawArgs);
   if (direct.success) {
     return { t: toolName, args: direct.data };

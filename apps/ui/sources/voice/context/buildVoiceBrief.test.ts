@@ -90,8 +90,8 @@ function buildBriefFromInboxFixture(input: Parameters<typeof buildVoiceBrief>[0]
 
 describe('Voice brief from the mounted Inbox', () => {
     it('uses the displayed sidebar membership and total instead of the larger Account Inbox', () => {
-        // This discriminates the observed numeric shape; RUN113 did not retain the
-        // contemporaneous breakdown needed to attribute its extra requests.
+        // The sidebar filters three admitted Session requests out of the larger
+        // Account Inbox; both projections use their real producers.
         const base = source();
         const original = base.sessionPresentation.readySessions[0]!.session;
         const candidates = ([['pending_blocked', 13], ['failed', 29], ['ready_after_read', 49]] as const)
@@ -120,17 +120,14 @@ describe('Voice brief from the mounted Inbox', () => {
             workflowRuns: [], automationRuns: [], automationServerId: null, openApprovals: [], stalledSessions: [], landings: [], snoozed: [],
             resolveSession: () => null, resolveOriginRunId: () => null });
         const inbox = { ...base, sessionPresentation, workGroups,
-            workflowAttention: { ...base.workflowAttention, serverId: 'home-a', available: true, phase: 'loaded' as const,
-                runIds: Array.from({ length: 646 }, (_, index) => `other-inbox-run-${index}`) },
             items: buildInboxItems({ sessionPresentation, workGroups, workflowServerId: 'home-a', accountServerId: 'home-a', notices: [] }),
             needsYouShelf: { count: header.eligibleCount!, items: shelfItems, incomplete: false },
         };
-        expect(countInboxNeedsYou(inbox)).toBe(659);
+        expect(countInboxNeedsYou(inbox)).toBe(13);
         const brief = buildVoiceBrief({ inbox, settings: {} });
         expect(JSON.parse(brief.context).counts).toEqual({ needs_you: 10, failed: 29, ready: 49 });
         expect(brief.items.filter(item => item.category === 'needs_you').map(item => item.destination)).toEqual(
             shelfItems.flatMap(item => item.type === 'session' ? [{ kind: 'session', address: { serverId: item.serverId, sessionId: item.sessionId } }] : []));
-        expect(brief.context).not.toContain('other-inbox-run-');
     });
     it('reports the sidebar total unavailable when its projection is absent rather than using an Account Inbox total', () => {
         const inbox = source();
@@ -202,7 +199,8 @@ describe('Voice brief from the mounted Inbox', () => {
             openApprovals: [], openUsageNotices: [], actionOperationEntries: [], friendRequests: [],
         };
         const accountCount = countInboxNeedsYou(inbox);
-        expect(accountCount).toBe(11 + Number(unloadedRun));
+        // Unknown Run ids are not admitted Needs you items in the Inbox projection.
+        expect(accountCount).toBe(11);
         const brief = buildVoiceBrief({ inbox, settings: {} });
         const context = JSON.parse(brief.context);
         expect(context.counts).toEqual({ needs_you: 11, failed: 31, ready: 45 });

@@ -94,7 +94,7 @@ import {
   readCodexAppServerResumeRecoveryTimeoutMs,
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
-import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, CODEX_HOST_FUNCTION_NAMESPACE, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
 import {
   CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
   CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -905,6 +905,7 @@ export function createCodexAppServerRuntime(
   }
   const mcpServers = normalizeMcpServers(params.mcpServers);
   const mcpServerKeys = assignInjectedServerKeys(listCodexAppServerMcpServerNames(mcpServers, params.toolRestriction));
+  const hostFunctionNamespace = resolveCodexHostFunctionNamespace(params.toolRestriction);
   const runtimeTargetId = params.happierSessionId !== undefined
     ? params.happierSessionId
     : params.executionRunId;
@@ -2189,7 +2190,7 @@ export function createCodexAppServerRuntime(
         const call = readRecord(request);
         const tool = params.functionTools?.find(candidate => candidate.name === call?.tool);
         const input = AgentRuntimeJsonValueSchema.safeParse(call?.arguments);
-        if (disposed || !threadId || call?.threadId !== threadId || call.namespace !== CODEX_HOST_FUNCTION_NAMESPACE || !tool || !input.success) {
+        if (disposed || !threadId || call?.threadId !== threadId || (call.namespace ?? null) !== hostFunctionNamespace || !tool || !input.success) {
           return { contentItems: [{ type: 'inputText', text: 'Host function is unavailable for this call.' }], success: false };
         }
         try {
@@ -2794,19 +2795,20 @@ export function createCodexAppServerRuntime(
         return await readResumedThreadMetadata(nextThreadId, recoveryReadRequestOptions);
       }
     };
+    const hostFunctionTools = params.functionTools?.map(tool => ({
+      type: 'function', name: tool.name, description: tool.description, inputSchema: tool.inputSchema,
+    }));
     const response = requestedThreadId
       ? await resumeThread(requestedThreadId)
       : await requestWithPermissionFallback('thread/start', {
         cwd: params.directory,
         ...commonFields,
         experimentalRawEvents: true,
-        ...(params.functionTools?.length ? { dynamicTools: [{
-          type: 'namespace', name: CODEX_HOST_FUNCTION_NAMESPACE,
+        ...(hostFunctionTools?.length ? { dynamicTools: hostFunctionNamespace ? [{
+          type: 'namespace', name: hostFunctionNamespace,
           description: 'Host functions supplied for this conversation.',
-          tools: params.functionTools.map(tool => ({
-            type: 'function', name: tool.name, description: tool.description, inputSchema: tool.inputSchema,
-          })),
-        }] } : {}),
+          tools: hostFunctionTools,
+        }] : hostFunctionTools } : {}),
         persistExtendedHistory: true,
         }, 'thread').catch((error: unknown) => {
           if (!isCodexAppServerApplicationRejectionForMethod(error, 'thread/start')) throw error;

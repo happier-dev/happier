@@ -1174,9 +1174,13 @@ an explicitly selected read-only intent still applies. Existing daemons need a
 reload to consume this change.
 
 Codex host function delivery is independent of that native permission policy.
-Its launch configuration keeps the `happier_host` namespace directly visible
-to code-mode-only models whenever the host supplies functions. Local Voice
-continues to use Protocol's Action catalog and the shared UI Action executor.
+Unrestricted recipes advertise flat host functions directly to code-mode-only
+models, so OpenAI-compatible providers do not have to preserve a custom function
+namespace. Explicitly restricted recipes retain the isolated `happier_host`
+namespace: exposing native `functions` there would also expose excluded native
+tools. Local Voice uses Protocol's Action catalog and the shared UI Action
+executor. A requested new coding Session receives its task through Session
+creation; spoken Brief requests use the Inbox Action rather than shell discovery.
 
 The Voice settings schema owns the idle lifetime default for both clients and
 the CLI. A confirmed primary Run Stop remains successful if the optional sweep

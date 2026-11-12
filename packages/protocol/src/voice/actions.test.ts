@@ -186,6 +186,22 @@ describe('decodeVoiceAssistantActions', () => {
     ]);
   });
 
+  it.each([
+    { t: 'inbox_get', args: {} },
+    { t: 'searchActionSpecs', args: { query: 'recent paths directory', limit: 5 } },
+  ])('decodes Muse JSON-encoded $t arguments through the canonical Action schema', (action) => {
+    const expected = decodeVoiceAssistantActions([action]);
+    expect(expected.actions).toHaveLength(1);
+    expect(decodeVoiceAssistantActions([{ ...action, args: JSON.stringify(action.args) }])).toEqual(expected);
+  });
+
+  it.each(['{"limit":', '[]', '{"limit":"private invalid limit"}'])('refuses invalid JSON-encoded Action args without disclosure (%s)', (args) => {
+    const result = decodeVoiceAssistantActions([{ t: 'listSessions', args }]);
+    expect(result.actions).toEqual([]);
+    expect(result.failure).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(JSON.stringify(result)).not.toContain('private invalid limit');
+  });
+
   it('coerces comma-separated string lists for text-list voice action args', () => {
     const input = [
       {
