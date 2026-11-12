@@ -5,7 +5,7 @@ import { resolveDeploymentRestoreCaptureV1, type DeploymentRestoreResolvedCaptur
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { DeploymentOwnServerContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
+import { DeploymentOwnServerContentV1Schema, DeploymentReviewV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol';
@@ -572,7 +572,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             snapshot: { ...snapshot, content: generation.content, deployment: generation.deployment },
             generation, installationId: input.installationId,
             ...(copySourceEnvironment && captureReceipt ? { copySource: { environment: copySourceEnvironment, receipt: captureReceipt } } : {}),
-            ...(copy || request.backup && !backup ? { operationKind: 'deployments.backups.restore' as const } : {}) },
+            operationKind: 'deployments.backups.restore' },
         async ({ native, createInput, createUploadInput, runtime, createBackupInput }) => {
             const reviewSnapshot = async (destination: Parameters<NonNullable<OwnServerRestoreRequestForHost['reviewNativeSnapshot']>>[0]['destination']) => {
                 if (!request.reviewNativeSnapshot) return;
@@ -766,12 +766,17 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         }
     }
 
-    const projection = (machineId: string, installationId: string, value: OwnServerDeploymentInputBasisV1, platform: string): OwnServerDeploymentRuntimeProjectionV1 => ({
-        machineId, installationId, manifestFingerprint: value.manifestFingerprint, configInputDigests: value.configInputDigests,
-        physicalProjectName: value.physicalProjectName, toolVersion: value.toolVersion, services: value.services, profiles: value.profiles,
-        ...(value.nativeGeneration === undefined ? {} : { nativeGeneration: value.nativeGeneration }),
-        platform, ...(value.servicePlatforms ? { servicePlatforms: value.servicePlatforms } : {}),
-    });
+    const projection = (machineId: string, installationId: string, review: OwnServerDeploymentReview): OwnServerDeploymentRuntimeProjectionV1 => {
+        const { inputBasis: value, runtimePlatform: platform } = review;
+        // Each remote member owns its native observation; normalize its review at this host boundary.
+        const { target } = DeploymentReviewV1Schema.parse(review.reviewedEffect);
+        return {
+            machineId, installationId, manifestFingerprint: value.manifestFingerprint, configInputDigests: value.configInputDigests,
+            physicalProjectName: value.physicalProjectName, toolVersion: value.toolVersion, services: value.services, profiles: value.profiles,
+            ...(value.nativeGeneration === undefined ? {} : { nativeGeneration: value.nativeGeneration }),
+            platform, engineKind: target.engine, ...(value.servicePlatforms ? { servicePlatforms: value.servicePlatforms } : {}),
+        };
+    };
     async function reviewMember(input: OwnServerDeploymentMemberReviewRequest) {
         const current = await readEnvironment(input.request, input.request.input.expectedRevision, undefined, input.request.environment);
         if (input.machineId !== host.machineId || !current.link.members.some(member => member.machineId === host.machineId
@@ -790,7 +795,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
         if (!reviews.length) refuse('target_mismatch');
         const firstEffect = reviews[0].reviewedEffect;
         return { runtimePlatform: reviews[0].runtimePlatform, inputBasis: OwnServerDeploymentInputBasisV1Schema.parse({ ...reviews[0].inputBasis,
-            runtimeProjections: current.link.members.map((member, index) => projection(member.machineId, member.installationId, reviews[index].inputBasis, reviews[index].runtimePlatform)) }),
+            runtimeProjections: current.link.members.map((member, index) => projection(member.machineId, member.installationId, reviews[index])) }),
             reviewedEffect: projectNativeJsonValueForTransport({ ...(firstEffect !== null && typeof firstEffect === 'object'
                 && !Array.isArray(firstEffect) ? firstEffect : {}),
                 runtimeMachines: current.link.members.map((member, index) => ({ machineId: member.machineId, review: reviews[index].reviewedEffect })) }) };
