@@ -59,6 +59,8 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   nativeExecutable?: string;
   /** Admitted MCP catalog snapshot; resolution and permission policy remain real. */
   mcpToolContext?: McpToolPolicyContext;
+  /** Host turn admission, shared by native pending requests in the loaded runner. */
+  readActiveTurnAdmissionWitness?: Parameters<typeof createNativeAgentSessionServices>[0]['readActiveTurnAdmissionWitness'];
 }> = {}) {
   const cwd = options.cwd ?? process.cwd();
   const pluginId = 'happier.agent.muse';
@@ -268,6 +270,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       sessionId, occurrenceId: lease.occurrenceId, sourceCustody, isCurrent: lease.isCurrent, signal,
       credentials, readCredentials: async () => credentials,
       readPermissionMode: () => 'default',
+      ...(options.readActiveTurnAdmissionWitness ? { readActiveTurnAdmissionWitness: options.readActiveTurnAdmissionWitness } : {}),
     };
     const presentation = createCurrentSessionPresentationHost({ session: host, signal }).bindCurrentSession();
     const currentSessionUi = createNativeAgentCurrentSessionUiServices({ ...nativeSessionParams, presentation });

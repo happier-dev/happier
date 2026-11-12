@@ -630,6 +630,70 @@ function sharedApproverContext(sessionId: string) {
 }
 
 describe('native offered permission ingress', () => {
+  it.each([
+    { name: 'bash persistent', sessionId: 'cmwcukh1p008omcjqre7ahinv',
+      requestId: 'call_01a1cd4c44ec7686b40259ad68a30416', approvalId: '01a1cd4c-483f-70f3-bc29-714e650316a2',
+      turnId: 'native-turn-8381f964-b71e-4e72-9064-b7ebd2e04fee-1', tool: 'bash', mode: 'default',
+      choiceId: 'allow_local_prefix', decision: 'approved_execpolicy_amendment', scope: 'localPersistent' },
+    { name: 'Happier MCP Session', sessionId: 'cmwcupz7u00dvmcjqkn0r7wir',
+      requestId: 'call_01a1cd4f877f765db523ac357e6446d8', approvalId: '01a1cd4f-8a1e-7fc0-8c39-c1dff893e381',
+      turnId: 'native-turn-bdf1eb38-c2fc-4220-8d4a-e49bb19bf7de-1', tool: 'mcp__happier__action_spec_get', mode: 'safe-yolo',
+      choiceId: 'allow_session', decision: 'approved_for_session', scope: 'session' },
+  ] as const)('answers the R1112A $name Action without a turn override and rejoins its exact retry', async (sample) => {
+    const session = new FakeSession();
+    session.sessionId = sample.sessionId;
+    session.rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(session.sessionId);
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[R1112A]' });
+    handler.setPermissionMode(sample.mode);
+    // QA exposes the native requirement object as an opaque JSON string at
+    // the Action boundary. Keep it opaque through the real ingress owners.
+    const nativeChoice = { requirementId: JSON.stringify({ approvalId: sample.approvalId, sourceIndex: 0 }),
+      choiceId: sample.choiceId };
+    const pending = handler.handleToolCall(sample.requestId, sample.tool, {}, {
+      turnId: sample.turnId,
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      nativeChoices: { requirementId: nativeChoice.requirementId, source: 'muse', choices: [{
+        id: sample.choiceId, label: sample.name, decision: sample.decision, scope: sample.scope,
+        response: { approved: true, decision: sample.decision },
+      }] },
+    });
+    void pending.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests[sample.requestId]).toMatchObject({ turnId: sample.turnId }));
+      const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+      const settings = ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } });
+      // Replace the authenticated Session network boundary only. Admission,
+      // Action dispatch, RPC codec, pending/claim owners and policy stay real.
+      const deps = {
+        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, settings, context),
+        sessionPermissionRespond: async ({ requestId, turnId, nativeChoice: choice }) => {
+          const result = await rpc(buildSessionPermissionRespondRpcParamsV1({ id: requestId ?? '',
+            ...(turnId == null ? {} : { turnId }), ...(choice ? { nativeChoice: choice } : {}),
+          }));
+          return result ?? { ok: true };
+        },
+      } satisfies Pick<ActionExecutorDeps, 'isActionApprovalRequired' | 'sessionPermissionRespond'>;
+      const executor = createActionExecutor(deps as ActionExecutorDeps);
+      const answer = (overrides = {}) => executor.execute('session.permission.respond', {
+        sessionId: sample.sessionId, requestId: sample.requestId, nativeChoice, ...overrides,
+      }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+        defaultSessionId: sample.sessionId });
+      await expect(answer({ turnId: 'another-turn' })).resolves.toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+      await expect(answer({ nativeChoice: { ...nativeChoice,
+        requirementId: JSON.stringify({ approvalId: sample.approvalId, sourceIndex: 1 }) } }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'permission_response_invalid' });
+      expect(session.agentState.requests[sample.requestId]).toBeDefined();
+      await expect(answer()).resolves.toMatchObject({ ok: true });
+      await expect(pending).resolves.toMatchObject({ decision: sample.decision, nativeChoice });
+      expect(session.agentState.requests[sample.requestId]).toBeUndefined();
+      expect(session.agentState.completedRequests[sample.requestId]).toMatchObject({ turnId: sample.turnId,
+        decision: sample.decision, nativeChoice });
+      await expect(answer()).resolves.toMatchObject({ ok: true });
+      expect(session.permissionResponseClaimWriteCount).toBe(1);
+    } finally { await handler.reset(); }
+  });
+
   it('keeps the native offer pending when another request grants the same tool for the Session', async () => {
     const session = new FakeSession();
     const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native allowlist]' });

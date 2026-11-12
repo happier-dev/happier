@@ -3574,10 +3574,14 @@ export abstract class BasePermissionHandler {
             if (!native) return null;
             const { choice } = native;
             nativeScope = choice.scope;
+            // An exact offered requirement identifies the native occurrence.
+            // Bind choice-only answers to its owned turn; explicit turns still
+            // pass through the shared custody check unchanged.
+            const turnId = response.turnId ?? context.turnId;
             selected = {
                 ...native.response,
                 id: response.id,
-                ...(response.turnId !== undefined ? { turnId: response.turnId } : {}),
+                ...(turnId !== undefined ? { turnId } : {}),
                 ...(response.answeringClientCategory !== undefined ? { answeringClientCategory: response.answeringClientCategory } : {}),
             };
         } else if (response.nativeChoice !== undefined || response.approved === undefined
@@ -3604,6 +3608,7 @@ export abstract class BasePermissionHandler {
             const nativeContext = context ?? (completed?.nativeChoices !== undefined ? {
                 requestId: response.id, toolName: completed.tool, toolInput: completed.arguments,
                 createdAt: completed.createdAt, nativeChoices: completedNativeChoices.success ? completedNativeChoices.data : null,
+                ...(completed.turnId !== undefined ? { turnId: completed.turnId } : {}),
                 sourceLocalId: null, correlation: 'agent_state' as const, status: 'agent_state_only' as const,
             } : null);
             if (nativeContext) {

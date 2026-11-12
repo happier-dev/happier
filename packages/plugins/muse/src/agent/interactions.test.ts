@@ -103,6 +103,8 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
     }) }));
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-local-persistent', recordingPath,
             nativePolicyPath: join(scratch, 'unused-native-policy.json') },
+        readActiveTurnAdmissionWitness: () => ({ inputId: 'catalog-choice-input', turnId: 'catalog-choice-turn',
+            userMessageSeq: null, userMessageSeqs: [], causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }),
         mcpToolContext: { mcpServerIdentities: { probe: { serverId: 'catalog-probe', serverTitle: 'Probe' } },
             catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [],
                 catalog: McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'catalog-probe', name: 'probe', title: 'Probe',
@@ -119,6 +121,7 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
         await fixture.waitForAudit(audit => audit.receiptCount === 1);
         await vi.waitFor(() => {
             const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === 'mcp__probe__pebble');
+            expect(pending).toMatchObject({ turnId: 'catalog-choice-turn' });
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
                 scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set',
                     input: { serverId: 'catalog-probe', tools: { pebble: 'allow' } } },
@@ -301,7 +304,10 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
         for (const restarted of [false, true]) {
             const sessionId = restarted ? 'host-muse-policy-restarted' : 'host-muse-policy-initial';
             const fixture = await createAdmittedMuseSessionFixture({ sessionId,
-                native: { scenario: 'approval-local-persistent', recordingPath, nativePolicyPath } });
+                native: { scenario: 'approval-local-persistent', recordingPath, nativePolicyPath },
+                readActiveTurnAdmissionWitness: () => ({ inputId: sessionId + '-input', turnId: sessionId + '-turn',
+                    userMessageSeq: null, userMessageSeqs: [], causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }),
+            });
             const events = createAgentSessionRuntimeHarness();
             try {
                 const session = await fixture.open({ kind: 'create', sessionId, cwd: process.cwd() });
@@ -318,6 +324,7 @@ it('leaves a localPersistent rule in the synthetic native policy file across pro
                             rulePreview: 'Always allow in this workspace: printf NORMAL ...',
                             response: { approved: true, decision: 'approved_execpolicy_amendment' },
                         }]) }));
+                    expect(fixture.host.getAgentStateSnapshot()!.requests![requestId]).toMatchObject({ turnId: sessionId + '-turn' });
                     const requirementId = fixture.host.getAgentStateSnapshot()!.requests![requestId]!.nativeChoices!.requirementId;
                     expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
                         id: requestId, // Exact r1111c Action payload: choice only, no decision or turn override.
