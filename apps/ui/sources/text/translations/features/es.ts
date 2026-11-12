@@ -6251,7 +6251,7 @@ const es: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Puedes cerrarlo; sigue en ${machine}.`,
     stepCheck: 'Comprobar que funciona',
     stepSignIn: 'Iniciar sesión',
-    failedKept: 'No se ha dejado nada a medio instalar.',
+    failedKept: 'Los archivos creados por el instalador pueden permanecer en esta máquina.',
     signInHow: ({ agent }) => `Cómo inicia sesión ${agent}`,
     useService: ({ service }) => `Usar tu ${service}`,
     recommended: 'Recomendado',

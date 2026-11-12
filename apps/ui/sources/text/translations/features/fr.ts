@@ -6249,7 +6249,7 @@ const fr: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Tu peux fermer ; cela continue sur ${machine}.`,
     stepCheck: 'Vérifier qu’il fonctionne',
     stepSignIn: 'Connexion',
-    failedKept: 'Rien d’à moitié installé n’a été conservé.',
+    failedKept: 'Des fichiers créés par le programme d’installation peuvent rester sur cette machine.',
     signInHow: ({ agent }) => `Comment ${agent} se connecte`,
     useService: ({ service }) => `Utiliser ton ${service}`,
     recommended: 'Recommandé',

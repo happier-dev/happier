@@ -6243,7 +6243,7 @@ const de: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Du kannst schließen; es läuft auf ${machine} weiter.`,
     stepCheck: 'Prüfen, ob es läuft',
     stepSignIn: 'Anmelden',
-    failedKept: 'Nichts Halbinstalliertes wurde behalten.',
+    failedKept: 'Vom Installationsprogramm erstellte Dateien können auf diesem Rechner verbleiben.',
     signInHow: ({ agent }) => `Wie sich ${agent} anmeldet`,
     useService: ({ service }) => `${service} verwenden`,
     recommended: 'Empfohlen',

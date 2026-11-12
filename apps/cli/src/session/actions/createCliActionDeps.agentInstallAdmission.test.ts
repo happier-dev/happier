@@ -35,7 +35,7 @@ vi.mock('socket.io-client', () => ({ io }));
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 it('reads and cancels an admitted install job at its receiving Action owner without a second Home RPC', async () => {
-  const owner = createAgentInstallJobOwner({ readTrackedSessions: () => [], readRegistry: () => ({ agents: [{
+  const owner = createAgentInstallJobOwner({ accountId: 'owner', readTrackedSessions: () => [], readRegistry: () => ({ agents: [{
     id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture', sourcePreferenceDefault: 'system-first',
       managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false },
   }] }) });

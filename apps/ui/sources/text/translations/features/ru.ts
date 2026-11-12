@@ -6278,7 +6278,7 @@ const ru: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Можно закрыть — установка продолжится на ${machine}.`,
     stepCheck: 'Проверить запуск',
     stepSignIn: 'Вход',
-    failedKept: 'Ничего недоустановленного не осталось.',
+    failedKept: 'Файлы, созданные установщиком, могут остаться на этой машине.',
     signInHow: ({ agent }) => `Как ${agent} выполняет вход`,
     useService: ({ service }) => `Использовать ${service}`,
     recommended: 'Рекомендуется',

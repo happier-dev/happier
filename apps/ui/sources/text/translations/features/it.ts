@@ -6251,7 +6251,7 @@ const it: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Puoi chiudere; continua su ${machine}.`,
     stepCheck: 'Verifica che funzioni',
     stepSignIn: 'Accesso',
-    failedKept: 'Non è rimasto nulla di installato a metà.',
+    failedKept: 'I file creati dal programma di installazione potrebbero rimanere su questa macchina.',
     signInHow: ({ agent }) => `Come accede ${agent}`,
     useService: ({ service }) => `Usa il tuo ${service}`,
     recommended: 'Consigliato',

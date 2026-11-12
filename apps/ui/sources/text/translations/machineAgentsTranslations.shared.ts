@@ -180,7 +180,7 @@ export const en: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `You can close this; it keeps going on ${machine}.`,
     stepCheck: 'Check that it runs',
     stepSignIn: 'Sign in',
-    failedKept: 'Nothing half-installed was kept.',
+    failedKept: 'Files created by the installer may remain on this machine.',
     signInHow: ({ agent }) => `How ${agent} signs in`,
     useService: ({ service }) => `Use your ${service}`,
     recommended: 'Recommended',

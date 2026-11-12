@@ -6251,7 +6251,7 @@ const ca: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Pots tancar-ho; continua a ${machine}.`,
     stepCheck: 'Comprova que funciona',
     stepSignIn: 'Inici de sessió',
-    failedKept: 'No s’ha deixat res mig instal·lat.',
+    failedKept: 'Els fitxers creats per l’instal·lador poden romandre en aquesta màquina.',
     signInHow: ({ agent }) => `Com inicia sessió ${agent}`,
     useService: ({ service }) => `Fes servir el teu ${service}`,
     recommended: 'Recomanat',

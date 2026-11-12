@@ -6246,7 +6246,7 @@ const ja: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `閉じても ${machine} で続行されます。`,
     stepCheck: '動作を確認',
     stepSignIn: 'サインイン',
-    failedKept: '途中までのインストールは残していません。',
+    failedKept: 'インストーラーが作成したファイルがこのマシンに残る場合があります。',
     signInHow: ({ agent }) => `${agent} のサインイン方法`,
     useService: ({ service }) => `${service} を使う`,
     recommended: 'おすすめ',

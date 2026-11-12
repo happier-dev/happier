@@ -6269,7 +6269,7 @@ const pl: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `Możesz zamknąć — instalacja trwa dalej na ${machine}.`,
     stepCheck: 'Sprawdź, czy działa',
     stepSignIn: 'Logowanie',
-    failedKept: 'Nic niedokończonego nie zostało.',
+    failedKept: 'Pliki utworzone przez instalator mogą pozostać na tej maszynie.',
     signInHow: ({ agent }) => `Jak ${agent} się loguje`,
     useService: ({ service }) => `Użyj: ${service}`,
     recommended: 'Zalecane',

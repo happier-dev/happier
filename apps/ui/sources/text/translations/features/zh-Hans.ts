@@ -6241,7 +6241,7 @@ const zhHans: MachineAgentsTranslation = {
     closeNote: ({ machine }) => `可以关闭，${machine} 上会继续进行。`,
     stepCheck: '检查能否运行',
     stepSignIn: '登录',
-    failedKept: '没有保留任何安装一半的内容。',
+    failedKept: '安装程序创建的文件可能仍保留在此机器上。',
     signInHow: ({ agent }) => `${agent} 的登录方式`,
     useService: ({ service }) => `使用你的 ${service}`,
     recommended: '推荐',
