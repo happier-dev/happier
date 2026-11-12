@@ -7,6 +7,8 @@ import type {
 import { CURSOR_API_KEY_ENV, materializeCursorAuthEnv } from '../agent/auth/status.js';
 import { cursorSubscriptionMode, refreshCursorSubscription, CURSOR_AUTH_TOKEN_ENV, CURSOR_CREDENTIAL_STORE_ENV } from './subscription.js';
 
+import { readCursorQuota } from './quota.js';
+
 const API_KEY_CREDENTIAL_KEY = 'apiKey';
 
 const authentication = {
@@ -101,6 +103,7 @@ const readHealth: ConnectedAccountRuntime['status'] = async (context, options) =
 export const cursorConnectedAccountRuntime: ConnectedAccountRuntime = {
   authentication, materialize, testConnection,
   status: readHealth,
+  quota: readCursorQuota,
   async refresh(context, options) {
     return await context.credentials.get('credentialKind', options) === 'oauth' ? refreshCursorSubscription(context, options) : readHealth(context, options);
   },
