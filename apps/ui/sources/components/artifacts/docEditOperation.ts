@@ -78,7 +78,7 @@ function restoredDocEditVersion(base: number, accepted: number | null,
 }
 
 export function useDocEditRestoredVersion(client: ArtifactActionsClient, artifactId: string,
-  baseBodyVersion: number, acceptedBodyVersion: number | null, currentBodyVersion: number | undefined,
+  baseBodyVersion: number, acceptedBodyVersion: number | null,
   currentArtifact: Readonly<{ revision: ArtifactRevisionV1; provenance?: ArtifactRevisionProvenanceV1 }> | null): number | null {
   const [restored, setRestored] = React.useState<Readonly<{
     client: ArtifactActionsClient; artifactId: string; acceptedBodyVersion: number; bodyVersion: number;
@@ -88,13 +88,16 @@ export function useDocEditRestoredVersion(client: ArtifactActionsClient, artifac
   // History archives superseded bodies only. Until another edit, the restore fact belongs to the head.
   const restoredHead = restoredDocEditVersion(baseBodyVersion, acceptedBodyVersion,
     currentArtifact?.revision.bodyVersion, currentArtifact?.provenance?.restoredFromBodyVersion);
+  const admittedBodyVersion = currentArtifact?.revision.bodyVersion;
   React.useEffect(() => {
-    if (known !== null || acceptedBodyVersion === null || currentBodyVersion === undefined
-      || currentBodyVersion <= acceptedBodyVersion) return;
+    if (known !== null || acceptedBodyVersion === null || admittedBodyVersion === undefined) return;
     if (restoredHead !== null) {
       setRestored({ client, artifactId, acceptedBodyVersion, bodyVersion: restoredHead });
       return;
     }
+    // Undo can only be body accepted+1. While that body is still the head, its admitted
+    // provenance already answers the question; history contains only superseded bodies.
+    if (admittedBodyVersion <= acceptedBodyVersion + 1) return;
     let live = true;
     void client.listRevisions(artifactId).then(outcome => {
       if (!live || !outcome.ok) return;
@@ -103,6 +106,6 @@ export function useDocEditRestoredVersion(client: ArtifactActionsClient, artifac
       if (revision) setRestored({ client, artifactId, acceptedBodyVersion, bodyVersion: revision.bodyVersion });
     });
     return () => { live = false; };
-  }, [acceptedBodyVersion, artifactId, baseBodyVersion, client, currentBodyVersion, known, restoredHead]);
+  }, [acceptedBodyVersion, admittedBodyVersion, artifactId, baseBodyVersion, client, known, restoredHead]);
   return restoredHead ?? known;
 }

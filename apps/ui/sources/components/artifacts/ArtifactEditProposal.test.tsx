@@ -603,6 +603,19 @@ describe('ArtifactEditProposal', () => {
     expect(cold.findByTestId('proposal.undo')).toBeNull();
   });
 
+  it('uses the admitted next body to rule out Undo without reading archived history', async () => {
+    const accepted = { headerVersion: 3, bodyVersion: 15 };
+    const current = { headerVersion: 4, bodyVersion: 16 };
+    const door = frontDoor({ 'doc.read': docRead(current) });
+    const screen = await render(door.client, {
+      state: 'accepted', acceptedRevision: accepted, decidedBy: { accountId: 'alice', atMs: 5 },
+    });
+    await flushHookEffects();
+    expect(screen.findByTestId('proposal.undoConflict')).not.toBeNull();
+    expect(screen.findByTestId('proposal.undo')).toBeNull();
+    expect(door.calls.filter(call => call.actionId === 'artifact.revisions.list')).toHaveLength(0);
+  });
+
   it('shares one history read for visible receipts and does not mistake a later restore for their Undo', async () => {
     const accepted = { headerVersion: 3, bodyVersion: 15 };
     const current = { headerVersion: 5, bodyVersion: 17 };
