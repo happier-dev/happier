@@ -287,7 +287,7 @@ describe('managed installation requester transport (real SQLite)', () => {
       });
       const caller = Object.assign(
         createAuthenticatedFakeSocket({
-          data: { clientType: 'user-scoped', authTokenKind: kind },
+          data: { clientType: 'user-scoped', userId: actor.id, authTokenKind: kind, authAuthority: authority },
         }),
         { handshake: { auth: { token } } },
       );

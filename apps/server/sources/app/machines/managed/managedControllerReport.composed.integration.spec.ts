@@ -68,8 +68,9 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey),
             active: true, pluginMaterializationRevision: 1n, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
+        // Controller Manage reaches its native resources; Use does not.
         await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: viewer.id,
-            createdByAccountId: account.id, accessLevel: 'view' } });
+            createdByAccountId: account.id, accessLevel: 'admin' } });
         const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
         const definition = manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'lima');
         if (!definition) throw new Error('Bundled Lima provisioner missing');
@@ -284,12 +285,26 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 else await auth.updateApiToken({ accountId: account.id, tokenId: controlApiToken.tokenId,
                     grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
                 expect((await mint()).statusCode).toBe(withdrawal === 'machine-grant' ? 409 : withdrawal === 'api-token-grant' ? 403 : 401);
-                expect((await signedPost({ ...controlReport, requestId: randomUUID() })).statusCode).toBe(401);
-                expect((await signedPost({ ...controlReport, managedId: randomUUID() })).statusCode).toBe(401);
-                expect((await signedPost({ ...controlReport, controller: { ...controller, installationId: randomUUID() } })).statusCode).toBe(401);
-                expect((await signedPost({ ...controlReport, expectedIntentRevision: correlation.expectedIntentRevision + 1 })).statusCode).toBe(401);
-                expect((await signedPost(controlReport, reportPath, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(401);
-                expect((await signedPost(correlation, '/v1/machines/managed/controller/submit-intent')).statusCode).toBe(401);
+                const probes = await Promise.all([
+                    signedPost({ ...controlReport, requestId: randomUUID() }),
+                    signedPost({ ...controlReport, managedId: randomUUID() }),
+                    signedPost({ ...controlReport, controller: { ...controller, installationId: randomUUID() } }),
+                    signedPost({ ...controlReport, expectedIntentRevision: correlation.expectedIntentRevision + 1 }),
+                    signedPost(controlReport, reportPath, tweetnacl.sign.keyPair().secretKey),
+                    signedPost(correlation, '/v1/machines/managed/controller/submit-intent'),
+                ]);
+                expect(probes.map(response => response.statusCode), JSON.stringify(probes.map(response => {
+                    const body = response.json();
+                    return { code: body.code, error: body.error, submitted: body.submitted };
+                }))).toEqual(withdrawal === 'machine-grant' ? [409, 401, 409, 409, 401, 200] : [401, 401, 401, 401, 401, 401]);
+                if (withdrawal === 'machine-grant') {
+                    // The Account credential remains valid: mismatched retained
+                    // jobs conflict, while resubmitting this admitted job is inert.
+                    for (const index of [0, 2, 3]) expect(probes[index]!.json()).toEqual({ code: 'request_conflict' });
+                    expect(probes[5]!.json()).toMatchObject({ submitted: false, machine: {
+                        id: controlled.id, submittedNativeEffect: { requestId: controlRequestId },
+                    } });
+                }
                 const settled = await signedPost(controlReport);
                 expect(settled.statusCode, settled.body).toBe(200);
                 controlled = ManagedControllerMachineOutputV1Schema.parse(settled.json()).machine;
