@@ -11,7 +11,7 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { countStoreNotifications } from '@/dev/testkit/performance/counts';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createRegistryNpmPackageFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
@@ -62,6 +62,17 @@ let network: SessionOpsNetworkBoundary;
 let syncBridge: Awaited<ReturnType<typeof loadVitestModuleForNodeRequire>>;
 const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
 
+type FixtureState = ReturnType<typeof storage.getState>;
+// These tests also control partial hydration/status projections directly. Publish
+// their answered Machine activity through the real ingress before waking readers.
+async function publishMachineSnapshot(update: Partial<FixtureState> | ((state: FixtureState) => Partial<FixtureState>)) {
+    const snapshot = typeof update === 'function' ? update(storage.getState()) : update;
+    for (const machines of Object.values(snapshot.machineListByServerId ?? {})) {
+        publishMachineActivityForTest(machines ?? []);
+    }
+    storage.setState(snapshot);
+}
+
 function readOriginSnapshotCallback(): (() => unknown) | undefined {
     const readers = vi.mocked(React.useMemo).mock.results.flatMap(result => {
         const value: unknown = result.type === 'return' ? result.value : null;
@@ -107,8 +118,8 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await setActiveServerId(home.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
-        const machine = createMachineFixture({ id: 'file-open-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+        const machine = createMachineFixture({ id: 'file-open-machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, machines: {},
             machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
         observeMachinePresenceForTest(scope, [machine.id]);
         const pluginId = 'acme.file-open';
@@ -143,7 +154,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             expect(renders - settledRenders).toBe(0);
             expect(selection?.candidates).toBe(initial?.candidates);
             expect(selection?.state).toBe(initial?.state);
-            await act(async () => storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, active: false }] } }));
+            await act(async () => await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, active: false }] } }));
             expect(renders).toBeGreaterThan(settledRenders);
             expect(selection?.state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         } finally { await screen.unmount(); }
@@ -166,7 +177,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             sourceCustody: { kind: 'development' as const, registeredRootId: machine.id } } }, version: '1.0.0',
             occurrenceId: machine.id, serverId: home.id }, releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } }));
         const pending = (machine: typeof a) => ({ ...machine, availability: undefined, metadata: null });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
             machineListByServerId: { [home.id]: [pending(a), pending(b)] }, machineListStatusByServerId: { [home.id]: 'loading' } });
         let autoPick = true;
         const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({ pluginId, sourceCandidates: sources,
@@ -174,31 +185,31 @@ describe('execution-origin plugin identity with real Account and machine owners'
         expect(hook.getCurrent()).toMatchObject({ loading: true, selectedOrigin: null, canExecute: false });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['unknown'] });
         // List completion is not content completion for a socket-superseded row.
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(hook.getCurrent()).toMatchObject({ loading: true, selectedOrigin: null, canExecute: false });
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [a, pending(b)] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [a, pending(b)] } }); });
         expect(hook.getCurrent()).toMatchObject({ loading: false, selectedOrigin: sources[0]!.source.origin, canExecute: true });
-        await act(async () => { storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
+        await act(async () => { await publishMachineSnapshot({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
             setPluginMachineExecutionOriginPreference({}, pluginId, sources[1]!.source.origin) } }); });
         expect(hook.getCurrent()).toMatchObject({ loading: true, selectedOrigin: null, canExecute: false,
             state: { kind: 'unavailable', storedTarget: { serverIdentityId, machineId: b.id }, reasons: ['unknown'] } });
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [a, { ...b, metadata: null,
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [a, { ...b, metadata: null,
             availability: { kind: 'locked', reason: 'decryption_failed' } }] } }); });
         expect(hook.getCurrent()).toMatchObject({ loading: false, selectedOrigin: null, canExecute: false });
-        await act(async () => { storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} },
+        await act(async () => { await publishMachineSnapshot({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} },
             machineListByServerId: { [home.id]: [a, b] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', selectionSource: 'auto', origin: sources[1]!.source.origin });
         expect(hook.getCurrent()).toMatchObject({ loading: false, canExecute: true });
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
         // Recency ranks the initial choice. Heartbeats must leave the current
         // eligible Auto choice and invocation target in agreement.
         const admittedCandidates = hook.getCurrent().candidates;
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...a, activeAt: b.activeAt + 1 }, b] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...a, activeAt: b.activeAt + 1 }, b] } }); });
         expect(hook.getCurrent().selectedOrigin).toEqual(sources[1]!.source.origin);
         expect(hook.getCurrent().resolveExecutionOrigin({ recordUse: false })?.origin).toEqual(sources[1]!.source.origin);
         // Admitted candidates are likewise unchanged by recency ordering.
         expect(hook.getCurrent().candidates).toBe(admittedCandidates);
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [a, b] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [a, b] } }); });
         expect(hook.getCurrent().candidates).toBe(admittedCandidates);
         // Machine RPC records its exact routing profile; Administration reads
         // the portable Home identity. Both must observe the same refusal.
@@ -221,14 +232,14 @@ describe('execution-origin plugin identity with real Account and machine owners'
         expect(readPluginMachineExecutionLastUsedTarget(scope, pluginId))
             .toEqual({ serverIdentityId, machineId: a.id });
         const offline = { ...b, active: false, activeAt: 0 };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [a, offline] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [a, offline] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', selectionSource: 'auto', origin: sources[0]!.source.origin });
-        await act(async () => { storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
+        await act(async () => { await publishMachineSnapshot({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
             setPluginMachineExecutionOriginPreference(storage.getState().settings.machineAdministrationTargetsLocalV1, pluginId, sources[1]!.source.origin) } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', storedTarget: { serverIdentityId, machineId: b.id } });
         expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
         autoPick = false;
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [a, b] }, settings: { ...storage.getState().settings,
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [a, b] }, settings: { ...storage.getState().settings,
             machineAdministrationTargetsLocalV1: {} } }); });
         await hook.rerender();
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selectionRequired' });
@@ -250,7 +261,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'scoped-origin-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
             machineListStatusByServerId: { [home.id]: 'idle' } });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
@@ -291,7 +302,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             sourceRef: { ...origin.sourceRef, machineId: foreignMachine.id } };
         sourceCandidates = [{ ...sources[0]!, source: { ...sources[0]!.source,
             origin: foreignOrigin, serverId: foreignHome.id } }];
-        await act(async () => { storage.setState(state => ({
+        await act(async () => { await publishMachineSnapshot(state => ({
             machineListByServerId: { ...state.machineListByServerId, [foreignHome.id]: [foreignMachine] },
             machineListStatusByServerId: { ...state.machineListStatusByServerId, [foreignHome.id]: 'idle' },
         })); });
@@ -333,22 +344,22 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machine = createMachineFixture({ id: 'pending-alias-machine' });
         const previous = storage.getState();
         try {
-            storage.setState({ machineListByServerId: { [serverIdentityId]: [machine], [home.id]: [machine] },
+            await publishMachineSnapshot({ machineListByServerId: { [serverIdentityId]: [machine], [home.id]: [machine] },
                 machineListStatusByServerId: { [serverIdentityId]: 'loading', [home.id]: 'idle' } });
             const hook = await renderHook(() => ({ settled: useIsMachineListSettled(home.id), status: useMachineListStatusForServer(home.id) }));
             expect(hook.getCurrent()).toEqual({ settled: false, status: 'loading' });
-            await act(async () => { storage.setState({ machineListStatusByServerId: {
+            await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: {
                 [serverIdentityId]: 'error', [home.id]: 'idle',
             } }); });
             expect(hook.getCurrent()).toEqual({ settled: false, status: 'error' });
-            await act(async () => { storage.setState({ machineListStatusByServerId: {
+            await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: {
                 [serverIdentityId]: 'idle', [home.id]: 'idle',
             } }); });
             expect(hook.getCurrent()).toEqual({ settled: true, status: 'idle' });
-            await act(async () => { storage.setState({ machineListByServerId: {}, machineListStatusByServerId: {} }); });
+            await act(async () => { await publishMachineSnapshot({ machineListByServerId: {}, machineListStatusByServerId: {} }); });
             expect(hook.getCurrent()).toEqual({ settled: false, status: 'loading' });
             await hook.unmount();
-        } finally { storage.setState(previous); }
+        } finally { await publishMachineSnapshot(previous); }
     });
 
     it('admits active machine inventory from its own read status independently of core readiness', async () => {
@@ -360,20 +371,20 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'inventory-readiness-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
         const hook = await renderHook(() => useAllProfileMachineInventorySnapshots());
         const snapshot = () => hook.getCurrent().find(row => row.kind !== 'missingIdentity' && row.serverIdentityId === serverIdentityId);
         expect(snapshot()).toMatchObject({ kind: 'unknown', inventoryStatus: 'loading' });
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [] },
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [] },
             machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(snapshot()).toMatchObject({ kind: 'resolved', settled: true, machines: [] });
-        await act(async () => { storage.setState({ machines: { [machine.id]: machine },
+        await act(async () => { await publishMachineSnapshot({ machines: { [machine.id]: machine },
             machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'loading' } }); });
         expect(snapshot()).toMatchObject({ inventoryStatus: 'loading', executionEligibleMachineIds: [machine.id] });
         expect(resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId, machineId: machine.id })?.machine).toBe(machine);
         for (const status of ['error', 'signedOut'] as const) {
-            await act(async () => { storage.setState({ machines: { [machine.id]: machine },
+            await act(async () => { await publishMachineSnapshot({ machines: { [machine.id]: machine },
                 machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: status } }); });
             // A failed read keeps the admitted, presence-fresh row executable; a signed-out Home does not.
             expect(snapshot()).toMatchObject({ inventoryStatus: status,
@@ -383,7 +394,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             const fresh = resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId, machineId: machine.id });
             if (status === 'error') expect(fresh?.machine).toBe(machine); else expect(fresh).toBeNull();
         }
-        await act(async () => { storage.setState({ isDataReady: false, machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ isDataReady: false, machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(snapshot()).toMatchObject({ settled: true, executionEligibleMachineIds: [machine.id] });
         expect(resolveFreshMachineAdministrationExecutionTarget({ serverIdentityId, machineId: machine.id })?.machine).toBe(machine);
         await hook.unmount();
@@ -397,7 +408,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await setActiveServerId(home.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [] }, machineListStatusByServerId: { [home.id]: 'idle' } });
         let establishingTargets: readonly { serverIdentityId: string; machineId: string }[] = [];
         let contextualTarget: Parameters<typeof usePluginMachineExecutionOriginSelection>[0]['contextualTarget'];
@@ -412,9 +423,9 @@ describe('execution-origin plugin identity with real Account and machine owners'
         expect(hook.getCurrent().loading).toBe(false);
         expect(hook.getCurrent().state.kind).toBe('unavailable');
         // Nor is "none" an answer while the Home's Machine list is still being read.
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
         expect(hook.getCurrent().loading).toBe(true);
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(hook.getCurrent().loading).toBe(false);
         establishingTargets = [{ serverIdentityId, machineId: 'initial-describe-machine' }];
         await hook.rerender();
@@ -436,7 +447,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
     });
 
     it('keeps a cold selector pending before its Account reader is bound', async () => {
-        storage.setState({ profileScope: null, settingsScope: null });
+        await publishMachineSnapshot({ profileScope: null, settingsScope: null });
         const hook = await renderHook(() => usePluginMachineExecutionOriginSelection({
             pluginId: 'acme.cold-account', includeMachineCandidates: false,
             classifyRelease: useActivePluginAccountAvailabilityReleaseClassifier(),
@@ -455,7 +466,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'return-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
             machineListStatusByServerId: { [home.id]: 'idle' } });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
@@ -477,7 +488,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         const now = Date.now();
         const result = TriageListEntriesResultV1Schema.parse({ v: 1,
-            configuredSources: [{ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, source: TRIAGE_TESTKIT_SOURCE, available: true }],
+            configuredSources: [{ sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, configurationRowId: 'return-source-config', source: TRIAGE_TESTKIT_SOURCE, available: true }],
             configuredSourcesStatus: 'complete', window: { v: 1,
                 rows: [{ entryRef: testkitEntryRef(), lane: '1-open', sortAtMs: now,
                     presence: { kind: 'present', observedAtMs: now },
@@ -564,7 +575,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'machine-source', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
             settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
         const pluginId = 'acme.source';
@@ -630,7 +641,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
         } });
         const machine = createMachineFixture({ id: 'machine-source', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
             settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.source',
@@ -657,17 +668,17 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const settingsAfterUse = storage.getState().settings;
         expect(settingsAfterUse).toBe(settingsBeforeMount);
         // An opened row stays executable while unrelated census work continues.
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
         expect(hook.getCurrent().selectedOrigin).toEqual(origin);
         expect(hook.getCurrent().loading).toBe(false);
         for (const status of ['error', 'signedOut'] as const) {
-            await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: status } }); });
+            await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: status } }); });
             // Only a signed-out Home withdraws execution; a failed list read proves nothing.
             expect(hook.getCurrent().canExecute).toBe(status === 'error');
             expect(hook.getCurrent().loading).toBe(false);
         }
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
         expect(hook.getCurrent().loading).toBe(false);
         await hook.rerender();
@@ -682,13 +693,13 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const resolveBeforePreferenceChange = hook.getCurrent().resolveExecutionOrigin;
         currentSources = [alternate];
         await act(async () => {
-            storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
+            await publishMachineSnapshot({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
                 setPluginMachineExecutionOriginPreference({}, 'acme.source', alternate.source.origin) } });
             expect(resolveBeforePreferenceChange()?.origin).toEqual(alternate.source.origin);
         });
         currentSources = candidates;
         await act(async () => {
-            storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
+            await publishMachineSnapshot({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1:
                 setPluginMachineExecutionOriginPreference({}, 'acme.source', origin) } });
         });
         const machineFree = await renderHook(() => usePluginMachineExecutionOriginSelection({ pluginId: 'acme.source',
@@ -701,13 +712,13 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await machineFree.unmount();
         const incumbentResolve = hook.getCurrent().resolveExecutionOrigin;
         currentSources = [];
-        await act(async () => { storage.setState({ settingsScope: { ...scope, accountId: 'account-switched' } }); });
+        await act(async () => { await publishMachineSnapshot({ settingsScope: { ...scope, accountId: 'account-switched' } }); });
         expect(incumbentResolve()).toBeNull();
         expect(hook.getCurrent().resolveExecutionOrigin()).toBeNull();
         currentSources = candidates;
-        await act(async () => { storage.setState({ profileScope: { ...scope, accountId: 'account-switched' } }); });
+        await act(async () => { await publishMachineSnapshot({ profileScope: { ...scope, accountId: 'account-switched' } }); });
         await act(async () => {
-            storage.setState({ profileScope: scope, settingsScope: scope });
+            await publishMachineSnapshot({ profileScope: scope, settingsScope: scope });
             replacePluginAccountAvailabilityProjection({ scope, snapshot: {
                 availabilityCursor: 2, intentReads: [], materializations: [], snapshots: [],
             } });
@@ -728,7 +739,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'machine-origin-admission', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
             settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.admission',
@@ -746,10 +757,10 @@ describe('execution-origin plugin identity with real Account and machine owners'
         for (let check = 0; check < 50; check += 1) expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(machine);
         expect(elections).toHaveBeenCalledTimes(1);
         // A real presence/inventory change re-admits, and still fails closed.
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...machine, revokedAt: Date.now() }] } }); });
         expect(resolve({ recordUse: false })).toBeNull();
         const refreshed = { ...machine, activeAt: Date.now() };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [refreshed] } }); });
         const beforeReadmission = elections.mock.calls.length;
         for (let check = 0; check < 10; check += 1) expect(resolve({ recordUse: false })?.machineTarget.machine).toBe(refreshed);
         expect(elections.mock.calls.length - beforeReadmission).toBe(1);
@@ -775,7 +786,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         // A Home without the presence fact: its presence expires on the client clock (online grace).
         const machine = counted(createMachineFixture({ id: 'machine-origin-held', active: true, activeAt: Date.now() }));
         const other = createMachineFixture({ id: 'machine-origin-other', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine, other] }, machineListStatusByServerId: { [home.id]: 'idle' },
             settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.held',
@@ -821,9 +832,9 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await setActiveServerId(home.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
-        const machine = createMachineFixture({ id: 'machine-origin-presence', active: true, activeAt: Date.now(), updatedAt: 10 });
+        const machine = createMachineFixture({ id: 'machine-origin-presence', active: true, activeAt: Date.now(), updatedAt: 10, presenceProtocolVersion: 1 });
         machine.metadata = { ...machine.metadata!, displayName: 'Before' };
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' },
             settings: { ...storage.getState().settings, machineAdministrationSelectionsV1: { v: 1, pluginExecutionOriginsByPluginId: {} } } });
         const origin = { serverIdentityId, sourceRef: { machineId: machine.id, pluginId: 'acme.presence',
@@ -880,7 +891,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
 
         const initialSerializations = createFacts.mock.calls.length;
         for (let version = 1; version <= 100; version += 1) {
-            await act(async () => { storage.setState({ settingsVersion: version }); });
+            await act(async () => { await publishMachineSnapshot({ settingsVersion: version }); });
         }
         const redundantSerializations = createFacts.mock.calls.length - initialSerializations;
         console.info('execution-origin unchanged inventory: 100 settings-version updates, fact projection creations =', redundantSerializations);
@@ -900,7 +911,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
 
         let refreshed = { ...machine, activeAt: Date.now(), updatedAt: 11,
             metadata: { ...machine.metadata!, displayName: 'After' } };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [refreshed] } }); });
         expect(renders).toBe(settledRenders);
         expect(hook.getCurrent().machineCandidates).toEqual([]);
         expect(hook.getCurrent().candidates).toBe(initial.candidates);
@@ -911,16 +922,16 @@ describe('execution-origin plugin identity with real Account and machine owners'
 
         await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
         expect(hook.getCurrent().canExecute).toBe(true);
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...refreshed, active: false }] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...refreshed, active: false }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
         // Fresh Machine activity, not an unrelated preference write, restores eligibility.
         refreshed = { ...refreshed, activeAt: Date.now() };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [refreshed] } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
 
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...refreshed,
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...refreshed,
             availability: { kind: 'locked', reason: 'encryption_material_unavailable' } }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['unknown'] });
         expect(hook.getCurrent().canExecute).toBe(false);
@@ -929,30 +940,30 @@ describe('execution-origin plugin identity with real Account and machine owners'
             [{ ...refreshed, revokedAt: Date.now() }, 'revoked'],
             [{ ...refreshed, replacedByMachineId: 'replacement' }, 'replaced'],
         ] as const) {
-            await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [changed] } }); });
+            await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [changed] } }); });
             expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: [reason] });
             expect(hook.getCurrent().canExecute).toBe(false);
             expect(initial.resolveExecutionOrigin()).toBeNull();
         }
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...refreshed, active: false, activeAt: 0 }] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...refreshed, active: false, activeAt: 0 }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         expect(hook.getCurrent().canExecute).toBe(false);
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [refreshed] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [refreshed] } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
         // A failed list read never proves the admitted, presence-fresh Machine gone; a signed-out Home does.
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'error' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'error' } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'signedOut' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'signedOut' } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['stale'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'idle' } }); });
         expect(hook.getCurrent().canExecute).toBe(true);
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['missing'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
-        await act(async () => { storage.setState({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListStatusByServerId: { [home.id]: 'loading' } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['unknown'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         expect(initial.resolveExecutionOrigin()).toBeNull();
@@ -960,11 +971,11 @@ describe('execution-origin plugin identity with real Account and machine owners'
         // the server's next presence publication does.
         vi.useFakeTimers();
         const renewed = { ...refreshed, activeAt: Date.now() };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [renewed] },
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [renewed] },
             machineListStatusByServerId: { [home.id]: 'idle' } }); });
         await act(async () => { await vi.advanceTimersByTimeAsync(1); });
         const heartbeat = { ...renewed, activeAt: Date.now() };
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [heartbeat] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [heartbeat] } }); });
         await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
         expect(hook.getCurrent().canExecute).toBe(true);
         // A heartbeat preserves semantic eligibility, but a later Availability
@@ -975,7 +986,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'selected', origin });
         expect(hook.getCurrent().candidates.every(candidate => candidate.validation.kind === 'admitted')).toBe(true);
-        await act(async () => { storage.setState({ machineListByServerId: { [home.id]: [{ ...heartbeat, active: false }] } }); });
+        await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: [{ ...heartbeat, active: false }] } }); });
         expect(hook.getCurrent().state).toMatchObject({ kind: 'unavailable', reasons: ['offline'] });
         expect(hook.getCurrent().canExecute).toBe(false);
         vi.useRealTimers();
@@ -995,7 +1006,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machines = Array.from({ length: 122 }, (_, index) => createMachineFixture({
             id: `probe-${index}`, active: true, activeAt: Date.now() + index,
         }));
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
             machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
         replacePluginAccountAvailabilityProjection({ scope, snapshot: {
             availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
@@ -1027,7 +1038,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
             const classifications = classify.mock.calls.length;
             const policyClassifications = classifySnapshot.mock.calls.length;
             const updateStart = performance.now();
-            await act(async () => { storage.setState({ machineListByServerId: { [home.id]: machines.map(machine => ({
+            await act(async () => { await publishMachineSnapshot({ machineListByServerId: { [home.id]: machines.map(machine => ({
                 ...machine, activeAt: machine.activeAt + 1,
             })) } }); });
             console.info('execution-origin projection probe', JSON.stringify({ machines: machines.length, plugins: unmounts.length,
@@ -1053,7 +1064,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machines = Array.from({ length: 6 }, (_, index) => createMachineFixture({ id: `scan-${index}`, active: true, activeAt: Date.now() }));
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true, machines: {},
             machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
         const pluginIds = Array.from({ length: 10 }, (_, index) => `acme.scan-${index}`);
         const materializations = pluginIds.flatMap(pluginId => machines.map((machine): PluginMachineMaterializationV1 => ({
@@ -1089,7 +1100,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
 
     it('recomputes candidates and reasons on A-to-B-to-A without refreshing stable inputs', async () => {
         const scope = { serverId: getActiveServerSnapshot().serverId, accountId: FIXTURE_ACCOUNT_ID };
-        storage.setState({ profileScope: scope });
+        await publishMachineSnapshot({ profileScope: scope });
         const materializationA: PluginMachineMaterializationV1 = {
             serverIdentityId: 'srv_one',
             machineId: 'machine-a',
@@ -1169,7 +1180,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const machines = Array.from({ length: 90 }, (_, index) => createMachineFixture({
             id: `retained-machine-${index}`, active: index === 0, activeAt: index === 0 ? Date.now() : 0,
         }));
-        storage.setState({ profileScope: scope, settingsScope: scope, isDataReady: true,
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, isDataReady: true,
             machines: {}, machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
         const sourceFor = (pluginId: string, machineId: string) => [{
             source: { origin: { serverIdentityId, sourceRef: { machineId, pluginId,
@@ -1228,7 +1239,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'observation-clock-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, machines: {},
             machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
         observeMachinePresenceForTest(scope, [machine.id]);
         const pluginId = 'acme.observation-clock';
@@ -1286,7 +1297,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const machine = createMachineFixture({ id: 'heartbeat-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, machines: {},
             machineListByServerId: { [home.id]: [machine] }, machineListStatusByServerId: { [home.id]: 'idle' } });
         observeMachinePresenceForTest(scope, [machine.id]);
         const pluginId = 'acme.heartbeat-idle';
@@ -1342,7 +1353,7 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
         const live = createMachineFixture({ id: 'origins-only-live', active: true, activeAt: Date.now() });
         const other = createMachineFixture({ id: 'origins-only-other', active: false, activeAt: 1 });
-        storage.setState({ profileScope: scope, settingsScope: scope, machines: {},
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope, machines: {},
             machineListByServerId: { [home.id]: [live, other] }, machineListStatusByServerId: { [home.id]: 'idle' } });
         observeMachinePresenceForTest(scope, [live.id, other.id]);
         const pluginId = 'acme.origins-only';
@@ -1374,11 +1385,11 @@ describe('execution-origin plugin identity with real Account and machine owners'
         const settledRenders = renders;
         expect(hook.getCurrent().candidates).toHaveLength(2);
         // offline -> revoked changes the unselectable Machine's rejection reason, not any selectable origin.
-        await act(async () => storage.setState({ machineListByServerId: { [home.id]: [live, { ...other, revokedAt: Date.now() }] } }));
+        await act(async () => await publishMachineSnapshot({ machineListByServerId: { [home.id]: [live, { ...other, revokedAt: Date.now() }] } }));
         console.info('origins-only observer: rejection-reason change renders =', renders - settledRenders);
         expect(renders).toBe(settledRenders);
         // The other Machine becoming selectable is a real change to what the observer reports.
-        await act(async () => storage.setState({ machineListByServerId: { [home.id]: [live, { ...other, active: true, activeAt: Date.now(), revokedAt: null }] } }));
+        await act(async () => await publishMachineSnapshot({ machineListByServerId: { [home.id]: [live, { ...other, active: true, activeAt: Date.now(), revokedAt: null }] } }));
         expect(renders).toBeGreaterThan(settledRenders);
         await hook.unmount();
     });
@@ -1392,8 +1403,8 @@ describe('execution-origin plugin identity with real Account and machine owners'
         await setActiveServerId(home.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         const scope = { serverId: home.id, accountId: FIXTURE_ACCOUNT_ID };
-        const machine = createMachineFixture({ id: 'snapshot-expiry-machine', active: true, activeAt: Date.now() });
-        storage.setState({ profileScope: scope, settingsScope: scope,
+        const machine = createMachineFixture({ id: 'snapshot-expiry-machine', active: true, activeAt: Date.now(), presenceProtocolVersion: 1 });
+        await publishMachineSnapshot({ profileScope: scope, settingsScope: scope,
             machines: {}, machineListByServerId: { [home.id]: [machine] },
             machineListStatusByServerId: { [home.id]: 'idle' } });
         // The socket boundary may withdraw retained presence. Publishing raw
@@ -1452,7 +1463,12 @@ describe('execution-origin plugin identity with real Account and machine owners'
             await act(async () => { await vi.advanceTimersByTimeAsync(expiresAtMs - readAtMs); });
             expect(storage.getState()).toBe(state);
             expect(hook.getCurrent().candidates.every(candidate => candidate.validation.kind === 'admitted')).toBe(true);
-            await act(async () => { storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: expiresAtMs }], { sourceServerId: home.id }); });
+            await act(async () => {
+                // This fixture deliberately has only a retained inventory projection,
+                // so publish on its admitted row rather than an absent opened-row index.
+                publishMachineActivityForTest([machine], { active: false, activeAt: expiresAtMs });
+                storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+            });
             expect(hook.getCurrent().candidates).toHaveLength(2);
             expect(hook.getCurrent().candidates.every(candidate =>
                 candidate.validation.kind === 'rejected' && candidate.validation.reason === 'offline')).toBe(true);
