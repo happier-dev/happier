@@ -758,7 +758,7 @@ it.each(['detached', 'attached', 'healthy-new-route'] as const)('reconciles runn
     expect(f.readContainer().State.Running).toBe(true);
     expect(f.readContainer().HostConfig.Mounts).toEqual(retained.HostConfig.Mounts);
     expect(f.readContainer().HostConfig.PortBindings).toEqual(retained.HostConfig.PortBindings);
-    expect(Object.keys(f.readContainer().NetworkSettings.Networks)).toEqual(expect.arrayContaining(input.routedNetworks));
+    expect(Object.keys(f.readContainer().NetworkSettings.Networks)).toEqual(expect.arrayContaining([...input.routedNetworks]));
     expect(await readFile(autosave, 'utf8')).toBe('{"retainedDomain":"sibling.example"}');
 });
 
