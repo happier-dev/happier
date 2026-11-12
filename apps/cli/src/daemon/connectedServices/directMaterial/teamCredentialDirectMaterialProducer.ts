@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { computeTeamCredentialSourceMemberKeyV1, createTeamCredentialDirectMaterialStoredV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import type { TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialUpsertRequestV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
@@ -89,7 +90,7 @@ export async function produceTeamCredentialDirectMaterial(
         payload,
         recipientMode: expected.recipientMode,
         ...(expected.recipientContentPublicKey ? { recipientContentPublicKey: expected.recipientContentPublicKey } : {}),
-        ...(input.randomBytes ? { randomBytes: input.randomBytes } : {}),
+        randomBytes: input.randomBytes ?? randomBytes,
       });
     } catch {
       return { ok: false, reason: 'recipient_unavailable' };

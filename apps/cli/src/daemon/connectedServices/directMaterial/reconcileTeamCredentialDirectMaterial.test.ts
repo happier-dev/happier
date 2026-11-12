@@ -7,6 +7,8 @@ import {
   TeamCredentialDirectMaterialPreparationResponseV1Schema,
   TeamCredentialDirectMaterialUpsertRequestV1Schema,
 } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
@@ -50,6 +52,47 @@ const sourceSnapshot: TeamCredentialSourceSnapshot = Object.freeze({
 const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
 
 describe('reconcileTeamCredentialDirectMaterial', () => {
+  it('delivers decryptable material to two E2EE recipients without caller-supplied randomness', async () => {
+    const recipients = [new Uint8Array(32).fill(7), new Uint8Array(32).fill(9)].map((seed, index) => ({
+      seed, recipientAccountId: `recipient-${index}`, publicKey: deriveBoxPublicKeyFromSeed(seed),
+    }));
+    let publishedSourceVersion: string | null = null;
+    const delivered = new Map<string, unknown>();
+    const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
+      homeServerIdentityId: 'home', teamId: 'team', resourceId: 'resource', resourceRevision: 4,
+      source: { v: 1, kind: 'provider_connection', connectionId: sourceMember.connectionId,
+        connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'apiKey' },
+      sourceMember, sourceCredentialIncarnation: null, publishedSourceVersion,
+      recipients: recipients.map(recipient => ({ recipientAccountId: recipient.recipientAccountId,
+        recipientMode: 'e2ee', recipientContentPublicKeyFingerprint: `fingerprint-${recipient.recipientAccountId}`,
+        recipientContentPublicKey: Buffer.from(recipient.publicKey).toString('base64'),
+        expectedStoredSourceVersion: null, storedTupleCurrent: false })), nextCursor: null,
+    });
+    const result = await reconcileTeamCredentialDirectMaterial({
+      teamId: page.teamId, resourceId: page.resourceId, sourceMemberKey,
+      fetchPreparation: async () => ({ ...page, publishedSourceVersion }),
+      resolveSourceSnapshot: async () => sourceSnapshot,
+      upsert: async item => {
+        const wire = TeamCredentialDirectMaterialUpsertRequestV1Schema.parse({ items: [item] }).items[0]!;
+        delivered.set(wire.recipientAccountId, wire.stored);
+        publishedSourceVersion = wire.sourceVersion;
+        return { ok: true };
+      },
+      withdrawPublication: async () => ({ ok: true }),
+    });
+    expect(result).toEqual({ ok: true, prepared: 2 });
+    for (const recipient of recipients) {
+      const stored = delivered.get(recipient.recipientAccountId);
+      expect(stored).toMatchObject({ t: 'encrypted' });
+      expect(materializeTeamCredentialDirectMaterialV1({ stored, recipientMode: 'e2ee',
+        recipientSecretKeyOrSeed: recipient.seed, expected: {
+          homeServerIdentityId: page.homeServerIdentityId, teamId: page.teamId, resourceId: page.resourceId,
+          resourceRevision: page.resourceRevision, recipientAccountId: recipient.recipientAccountId,
+          sourceVersion: sourceSnapshot.currentness.sourceVersion, sourceMemberKey,
+        } })).toMatchObject({ material: sourceSnapshot.material });
+    }
+  });
+
   it.each(['valid', 'invalid_request', 'invalid_response'] as const)(
     'preserves the producer → HTTP contract through reconciliation (%s)', async mode => {
       const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
