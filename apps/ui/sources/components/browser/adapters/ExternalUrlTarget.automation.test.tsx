@@ -173,7 +173,7 @@ describe('ExternalUrlTarget automation composition', () => {
         const screen = await renderScreen(<WebExternalUrlTarget testID="external-web" view={createView('webIframe')}
             diagnostics={{ ...diagnostics, sourceOrigin: 'https://example.com', webPostMessageTargetOrigin: 'https://app.example.test' }}
             automation={{ ...automation, sourceOrigin: 'https://example.com', onRegistrationRejected: (reason) => rejected.push(reason) }} />,
-            { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: { postMessage() {} } } : null });
+            { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: { postMessage() {}, document: new EventTarget() } } : null });
         try {
             await act(async () => screen.findByType('iframe').props.onLoad());
             expect(rejected).toEqual(['cross_origin_frame_unavailable']);

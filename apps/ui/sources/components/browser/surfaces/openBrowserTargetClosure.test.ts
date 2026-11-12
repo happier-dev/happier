@@ -42,6 +42,8 @@ describe('OWNER-OPEN closure: one atomic open path', () => {
             .split('\n')
             .filter((line) => line.trim().length > 0)
             .filter((line) => !line.includes('.test.'))
+            // A comment naming the canonical owner is not an import or caller.
+            .filter((line) => !/^[^:]+:\d+:\s*\/\//.test(line))
             // The definition + the canonical opener + the surfaces barrel re-export are allowed.
             .filter((line) => !line.includes('browserSurfaceDetailsTabModel.ts'))
             .filter((line) => !line.includes('openBrowserTargetInWorkspace.ts'))

@@ -480,7 +480,7 @@ describe('BrowserSurfaceHost runtime control registration', () => {
                 expect(MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body))))
                     .toEqual({ machineIds: ['machine-fresh'] });
                 return Response.json(MachineReadBatchResponseV1Schema.parse({ results: [{ machineId: 'machine-fresh', status: 'found',
-                    machine: { id: 'machine-fresh', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                    machine: { id: 'machine-fresh', managedMachineRef: null, kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
                         metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
                         storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                         access: { custodian: { accountId: 'account-a', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } },

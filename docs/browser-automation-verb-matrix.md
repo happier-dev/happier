@@ -734,7 +734,7 @@ with the loaded UI, daemon, Agent and model identified.
   silently swallow.
 
 <!-- BEGIN GENERATED: automation-verb-matrix -->
-The protocol declares **25 action kinds** and **19 adapter capability kinds**. The table covers **10 engine capability scenarios**, not a fixed surface count.
+The protocol declares **31 action kinds** and **19 adapter capability kinds**. The table covers **10 engine capability scenarios**, not a fixed surface count.
 
 ### Surfaces
 
@@ -786,6 +786,9 @@ The protocol declares **25 action kinds** and **19 adapter capability kinds**. T
 | `getDiagnosticsSummary` | _not registered_ | _none_ |
 | `getActionTimeline` | _not registered_ | _none_ |
 | `waitFor` | `waitFor` | External URL · web (`webIframe`)<br>External URL · iOS/Android (`nativeWebView`)<br>External URL · desktop (`desktopWebView`)<br>External URL · desktop with reverse-capture handler<br>Local service preview · web (`webIframe`)<br>Local service preview · native (`nativeWebView`) |
+| `clipboardRead` | _not registered_ | _none_ |
+| `download` | _not registered_ | _none_ |
+| `getInteractionState` | _not registered_ | _none_ |
 | `navigate` | _not registered_ | _none_ |
 | `reload` | _not registered_ | _none_ |
 | `goBack` | _not registered_ | _none_ |
@@ -800,6 +803,9 @@ The protocol declares **25 action kinds** and **19 adapter capability kinds**. T
 | `select` | _not registered_ | _none_ |
 | `setValue` | `type` | External URL · web (`webIframe`)<br>External URL · iOS/Android (`nativeWebView`)<br>External URL · desktop (`desktopWebView`)<br>External URL · desktop with reverse-capture handler<br>Local service preview · web (`webIframe`)<br>Local service preview · native (`nativeWebView`) |
 | `upload` | `upload` | External URL · web (`webIframe`)<br>External URL · iOS/Android (`nativeWebView`)<br>External URL · desktop (`desktopWebView`)<br>External URL · desktop with reverse-capture handler<br>Local service preview · web (`webIframe`)<br>Local service preview · native (`nativeWebView`) |
+| `clipboardWrite` | _not registered_ | _none_ |
+| `clipboardCut` | _not registered_ | _none_ |
+| `answerDialog` | _not registered_ | _none_ |
 | `drag` | `drag` | External URL · web (`webIframe`)<br>External URL · iOS/Android (`nativeWebView`)<br>External URL · desktop (`desktopWebView`)<br>External URL · desktop with reverse-capture handler<br>Local service preview · web (`webIframe`)<br>Local service preview · native (`nativeWebView`) |
 | `evaluate` | _not registered_ | _none_ |
 | `startElementPicker` | _not registered_ | _none_ |
