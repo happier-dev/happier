@@ -1308,9 +1308,22 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       expect.objectContaining({ decision: expect.objectContaining({ kind: 'reject', code: 'session_input_muted' }) }));
   });
 
+  it('preserves local cancellation during the retained input lookup', async () => {
+    const abort = new AbortController();
+    const cancellation = new DOMException('Input cancelled', 'AbortError');
+    axiosGetMock.mockImplementation(async () => {
+      abort.abort(cancellation);
+      throw new AxiosError('request cancelled', 'ERR_CANCELED');
+    });
+    const socket = createSocketStub();
+    const api = createApi({ getSocket: () => socket as never });
+    await expect(api.reconcileSessionInputForProviderDispatch({ localId: 'retained-input', signal: abort.signal }))
+      .rejects.toBe(cancellation);
+  });
+
   it.each((['valid', 'revoked', 'muted', 'held', 'unavailable', 'changed-cutoff', 'missing-service',
     'invalid-receipt', 'invalid-authority', 'settlement-unknown', 'permission-broadened', 'permission-narrowed',
-    'admitted-mute-changed', 'admitted-check-in-unavailable', 'unadmitted-check-in-unavailable'] as const)
+    'admitted-mute-changed', 'admitted-check-in-unavailable', 'unadmitted-check-in-unavailable', 'transport-abort'] as const)
     .flatMap(state => (['normal', 'steer'] as const).flatMap(delivery =>
       (state === 'valid' || state === 'permission-narrowed' || state === 'admitted-mute-changed'
         || state === 'admitted-check-in-unavailable' || state === 'unadmitted-check-in-unavailable'
@@ -1354,7 +1367,9 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         : { t: 'plain', v: settledPayload },
         inputAdmissionReceipt: state === 'invalid-receipt' ? { ...requestedOriginal.inputAdmissionReceipt,
           discussionAddressing: { ...discussionAddressing, throughSeq: 4 } } : requestedOriginal.inputAdmissionReceipt };
+      const transportAbort = new AxiosError('connection aborted', 'ECONNABORTED');
       axiosGetMock.mockImplementation(async (url: string) => {
+        if (state === 'transport-abort' && url.includes('/messages/by-local-id/')) throw transportAbort;
         if (!checkpointFinished) readBeforePreparationFinished = true;
         if (url.includes('/messages/by-local-id/')) return { status: state === 'unavailable' ? 503 : 200, data: { message: original } };
         if (url.includes('/delivery-mutes')) return { status: 200, data: { scopes: state === 'muted' || state === 'admitted-mute-changed'
@@ -1446,13 +1461,13 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       } else {
         queue.push({ text: 'Answer the original question', localId, discussionAddressing: queuedAddressing }, { permissionMode: 'default' });
       }
-      if (state === 'revoked') queue.pushIsolate({ text: 'UNRELATED_ORDINARY_INPUT', localId: 'ordinary-after-removal' }, { permissionMode: 'default' });
+      if (state === 'revoked' || state === 'transport-abort') queue.pushIsolate({ text: 'UNRELATED_ORDINARY_INPUT', localId: 'ordinary-after-removal' }, { permissionMode: 'default' });
       await runPermissionModePromptLoop({ providerName: 'Test', agentMessageType: 'codex', explicitPermissionMode: undefined,
         session, messageQueue: queue, permissionHandler: { setPermissionMode() {}, reset() {} }, runtime,
         createOverrideSynchronizer: () => ({ syncFromMetadata() {}, flushPendingAfterStart: async () => {} }),
         messageBuffer: new MessageBuffer(), shouldExit: () => shouldExit, getAbortSignal: () => new AbortController().signal,
         keepAlive() {}, setThinking() {}, sendReady() {
-          shouldExit = state !== 'revoked' || nativeSend.mock.calls.some(([text]) => text.includes('UNRELATED_ORDINARY_INPUT'));
+          shouldExit = (state !== 'revoked' && state !== 'transport-abort') || nativeSend.mock.calls.some(([text]) => text.includes('UNRELATED_ORDINARY_INPUT'));
         }, currentPermissionModeUpdatedAt: 0,
         setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {}, formatPromptErrorMessage: String,
         onPromptFailure,
@@ -1460,12 +1475,22 @@ describe('createSessionClientInteractionApi diagnostics', () => {
       });
       expect(checkpointFinished).toBe(true);
       expect(readBeforePreparationFinished).toBe(false);
+      if (state === 'transport-abort') {
+        expect(onPromptFailure).toHaveBeenCalledWith(expect.objectContaining({
+          code: 'session_input_admission_unavailable', retryable: true, cause: transportAbort,
+        }), expect.anything());
+        expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+          localId, kind: 'rejected_before_effect', retryable: true, retireLocalCustodyAfterDurableBlock: true,
+        }));
+        expect(nativeSend).toHaveBeenCalledWith(expect.stringContaining('UNRELATED_ORDINARY_INPUT'), expect.anything());
+        expect(queue.size()).toBe(0);
+      }
       expect(nativeSteer).not.toHaveBeenCalled();
       // The original's immutable authority already admitted this bounded input.
       // A later policy change applies to the next natural request.
       const admitted = state === 'valid' || state === 'permission-broadened' || state === 'permission-narrowed'
         || state === 'admitted-mute-changed' || state === 'admitted-check-in-unavailable';
-      expect(nativeSend).toHaveBeenCalledTimes(admitted || state === 'revoked' ? 1 : 0);
+      expect(nativeSend).toHaveBeenCalledTimes(admitted || state === 'revoked' || state === 'transport-abort' ? 1 : 0);
       if (state === 'revoked') {
         expect(nativeSend).toHaveBeenCalledWith(expect.stringContaining('UNRELATED_ORDINARY_INPUT'), expect.anything());
         expect(nativeSend.mock.calls.some(([text]) => text.includes('Answer the original question'))).toBe(false);
@@ -1474,10 +1499,13 @@ describe('createSessionClientInteractionApi diagnostics', () => {
         expect(observeProviderInputSettlement).not.toHaveBeenCalled();
       } else if (!admitted) {
         const retryable = state === 'held' || state === 'unavailable' || state === 'missing-service' || state === 'settlement-unknown'
-          || state === 'unadmitted-check-in-unavailable';
+          || state === 'unadmitted-check-in-unavailable' || state === 'transport-abort';
         expect(observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
           kind: 'rejected_before_effect', localId, retryable,
-          reason: retryable ? 'provider_unavailable_before_acceptance' : 'provider_rejected_before_acceptance',
+          // Admission owns this code; the shared runtime classifier owns the
+          // surrounding host/provider failure taxonomy.
+          diagnostic: expect.objectContaining({ code: state === 'held' ? 'session_input_held'
+            : retryable ? 'session_input_admission_unavailable' : 'session_input_rejected' }),
         }));
         expect(confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
       }

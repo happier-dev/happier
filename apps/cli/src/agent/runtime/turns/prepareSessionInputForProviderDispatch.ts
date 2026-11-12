@@ -11,6 +11,7 @@ import { createPromptCompositionScope, type PromptCompositionScope } from '@/age
 import { logger } from '@/ui/logger';
 import { renderRunFollowNotice } from '@/agent/runtime/session/follow/sessionFollowNotice';
 import { normalizePermissionModeQueuedPromptLocalIds, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
+import { SessionInputDispatchAdmissionError } from '@/api/session/sessionInputDispatchAdmissionError';
 import type { SessionClientInteractionApi } from '@/api/session/client/transport/sessionClientInteractionApi';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
@@ -249,8 +250,8 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
           status = await reconcile({ localId, ...(input.prompt.discussionAddressing
             ? { discussionAddressing: input.prompt.discussionAddressing } : {}), signal: input.signal });
         } catch (error) {
-          if (isAbortLikeError(error)) throw error;
-          throw new SessionInputDispatchAdmissionError('outcomeUnknown');
+          if (error instanceof SessionInputDispatchAdmissionError || isAbortLikeError(error)) throw error;
+          throw new SessionInputDispatchAdmissionError('outcomeUnknown', { cause: error });
         }
         if (status === 'withdrawn') return false;
         if (status !== 'admitted') throw new SessionInputDispatchAdmissionError(status);
@@ -266,16 +267,6 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
       : requiredPrompt,
     structuredInput: context.structuredInput ? normalizeStrictJsonValue(context.structuredInput) : undefined,
   };
-}
-
-class SessionInputDispatchAdmissionError extends Error {
-  readonly code: string;
-  readonly retryable: boolean;
-  constructor(status: 'rejected' | 'held' | 'outcomeUnknown') {
-    super('Session input is not currently admitted for provider dispatch');
-    this.code = status === 'rejected' ? 'session_input_rejected' : status === 'held' ? 'session_input_held' : 'session_input_admission_unavailable';
-    this.retryable = status !== 'rejected';
-  }
 }
 
 export function readStructuredInputPreparationFailure(error: unknown): Readonly<{ code: string; message: string; retryable: boolean; preparationCause?: RunnerDaemonPluginServicesPreparationCauseV1 }> | null {

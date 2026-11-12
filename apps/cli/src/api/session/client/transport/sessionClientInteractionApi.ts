@@ -69,6 +69,7 @@ import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/proto
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { readSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from '../../transcriptMessageLookup';
+import { SessionInputDispatchAdmissionError } from '../../sessionInputDispatchAdmissionError';
 import type { DiscussionAddressingV1, DiscussionAddressV1 } from '@happier-dev/protocol/discussions/references';
 
 export type SessionInputProviderDispatchReconciliation = Readonly<{
@@ -1378,7 +1379,13 @@ export function createSessionClientInteractionApi(
             if (!socket.connected) return 'outcomeUnknown';
             const original = await findTranscriptEncryptedMessageByLocalIdV2({ token: deps.token,
                 serverUrl, sessionId: deps.sessionId, localId: input.localId, signal: input.signal });
-            if (original.type !== 'found') return 'outcomeUnknown';
+            if (original.type !== 'found') {
+                input.signal.throwIfAborted();
+                // A transport abort is unavailable admission, not cancellation of
+                // this input. Preserve its cause for the existing retry settlement.
+                if ('error' in original) throw new SessionInputDispatchAdmissionError('outcomeUnknown', { cause: original.error });
+                return 'outcomeUnknown';
+            }
             const message: PendingQueueMaterializedMessage = { ...original.message,
                 messageRole: original.message.messageRole ?? null,
                 inputAdmissionReceipt: original.message.inputAdmissionReceipt ?? null,
