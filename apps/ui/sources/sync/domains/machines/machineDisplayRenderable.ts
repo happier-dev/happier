@@ -26,6 +26,7 @@ export interface MachineDisplayRenderable {
     updatedAt: number;
     active: boolean;
     activeAt: number;
+    activity?: Machine['activity'];
     presenceProtocolVersion?: 1;
     operationProtocolCapabilities?: Machine['operationProtocolCapabilities'];
     operationProtocolCapabilitiesRevision?: Machine['operationProtocolCapabilitiesRevision'];

@@ -60,7 +60,9 @@ export function resolveAutomationWatcherHealth(params: Readonly<{
         return Object.freeze({ kind: 'installationReplaced' });
     }
 
-    if (!isMachineOnline(machine, params.nowMs)) return Object.freeze({ kind: 'machineOffline' });
+    const online = isMachineOnline(machine, params.nowMs);
+    if (online === null) return Object.freeze({ kind: 'machineChecking' });
+    if (!online) return Object.freeze({ kind: 'machineOffline' });
     return Object.freeze({ kind: 'observing' });
 }
 

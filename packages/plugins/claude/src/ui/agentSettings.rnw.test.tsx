@@ -76,6 +76,16 @@ describe('Claude contributed Agent settings', () => {
     }]);
   });
 
+  it('keeps unanswered Machine status visible without asserting it is offline', async () => {
+    const data = input();
+    data.machines = [{ id: 'pending', displayName: 'Pending daemon', online: null,
+      pid: null, startedAt: null, cliVersion: null, source: null, report: null }];
+    const { fixture } = await mount(data);
+    await pressButton(fixture, 'Machine status');
+    expect(await fixture.getByText('Pending daemon')).toBeDefined();
+    expect(await fixture.getByText('Waiting for machine')).toBeDefined();
+  });
+
   it('distinguishes current application failure from retained failure in another daemon lifetime', async () => {
     const facts = { online: true, pid: 123, startedAt: 20, cliVersion: 'fixture',
       report: { status: 'error', reason: 'provider_settings_failed' } };

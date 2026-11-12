@@ -162,7 +162,6 @@ export interface Session {
     presence?: "online" | number,
     optimisticThinkingAt?: number | null; // Local-only timestamp used for immediate "processing" UI feedback after submit
     resumingAt?: number | null; // Local-only: set at resume initiation; cleared by post-attach activity, definitive failure, or a bounded post-acceptance fallback.
-    thinkingGraceUntil?: number | null; // Local-only timestamp used to debounce thinking indicator and avoid flicker between streaming chunks
     lastTurnCompletedAt?: number | null; // Local-only explicit terminal lifecycle timestamp used for completion surfaces
     todos?: Array<{
         content: string;
@@ -322,6 +321,8 @@ export interface Machine {
     updatedAt: number;
     active: boolean;
     activeAt: number;  // Changed from lastActiveAt to activeAt for consistency
+    /** In-memory presence answer; omitted from wire and warm display persistence. */
+    activity?: import('@/sync/domains/machines/machineActivity').MachineActivityState;
     /** Home-owned transition-only presence; absent on legacy Homes. */
     presenceProtocolVersion?: 1;
     revokedAt?: number | null;

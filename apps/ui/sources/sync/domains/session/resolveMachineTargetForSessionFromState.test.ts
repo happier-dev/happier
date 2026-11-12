@@ -12,18 +12,20 @@ import {
     resolveMachineTargetForSessionFromState,
 } from './resolveMachineTargetForSessionFromState';
 
+function answeredMachineFixture(overrides: Parameters<typeof createMachineFixture>[0] = {}) {
+    const machine = createMachineFixture({ presenceProtocolVersion: 1, ...overrides });
+    publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+    return machine;
+}
+
 function activeMachine(id: string, host: string) {
-    return {
-        id,
-        active: true,
-        activeAt: 1,
-        metadata: { host },
-    };
+    return answeredMachineFixture({ id, activeAt: Date.now(),
+        metadata: { ...createMachineFixture().metadata!, host } });
 }
 
 describe('resolveMachineTargetForSessionFromState', () => {
     it('retains a cold Machine RPC target until presence answers, without treating it as online', () => {
-        const machine = createMachineFixture({ id: 'cold-machine', active: false });
+        const machine = createMachineFixture({ id: 'cold-machine', active: false, presenceProtocolVersion: 1 });
         linkMachineActivity(machine, { ...machine });
         const session = createSessionFixture({ id: 'cold-session', active: true,
             metadata: { machineId: machine.id, path: '/workspace', host: 'cold.local' } });
@@ -38,6 +40,16 @@ describe('resolveMachineTargetForSessionFromState', () => {
         expect(resolveMachineTargetForSessionFromState(state, session.id)).toEqual(target);
     });
 
+    it('uses the presence owner for an answered legacy Machine whose heartbeat has expired', () => {
+        const machine = createMachineFixture({ id: 'expired-machine', active: true, activeAt: 1 });
+        const session = createSessionFixture({ id: 'expired-session', active: true,
+            metadata: { machineId: machine.id, path: '/workspace', host: 'expired.local' } });
+        const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
+        publishMachineActivity(machine, { active: true, activeAt: 1 }, []);
+        expect(resolveMachineTargetForSessionFromState(state, session.id)).toBeNull();
+        expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toBeNull();
+    });
+
     it('retains the canonical workspace Machine target for an offline Session', () => {
         const session = createSessionFixture({ id: 'offline-bound-session', active: true, metadata: {
             path: '', host: '',
@@ -48,7 +60,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
                 machinePath: '/machine/project',
             },
         } as any, serverId: 'home-a' });
-        const machine = createMachineFixture({ id: 'machine-nldw', active: false });
+        const machine = answeredMachineFixture({ id: 'machine-nldw', active: false });
         const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine },
             sessionListRowsByServerId: { 'home-a': { [session.id]: buildSessionListRenderableFromSession(session) } } };
 
@@ -60,9 +72,9 @@ describe('resolveMachineTargetForSessionFromState', () => {
     });
 
     it.each(['retained', 'missing'] as const)('keeps an explicit guest identity while it boots (%s)', (origin) => {
-        const metadata = { ...createMachineFixture().metadata!, host: 'lume.local', homeDir: '/Users/lume' };
-        const guest = createMachineFixture({ id: 'guest', active: false, metadata });
-        const clone = createMachineFixture({ id: 'older-guest', active: true, metadata });
+        const metadata = { ...answeredMachineFixture().metadata!, host: 'lume.local', homeDir: '/Users/lume' };
+        const guest = answeredMachineFixture({ id: 'guest', active: false, metadata });
+        const clone = answeredMachineFixture({ id: 'older-guest', active: true, metadata });
         const session = createSessionFixture({ id: 'wake-session', active: false,
             metadata: { machineId: guest.id, path: '/Users/lume/project', host: metadata.host, homeDir: metadata.homeDir } });
         const state = { sessions: { [session.id]: session }, machines: {
@@ -72,14 +84,14 @@ describe('resolveMachineTargetForSessionFromState', () => {
         expect(resolveMachineControlTargetForSessionFromState(state, session.id)).toEqual(origin === 'retained' ? null : {
             machineId: guest.id, basePath: '/Users/lume/project', confidence: 'metadata_direct',
         });
-        const ready = { ...state, machines: { ...state.machines, [guest.id]: { ...guest, active: true } } };
+        const ready = { ...state, machines: { ...state.machines, [guest.id]: answeredMachineFixture({ ...guest, active: true }) } };
         expect(resolveMachineTargetForSessionFromState(ready, session.id)).toEqual({
             machineId: guest.id, basePath: '/Users/lume/project',
         });
     });
 
     it('reads current Machine activity when the retained inventory object is unchanged', () => {
-        const machine = createMachineFixture({ id: 'presence-machine', active: true });
+        const machine = answeredMachineFixture({ id: 'presence-machine', active: true });
         const session = createSessionFixture({ id: 'presence-session', active: true,
             metadata: { machineId: machine.id, path: '/workspace', host: 'presence.local' } });
         const state = { sessions: { [session.id]: session }, machines: { [machine.id]: machine } };
@@ -97,7 +109,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
             metadataLayoutVersion: 1, metadata: { path: '', host: '' },
             ownerMetadataView: { machineId: 'owner-machine', path: '/owner/repo', host: 'owner.local' },
         });
-        const machine = createMachineFixture({ id: 'owner-machine', active: true });
+        const machine = answeredMachineFixture({ id: 'owner-machine', active: true });
         const state = { sessions: { s1: session }, machines: {},
             machineListByServerId: { 'home-a': [machine] },
             sessionListRowsByServerId: { 'home-a': { s1: buildSessionListRenderableFromSession({
@@ -121,7 +133,7 @@ describe('resolveMachineTargetForSessionFromState', () => {
         });
         const row = { ...buildSessionListRenderableFromSession(session),
             metadata: { path: '/shared/repo', host: 'shared.local', machineId: 'shared-machine' } };
-        const machine = createMachineFixture({ id: 'shared-machine', active: true });
+        const machine = answeredMachineFixture({ id: 'shared-machine', active: true });
         const state = { sessions: {}, machines: {}, machineListByServerId: { 'home-a': [machine] },
             sessionListRowsByServerId: { 'home-a': { s1: row } } };
         expect(resolveMachineControlTargetForSessionFromState(state, { serverId: 'home-a', sessionId: 's1' })).toBeNull();
@@ -155,13 +167,13 @@ describe('resolveMachineTargetForSessionFromState', () => {
             sessionWorkspaceLocationV1: { v: 1, machineId: 'machine-old',
                 agentPath: '/agent/old-project', machinePath: '/host/old-project' },
         } });
-        const machineMetadata = { ...createMachineFixture().metadata!, host: 'old.local', homeDir: '/home/user' };
+        const machineMetadata = { ...answeredMachineFixture().metadata!, host: 'old.local', homeDir: '/home/user' };
         const state = { sessions: { s1: session }, machines: {
             ...(route === 'same-host missing source' ? {} : {
-                'machine-old': createMachineFixture({ id: 'machine-old', active: false,
+                'machine-old': answeredMachineFixture({ id: 'machine-old', active: false,
                     ...(route === 'replacement' ? { replacedByMachineId: 'machine-new' } : {}) }),
             }),
-            'machine-new': createMachineFixture({ id: 'machine-new', active: true,
+            'machine-new': answeredMachineFixture({ id: 'machine-new', active: true,
                 ...(route !== 'replacement' ? { metadata: machineMetadata } : {}) }),
         } };
         expect(resolveMachineTargetForSessionFromState(state, 's1')).toBeNull();
@@ -185,8 +197,8 @@ describe('resolveMachineTargetForSessionFromState', () => {
         const target = { serverId: 'home-a', sessionId: 's1' };
         const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: false,
             metadata: { path: '/repo', host: 'shared.local' } });
-        const machines = ['one', 'two'].map(id => createMachineFixture({ id, active: true,
-            metadata: { ...createMachineFixture().metadata!, host: 'shared.local' } }));
+        const machines = ['one', 'two'].map(id => answeredMachineFixture({ id, active: true,
+            metadata: { ...answeredMachineFixture().metadata!, host: 'shared.local' } }));
         const state = { sessions: { s1: session }, machines: {}, machineListByServerId: { 'home-a': machines },
             machineListStatusByServerId: { 'home-a': 'idle' as const } };
         expect(resolveMachineControlTargetStateForSessionFromState({ ...state, sessions: {} }, target))
@@ -246,8 +258,8 @@ describe('resolveMachineTargetForSessionFromState', () => {
     });
 
     it('resolves a Home-qualified terminal target from that Home machine inventory', () => {
-        const activeMachine = createMachineFixture({ id: 'same-machine', active: false });
-        const foreignMachine = createMachineFixture({ id: 'same-machine', active: true });
+        const activeMachine = answeredMachineFixture({ id: 'same-machine', active: false });
+        const foreignMachine = answeredMachineFixture({ id: 'same-machine', active: true });
         const foreignSession = createSessionFixture({
             id: 'same-session', serverId: 'home-b', active: true,
             metadata: { path: '/home-b/project', host: 'home-b', machineId: 'same-machine' },

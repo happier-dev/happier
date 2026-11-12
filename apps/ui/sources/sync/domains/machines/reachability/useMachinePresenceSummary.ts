@@ -7,7 +7,7 @@ import { resolveServerScopedMachines, resolveServerScopedMachineInventory, resol
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, subscribeServerProfiles, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
@@ -37,7 +37,7 @@ import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/ma
 export type MachinePresenceSummary = Readonly<{
     /** Selected recipient-safe lifecycle and heartbeat facts; UI presentation never reclassifies native power. */
     nativeState?: import('@happier-dev/protocol/machines/managed/managedMachineV1').ManagedMachineInputRuntimeV1['state'];
-    presenceOnline?: boolean;
+    presenceOnline?: boolean | null;
     name: string | null;
     /** The name as a sentence uses it ("Reading it from {machine}"): "this machine" while its details load or are locked. */
     sentenceName?: string | null;
@@ -100,8 +100,8 @@ export function useMachinePresenceSummaries(
             const machineIsKnown = Boolean(machine);
             const activeAt = machine ? readMachineActivity(machine).activeAt : null;
             const nativeState = machine?.managedInputRuntime?.state ?? null;
-            const presenceOnline = Boolean(machine && isMachineOnline(machine, nowMs));
-            const lastSeenAt = reachability === 'unreachable' && machine && !presenceOnline
+            const presenceOnline = machine ? isMachineOnline(machine, nowMs) : null;
+            const lastSeenAt = reachability === 'unreachable' && machine && presenceOnline === false
                 && typeof activeAt === 'number' && activeAt > 0
                 ? activeAt : null;
             const previous = cached.current[index];
@@ -244,16 +244,12 @@ function useMachinePresenceScope(
             ? suppliedLifetime.scope : null;
 }
 
-/** App-wide consumers need membership, not heartbeat timestamps or machine presentation. */
-export function useMachinePresenceMembership(
-    serverId: string | null,
-    suppliedLifetime?: ServerAccountScopeLifetime | null,
-): MachinePresenceMembership {
-    const store = getStorage();
-    const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
-    const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
-    const cached = React.useRef<MachinePresenceMembership>({ onlineMachineIds: [], selectableMachineIds: [], counts: { online: 0, offline: 0, unknown: 0 } });
-    const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
+const EMPTY_MEMBERSHIP: MachinePresenceMembership = { onlineMachineIds: [], selectableMachineIds: [], counts: { online: 0, offline: 0, unknown: 0 } };
+
+function createMachinePresenceMembershipSource(store: ReturnType<typeof getStorage>, targetServerId: string | null,
+    scope: ReturnType<typeof useMachinePresenceScope>) {
+    let cached = EMPTY_MEMBERSHIP;
+    const readMachines = (resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
         const state = store.getState();
         const activeMachines = Object.values(state.machines);
         const machines = targetServerId ? resolveServerScopedMachines({
@@ -264,8 +260,8 @@ export function useMachinePresenceMembership(
             machineListStatusByServerId: state.machineListStatusByServerId,
         }, resolveScopeId) ?? [] : activeMachines;
         return machines.filter(isMachineVisibleForSelection);
-    }, [store, targetServerId]);
-    const readSnapshot = React.useCallback((nowMs: number) => {
+    };
+    const readSnapshot = (nowMs: number) => {
         const resolveScopeId = captureServerProfileScopeResolver();
         const machines = readMachines(resolveScopeId);
         const onlineMachineIds = machines.filter(machine => isMachineReachable(scope, machine, nowMs, resolveScopeId))
@@ -273,23 +269,59 @@ export function useMachinePresenceMembership(
         const selectableMachineIds = machines.filter(machine => isMachineSelectableForFleet(scope, machine, nowMs, resolveScopeId))
             .map(machine => machine.id).sort((left, right) => left.localeCompare(right));
         const { counts } = partitionMachineFleetPresence(machines, machine => resolveMachineFleetPresence(scope, machine, nowMs, resolveScopeId));
-        const previous = cached.current;
+        const previous = cached;
         const onlineChanged = onlineMachineIds.length !== previous.onlineMachineIds.length
             || onlineMachineIds.some((id, index) => id !== previous.onlineMachineIds[index]);
         const selectableChanged = selectableMachineIds.length !== previous.selectableMachineIds.length
             || selectableMachineIds.some((id, index) => id !== previous.selectableMachineIds[index]);
         const countsChanged = counts.online !== previous.counts.online || counts.offline !== previous.counts.offline || counts.unknown !== previous.counts.unknown;
         if (onlineChanged || selectableChanged || countsChanged) {
-            cached.current = {
+            cached = {
                 onlineMachineIds: onlineChanged ? onlineMachineIds : previous.onlineMachineIds,
                 selectableMachineIds: selectableChanged ? selectableMachineIds : previous.selectableMachineIds,
                 counts: countsChanged ? counts : previous.counts,
             };
         }
-        return cached.current;
-    }, [readMachines, scope]);
-    const targets = React.useMemo(() => [{ serverId: targetServerId }], [targetServerId]);
-    return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
+        return cached;
+    };
+    return createMachinePresenceSnapshotSource(readMachines, readSnapshot, [{ serverId: targetServerId }]);
+}
+
+type SharedMembershipSource = Readonly<{ source: ReturnType<typeof createMachinePresenceMembershipSource> }> & { mounted: number };
+/**
+ * Membership is a pure function of the Home inventory and its exact Account scope, and app-shell owners
+ * (rail, runtimes, plugin projection, drafts) mount it together. One derivation per Home/Account scope
+ * serves every mounted consumer; an entry lives while one is mounted.
+ */
+const sharedMembershipSources = new Map<string, SharedMembershipSource>();
+
+/** App-wide consumers need membership, not heartbeat timestamps or machine presentation. */
+export function useMachinePresenceMembership(
+    serverId: string | null,
+    suppliedLifetime?: ServerAccountScopeLifetime | null,
+): MachinePresenceMembership {
+    const store = getStorage();
+    const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
+    const scope = useMachinePresenceScope(targetServerId, suppliedLifetime);
+    const key = `${targetServerId ?? ''}\u0000${scope ? serverAccountScopeKeySuffix(scope) : ''}`;
+    const entry = React.useMemo(() => {
+        const existing = sharedMembershipSources.get(key);
+        if (existing) return existing;
+        const created: SharedMembershipSource = { source: createMachinePresenceMembershipSource(store, targetServerId, scope), mounted: 0 };
+        sharedMembershipSources.set(key, created);
+        return created;
+        // `scope` is identified by `key`; an equal scope shares one derivation.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [key, store]);
+    React.useEffect(() => {
+        entry.mounted += 1;
+        if (!sharedMembershipSources.has(key)) sharedMembershipSources.set(key, entry);
+        return () => {
+            entry.mounted -= 1;
+            if (entry.mounted === 0 && sharedMembershipSources.get(key) === entry) sharedMembershipSources.delete(key);
+        };
+    }, [entry, key]);
+    return React.useSyncExternalStore(entry.source.subscribe, entry.source.getSnapshot, entry.source.getSnapshot);
 }
 
 export type MachinePresenceTarget = Readonly<{
@@ -390,7 +422,29 @@ export function createMachinePresenceSnapshotSource<T>(
         published = { value };
         return value;
     };
+    // Every subscriber of one source shares one attachment: a source change refreshes
+    // deadlines, activity and the snapshot once, then notifies each subscriber.
+    const listeners = new Set<() => void>();
+    let detach: (() => void) | null = null;
+    const notify = () => { for (const listener of [...listeners]) listener(); };
     const subscribe = (listener: () => void) => {
+        listeners.add(listener);
+        if (detach) {
+            // Like a fresh attachment, re-sample what may have moved since this subscriber's render read.
+            revision += 1;
+            listener();
+            return () => release(listener);
+        }
+        detach = attach(notify);
+        return () => release(listener);
+    };
+    const release = (listener: () => void) => {
+        if (!listeners.delete(listener) || listeners.size > 0) return;
+        const stop = detach;
+        detach = null;
+        stop?.();
+    };
+    const attach = (listener: () => void) => {
         const token = {};
         let inputs = readInputs(store.getState());
         let stopActivity = () => {};

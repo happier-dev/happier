@@ -95,15 +95,15 @@ export function haveSameMachineContentAuthority(previous: MachineContentAuthorit
 
 /** One inventory retention rule for full-row ingress and later hydration. */
 export function retainMachineRecord(previous: Machine | null | undefined, next: Machine): Machine {
-    if (!previous || previous.storageMode !== next.storageMode || !haveSameMachineContentAuthority(previous, next)) return next;
+    // Ingress owns a new record; an incoming object's client-lifetime activity is never another Home's answer.
+    if (!previous || previous.storageMode !== next.storageMode || !haveSameMachineContentAuthority(previous, next)) return { ...next, activity: undefined };
     if (areStoredMachineSemanticsEqual(previous, next)) return previous;
-    let retained = next;
+    const retained: Machine = { ...next, activity: previous.activity };
     // Exact-field readers share the admitted siblings even when another field in the same decoded
     // blob advances. Whole-row version authority stays above.
     const retainField = <Key extends keyof Machine>(key: Key) => {
         const field = retainDeep(previous[key], next[key]);
         if (field === next[key]) return;
-        if (retained === next) retained = { ...next };
         retained[key] = field;
     };
     for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities', 'managedMachineRef'] as const) {

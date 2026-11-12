@@ -5,6 +5,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { beginMachineAddWatch } from '@/components/machines/add/machineAddTaskLifetime';
 import { discardMachineAddFlowDraft, readMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
@@ -71,13 +72,17 @@ describe('useAwaitedMachineArrival', () => {
                 onBaselineCaptured: (next) => { baseline = next; },
             }));
             expect(baseline).toBeNull();
-            await act(async () => storage.setState({ machineListByServerId: {
-                [home.id]: [createMachineFixture({ id: 'already-there', activeAt: Date.now() })],
-            } }));
+            await act(async () => {
+                const machine = createMachineFixture({ id: 'already-there', activeAt: Date.now(), presenceProtocolVersion: 1 });
+                publishMachineActivityForTest([machine]);
+                storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+            });
             expect(hook.getCurrent().status).toBe('waiting');
-            await act(async () => storage.setState({ machineListByServerId: {
-                [home.id]: [createMachineFixture({ id: 'new-here', activeAt: Date.now() })],
-            } }));
+            await act(async () => {
+                const machine = createMachineFixture({ id: 'new-here', activeAt: Date.now(), presenceProtocolVersion: 1 });
+                publishMachineActivityForTest([machine]);
+                storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+            });
             expect(hook.getCurrent().machine?.id).toBe('new-here');
             await hook.unmount();
         } finally {

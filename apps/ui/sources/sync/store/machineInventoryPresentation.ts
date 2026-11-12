@@ -1,6 +1,6 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { carryMachineActivity } from '@/sync/domains/machines/machineActivity';
-import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { selectVisibleMachineInventory } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { areMachineFactsEqual, areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
@@ -19,13 +19,13 @@ function createProjection(equal: (previous: Machine, next: Machine) => boolean) 
     const project = (input: Machine[], previous: Machine[] | null | undefined): Machine[] => {
         const cached = lists.get(input);
         if (cached) return cached;
-        const visible = input.filter(isMachineVisibleForSelection);
+        const visible = selectVisibleMachineInventory(input);
         const next = visible.map((machine, index) => {
             const cached = rows.get(machine);
             if (cached) return cached;
             const held = previous?.[index];
             const value = held && held.id === machine.id && equal(held, machine) ? held : machine;
-            if (value !== machine) carryMachineActivity(value, machine);
+            if (value !== machine) linkMachineActivity(machine, value);
             rows.set(machine, value);
             return value;
         });

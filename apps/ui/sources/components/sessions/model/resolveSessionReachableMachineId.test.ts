@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import {
     buildMachineResolutionContext,
     resolveSessionMachineRpcTarget,
@@ -13,9 +14,11 @@ function makeMachine(input: Readonly<{
     activeAt?: number;
     host?: string | null;
     replacedByMachineId?: string | null;
+    answered?: boolean;
 }>): Machine {
-    return {
+    const machine: Machine = {
         id: input.id,
+        presenceProtocolVersion: 1,
         seq: 1,
         createdAt: 1,
         updatedAt: 1,
@@ -36,9 +39,21 @@ function makeMachine(input: Readonly<{
         daemonState: null,
         daemonStateVersion: 1,
     };
+    if (input.answered !== false) publishMachineActivity(machine, machine, []);
+    return machine;
 }
 
 describe('resolveSessionReachableMachineId', () => {
+    it('admits zero of 24 cold unanswered Machines, then only the answered online Machine', () => {
+        const machines = Array.from({ length: 24 }, (_, index) => makeMachine({
+            id: `cold-${index}`, active: true, activeAt: Date.now(), answered: false,
+        }));
+        const targets = () => machines.map(machine => resolveSessionReachableMachineId({ machineId: machine.id, machines }));
+        expect(targets().filter(Boolean)).toHaveLength(0);
+        publishMachineActivity(machines[0]!, machines[0]!, []);
+        expect(targets()).toEqual([machines[0]!.id, ...machines.slice(1).map(() => null)]);
+    });
+
     it('returns the direct machine id when active', () => {
         const machines = [makeMachine({ id: 'm-offline', active: false }), makeMachine({ id: 'm-active', active: true })];
 

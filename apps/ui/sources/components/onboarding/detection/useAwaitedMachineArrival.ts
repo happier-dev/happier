@@ -20,7 +20,7 @@ export type AwaitedMachineArrivalBaseline = Readonly<{
     serverUrl: string;
     serverId?: string;
     knownIds: ReadonlySet<string>;
-    wasOnlineById: ReadonlyMap<string, boolean>;
+    wasOnlineById: ReadonlyMap<string, boolean | null>;
 }>;
 
 export type AwaitedMachineArrivalInput = Readonly<{
@@ -81,7 +81,7 @@ export function createAwaitedMachineArrivalBaseline(
     presenceById?: Readonly<Record<string, MachinePresence>>,
 ): AwaitedMachineArrivalBaseline {
     const knownIds = new Set<string>();
-    const wasOnlineById = new Map<string, boolean>();
+    const wasOnlineById = new Map<string, boolean | null>();
     for (const machine of machines) {
         knownIds.add(machine.id);
         wasOnlineById.set(machine.id, isMachineOnline(presenceById?.[machine.id] ?? machine));

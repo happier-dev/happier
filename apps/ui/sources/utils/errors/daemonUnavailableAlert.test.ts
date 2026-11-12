@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { installErrorUtilityCommonModuleMocks } from './errorUtilityTestHelpers';
 
 const modalAlertSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) => {}));
@@ -28,10 +29,15 @@ installErrorUtilityCommonModuleMocks({
     },
 });
 
+const { DAEMON_UNAVAILABLE_RPC_ERROR_CODE, buildMachineStatusLine, isDaemonUnavailableAlertError, promptDaemonUnavailableRetry, showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcError, tryShowDaemonUnavailableAlertForRpcFailure } = await import('./daemonUnavailableAlert');
+
+function answered<Machine extends { active: boolean; activeAt: number }>(machine: Machine): Machine {
+    publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+    return machine;
+}
+
 describe('daemonUnavailableAlert', () => {
     it('reads current activity without mutating the retained status-line Machine', async () => {
-        vi.resetModules();
-        const { buildMachineStatusLine } = await import('./daemonUnavailableAlert');
         const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
         const oldTimestamp = Date.now() - 5 * 60_000;
         const machine = { active: true, activeAt: oldTimestamp, metadata: { host: 'devbox' } };
@@ -42,18 +48,16 @@ describe('daemonUnavailableAlert', () => {
 
     it('shows a translated alert with machine status and Retry/Cancel buttons', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
 
         const onRetry = vi.fn();
         showDaemonUnavailableAlert({
             titleKey: 'errors.daemonUnavailableTitle',
             bodyKey: 'errors.daemonUnavailableBody',
-            machine: {
+            machine: answered({
                 active: false,
                 activeAt: Date.now() - 5 * 60_000,
                 metadata: { host: 'devbox' },
-            },
+            }),
             onRetry,
         });
 
@@ -71,8 +75,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('guards Retry when shouldContinue returns false', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
 
         const onRetry = vi.fn();
         showDaemonUnavailableAlert({
@@ -93,17 +95,15 @@ describe('daemonUnavailableAlert', () => {
 
     it('reports "unknown" when activeAt is not a valid timestamp and active=false', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
 
         showDaemonUnavailableAlert({
             titleKey: 'errors.daemonUnavailableTitle',
             bodyKey: 'errors.daemonUnavailableBody',
-            machine: {
+            machine: answered({
                 active: false,
                 activeAt: 0,
                 metadata: { host: 'devbox' },
-            },
+            }),
             onRetry: vi.fn(),
         });
 
@@ -114,17 +114,15 @@ describe('daemonUnavailableAlert', () => {
 
     it('reports last-seen time instead of "online" for stale machines even when active=true', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { showDaemonUnavailableAlert } = await import('./daemonUnavailableAlert');
 
         showDaemonUnavailableAlert({
             titleKey: 'errors.daemonUnavailableTitle',
             bodyKey: 'errors.daemonUnavailableBody',
-            machine: {
+            machine: answered({
                 active: true,
                 activeAt: Date.now() - 60 * 60_000,
                 metadata: { host: 'devbox' },
-            },
+            }),
             onRetry: vi.fn(),
         });
 
@@ -135,8 +133,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('shows an alert for RPC method-not-available failure objects (code/message)', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { tryShowDaemonUnavailableAlertForRpcFailure, DAEMON_UNAVAILABLE_RPC_ERROR_CODE } = await import('./daemonUnavailableAlert');
 
         const onRetry = vi.fn();
         const shown = tryShowDaemonUnavailableAlertForRpcFailure({
@@ -151,8 +147,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('does not match by message when a non-daemon rpcErrorCode is present on an Error', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { tryShowDaemonUnavailableAlertForRpcError } = await import('./daemonUnavailableAlert');
 
         const err = Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'SOME_OTHER_CODE' });
         const shown = tryShowDaemonUnavailableAlertForRpcError({
@@ -165,8 +159,6 @@ describe('daemonUnavailableAlert', () => {
     });
 
     it('classifies daemon-unavailable RPC errors for shared retry flows', async () => {
-        vi.resetModules();
-        const { isDaemonUnavailableAlertError } = await import('./daemonUnavailableAlert');
 
         expect(isDaemonUnavailableAlertError(
             new RpcError('Machine target not available for session', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
@@ -177,7 +169,6 @@ describe('daemonUnavailableAlert', () => {
     });
 
     it('classifies session-target unavailable follow-up failures as retryable', async () => {
-        vi.resetModules();
         const module = await import('./daemonUnavailableAlert');
         const classifyLaunchRetryFailure = (module as Record<string, unknown>).classifyLaunchRetryFailure;
 
@@ -203,7 +194,6 @@ describe('daemonUnavailableAlert', () => {
     });
 
     it('classifies domain errors as fatal and spawn webhook timeouts as retryable', async () => {
-        vi.resetModules();
         const module = await import('./daemonUnavailableAlert');
         const classifyLaunchRetryFailure = (module as Record<string, unknown>).classifyLaunchRetryFailure;
 
@@ -231,8 +221,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('does not match by message when a non-daemon rpcErrorCode is present', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { tryShowDaemonUnavailableAlertForRpcFailure } = await import('./daemonUnavailableAlert');
 
         const shown = tryShowDaemonUnavailableAlertForRpcFailure({
             rpcErrorCode: 'SOME_OTHER_CODE',
@@ -246,8 +234,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('returns false and does not alert for non-RPC method-not-available errors', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { tryShowDaemonUnavailableAlertForRpcError, tryShowDaemonUnavailableAlertForRpcFailure } = await import('./daemonUnavailableAlert');
 
         const shown = tryShowDaemonUnavailableAlertForRpcError({
             error: new Error('boom'),
@@ -268,8 +254,6 @@ describe('daemonUnavailableAlert', () => {
 
     it('resolves a retry prompt when the Retry button is pressed', async () => {
         modalAlertSpy.mockClear();
-        vi.resetModules();
-        const { promptDaemonUnavailableRetry } = await import('./daemonUnavailableAlert');
 
         const pending = promptDaemonUnavailableRetry({
             titleKey: 'errors.daemonUnavailableTitle',

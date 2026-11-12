@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture as createUnansweredMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity, type MachineActivityFacts } from '@/sync/domains/machines/machineActivity';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { isUsageQuotaHomeAccountChange, getUsageProjectionNextReadAtMs, getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, observeUsageProjection, subscribeUsageQueryStateInvalidation } from './usageQueryInvalidation';
 import { clearMachineRequestReachabilityForScope, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
@@ -8,6 +9,16 @@ import { installConnectedAccountDescriptorProjection } from '@/sync/domains/conn
 import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { handleEphemeralSocketUpdate } from '@/sync/engine/socket/socket';
+
+function answered<Machine extends MachineActivityFacts>(machine: Machine): Machine {
+    // These unit-state fixtures represent independent arrivals, rather than two views of one live row.
+    const row = { ...machine, activity: undefined };
+    publishMachineActivity(row, { active: row.active, activeAt: row.activeAt }, []);
+    return row;
+}
+function createMachineFixture(overrides: Parameters<typeof createUnansweredMachineFixture>[0] = {}) {
+    return answered(createUnansweredMachineFixture(overrides));
+}
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -41,7 +52,7 @@ it.each(['failed', 'withdrawn'] as const)('projects %s reachability evidence sep
                 : { status: 'pending', machineId: 'chosen' });
         clearMachineRequestReachabilityForScope(scope);
         observeMachinePresenceForTest(scope, ['chosen']);
-        expect(getUsageQueryPoolMachineSelection({ chosen: { ...machine, active: false } }, ['chosen'], scope))
+        expect(getUsageQueryPoolMachineSelection({ chosen: answered({ ...machine, active: false }) }, ['chosen'], scope))
             .toEqual({ status: 'unsupported', errorCode: 'no_machine' });
         expect(getUsageQueryPoolMachineSelection({}, [], scope))
             .toEqual({ status: 'unsupported', errorCode: 'no_machine' });
@@ -280,14 +291,14 @@ it('keys pool selection by its resolved machine and Session evidence by only its
         a: { ...machines.a!, metadata: { ...machines.a!.metadata!, displayName: 'Renamed' } },
         d: createMachineFixture({ id: 'd', activeAt: nowMs }),
     }, nowMs, scope, consumers)).toBe(key); // The pool remains ambiguous; neither name is quota evidence.
-    const two = { ...machines, c: { ...machines.c!, active: false, activeAt: 1 } };
+    const two = { ...machines, c: answered({ ...machines.c!, active: false, activeAt: 1 }) };
     expect(getUsageQueryMachineInvalidationKey(two, nowMs, scope, consumers)).toBe(key);
-    const one = { ...two, b: { ...machines.b!, active: false, activeAt: 1 } };
+    const one = { ...two, b: answered({ ...machines.b!, active: false, activeAt: 1 }) };
     expect(getUsageQueryMachineInvalidationKey(one, nowMs, scope, consumers)).not.toBe(key);
     const sessionConsumers = { poolMachineFilters: [], sessionMachineIds: ['a'] };
     const sessionKey = getUsageQueryMachineInvalidationKey(machines, nowMs, scope, sessionConsumers);
     expect(getUsageQueryMachineInvalidationKey(two, nowMs, scope, sessionConsumers)).toBe(sessionKey);
-    expect(getUsageQueryMachineInvalidationKey({ ...machines, a: { ...machines.a!, active: false, activeAt: 1 } }, nowMs, scope, sessionConsumers)).not.toBe(sessionKey);
+    expect(getUsageQueryMachineInvalidationKey({ ...machines, a: answered({ ...machines.a!, active: false, activeAt: 1 }) }, nowMs, scope, sessionConsumers)).not.toBe(sessionKey);
     expect(getUsageQueryMachineInvalidationKey({ ...machines, a: { ...machines.a!, replacedByMachineId: 'b' } }, nowMs, scope, sessionConsumers)).not.toBe(sessionKey);
 });
 
@@ -367,7 +378,7 @@ it('separates presentation settings and Machine labels from selection eligibilit
         expect(invalidations.splice(0)).toEqual(['quota-pool-inputs']);
         storage.setState({ machines: { [machine.id]: { ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } } } });
         expect(invalidations.splice(0)).toEqual(['projection-inputs']);
-        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: 1 } } });
+        storage.setState({ machines: { [machine.id]: answered({ ...machine, active: false, activeAt: 1 }) } });
         expect(invalidations.splice(0)).toEqual(['material-inputs']);
         observesSessionMachine = false;
         storage.setState({ machines: { [machine.id]: machine } });
@@ -407,7 +418,7 @@ it('does not reread machine details for unrelated store notifications or wall ti
         nowMs += 120_000;
         storage.setState({ isDataReady: !storage.getState().isDataReady });
         expect(invalidated).toBe(false);
-        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: nowMs } } });
+        storage.setState({ machines: { [machine.id]: answered({ ...machine, active: false, activeAt: nowMs }) } });
         expect(invalidated).toBe(true);
         expect(detailReads).toBeGreaterThan(unrelatedDetailReads);
         console.info(JSON.stringify({ unrelatedStoreRevisions: 128, unrelatedMachineDetailReads: unrelatedDetailReads, expiryDetailReads: detailReads - unrelatedDetailReads }));
@@ -417,7 +428,7 @@ it('does not reread machine details for unrelated store notifications or wall ti
         storage.setState({ isDataReady: !storage.getState().isDataReady });
         expect(invalidated).toBe(false);
         invalidated = false;
-        storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: nowMs + 1, updatedAt: nowMs + 1 } } });
+        storage.setState({ machines: { [machine.id]: answered({ ...machine, active: false, activeAt: nowMs + 1, updatedAt: nowMs + 1 }) } });
         expect(invalidated).toBe(false);
         const beforeScopeChange = detailReads;
         storage.setState({ settingsScope: { serverId: 'usage-invalidation.test', accountId: 'other-account' } });

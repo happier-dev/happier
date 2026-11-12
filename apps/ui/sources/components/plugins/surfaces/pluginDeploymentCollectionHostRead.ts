@@ -1,13 +1,13 @@
 import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import type { DeploymentActivityV1, DeploymentEnvironmentReadCollectionV1, DeploymentReadLeaseV1 } from '@happier-dev/deployments';
-import { projectDeploymentControllerAvailabilityV1 } from '@happier-dev/protocol/deployments/deploymentControllerAvailabilityV1';
+import type { DeploymentControllerAvailabilityV1 } from '@happier-dev/protocol/deployments/deploymentControllerAvailabilityV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readDeploymentProjectOwner } from '@/components/projects/deployments/useDeploymentProject';
 import { createMachinePresenceSnapshotSource } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 const ACTIVE = Object.freeze({ mounted: true, visible: true, focused: true });
@@ -37,8 +37,10 @@ export function createPluginDeploymentCollectionHostReadStore(input: Readonly<{
         const machineIds = 'items' in value
             ? [...new Set(value.items.map(item => item.environment.controllerMachineId))].sort() : [];
         const readMachines = () => machineIds.map(id => resolveServerScopedMachine(getStorage().getState(), input.lifetime.scope.serverId, id));
-        const source = createMachinePresenceSnapshotSource(readMachines, () => readMachines().map((machine, index) =>
-            projectDeploymentControllerAvailabilityV1(machineIds[index]!, machine ? { ...machine, ...readMachineActivity(machine) } : null)),
+        const source = createMachinePresenceSnapshotSource(readMachines, () => readMachines().map((machine, index): DeploymentControllerAvailabilityV1 => {
+            const presence = machine ? resolveMachinePresence(machine) : 'unknown';
+            return { machineId: machineIds[index]!, state: presence === 'unknown' ? 'unknown' : presence === 'online' ? 'available' : 'paused' };
+        }),
         [{ serverId: input.lifetime.scope.serverId, machineIds }], (left, right) => left.length === right.length
             && left.every((fact, index) => fact.machineId === right[index]!.machineId && fact.state === right[index]!.state));
         return { ...source, key: JSON.stringify(machineIds) };

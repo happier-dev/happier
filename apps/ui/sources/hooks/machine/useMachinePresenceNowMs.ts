@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { readMachineActivity, subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { subscribeMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
 import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
 import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 
@@ -9,9 +10,10 @@ export function useMachinePresenceNowMs(machines: readonly Parameters<typeof rea
         let previous: string | undefined;
         let sampledAtMs = Date.now();
         const getSnapshot = () => {
-            const active = machines.map(machine => readMachineActivity(machine).active ? '1' : '0').join('');
-            if (previous !== undefined && previous !== active) sampledAtMs = Math.max(Date.now(), sampledAtMs + 1);
-            previous = active;
+            const nowMs = Date.now();
+            const presence = machines.map(machine => resolveMachinePresence(machine, nowMs)).join(',');
+            if (previous !== undefined && previous !== presence) sampledAtMs = Math.max(nowMs, sampledAtMs + 1);
+            previous = presence;
             return sampledAtMs;
         };
         return { getSnapshot, subscribe: (listener: () => void) => {

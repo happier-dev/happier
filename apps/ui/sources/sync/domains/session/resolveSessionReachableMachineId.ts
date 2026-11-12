@@ -1,5 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 
@@ -182,8 +182,7 @@ function resolveSessionReachableMachineIdWithContext(input: Readonly<{
     const canonical = resolveCanonicalMachineId(machineId, input.machineResolutionContext.machineById);
     const resolvedMachineId = canonical?.machineId ?? machineId;
     const machine = input.machineResolutionContext.machineById.get(resolvedMachineId);
-    if (!machine || !readMachineActivity(machine).active) return null;
-    if (machine.revokedAt && machine.revokedAt > 0) return null;
+    if (!machine || isMachineOnline(machine) !== true) return null;
     if (machine.replacedByMachineId) return null;
     return resolvedMachineId;
 }

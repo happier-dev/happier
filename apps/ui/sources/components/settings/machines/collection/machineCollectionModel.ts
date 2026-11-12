@@ -1,3 +1,4 @@
+import { countMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { describeMachineRuntimePresence, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { resolveMachineFleetPresence, partitionMachineFleetPresence, type MachineFleetPresence } from '@/sync/domains/machines/reachability/machineReachability';
@@ -6,7 +7,7 @@ import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
-import { carryMachineActivity, linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -167,7 +168,7 @@ export function buildMachineCollection(input: Readonly<{
     const query = input.query?.trim().toLocaleLowerCase() ?? '';
     const nowMs = input.nowMs ?? Date.now();
     let count = 0;
-    let machineCount = 0;
+    const machineCount = countMachineFleet(input.groups);
     const sections = input.groups.flatMap((group): MachineCollectionSection[] => {
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
         const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
@@ -270,7 +271,6 @@ export function buildMachineCollection(input: Readonly<{
                 rows.sort(compareMachineCollectionRows);
             }
             count += rows.length;
-            if (ownershipGroup.key !== 'managedArchived') machineCount += rows.length;
             const ownershipTitle = ownershipGroup.key.startsWith('shared:')
                 ? describeMachineSharedGroupTitle(ownershipGroup.custodian)
                 : ownershipGroup.key === 'managed' ? t('machines.destinations.created')
@@ -337,7 +337,7 @@ export function reconcileMachineCollection(previous: MachineCollection | null, n
         rows.forEach((row, index) => {
             const current = section.rows[index]!;
             if (row !== current && row.presenceSource && current.presenceSource) {
-                carryMachineActivity(row.presenceSource.machine, current.presenceSource.machine);
+                linkMachineActivity(current.presenceSource.machine, row.presenceSource.machine);
             }
         });
         return { ...section, rows };

@@ -1,3 +1,5 @@
+import { createMachineFixture } from '@/dev/testkit';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -31,6 +33,14 @@ describe('Automation Event observer runtime health', () => {
 
 describe('Automation watcher health', () => {
     const watcher = { machineId: 'machine-a', machineInstallationId: 'install-a' };
+
+    it('keeps an unanswered watcher checking until its pushed online answer', () => {
+        const machine = createMachineFixture({ id: watcher.machineId, active: true, activeAt: 100, presenceProtocolVersion: 1 });
+        const read = () => resolveAutomationWatcherHealth({ watcher, machine, machineListSettled: true, nowMs: 100 });
+        expect(read()).toEqual({ kind: 'machineChecking' });
+        publishMachineActivity(machine, { active: true, activeAt: 101 }, []);
+        expect(read()).toEqual({ kind: 'observing' });
+    });
 
     it('does not call the watcher\'s machine gone while the machine list is still loading', () => {
         const checking = resolveAutomationWatcherHealth({ watcher, machine: undefined, machineListSettled: false });

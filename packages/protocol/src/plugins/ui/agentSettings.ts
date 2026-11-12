@@ -16,7 +16,7 @@ export const PluginAgentSettingsLaunchInputV1Schema = lazyZodSchema(() => z.stri
   machines: z.array(z.strictObject({
     id: z.string(),
     displayName: z.string(),
-    online: z.boolean(),
+    online: z.nullable(z.boolean()),
     pid: z.nullable(z.number()),
     startedAt: z.nullable(z.number()),
     cliVersion: z.nullable(z.string()),

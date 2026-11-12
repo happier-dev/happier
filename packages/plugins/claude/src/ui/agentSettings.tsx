@@ -28,11 +28,11 @@ function targetReason(reason: string | undefined, tr: Translate): string | undef
 const MachineRow = React.memo(function MachineRow({ machine, policy, tr }: Readonly<{ machine: Machine; policy: RetentionPolicy; tr: Translate }>) {
   const [expanded, setExpanded] = React.useState(false);
   const report = readRetentionMachineReport(machine);
-  const status = retentionMachineStatus(machine, policy);
+  const status = machine.online === null ? 'pending' : retentionMachineStatus(machine, policy);
   const genericFailure = !report && status === 'error';
   const statusText = tr(status, statusFallback[status]);
   return <Item title={machine.displayName} testID={`claude-session-retention-machine-${machine.id}`}
-    subtitle={machine.online ? statusText : `${statusText} · ${tr('offline', 'Offline · last confirmed status')}`}
+    subtitle={machine.online === false ? `${statusText} · ${tr('offline', 'Offline · last confirmed status')}` : statusText}
     expanded={expanded} accessibilityExpanded={expanded}
     onPress={report?.targets.length || genericFailure ? () => setExpanded(value => !value) : undefined}
     expandedContent={expanded ? genericFailure

@@ -77,9 +77,7 @@ function DeploymentLinkMachineSheet(
       }] : []), ...machines.map((machine) => ({
         id: machine.id,
         title: getMachineDisplayName(machine, machines),
-        subtitle: isMachineOnline(machine)
-          ? undefined
-          : t('projects.deployments.machineAway'),
+        subtitle: isMachineOnline(machine) === false ? t('projects.deployments.machineAway') : undefined,
         checked: machine.id === chosen?.id,
       }))],
     [chosen?.id, chosenId, machines],

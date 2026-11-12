@@ -165,7 +165,7 @@ function readUsageMachineFacts(machines: Readonly<Record<string, Machine>>, nowM
         return { id: machine.id, name: readMachineName(machine), replaced: isMachineReplaced(machine),
             reachable: reachability === 'reachable',
             // A withdrawn observation or failed route is not a confirmed offline daemon.
-            unavailable: reachability === 'unknown' || reachability === 'unreachable' && isMachineOnline(machine, nowMs) };
+            unavailable: reachability === 'unknown' || reachability === 'unreachable' && isMachineOnline(machine, nowMs) !== false };
     })
         .sort((left, right) => left.id.localeCompare(right.id));
 }

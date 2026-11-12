@@ -19,7 +19,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveServerScopedMachineInventory, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
-import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 
 type MachineTargetLikeState = SessionListLookupStateLike & Readonly<{
     sessions?: Record<string, {
@@ -142,8 +142,7 @@ function resolveUniqueActiveMachineByHost(
     if (!host) return null;
     const matches = machineCollectionValues(machines).filter((machine) => {
         const machineHost = normalizeNonEmptyString(machine.metadata?.host);
-        return readMachineActivity(machine).active
-            && !machine.revokedAt
+        return isMachineOnline(machine) === true
             && !machine.replacedByMachineId
             && machineHost === host;
     });
@@ -361,9 +360,8 @@ export function resolveMachineTargetForSessionFromState(
 
 function hasKnownUnavailableMachineState(machine: Machine | undefined): boolean {
     if (!machine) return false;
-    if (machine.revokedAt && machine.revokedAt > 0) return true;
     if (machine.replacedByMachineId) return true;
-    return !readMachineActivity(machine).active;
+    return isMachineOnline(machine) === false;
 }
 
 function hasConflictingDirectSessionMachine(input: ReturnType<typeof readPrivateSessionTargetInput>): boolean {

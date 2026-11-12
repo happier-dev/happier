@@ -50,7 +50,7 @@ export function EnvironmentMachineChoice(
         id: machine.id,
         testID: `${props.testID}.${machine.id}`,
         title: name,
-        subtitle: isMachineOnline(machine) ? undefined : t('projects.deployments.machineAway'),
+        subtitle: isMachineOnline(machine) === false ? t('projects.deployments.machineAway') : undefined,
         checked: current,
       }] : [];
     })];

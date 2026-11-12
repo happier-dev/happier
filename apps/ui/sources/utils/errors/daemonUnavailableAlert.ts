@@ -19,6 +19,9 @@ export type MachineStatusLineInput =
     | Readonly<{
           active?: boolean | null;
           activeAt?: number | null;
+          activity?: Machine['activity'];
+          presenceProtocolVersion?: Machine['presenceProtocolVersion'];
+          revokedAt?: Machine['revokedAt'];
           metadata?: Readonly<{ displayName?: string | null; host?: string | null }> | null;
       }>
     | null
@@ -38,26 +41,14 @@ function hasActivity(machine: MachineStatusLineInput): machine is NonNullable<Ma
 export function buildMachineStatusLine(machine: MachineStatusLineInput): string {
     const activity = hasActivity(machine) ? readMachineActivity(machine) : machine;
     const machineStatus = (() => {
-        const activeAt = typeof activity?.activeAt === 'number' && Number.isFinite(activity.activeAt) && activity.activeAt > 0 ? activity.activeAt : null;
-        if (activeAt !== null) {
-            const statusMachine: Machine = {
-                id: 'status-line-machine',
-                seq: 0,
-                createdAt: 0,
-                updatedAt: 0,
-                active: activity?.active === true,
-                activeAt,
-                revokedAt: null,
-                metadata: null,
-                metadataVersion: 0,
-                daemonState: null,
-                daemonStateVersion: 0,
-            };
-            if (isMachineOnline(statusMachine)) return t('status.online');
-            return t('status.lastSeen', { time: formatLastSeen(activeAt, false) });
-        }
-        if (activity?.active === true) return t('status.online');
-        return t('status.unknown');
+        if (!hasActivity(machine)) return t('status.unknown');
+        const online = isMachineOnline(machine);
+        if (online === null) return t('status.unknown');
+        if (online) return t('status.online');
+        const activeAt = activity?.activeAt;
+        return typeof activeAt === 'number' && Number.isFinite(activeAt) && activeAt > 0
+            ? t('status.lastSeen', { time: formatLastSeen(activeAt, false) })
+            : t('status.unknown');
     })();
 
     const machineName = resolveMachineName(machine);

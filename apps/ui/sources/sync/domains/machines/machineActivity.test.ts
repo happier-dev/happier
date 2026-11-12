@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { carryMachineActivity, linkMachineActivity, publishMachineActivities, publishMachineActivity, readMachineActivity, subscribeMachineActivity } from './machineActivity';
+import { linkMachineActivity, publishMachineActivities, publishMachineActivity, readMachineActivity, subscribeMachineActivity } from './machineActivity';
 
-const row = () => Object.freeze({ active: true, activeAt: 1 });
+const row = (active = true) => Object.freeze({ active, activeAt: 1,
+    activity: { value: { active, activeAt: 1 }, answered: false } });
 
 describe('machine activity subscriptions', () => {
     it('publishes a cold presence answer only to the changed Machine row', () => {
@@ -15,7 +16,7 @@ describe('machine activity subscriptions', () => {
     });
 
     it.each([true, false])('keeps linked projections current across same-valued replacements from active=%s', (active) => {
-        const held = Object.freeze({ active, activeAt: 1 });
+        const held = row(active);
         const projection = { ...held };
         const nestedProjection = { ...held };
         linkMachineActivity(held, projection);
@@ -23,13 +24,11 @@ describe('machine activity subscriptions', () => {
         const observed: boolean[] = [];
         const stop = subscribeMachineActivity(projection, () => observed.push(readMachineActivity(projection).active));
         const middle = { ...held };
-        carryMachineActivity(held, middle);
         const lateObserved: boolean[] = [];
         const stopLate = subscribeMachineActivity(nestedProjection, () => lateObserved.push(readMachineActivity(nestedProjection).active));
         const current = { ...held };
         const currentObserved: boolean[] = [];
         const stopCurrent = subscribeMachineActivity(current, () => currentObserved.push(readMachineActivity(current).active));
-        carryMachineActivity(middle, current);
 
         publishMachineActivities([
             { machine: current, activity: { active, activeAt: 2 }, projections: [] },
@@ -66,12 +65,10 @@ describe('machine activity subscriptions', () => {
 
     it('stops a reader however far carried rows moved its subscription', () => {
         const held = row();
-        const middle = row();
-        const current = row();
+        const middle = { ...held };
+        const current = { ...middle };
         const listener = vi.fn();
         const stop = subscribeMachineActivity(held, listener);
-        carryMachineActivity(held, middle);
-        carryMachineActivity(middle, current);
 
         publishMachineActivity(current, { active: false, activeAt: 2 }, []);
         expect(listener).toHaveBeenCalledTimes(1);

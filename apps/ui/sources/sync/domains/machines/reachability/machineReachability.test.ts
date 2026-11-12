@@ -27,6 +27,11 @@ afterEach(() => {
     vi.unstubAllEnvs();
 });
 
+function answered<Machine extends { active: boolean; activeAt?: number | null }>(machine: Machine): Machine {
+    publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+    return machine;
+}
+
 describe('machine reachability', () => {
     const negotiated = { presenceProtocolVersion: 1 as const };
     it('keeps a retained active bit pending until its presence answer', () => {
@@ -76,7 +81,7 @@ describe('machine reachability', () => {
             { id: 'old-install', active: false, replacedByMachineId: 'live' },
             { id: 'revoked', active: false, revokedAt: 1 },
             { id: 'runner', active: false, kind: 'ephemeral_session_runner' as const },
-        ].map(machine => ({ ...negotiated, activeAt: 1, ...machine }));
+        ].map(machine => answered({ ...negotiated, activeAt: 1, ...machine }));
         const rows = machines.map(machine => ({ machine, presence: resolveMachineFleetPresence(scope, machine) }));
         const fleet = partitionMachineFleetPresence(rows, row => row.presence);
         expect(fleet.counts).toEqual({ online: 1, offline: 1, unknown: 0 });
@@ -125,7 +130,7 @@ describe('machine reachability', () => {
     it('invalidates a retained verdict when pushed activity changes without changing its timestamp', () => {
         const scope = { serverId: 'home', accountId: 'account-a' };
         // Without a heartbeat timestamp the protocol uses the explicit active bit.
-        const machine = { id: 'controller', active: true, activeAt: 0 };
+        const machine = answered({ id: 'controller', active: true, activeAt: 0 });
         expect(resolveMachineReachability(scope, machine, 100)).toBe('reachable');
         publishMachineActivity(machine, { active: false, activeAt: 0 }, []);
         expect(resolveMachineReachability(scope, machine, 101)).toBe('unreachable');
@@ -137,6 +142,7 @@ describe('machine reachability', () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const scope = { serverId: 'home', accountId: 'account-a' };
         const machines = Array.from({ length: 138 }, (_, index) => ({ id: `machine-${index}`, active: true, activeAt: 100, ...negotiated }));
+        machines.forEach(answered);
         const resolveScope = captureServerProfileScopeResolver();
         const clock = vi.spyOn(Date, 'now');
         try {
@@ -168,10 +174,10 @@ describe('machine reachability', () => {
             expect(resolveMachineReachability(scope, mutable, 70_002, resolveScope)).toBe('reachable');
             mutable.revokedAt = 1;
             expect(resolveMachineReachability(scope, mutable, 70_002, resolveScope)).toBe('unreachable');
-            machine.active = false;
+            publishMachineActivity(machine, { active: false, activeAt: machine.activeAt }, []);
             expect(resolveMachineReachability(scope, machine, 70_002, resolveScope)).toBe('unreachable');
             // A released Home without the presence marker still uses the legacy heartbeat grace.
-            const legacy = { id: 'legacy-home-machine', active: true, activeAt: 100 };
+            const legacy = answered({ id: 'legacy-home-machine', active: true, activeAt: 100 });
             expect(resolveMachineReachability(scope, legacy, 60_100, resolveScope)).toBe('reachable');
             expect(resolveMachineReachability(scope, legacy, 60_101, resolveScope)).toBe('unreachable');
         } finally {
@@ -183,6 +189,7 @@ describe('machine reachability', () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const scope = { serverId: 'home', accountId: 'account-a' };
         const machines = Array.from({ length: 138 }, (_, index) => ({ id: `machine-${index}`, active: true, activeAt: 100, ...negotiated }));
+        machines.forEach(answered);
         const resolveScope = vi.fn(captureServerProfileScopeResolver());
         recordMachineRequestSucceeded({ ...scope, machineId: machines[0]!.id, observedAtMs: 100 });
         const observation = readMachineRequestReachabilityObservation(scope, machines[0]!.id);
@@ -228,7 +235,7 @@ describe('machine reachability', () => {
         recordMachineRequestFailed({ ...scope, machineId: 'machine', route, observedAtMs: 20 });
         expect(readMachineRequestReachabilityObservation({ serverId: ' home ', accountId: ' account-a ' }, ' machine ', route)?.outcome).toBe('failed');
         recordMachineRequestSucceeded({ ...scope, machineId: 'machine', observedAtMs: 30 });
-        expect(isMachineReachable(scope, { id: 'machine', active: true }, 30)).toBe(true);
+        expect(isMachineReachable(scope, answered({ id: 'machine', active: true }), 30)).toBe(true);
         expect(readMachineRequestReachabilityObservation(scope, 'machine', route)?.outcome).toBe('failed');
         expect(readMachineRequestReachabilityObservation({ ...scope, accountId: 'account-b' }, 'machine', route)).toBeNull();
         expect(readMachineRequestReachabilityObservation({ ...scope, serverId: 'other-home' }, 'machine', route)).toBeNull();
@@ -259,7 +266,7 @@ describe('machine reachability', () => {
         recordMachineRequestSucceeded({ ...scope, machineId: 'machine', observedAtMs: 46 });
         listener.mockClear();
         withdrawMachinePresenceForScope(scope);
-        const machine = { id: 'machine', active: true, activeAt: 47 };
+        const machine = answered({ id: 'machine', active: true, activeAt: 47 });
         recordMachineRequestSucceeded({ ...scope, machineId: machine.id, observedAtMs: 48 });
         expect(readMachineRequestReachabilityObservation(scope, machine.id)?.outcome).toBe('succeeded');
         expect(resolveMachineReachability(scope, machine, 48)).toBe('reachable');
@@ -275,6 +282,7 @@ describe('machine reachability', () => {
         const machines = Array.from({ length: 65 }, (_, index) => ({
             id: `machine-${index}`, active: index < 2, activeAt: index < 2 ? 1_000_000 : 903_000, ...negotiated,
         }));
+        machines.forEach(answered);
         const verdicts = machines.map(machine => resolveMachineReachability(scope, machine, 1_000_000));
         expect(verdicts.filter(verdict => verdict === 'reachable')).toHaveLength(2);
         expect(verdicts.filter(verdict => verdict === 'unreachable')).toHaveLength(63);
@@ -295,7 +303,7 @@ describe('machine reachability', () => {
         const listener = vi.fn();
         const unsubscribe = subscribeMachineRequestReachability(listener);
         const scope = { serverId: 'home', accountId: 'account-a' };
-        const machine = { id: 'machine', active: true, activeAt: 10 };
+        const machine = answered({ id: 'machine', active: true, activeAt: 10 });
         recordMachineRequestFailed({ ...scope, machineId: machine.id, observedAtMs: 20 });
         for (const activeAt of [10, 20, 21, null]) {
             expect(isMachineReachable(scope, { ...machine, activeAt }, 21)).toBe(false);
@@ -311,7 +319,7 @@ describe('machine reachability', () => {
     it('isolates observations by Home and Account, including a late completion from another Account', () => {
         const accountA = { serverId: 'home', accountId: 'account-a' };
         const accountB = { serverId: 'home', accountId: 'account-b' };
-        const machine = { id: 'machine', active: true, activeAt: 100 };
+        const machine = answered({ id: 'machine', active: true, activeAt: 100 });
         recordMachineRequestFailed({ ...accountA, machineId: machine.id, observedAtMs: 20 });
         expect(isMachineReachable(accountA, machine, 100)).toBe(false);
         expect(isMachineReachable(accountB, machine, 100)).toBe(true);

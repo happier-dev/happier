@@ -26,11 +26,11 @@ import {
     scheduleMachineDisplayWarmCacheSave,
     scheduleMachineListDisplayWarmCacheSave,
 } from '../../domains/state/machineDisplayWarmCacheWriter';
-import { retainMachineRecord, haveSameMachineContentAuthority, readMachineContributionRegistryProjectionInvalidation, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
+import { retainMachineRecord, readMachineContributionRegistryProjectionInvalidation, hasMachineDaemonStateAdvanced } from './areStoredMachinesEqual';
 import { areSessionValuesDeepEqual } from './areStoredSessionsEqual';
 import { applyWorkspaceSyncRuntimeEvent } from '../../domains/sessionHandoff/applyWorkspaceSyncRuntimeEvent';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { buildMachineActivityPlaceholder, carryMachineActivity, publishMachineActivities, readMachineActivity, readMachinePresenceAnswer, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
+import { buildMachineActivityPlaceholder, publishMachineActivities, readMachineActivity, readMachinePresenceAnswer, type MachineActivityPublication, type MachineActivityUpdate } from '@/sync/domains/machines/machineActivity';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { indexMachineInventory, mergeMachineInventory } from './machines/machineInventory';
@@ -144,10 +144,11 @@ export type MachinePresence = Readonly<{
     activeAt: number;
     updatedAt: number;
     presenceProtocolVersion?: 1;
+    activity?: Machine['activity'];
 }>;
 
-function readMachinePresence(machine: MachinePresence): MachinePresence {
-    return { active: machine.active, activeAt: machine.activeAt, updatedAt: machine.updatedAt,
+function readMachinePresence(machine: MachinePresence, activity: Machine['activity']): MachinePresence {
+    return { activity, active: machine.active, activeAt: machine.activeAt, updatedAt: machine.updatedAt,
         ...(machine.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}) };
 }
 
@@ -167,10 +168,11 @@ function retainMachineDisplay(
     previous: MachineDisplayRenderable | undefined,
     next: MachineDisplayRenderable,
 ): MachineDisplayRenderable {
-    if (!previous) return next;
+    if (!previous) return { ...next, activity: undefined };
     if (areMachineDisplaySemanticsEqual(previous, next)) return previous;
     const retained = {
         ...next,
+        activity: previous.activity,
         metadata: areSessionValuesDeepEqual(previous.metadata, next.metadata) ? previous.metadata : next.metadata,
         ...(next.availability !== undefined ? { availability: areSessionValuesDeepEqual(previous.availability, next.availability) ? previous.availability : next.availability } : {}),
         ...(next.access !== undefined ? { access: areSessionValuesDeepEqual(previous.access, next.access) ? previous.access : next.access } : {}),
@@ -349,16 +351,10 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 // Retain once, then publish that exact record to both projections.
                 // Two independent reconciliations can create distinct retained
                 // copies, forcing liveness to search and patch both inventories.
-                const retainedMachines = normalizedMachines.map(machine => {
-                    const previous = shouldUpdateActiveProjection ? state.machines[machine.id] ?? currentMachineById[machine.id]
-                        : currentMachineById[machine.id];
-                    const retained = retainMachineRecord(previous, machine);
-                    if (previous && previous.storageMode === retained.storageMode && haveSameMachineContentAuthority(previous, retained)) {
-                        // Content replacement keeps this authority's answered activity and its subscribers.
-                        carryMachineActivity(retained, previous);
-                    }
-                    return retained;
-                });
+                const retainedMachines = normalizedMachines.map(machine => retainMachineRecord(
+                    shouldUpdateActiveProjection ? state.machines[machine.id] ?? currentMachineById[machine.id]
+                        : currentMachineById[machine.id], machine,
+                ));
                 activityUpdates = normalizedMachines.flatMap((machine, index) => {
                     const activity = readMachineActivity(retainedMachines[index]);
                     return activity.active === machine.active && activity.activeAt === machine.activeAt ? []
@@ -388,7 +384,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         const previousMachine = shouldUpdateActiveProjection
                             ? state.machines[machine.id] ?? currentMachineById[machine.id]
                             : currentMachineById[machine.id];
-                        const presence = retainMachinePresence(previous, readMachinePresence(machine), retainedMachines[index] === previousMachine);
+                        const presence = retainMachinePresence(previous, readMachinePresence(machine, retainedMachines[index]?.activity), retainedMachines[index] === previousMachine);
                         if (presence === previous) continue;
                         if (nextPresence === previousPresence) nextPresence = { ...previousPresence };
                         nextPresence[machine.id] = presence;
@@ -485,7 +481,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                 for (const [index, machine] of normalizedMachines.entries()) {
                     const previous = state.machinePresenceById[machine.id];
                     const previousMachine = state.machines[machine.id] ?? currentMachineById[machine.id];
-                    const presence = retainMachinePresence(previous, readMachinePresence(machine), retainedMachines[index] === previousMachine);
+                    const presence = retainMachinePresence(previous, readMachinePresence(machine, retainedMachines[index]?.activity), retainedMachines[index] === previousMachine);
                     if (presence === previous) continue;
                     if (machinePresenceById === state.machinePresenceById) machinePresenceById = { ...state.machinePresenceById };
                     machinePresenceById[machine.id] = presence;
@@ -677,9 +673,10 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     const previousDisplay = state.machineDisplayById[machine.id];
                     if (!areMachineDisplaySemanticsEqual(previousDisplay, nextDisplay)) hasDisplaySemanticChanges = true;
                     const retained = retainMachineDisplay(previousDisplay, nextDisplay);
-                    const activity = readMachineActivity(nextDisplay);
+                    // The incoming fields are this arrival; a copied projection can still hold an older activity state.
+                    const activity = nextDisplay;
                     const previousActivity = previousDisplay ? readMachineActivity(previousDisplay) : null;
-                    if (retained === previousDisplay && (activity.active !== previousActivity?.active
+                    if (previousDisplay && (activity.active !== previousActivity?.active
                         || activity.activeAt !== previousActivity?.activeAt)) {
                         activityUpdates.push({ display: retained,
                             activity: { id: retained.id, active: activity.active, activeAt: activity.activeAt ?? 0 } });

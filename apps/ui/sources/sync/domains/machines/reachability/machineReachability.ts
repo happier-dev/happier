@@ -1,7 +1,7 @@
 import { isMachineRequestReachabilityFailureV1, type MachinePresenceV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
-import { isMachineOnline, type MachinePresenceCounts } from '@/utils/sessions/machineUtils';
+import type { MachinePresenceCounts } from '@/utils/sessions/machineUtils';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
+import { resolveMachinePresence } from './machinePresence';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import type { SessionMachineReachability } from './resolveSessionMachineReachability';
@@ -186,11 +186,10 @@ export function resolveMachineReachability(
     const normalized = normalizeScope(scope, resolveScopeId);
     const state = normalized ? readScope(normalized) : undefined;
     const requestOutcome = readObservation(state, machine.id)?.outcome;
-    if ((typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0)
-        || requestOutcome === 'failed') return 'unreachable';
-    if (readMachinePresenceAnswer(machine) === false) return 'unknown';
-    const reachable = isMachineOnline(machine, nowMs);
-    if (!reachable) return 'unreachable';
+    if (requestOutcome === 'failed') return 'unreachable';
+    const presence = resolveMachinePresence(machine, nowMs);
+    if (presence === 'unknown') return 'unknown';
+    if (presence === 'offline') return 'unreachable';
     if (!normalized) return 'unknown';
     return 'reachable';
 }

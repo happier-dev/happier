@@ -12,6 +12,7 @@ installDisconnectedServerSocketBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { subscribeMachineActivity } =
   await import('@/sync/domains/machines/machineActivity');
+const { isMachineOnline } = await import('@/utils/sessions/machineUtils');
 const { resolveMachineReachability } =
   await import('@/sync/domains/machines/reachability/machineReachability');
 
@@ -94,11 +95,13 @@ it('publishes an answered Machine before content replacement reaches presence re
   try {
     expect(source.getSnapshot()).toBe('reachable');
     observations.length = 0;
-    storage.getState().applyMachines([{ ...machine, metadataVersion: 2,
+    storage.getState().applyMachines([{ ...machine, updatedAt: machine.updatedAt + 1, metadataVersion: 2,
       metadata: { ...machine.metadata!, homeDir: '/changed/home' } }], false, options);
     expect(observations).not.toContain('unknown');
     expect(source.getSnapshot()).toBe('reachable');
     expect(activityPublications).toBe(0);
+    expect(resolveMachineReachability(scope, storage.getState().machinePresenceById[machine.id]!, Date.now())).toBe('reachable');
+    expect(resolveMachineReachability(scope, storage.getState().machinePresenceByServerId[home]![machine.id]!, Date.now())).toBe('reachable');
 
     storage.getState().applyMachineActivityUpdates([
       { id: machine.id, active: false, activeAt: machine.activeAt },
@@ -143,11 +146,13 @@ it('answers a warm-matching census once and renders only rows whose presence bec
   const screen = await renderScreen(React.createElement(React.Fragment, null,
     ...census.map((machine, index) => React.createElement(Row, { key: machine.id, index }))));
   try {
+    expect(displays.map(machine => isMachineOnline(machine, now))).toEqual(census.map(() => null));
     expect([...verdicts.values()]).toEqual(census.map(() => 'unknown'));
     counters.forEach(counter => counter.reset());
 
     // Same id and equal active/activeAt: knowing the answer is the changed fact.
     await act(async () => storage.getState().applyMachines([{ ...census[0]! }], false, options));
+    expect(isMachineOnline(displays[0]!, now)).toBe(true);
     expect(verdicts.get(census[0]!.id)).toBe('reachable');
     expect([...verdicts.values()].filter(value => value === 'reachable')).toHaveLength(1);
     expect(counters.map(counter => counter.read())).toEqual(census.map((_, index) =>

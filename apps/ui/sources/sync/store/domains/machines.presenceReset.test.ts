@@ -6,7 +6,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 installDisconnectedServerSocketBoundary();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { sync } = await import('@/sync/syncEngine');
-const { carryMachineActivity, linkMachineActivity, readMachineActivity, subscribeMachineActivity } =
+const { linkMachineActivity, readMachineActivity, subscribeMachineActivity } =
     await import('@/sync/domains/machines/machineActivity');
 
 it.each(['activity', 'row'] as const)('settles %s inactivity and sign-out with retained Machines and live subscriptions', async ingress => {
@@ -20,8 +20,8 @@ it.each(['activity', 'row'] as const)('settles %s inactivity and sign-out with r
     const projection = { ...held };
     linkMachineActivity(held, projection);
     // Inventory/collection retention can revisit the same row and rejoin an alias.
-    carryMachineActivity(held, held);
-    carryMachineActivity(held, projection);
+    linkMachineActivity(held, held);
+    linkMachineActivity(projection, held);
     linkMachineActivity(projection, held);
     const observed: boolean[] = [];
     const stopActivity = subscribeMachineActivity(display, () => {

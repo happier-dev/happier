@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { isMachineOnline } from './machineUtils';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+
+function answeredOnline(machine: Parameters<typeof isMachineOnline>[0], nowMs: number) {
+  publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+  return isMachineOnline(machine, nowMs);
+}
 
 function withGraceMs(graceMs: string, fn: () => void): void {
   const previous = process.env.EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS;
@@ -17,15 +23,15 @@ describe('isMachineOnline (Home-owned presence)', () => {
   const negotiated = { presenceProtocolVersion: 1 as const };
   it('uses authoritative pushed active state without a client expiry or grace window', () => {
     const nowMs = 1_000_000;
-    expect(isMachineOnline({ ...negotiated, active: true, activeAt: 1 }, nowMs)).toBe(true);
-    expect(isMachineOnline({ ...negotiated, active: false, activeAt: nowMs }, nowMs)).toBe(false);
+    expect(answeredOnline({ ...negotiated, active: true, activeAt: 1 }, nowMs)).toBe(true);
+    expect(answeredOnline({ ...negotiated, active: false, activeAt: nowMs }, nowMs)).toBe(false);
   });
   it('does not let a configured client grace override a pushed offline state', () => {
     withGraceMs('600000', () => {
       const nowMs = 1_000_000;
       const machine = { ...negotiated, active: false, activeAt: nowMs - 450_000 };
-      expect(isMachineOnline(machine, nowMs)).toBe(false);
-      expect(isMachineOnline({ ...machine, activeAt: nowMs - 600_001 }, nowMs)).toBe(false);
+      expect(answeredOnline(machine, nowMs)).toBe(false);
+      expect(answeredOnline({ ...machine, activeAt: nowMs - 600_001 }, nowMs)).toBe(false);
     });
   });
 
@@ -46,8 +52,8 @@ describe('isMachineOnline (Home-owned presence)', () => {
         daemonStateVersion: 0,
       };
 
-      expect(isMachineOnline(machine, nowMs)).toBe(false);
-      expect(isMachineOnline({ ...machine, activeAt: nowMs - 65_000 }, nowMs)).toBe(false);
+      expect(answeredOnline(machine, nowMs)).toBe(false);
+      expect(answeredOnline({ ...machine, activeAt: nowMs - 65_000 }, nowMs)).toBe(false);
     });
   });
 
@@ -68,7 +74,7 @@ describe('isMachineOnline (Home-owned presence)', () => {
         daemonStateVersion: 0,
       };
 
-      expect(isMachineOnline(machine as any, nowMs)).toBe(true);
+      expect(answeredOnline(machine as any, nowMs)).toBe(true);
     });
   });
 
@@ -89,8 +95,8 @@ describe('isMachineOnline (Home-owned presence)', () => {
         daemonStateVersion: 0,
       };
 
-      expect(isMachineOnline(machine, nowMs)).toBe(false);
-      expect(isMachineOnline({ ...machine, activeAt: nowMs - 15_000 } as any, nowMs)).toBe(false);
+      expect(answeredOnline(machine, nowMs)).toBe(false);
+      expect(answeredOnline({ ...machine, activeAt: nowMs - 15_000 } as any, nowMs)).toBe(false);
     });
   });
 
@@ -111,7 +117,7 @@ describe('isMachineOnline (Home-owned presence)', () => {
         daemonStateVersion: 0,
       };
 
-      expect(isMachineOnline(machine, nowMs)).toBe(true);
+      expect(answeredOnline(machine, nowMs)).toBe(true);
     });
   });
 
@@ -130,6 +136,6 @@ describe('isMachineOnline (Home-owned presence)', () => {
       daemonState: null,
       daemonStateVersion: 0,
     };
-    expect(isMachineOnline(machine as any, nowMs)).toBe(false);
+    expect(answeredOnline(machine as any, nowMs)).toBe(false);
   });
 });

@@ -27,7 +27,7 @@ export type MachineManagedPresence = Readonly<{
 /** Retain native status words, rather than the protected managed inventory row, in rendered rows. */
 export function projectMachineManagedPresence(
     machine: Pick<MachinePresenceV1, 'revokedAt'> & Readonly<{ id?: string }>
-        & Partial<Pick<MachineDisplayRenderable, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
+        & Partial<Pick<MachineDisplayRenderable, 'activity' | 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
     managedMachine?: ManagedMachineV1 | null,
 ): MachineManagedPresence | null {
     if (!managedMachine && !machine.managedInputRuntime?.state) return null;
@@ -47,13 +47,13 @@ export type MachineRuntimePresence = MachinePresenceLine & Readonly<{ nextAction
 
 function presentMachinePresence(input: Readonly<{
     reachability: 'reachable' | 'unreachable' | 'unknown';
-    presenceOnline: boolean;
+    presenceOnline: boolean | null;
     lastSeenAt: number | null;
     managed: ManagedPresenceOverride | null;
 }>): MachineRuntimePresence {
     const online = input.reachability === 'reachable';
     const word = input.reachability === 'unknown' ? '' : online ? t('settingsOverview.machineOnline')
-        : input.presenceOnline ? t('settingsOverview.machineUnreachableFromHome')
+        : input.presenceOnline !== false ? t('settingsOverview.machineUnreachableFromHome')
             : t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(input.lastSeenAt ?? 0) });
     const presentation = input.managed ?? resolveWorkStatusTone({ kind: 'machine', facts: {
         online: input.reachability === 'unknown' ? null : online, word, needsYouCount: 0, runningSessionCount: 0,
@@ -71,7 +71,7 @@ function presentMachinePresence(input: Readonly<{
 /** Project/Services consume the same words as machine rows, without retaining protected inventory. */
 export function describeMachinePresenceSummary(summary: MachinePresenceSummary): MachineRuntimePresence {
     return presentMachinePresence({ reachability: summary.reachability,
-        presenceOnline: summary.presenceOnline === true,
+        presenceOnline: summary.presenceOnline ?? null,
         lastSeenAt: summary.lastSeenAt ?? null,
         managed: resolveManagedMachineWorkStatus({ online: summary.reachability === 'reachable',
             nativeState: summary.nativeState, machineName: summary.name ?? '' }),
@@ -80,7 +80,7 @@ export function describeMachinePresenceSummary(summary: MachinePresenceSummary):
 
 export function describeMachineRuntimePresence(
     machine: MachinePresenceV1 & Readonly<{ id?: string; presence?: null }>
-        & Partial<Pick<MachineDisplayRenderable, 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
+        & Partial<Pick<MachineDisplayRenderable, 'activity' | 'metadata' | 'managedMachineRef' | 'availability' | 'managedInputRuntime' | 'replacedByMachineId'>>,
     nowMs?: number,
     managedPresence?: MachineManagedPresence | null,
     scope?: MachineReachabilityScope | null,
