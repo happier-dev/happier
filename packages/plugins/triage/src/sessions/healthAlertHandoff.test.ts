@@ -9,13 +9,14 @@ import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
 function receiptFixture(
     sourceIntent: NonNullable<DeploymentContentV1['sourceIntent']>,
     overrides: Parameters<typeof createDeploymentReceiptHeaderV1>[0],
+    failure?: DeploymentContentV1['failure'],
 ) {
     const deployment = createDeploymentReceiptHeaderV1({ state: 'failed', ...overrides });
     const base = createDeploymentReceiptDetailV1().content;
     const source = sourceIntent.kind === 'repository' && base.sourceIntent.kind === 'repository'
         ? { ...base.sourceIntent, ...sourceIntent } : sourceIntent;
     const content = createDeploymentReceiptDetailV1({ content: {
-        ...base, sourceIntent: source,
+        ...base, sourceIntent: source, ...(failure ? { failure } : {}),
     } }).content;
     return { deployment, artifact: {
         artifactId: deployment.contentArtifactId, ownerAccountId: 'account-a', access: 'owner', publicAudience: 'none',
@@ -104,6 +105,8 @@ describe('typed failure subjects through the existing investigation owner', () =
         { kind: 'service', target: { kind: 'host', page: 'environment', environment: target.environment, targetLinkId: 'link' } },
         { kind: 'domain', serverId: 'server-a', environmentId: 'environment', domainId: 'domain-a' },
         { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment' },
+        { kind: 'deploymentEnvironment', serverId: 'server-a', environmentId: 'environment',
+            readiness: { projectId: 'project', fact: 'backups' } },
         { kind: 'workflowRun', serverId: 'server-a', runId: 'failed-run' },
     ];
     it.each(subjects)('keeps exact reference evidence without joining service establishment ($kind)', async subject => {
@@ -111,7 +114,8 @@ describe('typed failure subjects through the existing investigation owner', () =
         const receipt = receiptFixture({ kind: 'repository', projectSourceId: 'project', sourceRevision: 7, sha: 'a'.repeat(40) }, {
             id: 'deployment-a', environmentId: 'environment', operation: 'deploy', actionOperationId: 'deployment-operation',
             revision: 3, requestedAtMs: 100, startedAtMs: 110, settledAtMs: 120, predecessorDeploymentId: 'deployment-before',
-        });
+        }, { code: 'native_build_failed', phase: 'build', failureCause: { phase: 'deployment.native.build.build_failed',
+            errorClass: 'Error', errorCode: 'deployment_disk_full', httpStatus: null } });
         const host = {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string, input: JsonValue) => {
@@ -149,6 +153,10 @@ describe('typed failure subjects through the existing investigation owner', () =
         expect(result).toMatchObject({ kind: 'ready', machine: { serverId: 'server-a', machineId: 'machine-b' } });
         expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ subject });
         if (subject.kind === 'deploymentReceipt') {
+            expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({
+                recovery: { nextAction: { destination: 'machines' } },
+                failureCause: { errorCode: 'deployment_disk_full' },
+            });
             expect(reads.filter(read => read.id === 'artifact.get')).toEqual([
                 { id: 'artifact.get', input: { artifactId: receipt.deployment.contentArtifactId } },
                 { id: 'artifact.get', input: { artifactId: receipt.deployment.contentArtifactId } },
@@ -164,6 +172,12 @@ describe('typed failure subjects through the existing investigation owner', () =
         } else if (subject.kind === 'deploymentEnvironment') {
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
                 actionId: 'deployments.environments.get', input: { serverId: 'server-a', environmentId: 'environment' } } });
+            if ('readiness' in subject && subject.readiness) {
+                const foreign = { ...subject, readiness: { ...subject.readiness, projectId: 'another-project' } };
+                const mismatched = TriageSessionHandoffInputV1Schema.parse({ ...handoff,
+                    context: { kind: 'failure', subject: foreign }, evidence: [{ kind: 'failure', subject: foreign }] });
+                expect(await readTriageHealthAlertHandoffV1(host, mismatched, new AbortController().signal)).toBeNull();
+            }
         } else if (subject.kind === 'workflowRun') {
             expect(result?.kind === 'ready' && result.workspace).toBeUndefined();
             expect(result?.kind === 'ready' && JSON.parse(result.evidence.text)).toMatchObject({ read: {
@@ -231,5 +245,10 @@ describe('a failed receipt names itself the way its page does (D4c)', () => {
         const result = await readTriageHealthAlertHandoffV1(host, handoff, new AbortController().signal);
         expect(result?.kind === 'ready' && result.evidence.source.label)
             .toBe(state === 'current' ? 'Deploy of 302cf72 failed' : 'Deployment reference');
+        if (state !== 'current') {
+            const evidence = result?.kind === 'ready' ? JSON.parse(result.evidence.text) : null;
+            expect(evidence).not.toHaveProperty('failureCause');
+            expect(evidence).not.toHaveProperty('recovery');
+        }
     });
 });

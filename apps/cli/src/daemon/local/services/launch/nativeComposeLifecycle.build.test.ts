@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { nativeBuildFixtureDigest as digest, withNativeComposeBuildFixture as withBuilder,
     withNativeComposeBuildAdmission as admitted } from './nativeComposeBuild.testkit';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
@@ -8,6 +9,54 @@ import { readDeploymentChildResult } from '@/deployments/deploymentChild';
 import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
 
 describe('phase-correct native platform image production', () => {
+    it.each([
+        ['JavaScript heap out of memory', 'deployment_out_of_memory', 'machines'],
+        ['no space left on device', 'deployment_disk_full', 'machines'],
+        ['ERR_PNPM_OUTDATED_LOCKFILE', 'deployment_lockfile_mismatch', 'source'],
+        ['required variable APP_KEY is missing a value', 'deployment_env_var_missing', 'variables'],
+        ['container web is unhealthy', 'deployment_health_check_failed', 'logs'],
+        ['Bind for 0.0.0.0:3000 failed: port is already allocated', 'deployment_port_in_use', 'source'],
+        ['pull access denied for private/image', 'deployment_image_pull_denied', 'connectedAccounts'],
+        ['manifest unknown', 'deployment_image_not_found', 'source'],
+        ['toomanyrequests: pull rate limit reached', 'deployment_image_rate_limited', 'connectedAccounts'],
+        ['getaddrinfo EAI_AGAIN registry.example.test', 'deployment_network_unavailable', 'machines'],
+        ['Missing script: "build"', 'deployment_build_script_missing', 'source'],
+        ['COPY failed: file not found in build context', 'deployment_build_input_missing', 'source'],
+    ] as const)('retains a safe classified cause through build, command and receipt for %s', async (output, code, destination) => {
+        for (const command of ['bake', 'compose'] as const) {
+            await withBuilder(async ({ project, requests }) => {
+                const error: unknown = await (command === 'bake'
+                    ? admitted(project, context => project.prepareImages({ context, platforms: ['linux/amd64'],
+                        build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }))
+                    : project.describeBuild()).catch((failure: unknown) => failure);
+                const failure = projectDeploymentFailure(command === 'bake' ? 'native_build_failed' : 'native_failed', error);
+                expect(failure.failureCause?.errorCode).toBe(code);
+                const receipt = projectDeploymentReceiptFailure(failure, command === 'bake' ? 'build' : 'activate');
+                expect(receipt.failureCause?.errorCode).toBe(code);
+                expect(readDeploymentFailureRecoveryV1(receipt.code, receipt).nextAction.destination).toBe(destination);
+                if (command === 'bake') expect(receipt.effectAttempted).toBe(true);
+                // One failed build settles; diagnosis never retries it or starts the app.
+                expect(requests.filter(request => request.args[0] === 'buildx' && request.args[1] === 'bake'
+                    && !request.args.includes('--print'))).toHaveLength(command === 'bake' ? 1 : 0);
+                expect(requests.some(request => request.args.includes('up'))).toBe(false);
+                expect(JSON.stringify(receipt)).not.toContain('private-output-sentinel');
+            }, { failureOutput: { command, stdout: output, stderr: 'private-output-sentinel' } });
+        }
+    });
+
+    it.each(['process exited with code: 137', 'Killed', 'unrecognized private-output-sentinel'])(
+        'keeps ambiguous output generic instead of guessing memory exhaustion (%s)', async stdout => {
+        await withBuilder(async ({ project }) => {
+            const error: unknown = await admitted(project, context => project.prepareImages({ context,
+                platforms: ['linux/amd64'], build: { noCacheServices: [], secretVariableNames: ['BUILD_SECRET'] } }))
+                .catch((failure: unknown) => failure);
+            const failure = projectDeploymentReceiptFailure(projectDeploymentFailure('native_build_failed', error), 'build');
+            expect(failure).toMatchObject({ code: 'native_build_failed', effectAttempted: true,
+                failureCause: { errorCode: 'native_build_failed' } });
+            expect(JSON.stringify(failure)).not.toContain(stdout);
+        }, { failureOutput: { command: 'bake', stdout } });
+    });
+
     it.each([
         ['unsupportedPlatform', 'build_platform_unsupported', 'runtime_platform_unsupported'],
         ['execFormat', 'native_build_failed', 'execution_format_error'],

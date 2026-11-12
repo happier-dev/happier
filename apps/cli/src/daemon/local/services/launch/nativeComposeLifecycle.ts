@@ -1,3 +1,4 @@
+import { classifyNativeComposeFailure } from './nativeComposeFailure';
 import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
@@ -793,7 +794,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
     };
 }
 
-function nativeRefusal(reason: string, step = 'deployment.native', errorCode: 'EACCES' | null = null,
+function nativeRefusal(reason: string, step = 'deployment.native', errorCode: string | null = null,
     effectAttempted?: true): never {
     const failureCause = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
     throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason },
@@ -923,13 +924,14 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                     message: 'Install Docker Buildx on the build machine before deploying', retryable: false });
             }
             if (!dockerAccessDenied && args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
-                throw new NativeComposeBakeFailure(output.exitCode, output.stderr ?? '', authority ? true : undefined);
+                throw new NativeComposeBakeFailure(output.exitCode, output.stdout + '\n' + (output.stderr ?? ''), authority ? true : undefined);
             }
-            return nativeRefusal('native_compose_command_failed', args[0] === 'compose'
+            const cause = dockerAccessDenied ? null : classifyNativeComposeFailure(output.stdout + '\n' + (output.stderr ?? ''));
+            return nativeRefusal(cause ?? 'native_compose_command_failed', args[0] === 'compose'
                 ? args.includes('--no-interpolate') || args.includes('--no-consistency')
                     ? 'deployment.native.compose.config' : 'deployment.native.compose'
                 : args[0] === 'version' ? 'deployment.native.docker.version' : 'deployment.native.command',
-                dockerAccessDenied ? 'EACCES' : null,
+                dockerAccessDenied ? 'EACCES' : cause,
                 // A returned process result proves this admitted native effect ran.
                 // Launch errors and read-only native commands remain unknown.
                 authority ? true : undefined);

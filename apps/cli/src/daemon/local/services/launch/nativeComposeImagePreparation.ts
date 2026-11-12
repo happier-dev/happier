@@ -9,6 +9,7 @@ import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedIm
     type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
 import { nativeComposeReferencesAnyVariable as referencesSecret } from '@/workspaces/projectSetup/nativeComposeInterpolation';
 import { publishNativeComposeImages } from './nativeComposeImagePublication';
+import { classifyNativeComposeFailure } from './nativeComposeFailure';
 
 export type NativeComposeBuildSelection = Readonly<{
     signal?: AbortSignal;
@@ -43,12 +44,14 @@ export type NativeComposeBuildDescription = Readonly<{
 /** The native process boundary retains only a closed cause, never Bake's private output. */
 export class NativeComposeBakeFailure extends Error {
     readonly observedCause: Extract<DeploymentBuildSupportV1, { status: 'failed' }>['cause'];
-    constructor(readonly exitCode: number, stderr: string, readonly effectAttempted?: true) {
+    readonly diagnosticCode: string;
+    constructor(readonly exitCode: number, output: string, readonly effectAttempted?: true) {
         super('Native image build failed');
-        // BuildKit's explicit execution-platform refusal is distinct from an app's
-        // malformed executable, which can also produce an exec-format error.
-        this.observedCause = /no support for running processes with [^\r\n]+ platform,\s*supported:/iu.test(stderr)
-            ? 'runtime_platform_unsupported' : /exec format error/iu.test(stderr) ? 'execution_format_error' : 'build_failed';
+        const code = classifyNativeComposeFailure(output);
+        this.diagnosticCode = code ?? 'native_build_failed';
+        // Preserve platform evidence independently of the more specific failure remedy.
+        this.observedCause = code === 'build_platform_unsupported' ? 'runtime_platform_unsupported'
+            : code === 'deployment_execution_format_error' ? 'execution_format_error' : 'build_failed';
     }
 }
 
@@ -426,8 +429,8 @@ export function createNativeComposeImagePreparation(input: Readonly<{
                         const buildSupport = projectNativeComposeBuildSupport(requestedBuildPlatforms, { builtPlatforms, failure: error });
                         const code = error.observedCause === 'runtime_platform_unsupported' ? 'build_platform_unsupported' : 'native_build_failed';
                         const failureCause = { phase: `deployment.native.build.${error.observedCause}`, errorClass: 'Error',
-                            errorCode: code, httpStatus: null };
-                        throw new PluginError({ code, message: 'The build Machine could not build the requested image platform',
+                            errorCode: error.diagnosticCode, httpStatus: null };
+                        throw new PluginError({ code, message: 'The native image build failed',
                             details: { buildSupport }, failureCause }, { cause: { ok: false, errorCode: code, error: code,
                             details: { buildSupport }, failureCause,
                             ...(error.effectAttempted ? { effectAttempted: true } : {}) } });

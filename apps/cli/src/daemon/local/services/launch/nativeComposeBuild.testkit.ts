@@ -54,6 +54,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
     missingBuildx?: boolean; subdirectoryCompose?: boolean;
     bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
     bakeFailurePlatform?: string;
+    failureOutput?: Readonly<{ command: 'bake' | 'compose'; stdout?: string; stderr?: string }>;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
     effectivePlatforms?: boolean;
     preapprovalArmOnly?: boolean;
@@ -233,6 +234,11 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                     ? 'no support for running processes with linux/arm64 platform, supported: linux/amd64'
                     : options.bakeFailure === 'execFormat' ? 'exec user process caused: exec format error' : 'process did not complete successfully: exit code: 2';
                 return { exitCode: 1, stdout: '', stderr: `${reason}\nprivate-registry-sentinel` };
+            }
+            if (options?.failureOutput && (options.failureOutput.command === 'bake'
+                ? request.args[0] === 'buildx' && request.args[1] === 'bake' && !request.args.includes('--print')
+                : request.args[0] === 'compose' && request.args.includes('config'))) {
+                return { exitCode: 1, stdout: options.failureOutput.stdout ?? '', stderr: options.failureOutput.stderr ?? '' };
             }
             // Docker output is this fixture's OS boundary. Exercise the real
             // admitted launch's streaming sanitizer before delivering bytes.

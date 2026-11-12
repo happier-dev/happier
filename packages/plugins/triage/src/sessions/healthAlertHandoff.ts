@@ -5,7 +5,8 @@ import type { PluginActionInputById, PluginActionResultById, PluginClientActionU
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { deploymentRevisionShortLabelV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentReceiptArtifactV1, type DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import {
     ProtocolArtifactGetOutputV1Schema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
@@ -136,6 +137,7 @@ async function readFailureSubject(
     let reference: { actionId: string; input: JsonReadInput; retained?: object };
     // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
     let receiptTitle: string | undefined;
+    let receiptFailure: DeploymentContentV1['failure'];
     switch (subject.kind) {
         case 'workflowRun': {
             const address = { runId: subject.runId };
@@ -166,6 +168,7 @@ async function readFailureSubject(
             if (signal.aborted) return null;
             const opened = readDeploymentReceiptArtifactV1(receipt, artifact);
             const source = opened.ok ? opened.content.sourceIntent : undefined;
+            receiptFailure = opened.ok ? opened.content.failure : undefined;
             receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source ? deploymentRevisionShortLabelV1(source) : undefined);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
@@ -213,6 +216,7 @@ async function readFailureSubject(
         }
         case 'deploymentEnvironment': {
             if (!await environmentPlacement(subject.environmentId)) return null;
+            if (subject.readiness && subject.readiness.projectId !== projectSourceId) return null;
             reference = { actionId: 'deployments.environments.get', input: { serverId, environmentId: subject.environmentId } };
             break;
         }
@@ -225,7 +229,10 @@ async function readFailureSubject(
         evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
             : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference'
                 : subject.kind === 'workflowRun' ? 'Workflow Run reference' : 'Failure reference' }, author: { kind: 'process' as const },
-            text: JSON.stringify({ subject, read: reference }) } };
+            text: JSON.stringify({ subject, ...(receiptFailure ? {
+                failureCause: receiptFailure.failureCause,
+                recovery: readDeploymentFailureRecoveryV1(receiptFailure.code, receiptFailure),
+            } : {}), read: reference }) } };
 }
 
 /**
