@@ -12,11 +12,7 @@ import type {
     SignedProviderBrokerRouteGrantV1,
     UsageObservationTokens,
 } from '@happier-dev/protocol';
-import {
-    verifyProviderBrokerRouteGrantV1,
-    type ProviderBrokerRouteGrantExpectedBindingV1,
-} from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
-import type { DirectRouteGrantTrustRoot } from '@/daemon/peer/mediation/verifyRouteGrantSignature';
+import type { ProviderBrokerRouteGrantExpectedBindingV1 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
 import { evaluateTeamCredentialRequestPolicyV1, sanitizeProviderBrokerRequestV1, type TeamCredentialRequestPolicyFailureCodeV1 } from './requestPolicyV1';
 import type {
     TeamCredentialProviderBrokerApplicationCarrierRequestV1,
@@ -71,6 +67,15 @@ export type ProviderBrokerRequestAdmission = Readonly<{
 export type TeamCredentialRequestModelCatalog = Readonly<{
     models: readonly Readonly<{ id: string; name?: string }>[];
     resolveCanonicalModelId(requestedModelId: string): string | null;
+}>;
+
+export type ProviderBrokerRequestPolicySnapshot = Readonly<{
+    resourceRevision: number;
+    sourceRevision: string;
+    application: ProviderBrokerApplicationBindingV1;
+    policy: TeamCredentialRequestPolicyV1 | null;
+    modelCatalog: TeamCredentialRequestModelCatalog;
+    source: TeamCredentialSourceBindingV1;
 }>;
 
 export type ProviderBrokerExternalRequestPolicySnapshot =
@@ -279,22 +284,14 @@ function routeMatchesApplicationProtocol(
 }
 
 export function createProviderBrokerRequestHandler(input: Readonly<{
-    resolveTrustRoots: () => readonly DirectRouteGrantTrustRoot[];
-    nowMs: () => number;
-    verifyAuthority?: typeof verifyProviderBrokerRouteGrantV1;
+    readAdmittedRequestPolicy?(authority: ProviderBrokerRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
+    retainAdmittedRequestPolicy?(authority: ProviderBrokerRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
     resolveRequestPolicy: (input: Readonly<{
         authority: ProviderBrokerRouteGrantPayloadV1;
         request: ManagedServiceRequest;
-    }>) => Promise<Readonly<{
-        resourceRevision: number;
-        sourceRevision: string;
-        application: ProviderBrokerApplicationBindingV1;
-        policy: TeamCredentialRequestPolicyV1 | null;
-        modelCatalog: TeamCredentialRequestModelCatalog;
-        source: TeamCredentialSourceBindingV1;
-    }> | null>;
+    }>) => Promise<ProviderBrokerRequestPolicySnapshot | null>;
     /**
-     * Rechecks mutable Home authority for metadata-only catalog reads. This is
+     * Checks Home job activity for private metadata-only catalog reads. This is
      * deliberately separate from effect admission so listing models cannot
      * acquire Provider credentials or create a UsageEvent.
      */
@@ -543,21 +540,11 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                 throw error;
             }
         }
-        // Per-request re-verification of the stream-admitted authority keeps
-        // trust-root revocation effective without turning the grant TTL into a
-        // request lifetime; the Agent's own headers never take part.
-        const verification = (input.verifyAuthority ?? verifyProviderBrokerRouteGrantV1)({
-            authority: context.authority,
-            trustRoots: input.resolveTrustRoots(),
-            nowMs: input.nowMs(),
-            enforceExpiry: false,
-            expected: context.expected,
-            authenticatedRemoteEndpointId: context.authenticatedRemoteEndpointId,
-        });
-        if (!verification.valid) return { ok: false, reasonCode: verification.reasonCode };
-
+        // The carrier already authenticated this stream and its signed job.
+        // Home decides whether the admitted job remains active per request.
+        const authority = context.authority;
         const requestId = input.createRequestId();
-        const phaseDiagnostic = providerBrokerEndpointPhaseDiagnostic(verification.authority.payload, request);
+        const phaseDiagnostic = providerBrokerEndpointPhaseDiagnostic(authority.payload, request);
         const streamLifetime = context.streamLifetime;
         const authorizeModelCatalog = input.authorizeModelCatalog;
 
@@ -582,26 +569,23 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
         }
         if (context.releaseOnly) return { ok: false, reasonCode: 'grant_expired' };
 
-        const policySnapshot = await runProviderBrokerApplicationPhase('request_policy', requestId, () =>
+        const admittedPolicy = input.readAdmittedRequestPolicy?.(authority.payload);
+        const policySnapshot = admittedPolicy ?? await runProviderBrokerApplicationPhase('request_policy', requestId, () =>
             input.resolveRequestPolicy({
-                authority: verification.authority.payload,
+                authority: authority.payload,
                 request,
             }), phaseDiagnostic);
         if (!policySnapshot) return { ok: false, reasonCode: 'resource_unavailable' };
-        // The resource revision is deliberately not compared against the
-        // signed authority: it is a mutable policy fact and this request
-        // already presents the snapshot's current revision to the Home, which
-        // owns that decision. The model is a request fact the policy owner
-        // below evaluates against that same current policy
-        // (`04-private-iroh-broker-transport.md:270`). Source and application
-        // identity are the signed claim and are still enforced here.
-        if (
-            policySnapshot.sourceRevision !== verification.authority.payload.sourceRevision
+        // The admitted policy is retained across streams of the same signed
+        // job. Home alone decides its activity against the resource revision;
+        // a later catalog publication cannot replace this source snapshot.
+        if (!admittedPolicy && (
+            policySnapshot.sourceRevision !== authority.payload.sourceRevision
             || !isSameTeamCredentialBrokerApplication(
                 policySnapshot.application,
-                verification.authority.payload.application,
+                authority.payload.application,
             )
-        ) return { ok: false, reasonCode: 'resource_changed' };
+        )) return { ok: false, reasonCode: 'resource_changed' };
         if (request.method === 'GET' && request.pathAndQuery === PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
             if (!authorizeModelCatalog || !streamLifetime) return { ok: false, reasonCode: 'resource_unavailable' };
             const requestedModel = Object.entries(request.headers ?? {})
@@ -612,38 +596,40 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             }
             const authorized = await runProviderBrokerApplicationPhase('model_catalog_authorization', requestId, () =>
                 authorizeModelCatalog({
-                    authorization: { kind: 'private', authority: verification.authority },
+                    authorization: { kind: 'private', authority },
                     expectedResourceRevision: policySnapshot.resourceRevision, request,
                 }), phaseDiagnostic);
             if (!authorized.ok) return authorized;
+            if (!request.signal?.aborted) input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
             // The exact runtime must be materialized to read its declaration.
             // Home authorizes this private metadata demand first; no inference,
             // upstream credential disclosure or UsageEvent is performed.
             const selected = await runProviderBrokerApplicationPhase('source_open', requestId, () =>
                 streamLifetime.acquireSource({
-                    source: policySnapshot.source, resourceId: verification.authority.payload.resourceId,
-                    brokerMachineId: verification.authority.payload.target.machineId,
-                    operation: verification.authority.payload.consumer,
+                    source: policySnapshot.source, resourceId: authority.payload.resourceId,
+                    brokerMachineId: authority.payload.target.machineId,
+                    operation: authority.payload.consumer,
                     expectedResourceRevision: policySnapshot.resourceRevision,
-                    application: verification.authority.payload.application,
+                    application: authority.payload.application,
                     modelId, sourceRevision: policySnapshot.sourceRevision,
                 }), phaseDiagnostic);
             if (!selected) return { ok: false, reasonCode: 'resource_unavailable' };
             if ('reasonCode' in selected) return selected;
             request.signal?.throwIfAborted();
             const response = projectProviderBrokerEndpointMetadata(selected.access.endpointUrl(
-                verification.authority.payload.application.endpointTemplateId));
+                authority.payload.application.endpointTemplateId));
             return response ? { ok: true, response } : { ok: false, reasonCode: 'resource_unavailable' };
         }
         if (request.method === 'GET' && request.pathAndQuery === '/v1/models') {
             if (!authorizeModelCatalog) return { ok: false, reasonCode: 'resource_unavailable' };
             const authorized = await runProviderBrokerApplicationPhase('model_catalog_authorization', requestId, () =>
                 authorizeModelCatalog({
-                    authorization: { kind: 'private', authority: verification.authority },
+                    authorization: { kind: 'private', authority },
                     expectedResourceRevision: policySnapshot.resourceRevision,
                     request,
                 }));
             if (!authorized.ok) return authorized;
+            if (!request.signal?.aborted) input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
             return { ok: true, response: modelListResponse(policySnapshot.modelCatalog, policySnapshot.policy) };
         }
         const policy = policySnapshot.policy ?? {
@@ -657,13 +643,13 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             resolveCanonicalModelId: policySnapshot.modelCatalog.resolveCanonicalModelId,
         });
         if (!evaluated.ok) return evaluated;
-        if (!routeMatchesApplicationProtocol(evaluated.routeKind, verification.authority.payload.application.protocol)) {
+        if (!routeMatchesApplicationProtocol(evaluated.routeKind, authority.payload.application.protocol)) {
             return { ok: false, reasonCode: 'route_not_allowed' };
         }
 
         const admitted = await runProviderBrokerApplicationPhase('home_admission', requestId, () =>
             input.admit({
-                authority: verification.authority,
+                authority,
                 ...(streamLifetime ? { streamLifetime } : {}),
                 expectedResourceRevision: policySnapshot.resourceRevision,
                 expectedSourceRevision: policySnapshot.sourceRevision,
@@ -678,6 +664,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                 },
             }));
         if (!admitted.ok) return admitted;
+        if (!request.signal?.aborted) input.retainAdmittedRequestPolicy?.(authority.payload, policySnapshot);
 
         return await runProviderBrokerApplicationPhase('upstream_forward', requestId, () =>
             requestProviderAccess(admitted.access, evaluated.request));

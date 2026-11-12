@@ -27,7 +27,6 @@ import {
   writeProviderBrokerApplicationFailure,
 } from './providerBrokerApplicationServer';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
-import { mapProviderBrokerApplicationFailure } from '../../../../server/sources/app/api/routes/providers/externalProviderBrokerDispatcher';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from './providerBrokerPrivateProtocol';
 import { logger } from '@/ui/logger';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
@@ -194,8 +193,6 @@ describe('Provider broker target application integration', () => {
     const source = TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'provider_connection',
       connectionId: 'pc_source', connectionSecurityFingerprint: 'connection-security:v1:source', credentialSlotId: 'apiKey' });
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{ keyId: 'home-1', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: payload.sourceRevision,
         application: payload.application, source, policy: null,
         modelCatalog: { models: [{ id: 'gpt-5' }], resolveCanonicalModelId: id => id } }),
@@ -243,8 +240,6 @@ describe('Provider broker target application integration', () => {
     if (!address || typeof address === 'string') throw new Error('upstream did not listen');
     const upstreamUrl = `http://127.0.0.1:${address.port}`;
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{ keyId: 'home-1', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: payload.sourceRevision,
         application: payload.application,
         source: TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'provider_connection',
@@ -298,8 +293,6 @@ describe('Provider broker target application integration', () => {
     // The Home policy/admission and Provider HTTP boundary are external systems;
     // keep the broker's real policy, signature verification and HTTP wiring.
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{ keyId: 'home-1', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: payload.sourceRevision,
         application: payload.application, source, policy: null,
         modelCatalog: { models: [{ id: 'gpt-5' }], resolveCanonicalModelId: id => id } }),
@@ -348,8 +341,7 @@ describe('Provider broker target application integration', () => {
       openProviderConnectionSource: async () => null,
     });
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{ keyId: 'home-1', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-      nowMs: () => 200, resolveRequestPolicy: async () => null, createRequestId: () => 'broker-request',
+      resolveRequestPolicy: async () => null, createRequestId: () => 'broker-request',
       admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
     }) });
     try {
@@ -403,9 +395,6 @@ describe('Provider broker target application integration', () => {
       } });
       expect(response.statusCode).toBe(503);
       expect(response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]).toBe('broker_unavailable');
-      expect(mapProviderBrokerApplicationFailure(response.statusCode, {
-        [PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]: String(response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER]),
-      })).toEqual({ error: 'broker_unavailable' });
       expect(response.json().error.code).toBe('broker_unavailable');
       expect(diagnostics).toHaveBeenCalledWith('[provider-broker-application]', {
         stage: 'handler', code: 'exception', phase: 'handler', applicationRequestId: expect.any(String), ...expected,
@@ -419,7 +408,7 @@ describe('Provider broker target application integration', () => {
   });
   it('parses complete external carrier envelopes above retired local caps before enforcing carrier admission', async () => {
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: () => 0, resolveRequestPolicy: async () => null,
+      resolveRequestPolicy: async () => null,
       createRequestId: () => 'unused', admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
     }) });
     try {
@@ -616,8 +605,6 @@ describe('Provider broker target application integration', () => {
       },
     };
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{ keyId: 'home-1', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({
         resourceRevision: 7, sourceRevision: payload.sourceRevision, application: payload.application,
         source: TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'provider_connection',
@@ -759,11 +746,6 @@ describe('Provider broker target application integration', () => {
       retire,
     };
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{
-        keyId: 'home-1',
-        publicKey: Buffer.from(signingKey.publicKey).toString('base64url'),
-      }],
-      nowMs: () => 200,
       resolveRequestPolicy: vi.fn(async () => null),
       createRequestId: () => 'request-1',
       admit: vi.fn(async () => ({ ok: false as const, reasonCode: 'resource_unavailable' as const })),
@@ -842,11 +824,6 @@ describe('Provider broker target application integration', () => {
     };
     const admit = vi.fn(async () => ({ ok: true as const, access }));
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{
-        keyId: 'home-1',
-        publicKey: Buffer.from(signingKey.publicKey).toString('base64url'),
-      }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({
         resourceRevision: 7,
         sourceRevision: 'source-revision-7',
@@ -905,11 +882,6 @@ describe('Provider broker target application integration', () => {
     };
     const admit = vi.fn(async () => ({ ok: true as const, access }));
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [{
-        keyId: 'home-1',
-        publicKey: Buffer.from(signingKey.publicKey).toString('base64url'),
-      }],
-      nowMs: () => 200,
       resolveRequestPolicy: async () => ({
         resourceRevision: 7,
         sourceRevision: 'source-revision-7',

@@ -1,3 +1,8 @@
+import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SignedProviderBrokerActionRouteGrantV3Schema, type SignedProviderBrokerActionRouteGrantV3, type ProviderBrokerActionAdmissionResponseV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { verifyProviderBrokerActionRouteGrantV3 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
 import type {
   ProviderBrokerAdmissionFailureCodeV1,
   ProviderBrokerApplicationBindingV1,
@@ -95,7 +100,7 @@ type VerifiedAuthority = Extract<
 
 type ProviderBrokerApplicationTargetInput = Readonly<{
   handshake: IrohProviderBrokerHandshake;
-  authority: SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2;
+  authority: SignedProviderBrokerRouteGrantV1 | SignedProviderBrokerRouteGrantV2 | SignedProviderBrokerActionRouteGrantV3;
   authenticatedRemoteEndpointId: string;
   localEndpointId: string;
   signal: AbortSignal;
@@ -112,6 +117,7 @@ export { resolveRunnerCredentialSelectionCurrentness } from './runnerCredentialS
 
 export type DaemonProviderBrokerRuntime = Readonly<{
   accountConnectionIngress: boolean;
+  actionOperationIngress?: boolean;
   checkRunnerCredentialSelectionCurrentness(
     input: Readonly<{
       selection: RunnerCredentialSelectionBindingV1;
@@ -181,11 +187,11 @@ async function responseWithCleanup(
  * Connected Pools re-enter their canonical selector before each admission so
  * normal source-owner switching does not strand the stream on a stale member. */
 export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
-  sourceOwner: TeamCredentialBrokerSourceOwner;
+  sourceOwner: Pick<TeamCredentialBrokerSourceOwner, 'acquire' | 'retireOperation'>;
   application: ProviderBrokerApplicationBindingV1;
   /** The Session or Execution Run the verified authority names. */
   operation: TeamCredentialBrokerOperation;
-  revalidateOperationAuthorization?(expectedResourceRevision: number, signal?: AbortSignal): Promise<boolean>;
+  brokerAdmissionFingerprint?: string;
   revalidateOperationCurrentness?(input: Readonly<{
     operation: TeamCredentialBrokerOperation;
     application: ProviderBrokerApplicationBindingV1;
@@ -255,13 +261,9 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
   return Object.freeze({
     async acquireSource({ source, resourceId, brokerMachineId, operation, expectedResourceRevision, application, modelId, sourceRevision, admittedSourceMember }) {
       if (retired) return null;
-      // The resource revision is a mutable policy fact the Home rechecks on
-      // every request, not stream identity: a harmless policy edit must not
-      // retire a still-valid stream (`04-private-iroh-broker-transport.md:272`).
-      // The model is a request fact (`:270`): one stream serves every model
-      // the resource currently allows, each evaluated by the request-policy
-      // owner. The stream's source projection is the one its first request
-      // established for this operation's exact source and application.
+      // Home checks this admitted job's activity at each request. The model
+      // remains a request fact evaluated against its admitted policy; the
+      // source projection belongs to this exact operation and application.
       const nextBindingKey = JSON.stringify([
         resourceId,
         brokerMachineId,
@@ -288,11 +290,8 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
             application: input.application,
             modelId,
             sourceRevision,
+            ...(input.brokerAdmissionFingerprint ? { brokerAdmissionFingerprint: input.brokerAdmissionFingerprint } : {}),
             ...(admittedSourceMember ? { admittedSourceMember } : {}),
-            ...(input.revalidateOperationAuthorization ? {
-              revalidateOperationAuthorization: (signal?: AbortSignal) =>
-                input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
-            } : {}),
             signal: lifetimeController.signal,
           }).catch(preserveBrokerSourceHealthFailure);
 
@@ -317,11 +316,8 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
               application: input.application,
               modelId,
               sourceRevision,
+              ...(input.brokerAdmissionFingerprint ? { brokerAdmissionFingerprint: input.brokerAdmissionFingerprint } : {}),
               ...(admittedSourceMember ? { admittedSourceMember } : {}),
-              ...(input.revalidateOperationAuthorization ? {
-                revalidateOperationAuthorization: (signal?: AbortSignal) =>
-                  input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
-              } : {}),
               signal: lifetimeController.signal,
             }).catch(preserveBrokerSourceHealthFailure);
           }
@@ -361,11 +357,8 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
           application: input.application,
           modelId,
           sourceRevision,
+          ...(input.brokerAdmissionFingerprint ? { brokerAdmissionFingerprint: input.brokerAdmissionFingerprint } : {}),
           ...(admittedSourceMember ? { admittedSourceMember } : {}),
-          ...(input.revalidateOperationAuthorization ? {
-            revalidateOperationAuthorization: (signal?: AbortSignal) =>
-              input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
-          } : {}),
           signal: lifetimeController.signal,
         }).catch(preserveBrokerSourceHealthFailure);
       }
@@ -402,14 +395,17 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
 
 /**
  * Installs the target daemon's one Provider-broker application handler.
- * Mutable Home authority is resolved for every request; the only stream-local
- * state retained here is the transport-authenticated endpoint plus the exact
- * signed application binding admitted by machine/1.
+ * The carrier authenticates each stream. The source owner retains the signed
+ * job's admitted source and policy; Home checks only job activity per request.
  */
 export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   machineId: string;
   /** Captured canonical Home/Account identity; personal ingress stays absent
    * until the private catalog and shared-custody producer are installed. */
+  actionOperations?: Readonly<{
+    admit(request: Readonly<{ v: 3; authority: SignedProviderBrokerActionRouteGrantV3 }>, signal: AbortSignal): Promise<ProviderBrokerActionAdmissionResponseV3>;
+    execute(request: Readonly<{ authority: SignedProviderBrokerActionRouteGrantV3; input: JsonValue; signal: AbortSignal }>): Promise<ActionExecuteResult>;
+  }>;
   accountConnection?: Readonly<{
     homeId: string;
     accountId: string;
@@ -438,11 +434,6 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     source: import('@happier-dev/protocol/teams').TeamCredentialSourceBindingV1;
   }> | null>;
   admitRequest(input: SelectedProviderBrokerRequestAdmission): Promise<ProviderBrokerRequestAdmissionResponseV1>;
-  revalidateOperationAuthorization?(input: Readonly<{
-    authority: SignedProviderBrokerRouteGrantV1;
-    expectedResourceRevision: number;
-    signal?: AbortSignal;
-  }>): Promise<boolean>;
   revalidateOperationCurrentness?(input: Readonly<{
     operation: TeamCredentialBrokerOperation;
     application: ProviderBrokerApplicationBindingV1;
@@ -466,12 +457,6 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     requestFacts: ProviderBrokerRequestAdmission['requestFacts'];
     request: ManagedServiceRequest;
   }>): Promise<TeamCredentialExternalProviderAdmissionResponseV1>;
-  revalidateExternalAuthorization?(input: Readonly<{
-    binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
-    expectedResourceRevision: number;
-    application: ProviderBrokerSourceApplicationBindingV1;
-    signal?: AbortSignal;
-  }>): Promise<boolean>;
   retireExternalApiKey?(input: Readonly<{
     externalApiKeyId: string;
     operationId: string;
@@ -533,13 +518,8 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   };
 
   const handler = createProviderBrokerRequestHandler({
-    resolveTrustRoots: input.resolveTrustRoots,
-    nowMs: input.nowMs,
-    verifyAuthority: (request) => verify({
-      authority: request.authority,
-      authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId,
-      expected: request.expected,
-    }),
+    readAdmittedRequestPolicy: input.sourceOwner.readAdmittedRequestPolicy,
+    retainAdmittedRequestPolicy: input.sourceOwner.retainAdmittedRequestPolicy,
     resolveRequestPolicy: input.resolveRequestPolicy,
     authorizeModelCatalog: async (request) => {
       const authorization = await input.authorizeModelCatalog(request);
@@ -580,14 +560,9 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
       const { sourceMemberKey, sourceMember } = selectedMember;
       const admitted = await runProviderBrokerApplicationPhase('home_admission', request.requestId, () =>
         input.admitRequest({ ...request, sourceMemberKey }));
-      if (!admitted.ok) {
-        // Actual authority loss ends the operation's custody (L10/11 A2(8));
-        // a limit, a turn boundary or an unreachable Home does not.
-        if (PROVIDER_BROKER_OPERATION_AUTHORITY_LOST.has(admitted.reasonCode)) {
-          await streamLifetime.retire().catch(() => undefined);
-        }
-        return admitted;
-      }
+      // Home liveness refuses this request at its natural boundary. Physical
+      // custody belongs to the operation and may still serve an in-flight body.
+      if (!admitted.ok) return admitted;
       if (
         admitted.resourceId !== request.authority.payload.resourceId
         || admitted.brokerMachineId !== input.machineId
@@ -679,17 +654,6 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
             },
           } : {}),
           application: request.application,
-          ...(input.revalidateExternalAuthorization
-            ? {
-                revalidateOperationAuthorization: async (signal) =>
-                  await input.revalidateExternalAuthorization!({
-                    binding: request.binding,
-                    expectedResourceRevision: request.expectedResourceRevision,
-                    application: request.application,
-                    ...(signal ? { signal } : {}),
-                  }),
-              }
-            : {}),
           signal: request.request.signal ?? new AbortController().signal,
         });
         if (!acquired.ok) {
@@ -777,6 +741,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
 
   return Object.freeze({
     accountConnectionIngress: input.accountConnection !== undefined,
+    actionOperationIngress: input.actionOperations !== undefined,
     async checkRunnerCredentialSelectionCurrentness(currentness, signal) {
       return await input.checkRunnerCredentialSelectionCurrentness?.({ ...currentness, signal }) ?? { kind: 'update_required' };
     },
@@ -794,6 +759,26 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     },
     async resolveProviderBrokerApplicationTarget(request) {
       request.signal.throwIfAborted();
+      if (request.handshake.v === 3) {
+        const parsed = SignedProviderBrokerActionRouteGrantV3Schema.safeParse(request.authority);
+        const executor = input.actionOperations;
+        if (!parsed.success || !executor) return null;
+        const authority = parsed.data;
+        if (authority.payload.target.machineId !== input.machineId
+          || authority.payload.target.endpointId !== request.localEndpointId) return null;
+        const verified = verifyProviderBrokerActionRouteGrantV3({ authority, trustRoots: input.resolveTrustRoots(),
+          nowMs: input.nowMs(),
+          authenticatedRemoteEndpointId: request.authenticatedRemoteEndpointId, enforceExpiry: true });
+        if (!verified.valid) return null;
+        return await application.createActionStreamTarget({ kind: 'action_operation', authority,
+          execute: async ({ input: actionInput, signal }) => {
+            const admitted = await executor.admit({ v: 3, authority }, signal);
+            if (!admitted.ok) throw new ProviderBrokerApplicationFailureError(admitted);
+            signal.throwIfAborted();
+            return await executor.execute({ authority, input: actionInput, signal });
+          },
+        }, request.signal);
+      }
       if (request.handshake.v === 2) {
         const parsed = SignedProviderBrokerRouteGrantV2Schema.safeParse(request.authority);
         const owner = input.accountConnection;
@@ -929,20 +914,16 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
           sourceOwner: input.sourceOwner,
           application: authoritative.authority.payload.application,
           operation: authoritative.authority.payload.consumer,
-          ...(input.revalidateOperationAuthorization ? {
-            revalidateOperationAuthorization: (expectedResourceRevision, signal) =>
-              input.revalidateOperationAuthorization!({
-                authority: authoritative.authority,
-                expectedResourceRevision,
-                ...(signal ? { signal } : {}),
-              }),
-          } : {}),
+          brokerAdmissionFingerprint: authoritative.authority.payload.brokerPlacementFingerprint,
           ...(input.revalidateOperationCurrentness ? {
             revalidateOperationCurrentness: input.revalidateOperationCurrentness,
           } : {}),
         }),
       }, request.signal);
     },
-    close: application.close,
+    async close() {
+      try { await application.close(); }
+      finally { input.sourceOwner.clearAdmittedRequests(); }
+    },
   });
 }

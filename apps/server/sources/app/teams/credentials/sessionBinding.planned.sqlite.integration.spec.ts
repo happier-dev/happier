@@ -240,13 +240,17 @@ describe("planned Session Team credential selection (SQLite)", () => {
             appliedPolicy: { ...appliedPolicy, desiredBindingKeys: [stale.bindingKey, fresh.bindingKey] } })))
             .toEqual({ ok: false, code: 'action_outcome_unknown' });
         expect(await submitAndCompleteNativeDelivery({ ...fresh, requestId: crypto.randomUUID(), outcome: 'confirmed' }))
-            .toEqual({ ok: true });
+            .toEqual({ ok: false, code: 'resource_changed' });
+        expect(await submitAndCompleteNativeDelivery({ ...fresh, requestId: crypto.randomUUID(),
+            operation: 'release', outcome: 'confirmed' })).toEqual({ ok: true });
+        const recovered = await prepare(session.id, guest.id);
+        expect(await submitAndCompleteNativeDelivery({ ...recovered, outcome: 'confirmed' })).toEqual({ ok: true });
         expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
             .toMatchObject({ ok: true, binding: { installation: 'prepared' } });
         expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: session.id })))
             .toMatchObject({ ok: true, binding: { installation: 'confirmed' } });
         expect(await db.session.count({ where: { id: { in: [f.session.id, session.id] } } })).toBe(2);
-        expect(await authority(f.creator.id)).not.toBeNull();
+        expect(await authority(f.creator.id, recovered)).not.toBeNull();
         expect(await authority(f.creator.id, stale)).toBeNull();
     });
 
@@ -512,7 +516,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             .toMatchObject({ ok: true, binding: { installation: 'prepared' } });
     });
 
-    it('settles a stale submission marker with the next confirmed whole-policy apply', async () => {
+    it('waits for the submitted Action outcome before the next whole-policy install', async () => {
         const f = await createNativeSessionTeamCredentialFixture();
         const prepare = async (sessionId: string) => {
             await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId,
@@ -530,9 +534,12 @@ describe("planned Session Team credential selection (SQLite)", () => {
         const second = await prepare(sibling.id);
         const submit = (request: typeof first) => inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, request));
         await expect(submit(first)).resolves.toEqual({ ok: true, submitted: true });
-        // The controller dies before reporting. Its next serialized apply can
-        // replace the whole policy rather than retaining an abandoned claim.
+        // An exact retry keeps the incumbent claim. Another install waits
+        // until that Action reports its outcome.
         await expect(submit(first)).resolves.toEqual({ ok: true, submitted: false });
+        await expect(submitAndCompleteNativeDelivery({ ...second, outcome: 'confirmed' }))
+            .resolves.toEqual({ ok: false, code: 'resource_changed' });
+        await expect(submitAndCompleteNativeDelivery({ ...first, outcome: 'confirmed' })).resolves.toEqual({ ok: true });
         await expect(submitAndCompleteNativeDelivery({ ...second, outcome: 'confirmed' })).resolves.toEqual({ ok: true });
         for (const patch of [{ requestId: crypto.randomUUID() }, { operation: 'release' as const }, { accountId: f.stranger.id }]) {
             await expect(inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, { ...first, ...patch, outcome: 'refused' })))
@@ -560,7 +567,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             .resolves.toEqual({ ok: true });
     });
 
-    it('settles an earlier unknown with a confirmed install and then releases normally', async () => {
+    it('refuses another install after an unknown outcome and recovers through confirmed release', async () => {
         const f = await createNativeSessionTeamCredentialFixture();
         await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id,
             accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION }))).resolves.toEqual({ ok: true });
@@ -575,11 +582,8 @@ describe("planned Session Team credential selection (SQLite)", () => {
         await expect(complete('install', 'unknown')).resolves.toEqual({ ok: true });
         expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
             .toMatchObject({ ok: true, binding: { installation: 'unknown' } });
-        for (const operation of ['install', 'release'] as const) {
-            await expect(complete(operation, 'confirmed')).resolves.toEqual({ ok: true });
-            if (operation === 'install') expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
-                .toMatchObject({ ok: true, binding: { installation: 'confirmed', safeFacet: prepared.binding.safeFacet } });
-        }
+        await expect(complete('install', 'confirmed')).resolves.toEqual({ ok: false, code: 'resource_changed' });
+        await expect(complete('release', 'confirmed')).resolves.toEqual({ ok: true });
         expect(await db.sessionTeamCredentialBinding.count({ where: { sessionId: f.session.id } })).toBe(0);
     });
 

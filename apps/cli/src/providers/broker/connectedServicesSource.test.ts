@@ -4,7 +4,7 @@ import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/team
 
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
-import { createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
+import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 
 const source = Object.freeze({
@@ -114,6 +114,30 @@ function bindingSelectionResolver(account: QualifiedConnectedAccountRef = source
 }
 
 describe('Connected Services Team credential broker source', () => {
+  it('selects the signed exact member when the connected target changes after admission', async () => {
+    const unusedBoundary = (): never => { throw new Error('Unexpected effect boundary'); };
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unusedBoundary, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unusedBoundary,
+      resolveTarget: async () => null,
+      materializeAccount: unusedBoundary,
+      projectTargetAccounts: unusedBoundary,
+      assertTargetAccountMaterializable: unusedBoundary,
+    });
+    const resolveBindingIntentSelection = vi.fn(owner.resolveBindingIntentSelection);
+    const select = createConnectedServicesBrokerSourceMemberSelect({
+      withRegistry: async read => await read(createBrokerProviderRegistry()),
+      resolveBindingIntentSelection,
+    });
+
+    await expect(select(request())).resolves.toEqual({
+      kind: 'connected_account',
+      service: source.target.account.service,
+      connectedAccountId: source.target.account.accountId,
+    });
+    expect(resolveBindingIntentSelection).not.toHaveBeenCalled();
+  });
+
   it('refuses an excluded managed Provider before selecting credentials or acquiring custody', async () => {
     const readResource = vi.fn(async () => resource());
     const resolveBindingIntentSelection = bindingSelectionResolver();
@@ -172,7 +196,7 @@ describe('Connected Services Team credential broker source', () => {
       custody,
     });
 
-    await expect(open(exactRequest)).resolves.toMatchObject({ projection, sourceCurrentness: { sourceMember: { service, connectedAccountId: account.accountId } } });
+    await expect(open(exactRequest)).resolves.toMatchObject({ projection, sourceMember: { service, connectedAccountId: account.accountId } });
     expect(resolveBindingIntentSelection).toHaveBeenCalledWith(expect.objectContaining({
       purpose: {
         consumer: {
@@ -199,50 +223,11 @@ describe('Connected Services Team credential broker source', () => {
     }] });
   });
 
-  it('keeps the operation current across a policy edit, which only advances the resource revision', async () => {
-    // The revision is a mutable policy fact the Home rechecks on every request
-    // (`04-private-iroh-broker-transport.md:272`); it is not source identity.
-    let revision = 7;
-    const readResource = vi.fn(async () => resource({ revision }));
-    const cleanup = vi.fn();
-    const custody: ManagedProviderExplicitStartCustody = Object.freeze({
-      acquire: vi.fn(async () => Object.freeze({
-        access: Object.freeze({ endpointUrl: vi.fn(() => null), request: vi.fn() }),
-        isCurrent: vi.fn(() => true),
-        cleanup,
-      })),
-      retire: vi.fn(async () => true),
-      retireExternalApiKey: vi.fn(async () => true),
-      revalidateRetainedClaims: vi.fn(async () => 0),
-      retireAll: vi.fn(async () => 0),
-    });
-    const open = createConnectedServicesBrokerSourceOpen({
-      withRegistry: async (read) => await read(createBrokerProviderRegistry()),
-      readResource,
-      resolveBindingIntentSelection: bindingSelectionResolver(),
-      custody,
-    });
-
-    const opened = await open(request());
-    expect(opened).not.toBeNull();
-    if ('unavailable' in opened) throw new Error('Expected current source');
-    readResource.mockRejectedValueOnce(new Error('Home unreachable'));
-    // The shared operation owner denies an uncertain read without retiring custody;
-    // the next authoritative read can recover the same operation.
-    await expect(opened.sourceCurrentness.isCurrent()).resolves.toBeNull();
-    revision = 8;
-    await expect(opened.sourceCurrentness.isCurrent()).resolves.toBe(true);
-    // A real withdrawal of the resource still ends the operation.
-    readResource.mockImplementation(async () => resource({ revision, enabled: false }));
-    await expect(opened.sourceCurrentness.isCurrent()).resolves.toBe(false);
-    expect(cleanup).not.toHaveBeenCalled();
-  });
-
   it('releases custody when the resource is disabled during acquisition', async () => {
     let reads = 0;
     const readResource = vi.fn(async () => {
       reads += 1;
-      return reads < 3 ? resource() : resource({ enabled: false });
+      return reads < 2 ? resource() : resource({ enabled: false });
     });
     const cleanup = vi.fn();
     const custody: ManagedProviderExplicitStartCustody = Object.freeze({
@@ -326,7 +311,7 @@ describe('Connected Services Team credential broker source', () => {
     expect(custody.acquire).toHaveBeenCalledOnce();
   });
 
-  it('freezes a connected Pool selection to its exact member and retires it when the canonical selector changes', async () => {
+  it('freezes a connected Pool selection to its admitted member until explicit retirement', async () => {
     const poolSource = {
       v: 1 as const,
       kind: 'connected_pool' as const,
@@ -337,7 +322,6 @@ describe('Connected Services Team credential broker source', () => {
       },
       poolIncarnation: 'pool-incarnation-1',
     };
-    let selectionCurrent = true;
     const selectedAccount = {
       service: source.target.account.service,
       accountId: 'selected-account-2',
@@ -354,7 +338,7 @@ describe('Connected Services Team credential broker source', () => {
       retireAll: vi.fn(async () => 0),
     });
     const resolveBindingIntentSelection = bindingSelectionResolver(selectedAccount, {
-      group: { groupId: 'pool-1', generation: 4 }, isCurrent: () => selectionCurrent,
+      group: { groupId: 'pool-1', generation: 4 }, isCurrent: () => true,
     });
     const open = createConnectedServicesBrokerSourceOpen({
       withRegistry: async (read) => await read(createBrokerProviderRegistry()),
@@ -371,7 +355,7 @@ describe('Connected Services Team credential broker source', () => {
       ...request().application, endpointTemplateId: 'cliproxyapi-anthropic', protocol: 'anthropic',
     } });
     if ('unavailable' in opened) throw new Error('Expected current Pool source');
-    expect(opened?.sourceCurrentness.sourceMember).toEqual({
+    expect(opened?.sourceMember).toEqual({
       kind: 'connected_account',
       service: selectedAccount.service,
       connectedAccountId: selectedAccount.accountId,
@@ -384,8 +368,6 @@ describe('Connected Services Team credential broker source', () => {
         })],
       },
     }));
-    selectionCurrent = false;
-    await expect(opened?.sourceCurrentness.isCurrent()).resolves.toBe(false);
     // Retirement is idempotent at the one broker-source acquisition owner, so
     // a repeated release never issues a second custody retirement.
     await opened?.retire();

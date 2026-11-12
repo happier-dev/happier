@@ -12,7 +12,6 @@ import {
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
-import { mapProviderBrokerApplicationFailure } from '../../../../server/sources/app/api/routes/providers/externalProviderBrokerDispatcher';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
 const payload: ProviderBrokerRouteGrantPayloadV1 = {
@@ -73,8 +72,6 @@ const modelCatalog = (
     models: readonly string[] = ['gpt-5'],
 ) => ({ models: models.map((id) => ({ id })), resolveCanonicalModelId });
 const handlerSecurity = {
-    resolveTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') }],
-    nowMs: () => 150,
     resolveRequestPolicy: async () => ({
         resourceRevision: 7,
         sourceRevision: 'source-revision-7',
@@ -99,8 +96,6 @@ describe('createProviderBrokerRequestHandler', () => {
         expect(result).toMatchObject({ ok: true, response: { status: 413,
             headers: { 'x-happier-provider-broker-error-code': 'request_too_large' } } });
         if (!result.ok) throw new Error('expected transport size response');
-        expect(mapProviderBrokerApplicationFailure(result.response.status, result.response.headers))
-            .toEqual({ error: 'invalid_request' });
         expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).json()).toMatchObject({ error: {
             code: 'request_too_large', type: 'invalid_request_error',
         } });
@@ -254,7 +249,7 @@ describe('createProviderBrokerRequestHandler', () => {
         expect(admitResourceTest).not.toHaveBeenCalled();
     });
 
-    it('re-verifies transport authority, performs current Home admission, strips auth, and delegates', async () => {
+    it('uses carrier-admitted authority, checks Home activity, strips auth, and delegates', async () => {
         const endpoint = access();
         const admit = vi.fn(async () => ({ ok: true as const, access: endpoint }));
         const handle = createProviderBrokerRequestHandler({ ...handlerSecurity, admit });
@@ -282,14 +277,6 @@ describe('createProviderBrokerRequestHandler', () => {
         const handle = createProviderBrokerRequestHandler({ ...handlerSecurity, admit: async () => ({ ok: true as const, access: endpoint }) });
         await handle({ context, request: { ...request, headers: { Authorization: 'Bearer secret', 'X-API-KEY': 'secret', 'Content-Length': '999', 'X-Provider-Header': 'kept' } } });
         expect(vi.mocked(endpoint.request).mock.calls[0]![0].headers).toEqual({ 'x-provider-header': 'kept' });
-    });
-    it('fails closed before Home admission when transport identity or authority is wrong', async () => {
-        const endpoint = access();
-        const admit = vi.fn(async () => ({ ok: true as const, access: endpoint }));
-        const handle = createProviderBrokerRequestHandler({ ...handlerSecurity, admit });
-        await expect(handle({ context: { ...context, authenticatedRemoteEndpointId: 'c'.repeat(64) }, request })).resolves.toEqual({ ok: false, reasonCode: 'transport_identity_mismatch' });
-        expect(admit).not.toHaveBeenCalled();
-        expect(endpoint.request).not.toHaveBeenCalled();
     });
     it('does not call the managed provider when current Home admission denies the request', async () => {
         const endpoint = access();

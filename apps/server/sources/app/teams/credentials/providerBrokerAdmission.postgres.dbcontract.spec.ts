@@ -13,7 +13,7 @@ import { signProviderBrokerRouteGrantV1, verifyProviderBrokerRouteGrantSignature
 import { authorizeTeamCredentialProviderModelCatalog, openTeamCredentialProviderBroker } from './providerBrokerAdmission';
 import { writeSessionTeamCredentialBindingsInTx } from './sessionBinding';
 import { createPlannedSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
-import { resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
+import { resolveTeamCredentialBrokerJobFingerprint, resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
 import { openAccountConnectionProviderBroker, admitAccountConnectionProviderBroker } from '@/app/providers/providerBrokerAdmission';
 import { verifyProviderBrokerRouteGrantSignatureV2 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
@@ -62,7 +62,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
         }
     });
 
-    it('authorizes the foreign endpoint through current Use admission, then refuses its retained grant after revocation', async () => {
+    it('authorizes the foreign endpoint through current Use admission and preserves admitted work after grant revocation', async () => {
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const resourceCustodian = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -109,7 +109,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
             const authority = signProviderBrokerRouteGrantV1({ signingKey: { keyId: 'pg-home', secretKey: signing.secretKey }, payload: {
                 v: 1, grantId: randomUUID(), aud: PROVIDER_BROKER_ROUTE_AUDIENCE_V1, issuedAt: 1, expiresAt: 10_000,
                 teamId: team.id, resourceId: resource.id, sourceRevision: 'source-revision-1',
-                brokerPlacementFingerprint: resolveTeamCredentialBrokerPlacementFingerprint(resource), initiatorTokenEpoch: requester.tokenEpoch,
+                brokerPlacementFingerprint: resolveTeamCredentialBrokerJobFingerprint(
+                    resolveTeamCredentialBrokerPlacementFingerprint(resource), resource.revision), initiatorTokenEpoch: requester.tokenEpoch,
                 initiator: { accountId: requester.id, machineId: worker.id, endpointId: '1'.repeat(64) },
                 target: { custodianAccountId: resourceCustodian.id, machineId: broker.id, endpointId: '2'.repeat(64) },
                 consumer: { kind: 'session', sessionId: session.id },
@@ -119,7 +120,6 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
             } });
             const read = () => authorizeTeamCredentialProviderModelCatalog({
                 authenticatedBrokerAccountId: resourceCustodian.id, authority, expectedResourceRevision: resource.revision,
-                readCurrentBrokerPresence: async () => ({ state: 'partial', machineIds: new Set([broker.id]) }),
                 verifyAuthority: candidate => verifyProviderBrokerRouteGrantSignatureV1({ authority: candidate, nowMs: 1,
                     signingCapability: { keyId: 'pg-home', publicKey: Buffer.from(signing.publicKey).toString('base64url'), expiresAt: null } }),
             });
@@ -194,20 +194,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                             if (!final) return Reflect.get(client, property, client);
                             if (property === '$queryRawUnsafe') return async (...queryArgs: unknown[]) => {
                                 const [query, ...values] = queryArgs;
+                                const rows: unknown = await Reflect.apply(client.$queryRawUnsafe, client, queryArgs);
                                 if (typeof query === 'string' && query.includes('FROM "Account"') && query.includes(' FOR ')) {
                                     expect(query).toContain('ORDER BY "id" FOR NO KEY UPDATE');
                                     cohortQueries.push(values);
-                                }
-                                return Reflect.apply(client.$queryRawUnsafe, client, queryArgs);
-                            };
-                            // Session admission now reads Machine grant facts
-                            // through the real exact AccessKey relation.
-                            if (property !== 'accessKey') return Reflect.get(client, property, client);
-                            return new Proxy(client.accessKey, { get(model, method) {
-                                const query = Reflect.get(model, method, model);
-                                if (method !== 'findUnique') return query;
-                                return async (...queryArgs: unknown[]) => {
-                                    const rows: unknown = await Reflect.apply(query, model, queryArgs);
                                     if (!checked) {
                                         for (const intent of ['NO KEY UPDATE', 'UPDATE']) {
                                             await expect(db.$queryRawUnsafe(
@@ -216,9 +206,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                                         }
                                         checked = true;
                                     }
-                                    return rows;
-                                };
-                            } });
+                                }
+                                return rows;
+                            };
+                            return Reflect.get(client, property, client);
                         } });
                         return Reflect.apply(fn, context, [scheduled, ...callbackArgs.slice(1)]);
                     } });
@@ -537,7 +528,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                 actorAccountId: custodian.id, machineId: worker.id,
                 principal: { kind: 'account', accountId: requester.id },
             }));
-            expect(await read()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+            expect(await read()).toEqual({ ok: true });
+            expect(await openTeamCredentialProviderBroker(teamOpenInput)).toMatchObject({ ok: false });
             const readsBeforeRevocation = presenceReads;
             for (const personalAuthority of personalAuthorities) {
                 expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,

@@ -40,7 +40,7 @@ describe('Provider broker external authenticated context', () => {
         + 'data: [DONE]\n\n';
       const facts: unknown[] = [];
       const handler = createProviderBrokerRequestHandler({
-        resolveTrustRoots: () => [], nowMs: Date.now, resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
+        resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
         resolveExternalRequestPolicy: async () => ({ kind: 'application', resourceRevision: 4, policy: null,
           modelCatalog: { models: [{ id: 'model' }], resolveCanonicalModelId: (id) => id },
           application: { agentTargetKey: 'agent:happier.agent.codex/codex',
@@ -63,7 +63,7 @@ describe('Provider broker external authenticated context', () => {
       if (!result.ok) throw new Error('Expected admitted response');
       expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).text()).toBe(sse);
       expect(facts).toEqual([expect.objectContaining({ reportedCostUsd: 0.12, measurement: 'reported',
-        tokens: { input: 8, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 } })]);
+        tokens: { input: 8, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 10 } })]);
     } finally { await kit.dispose(); }
   });
   it('accepts an admitted Pool target and converges on the same model policy and managed request owner', async () => {
@@ -103,7 +103,6 @@ describe('Provider broker external authenticated context', () => {
     )).toBe(false);
 
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => receiverAcceptsResource()
         ? {
@@ -161,7 +160,6 @@ describe('Provider broker external authenticated context', () => {
       })),
     };
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -225,7 +223,6 @@ describe('Provider broker external authenticated context', () => {
       })),
     };
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -262,7 +259,7 @@ describe('Provider broker external authenticated context', () => {
     expect(recordTerminal).toHaveBeenCalledWith({
       outcome: 'succeeded',
       actualModelId: 'gpt-5-2025-11-01',
-      tokens: { input: 120, output: 45, reasoning: 30, cacheRead: 80, cacheWrite: 0, total: 165 },
+      tokens: { input: 120, output: 45, reasoning: 30, cacheRead: 80, cacheWrite: null, total: 165 },
     });
   });
 
@@ -287,7 +284,7 @@ describe('Provider broker external authenticated context', () => {
         + 'event: message_stop\ndata: {"type":"message_stop"}\n\n',
       expected: {
         outcome: 'succeeded', actualModelId: 'claude-sonnet-4-6',
-        tokens: { input: 25, output: 7, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 32 },
+        tokens: { input: 25, output: 7, reasoning: null, cacheRead: null, cacheWrite: null, total: null },
       },
     },
   ])('preserves Anthropic bytes and truthful usage after $name', async ({ ending, expected }) => {
@@ -296,7 +293,6 @@ describe('Provider broker external authenticated context', () => {
     const sse = 'event: message_start\ndata: {"type":"message_start","message":{"model":"claude-sonnet-4-6",'
       + '"stop_reason":null,"usage":{"input_tokens":25,"output_tokens":1}}}\n\n' + ending;
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -349,7 +345,6 @@ describe('Provider broker external authenticated context', () => {
   it('records one failed terminal fact when the admitted Provider response is lost', async () => {
     const recordTerminal = vi.fn(async () => {});
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -386,7 +381,6 @@ describe('Provider broker external authenticated context', () => {
   it('records one failed terminal fact when the Provider stream truncates', async () => {
     const recordTerminal = vi.fn(async () => {});
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -449,7 +443,6 @@ describe('Provider broker external authenticated context', () => {
     >>(async () => ({ ok: true as const }));
     const admitExternal = vi.fn();
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'model_catalog' as const,
@@ -502,7 +495,6 @@ describe('Provider broker external authenticated context', () => {
       } satisfies ManagedProviderEndpointHttpAccess,
     }));
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: async () => ({
         kind: 'application' as const,
@@ -541,7 +533,6 @@ describe('Provider broker external authenticated context', () => {
 
   it('rejects attribution changed after relay authorization', async () => {
     const handler = createProviderBrokerRequestHandler({
-      resolveTrustRoots: () => [], nowMs: Date.now,
       resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
       resolveExternalRequestPolicy: vi.fn(), admitExternal: vi.fn(),
     });

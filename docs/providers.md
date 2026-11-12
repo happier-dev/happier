@@ -36,10 +36,10 @@ operation: a native-import requirement applies to acquiring a login, while an
 explicit browser reachability restriction still routes the test to a Machine.
 Muse subscriptions with an inference key use the existing authenticated models
 GET. MSP usage/read returns cached observations; usage/refresh acquires a key,
-so neither is substituted for that explicit no-usage test. Valid access-only
-Muse snapshots retain connected health and native delivery; their remote test
-returns unsupported because no read-only account-token probe is characterized.
-Expired access-only snapshots require reauthentication.
+so neither is substituted for that explicit no-usage test. Previously delivered
+access-only Muse snapshots have no characterized read-only account-token probe;
+their remote connection test returns unsupported. New Muse Team shares use the
+brokered route only.
 
 ### Passive managed gateway families (0.3 development)
 
@@ -2440,22 +2440,17 @@ Account's list. There is no additional pre-launch discovery seam. These are
 development-source contracts, not loaded-runtime certification.
 
 In development source, a Connected Account authentication mode may explicitly
-declare access-only Direct delivery. The custodian source owner exports only the
-access token, its finite future expiry and declared non-secret metadata through
-the existing recipient envelope. Muse device login and imported Meta OAuth
-logins declare this route. Native materialization omits the custodian's inference
-key and any refresh token; Muse obtains its own inference key on the member's
-Machine. Existing accounts gain the current export declaration at daemon registry
-publication and natural credential acquisition. At Direct acquisition, the existing
-credential enrichment owner derives a missing expiry from a JWT's reported
-expiration when available. An imported login without a determinable expiry keeps
-its brokered route and reports why native delivery requires Meta sign-in again.
-Native `expires_at` normalization is not implemented until its units are verified.
-There is no expiry timer; the next launch or existing post-failure acquisition
-obtains current material. A Session that outlives its token may need Resume.
-An absent or expired token expiry is unavailable for Direct delivery. Manual API keys retain
-the existing manual Direct export contract. Brokered-only Muse selections still
-follow the existing early compatibility refusal.
+declare access-only Direct delivery with a finite future expiry and declared
+non-secret metadata. Muse declares brokered-only sharing for all connection
+methods. Its opaque account token has no knowable expiry, and the incumbent
+Team snapshot opener does not re-acquire from the custodian on vendor rejection.
+Codex/Claude runtime rejection recovery refreshes the current Account's own
+stored credential; it does not provide recovery for delivered Team snapshots.
+No new recovery mechanism or synthetic expiry is added. Existing Muse accounts
+pick up the current export declaration at registry publication and natural
+credential acquisition; reconnecting does not enable native sharing.
+Brokered-only Muse selections still follow the existing early native Agent
+compatibility refusal.
 
 Withdrawal clears delivered credential files from retained daemon materialization
 homes at the next existing Team reconciliation. The materialization manifest

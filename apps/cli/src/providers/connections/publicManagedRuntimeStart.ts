@@ -87,7 +87,9 @@ function failForCoordinatorCode(
   if (code === 'managed_provider_runtime_unavailable') {
     throw createProviderErrorV1('provider_contribution_unavailable', { machineId });
   }
-  throw createProviderErrorV1('provider_endpoint_unavailable', { machineId });
+  throw createProviderErrorV1('provider_endpoint_unavailable', { machineId,
+    ...(startupFailure ? { failureCause: startupFailure.failureCause } : {}),
+  });
 }
 
 /**

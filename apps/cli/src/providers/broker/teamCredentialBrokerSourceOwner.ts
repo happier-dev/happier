@@ -1,4 +1,5 @@
-import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerSourceApplicationBindingV1, ProviderBrokerRouteGrantPayloadV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { ProviderBrokerRequestPolicySnapshot } from './providerBrokerRequestHandler';
 import { projectProviderConnectionBrokerApplication } from './providerConnectionCpxBridge';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
@@ -119,11 +120,12 @@ type ExactSourceOpenInput<TSource extends TeamCredentialSourceBindingV1> = Reado
   application: ProviderBrokerSourceApplicationBindingV1;
   modelId?: string;
   sourceRevision?: string;
+  /** Signed job identity, stable across grant renewal and stream reconnects. */
+  brokerAdmissionFingerprint?: string;
   /** The member the Home admitted this request against. A Pool open
    * materializes exactly it, so a rotation after admission cannot refuse or
    * re-attribute the admitted request; the next request selects again. */
   admittedSourceMember?: TeamCredentialSourceMemberV1;
-  revalidateOperationAuthorization?(signal?: AbortSignal): Promise<boolean>;
   signal: AbortSignal;
 }>;
 
@@ -162,6 +164,8 @@ export type TeamCredentialBrokerSourceAcquireResult =
     }>;
 
 export type TeamCredentialBrokerSourceOwner = Readonly<{
+  readAdmittedRequestPolicy(authority: ProviderBrokerRouteGrantPayloadV1): ProviderBrokerRequestPolicySnapshot | null;
+  retainAdmittedRequestPolicy(authority: ProviderBrokerRouteGrantPayloadV1, snapshot: ProviderBrokerRequestPolicySnapshot): void;
   /**
    * The current source member a request would use, read without starting or
    * joining managed custody. The Home attributes and admits the request
@@ -177,6 +181,8 @@ export type TeamCredentialBrokerSourceOwner = Readonly<{
   acquire(
     input: TeamCredentialBrokerSourceOpenInput,
   ): Promise<TeamCredentialBrokerSourceAcquireResult>;
+  /** Drops host-private admission captures when this broker runtime closes. */
+  clearAdmittedRequests(): void;
   /**
    * Retires the operation-scoped managed Provider custody named by an already
    * verified authority, whether or not the caller holds a joined view of it.
@@ -190,11 +196,22 @@ export type TeamCredentialBrokerSourceOwner = Readonly<{
   }>): Promise<void>;
 }>;
 
-type SourceOpenResult = Promise<Readonly<{
+export type TeamCredentialBrokerOpenedSource = Readonly<{
   projection: ManagedProviderEndpointAccessProjection;
-  sourceCurrentness: Readonly<{ sourceMember: TeamCredentialSourceMemberV1; isCurrent(): Promise<boolean | null> }>;
+  sourceMember: TeamCredentialSourceMemberV1;
   retire(): Promise<void>;
-}> | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }> | null>;
+  /** Rejoin custody using this successful admission's captured source facts. */
+  reopen?(signal: AbortSignal): SourceOpenResult;
+}>;
+
+type SourceOpenResult = Promise<TeamCredentialBrokerOpenedSource
+  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }> | null>;
+
+function admittedRequestPolicyKey(authority: ProviderBrokerRouteGrantPayloadV1): string {
+  return JSON.stringify(['policy', authority.teamId, authority.resourceId, authority.sourceRevision,
+    authority.brokerPlacementFingerprint, authority.initiatorTokenEpoch, authority.initiator, authority.target,
+    authority.consumer, authority.executionRunOccurrenceId ?? null, authority.application]);
+}
 
 function validOperation(operation: TeamCredentialBrokerOperation): boolean {
   if (operation.kind === 'session') {
@@ -227,17 +244,8 @@ function readsCurrent(projection: ManagedProviderEndpointAccessProjection): bool
   }
 }
 
-function sourceCurrentnessFailure(
-  sourceCurrent: boolean | null,
-  projection: ManagedProviderEndpointAccessProjection,
-) {
-  if (sourceCurrent === null) return 'source_currentness_unknown' as const;
-  if (!sourceCurrent) return 'source_not_current' as const;
-  return readsCurrent(projection) ? null : 'projection_not_current' as const;
-}
-
 function logSourceCurrentnessRefusal(
-  code: NonNullable<ReturnType<typeof sourceCurrentnessFailure>> | 'request_cancelled' | 'source_join_retired',
+  code: 'projection_not_current' | 'request_cancelled' | 'source_join_retired',
 ): void {
   try {
     logger.warnLocalFile('[provider-broker-source]', { stage: 'source_currentness', code });
@@ -273,7 +281,33 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
     input: ExactSourceOpenInput<ProviderConnectionSource>,
   ): SourceOpenResult;
 }>): TeamCredentialBrokerSourceOwner {
+  // Stream cleanup releases a physical join. These job captures live until
+  // explicit operation retirement or broker shutdown, including metadata-only jobs.
+  const admittedRequests = new Map<string, Readonly<{
+    operation: TeamCredentialBrokerOperation;
+    application: ProviderBrokerSourceApplicationBindingV1;
+  }> & (
+    | Readonly<{ kind: 'source'; reopen: NonNullable<TeamCredentialBrokerOpenedSource['reopen']> }>
+    | Readonly<{ kind: 'policy'; snapshot: ProviderBrokerRequestPolicySnapshot }>
+  )>();
+  const clearAdmittedOperation = (operation: TeamCredentialBrokerOperation, application: ProviderBrokerSourceApplicationBindingV1): void => {
+    for (const [key, admitted] of admittedRequests) {
+      if (JSON.stringify(admitted.operation) === JSON.stringify(operation)
+        && JSON.stringify(admitted.application) === JSON.stringify(application)) admittedRequests.delete(key);
+    }
+  };
   return Object.freeze({
+    clearAdmittedRequests() { admittedRequests.clear(); },
+    readAdmittedRequestPolicy(authority) {
+      const admitted = admittedRequests.get(admittedRequestPolicyKey(authority));
+      return admitted?.kind === 'policy' ? admitted.snapshot : null;
+    },
+    retainAdmittedRequestPolicy(authority, snapshot) {
+      const key = admittedRequestPolicyKey(authority);
+      if (!admittedRequests.has(key)) admittedRequests.set(key, {
+        kind: 'policy', operation: authority.consumer, application: authority.application, snapshot,
+      });
+    },
     async selectSourceMember({ source: rawSource, application, signal }) {
       const source = TeamCredentialSourceBindingV1Schema.safeParse(rawSource);
       if (!source.success || signal.aborted) return null;
@@ -288,6 +322,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
     },
     async retireOperation({ operation, application }) {
       if (!validOperation(operation)) return;
+      clearAdmittedOperation(operation, application);
       await input.custody.retire({
         identity: application.implementationIdentity,
         operationClaim: { kind: 'providerBroker', operation },
@@ -344,17 +379,21 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
         ...(rawInput.modelId !== undefined ? { modelId: rawInput.modelId } : {}),
         ...(rawInput.sourceRevision !== undefined ? { sourceRevision: rawInput.sourceRevision } : {}),
         ...(rawInput.admittedSourceMember ? { admittedSourceMember: rawInput.admittedSourceMember } : {}),
-        ...(rawInput.revalidateOperationAuthorization
-          ? {
-              revalidateOperationAuthorization:
-                rawInput.revalidateOperationAuthorization,
-            }
-          : {}),
         signal: rawInput.signal,
       });
+      const admissionKey = JSON.stringify([
+        'source',
+        rawInput.brokerAdmissionFingerprint ?? null,
+        rawInput.resourceId, rawInput.resourceRevision, input.machineId,
+        rawInput.operation, source.data, rawInput.application,
+        rawInput.sourceRevision ?? null, rawInput.admittedSourceMember ?? null,
+      ]);
+      const retainedConsumer = rawInput.operation.kind === 'session' || rawInput.operation.kind === 'execution_run';
+      const admittedSource = retainedConsumer ? admittedRequests.get(admissionKey) : undefined;
       let opened: Awaited<SourceOpenResult>;
       try {
-        opened = source.data.kind === 'provider_connection'
+        opened = admittedSource?.kind === 'source' ? await admittedSource.reopen(rawInput.signal)
+          : source.data.kind === 'provider_connection'
           ? await input.openProviderConnectionSource({
               ...exactInput,
               source: source.data,
@@ -383,23 +422,22 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
           ...(sourceOpenFailureReason ? { sourceOpenFailureReason } : {}),
         });
       }
-      const { projection, sourceCurrentness } = opened;
-      let sourceCurrent = await sourceCurrentness.isCurrent().catch(() => null);
-      const sourceFailure = rawInput.signal.aborted ? null : sourceCurrentnessFailure(sourceCurrent, projection);
-      const refusalCode = rawInput.signal.aborted ? 'request_cancelled' : sourceFailure;
+      const { projection, sourceMember } = opened;
+      const refusalCode = rawInput.signal.aborted ? 'request_cancelled'
+        : readsCurrent(projection) ? null : 'projection_not_current';
       if (refusalCode) {
         logSourceCurrentnessRefusal(refusalCode);
-        // Only a source that is not current retires the operation this open
-        // would have joined; a caller that went away releases nothing shared.
-        if (!rawInput.signal.aborted && sourceCurrent !== null
-          && sourceFailure) {
+        // A physical projection that failed before its first dispatch cannot
+        // serve this join. Caller cancellation never retires shared custody.
+        if (refusalCode === 'projection_not_current') {
+          clearAdmittedOperation(rawInput.operation, rawInput.application);
           await opened.retire().catch(() => undefined);
         }
         await Promise.resolve(projection.cleanup()).catch(() => undefined);
         return Object.freeze({
           ok: false as const,
           reasonCode: 'source_unavailable' as const,
-          ...(!rawInput.signal.aborted && sourceFailure ? { sourceOpenFailureReason: sourceFailure } : {}),
+          ...(refusalCode === 'projection_not_current' ? { sourceOpenFailureReason: refusalCode } : {}),
         });
       }
 
@@ -418,6 +456,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
       };
       const retire = (): Promise<void> => {
         retired = true;
+        clearAdmittedOperation(rawInput.operation, rawInput.application);
         if (semanticRetired) return Promise.resolve();
         retireInFlight ??= Promise.resolve(opened.retire()).then(
           () => {
@@ -447,13 +486,6 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
         );
         return cleanupInFlight;
       };
-      const retireAndCleanup = async (): Promise<void> => {
-        try {
-          await retire();
-        } finally {
-          await cleanup();
-        }
-      };
       rawInput.signal.addEventListener('abort', onAbort, { once: true });
       if (rawInput.signal.aborted) {
         await cleanup().catch(() => undefined);
@@ -462,33 +494,21 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
           reasonCode: 'broker_unavailable' as const,
         });
       }
+      if (retainedConsumer && opened.reopen && !admittedSource) admittedRequests.set(admissionKey, {
+        kind: 'source', operation: rawInput.operation, application: rawInput.application, reopen: opened.reopen,
+      });
       return Object.freeze({
         ok: true as const,
-        sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(sourceCurrentness.sourceMember),
+        sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(sourceMember),
         retire,
         projection: Object.freeze({
           ...(projection.requestCostParser ? { requestCostParser: projection.requestCostParser } : {}),
           access: Object.freeze({
             endpointUrl: projection.access.endpointUrl,
             async request(request: ManagedServiceRequest) {
-              if (retired) {
+              if (retired || rawInput.signal.aborted) {
                 logSourceCurrentnessRefusal(rawInput.signal.aborted ? 'request_cancelled' : 'source_join_retired');
                 throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
-              }
-              sourceCurrent = await sourceCurrentness.isCurrent().catch(() => null);
-              const sourceFailure = retired || rawInput.signal.aborted ? null : sourceCurrentnessFailure(sourceCurrent, projection);
-              const refusalCode = rawInput.signal.aborted ? 'request_cancelled'
-                : retired ? 'source_join_retired' : sourceFailure;
-              if (refusalCode) {
-                logSourceCurrentnessRefusal(refusalCode);
-                // A source that stopped being current invalidates the whole
-                // operation's gateway, so it is retired. A caller that merely
-                // went away releases only its own view.
-                const invalid = !retired && !rawInput.signal.aborted && sourceCurrent !== null
-                  && sourceFailure !== null;
-                await (invalid ? retireAndCleanup() : cleanup()).catch(() => undefined);
-                throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable',
-                  ...(sourceFailure ? { sourceOpenFailureReason: sourceFailure } : {}) });
               }
               return await projection.access.request(request);
             },
@@ -496,7 +516,6 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
           isCurrent: () => (
             !retired
             && !rawInput.signal.aborted
-            && sourceCurrent === true
             && readsCurrent(projection)
           ),
           cleanup,

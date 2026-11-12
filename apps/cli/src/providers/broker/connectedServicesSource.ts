@@ -10,7 +10,7 @@ import { resolveManagedProviderPurposeBindingSnapshot } from '@/providers/manage
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
-import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
+import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource, TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition';
 import { readConnectedAccountBrokerModelCatalog, type ReadConnectedAccountBrokerModelProjection } from './connectedAccountModelCatalog';
 import { observeCurrentConnectedServiceMaterializationPhase as observeMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
@@ -84,16 +84,25 @@ export function createConnectedServicesBrokerSourceMemberSelect(input: Readonly<
   withRegistry: ProviderConnectionRegistryReader;
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
 }>): (request: ConnectedSelectionInput) => Promise<TeamCredentialSourceMemberV1 | null> {
-  return async (request) => (
-    await resolveConnectedServicesBrokerSelection(input.withRegistry, input.resolveBindingIntentSelection, request)
-  )?.sourceMember ?? null;
+  return async (request) => {
+    if (request.source.kind === 'connected_account') {
+      if (request.source.target.kind !== 'account') return null;
+      return Object.freeze({
+        kind: 'connected_account' as const,
+        service: Object.freeze({ ...request.source.target.account.service }),
+        connectedAccountId: request.source.target.account.accountId,
+      });
+    }
+    return (await resolveConnectedServicesBrokerSelection(
+      input.withRegistry, input.resolveBindingIntentSelection, request,
+    ))?.sourceMember ?? null;
+  };
 }
 
 /**
- * Opens one operation-scoped CLIProxyAPI projection over the exact current
- * Connected Account/Pool selected by the Team resource. The Connected Account
- * purpose-binding owner resolves credentials and Pool membership; this adapter
- * only connects that current authority to existing managed Provider custody.
+ * Captures one admitted Connected Account/Pool source for operation-scoped
+ * CLIProxyAPI custody. Rejoining uses that capture; the purpose-binding owner
+ * still acquires credentials at each natural materialization boundary.
  */
 export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
   withRegistry: ProviderConnectionRegistryReader;
@@ -104,14 +113,8 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
   custody: ManagedProviderExplicitStartCustody;
   readModelProjection?: ReadConnectedAccountBrokerModelProjection;
-}>): (request: ConnectedOpenInput) => Promise<Readonly<{
-  projection: NonNullable<Awaited<ReturnType<ManagedProviderExplicitStartCustody['acquire']>>>;
-  sourceCurrentness: Readonly<{
-    sourceMember: TeamCredentialSourceMemberV1;
-    isCurrent(): Promise<boolean | null>;
-  }>;
-  retire(): Promise<void>;
-}> | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
+}>): (request: ConnectedOpenInput) => Promise<TeamCredentialBrokerOpenedSource
+  | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> {
   return async (request) => {
     const readsResourceCurrent = async (
       signal: AbortSignal,
@@ -119,8 +122,8 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
       if (signal.aborted) return false;
       const resource = await observeMaterializationPhase('binding_read', () => input.readResource(request.resourceId, signal));
       // Source currentness is enabled, placement and source identity. The
-      // revision is a policy fact the Home rechecks per request, so a policy
-      // edit is not a source replacement (`04-private-iroh-broker-transport.md:272`).
+      // Home checks the admitted job's revision with its active-job lookup;
+      // a policy edit is not a source replacement.
       return teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
         && sameTeamCredentialBrokerSource(resource.source, request.source);
     };
@@ -162,46 +165,42 @@ export function createConnectedServicesBrokerSourceOpen(input: Readonly<{
       signal: request.signal,
     }).catch(() => null);
     if (!purposeBindings) return { unavailable: 'purpose_binding_unavailable' };
-    if (!await readsResourceCurrent(request.signal)) return { unavailable: 'resource_not_current' };
 
     const readCatalog = input.readModelProjection;
     const catalog = readCatalog ? await observeMaterializationPhase('binding_read', () => readConnectedAccountBrokerModelCatalog({ request, purpose,
       projectModels: readCatalog, signal: request.signal })) : undefined;
     if (catalog === null) return { unavailable: 'projection_not_current' };
 
-    const acquired = await observeMaterializationPhase('materialization_invoke', () => acquireBrokerSourceOperation({
-      custody: input.custody,
-      ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
-      identity: request.application.implementationIdentity,
-      contributionKey: `${request.application.implementationIdentity.pluginId}/${request.application.implementationIdentity.localId}`,
-      endpointTemplateId: request.application.endpointTemplateId,
-      operationClaim: { kind: 'providerBroker', operation: request.operation },
-      purposeBindings,
-      ...(catalog?.modelCatalogs ? { modelCatalogs: catalog.modelCatalogs } : {}),
-      retainedCurrentnessScope: {
-        facts: ['teams', 'team-credential-material', 'connected-services', 'connected-catalog'],
-        connectedServiceRefs: [sourceMember.service],
-      },
-      isSourceCurrent: async (signal) => (
-        await readsResourceCurrent(signal) && await selection.isCurrent(signal)
-        && (!readCatalog || (await readConnectedAccountBrokerModelCatalog({ request, purpose,
-          projectModels: readCatalog, signal }))?.sourceRevision === catalog?.sourceRevision)
-      ),
-      ...(request.revalidateOperationAuthorization
-        ? { revalidateOperationAuthorization: request.revalidateOperationAuthorization }
-        : {}),
-      callerSignal: request.signal,
-    }));
-    if (!acquired) return { unavailable: 'managed_custody_unavailable' };
-    if ('unavailable' in acquired) return acquired;
-    const { projection, retire, revalidateSourceCurrentness } = acquired;
-    return Object.freeze({
-      projection,
-      retire,
-      sourceCurrentness: Object.freeze({
+    let sourceAdmitted = false;
+    const reopen = async (signal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource
+      | Readonly<{ unavailable: TeamCredentialBrokerSourceOpenFailureReason }>> => {
+      const acquired = await observeMaterializationPhase('materialization_invoke', () => acquireBrokerSourceOperation({
+        custody: input.custody,
+        ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
+        identity: request.application.implementationIdentity,
+        contributionKey: `${request.application.implementationIdentity.pluginId}/${request.application.implementationIdentity.localId}`,
+        endpointTemplateId: request.application.endpointTemplateId,
+        operationClaim: { kind: 'providerBroker', operation: request.operation },
+        purposeBindings,
+        ...(catalog?.modelCatalogs ? { modelCatalogs: catalog.modelCatalogs } : {}),
+        isSourceCurrent: async (signal) => (
+          sourceAdmitted || await readsResourceCurrent(signal) && await selection.isCurrent(signal)
+          && (!readCatalog || (await readConnectedAccountBrokerModelCatalog({ request, purpose,
+            projectModels: readCatalog, signal }))?.sourceRevision === catalog?.sourceRevision)
+        ),
+        callerSignal: signal,
+      }));
+      if (!acquired) return { unavailable: 'managed_custody_unavailable' };
+      if ('unavailable' in acquired) return acquired;
+      sourceAdmitted = true;
+      const { projection, retire } = acquired;
+      return Object.freeze({
+        projection,
+        retire,
         sourceMember,
-        isCurrent: revalidateSourceCurrentness,
-      }),
-    });
+        reopen,
+      });
+    };
+    return await reopen(request.signal);
   };
 }

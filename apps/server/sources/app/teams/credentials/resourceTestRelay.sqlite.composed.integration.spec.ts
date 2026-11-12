@@ -203,7 +203,6 @@ describe("Resource Test relay composition (SQLite integration)", () => {
         const proxy = await startFirstBytesLocalCapabilityProxy({ targetPort: address.port });
         const applicationServer = realApplication ? await startProviderBrokerApplicationServer({
             handler: createProviderBrokerRequestHandler({
-                resolveTrustRoots: () => [], nowMs: Date.now,
                 createRequestId: () => "initial-resource-test",
                 resolveRequestPolicy: async () => null,
                 admit: async () => ({ ok: false, reasonCode: "resource_unavailable" }),

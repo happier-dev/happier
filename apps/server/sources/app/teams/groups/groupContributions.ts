@@ -7,6 +7,7 @@ import {
 import type { SessionHistoryAccess } from "@/storage/enums.generated";
 import { readTransactionDatabaseTime } from "@/storage/transactionDatabaseTime";
 import { mintSessionAccessStartsAt } from "../memberships/sessionHistory";
+import { advanceBrokerJobRevisionsForGroupInTx } from '../credentials/brokerJobWithdrawal';
 
 /**
  * The one owner of effective Group membership.
@@ -211,6 +212,9 @@ export async function applyTeamGroupContributionInTx(
         // empty row must never survive: a zero-contribution membership would still
         // grant Group access with nothing left justifying it.
         await tx.teamGroupMembership.delete({ where: { teamGroupId_teamMembershipId: key } });
+        await advanceBrokerJobRevisionsForGroupInTx(tx, {
+            teamId: input.teamId, teamGroupId: input.teamGroupId,
+        });
         return { outcome: "removed", membershipRetained: false };
     });
 }

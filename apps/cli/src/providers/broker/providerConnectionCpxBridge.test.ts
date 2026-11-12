@@ -159,13 +159,6 @@ describe('Provider Connection CPX bridge', () => {
       purposeBindings: { v: 1, bindings: [] },
       operationClaim: { kind: 'providerBroker', operation },
     }));
-    await projection!.retire();
-    await projection!.retire();
-    expect(managed.owner.retire).toHaveBeenCalledOnce();
-    expect(managed.owner.retire).toHaveBeenCalledWith({
-      identity: application.implementationIdentity,
-      operationClaim: { kind: 'providerBroker', operation },
-    });
     const result = await projection!.access.request({
       pathAndQuery: '/v1/responses?stream=true', method: 'POST',
       headers: { authorization: 'Bearer worker', 'x-api-key': 'worker-key', 'x-client': 'worker' },
@@ -188,6 +181,15 @@ describe('Provider Connection CPX bridge', () => {
     expect(result.headers).not.toHaveProperty('set-cookie');
     expect(await new Response(await readProviderBrokerResponseBody(result.body)).text()).toBe('{"echo":"[REDACTED]"}');
     expect(JSON.stringify({ projection, result })).not.toContain('gateway.example');
+    await projection!.retire();
+    await projection!.retire();
+    expect(managed.owner.retire).toHaveBeenCalledOnce();
+    expect(managed.owner.retire).toHaveBeenCalledWith({
+      identity: application.implementationIdentity,
+      operationClaim: { kind: 'providerBroker', operation },
+    });
+    await expect(projection!.access.request({ pathAndQuery: '/v1/responses' }))
+      .rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
   });
 
   it('keeps the retained operation current after the creating caller goes away, and ends it only on retirement', async () => {
@@ -221,9 +223,11 @@ describe('Provider Connection CPX bridge', () => {
     await expect(retained.revalidateAuthorization(operationRead.signal)).resolves.toBe(true);
     expect(managed.owner.retire).not.toHaveBeenCalled();
 
-    // The operation's own authority still ends it.
+    // A newer source answer cannot revoke this admitted operation.
     sourceCurrent = false;
-    await expect(retained.revalidateAuthorization(operationRead.signal)).resolves.toBe(false);
+    await expect(retained.revalidateAuthorization(operationRead.signal)).resolves.toBe(true);
+    expect(retained.isAuthorizationCurrent()).toBe(true);
+    await projection!.retire();
     expect(retained.isAuthorizationCurrent()).toBe(false);
   });
 
@@ -264,7 +268,7 @@ describe('Provider Connection CPX bridge', () => {
       .toEqual({ 'x-companion-token': 'Bearer companion-value' });
   });
 
-  it('fails closed for source changes, protocol mismatch, and managed redirects', async () => {
+  it('checks source at admission, rejects protocol mismatch, and blocks managed redirects', async () => {
     const managedRequest = vi.fn<(input: ManagedServiceRequest) => Promise<ManagedServiceResponse>>(async () => response('', 302));
     const managed = custody(managedRequest);
     const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
@@ -281,18 +285,15 @@ describe('Provider Connection CPX bridge', () => {
       acquireRequestCredential: async () => credentialLease(),
     });
     await expect(open('openai-chat')).resolves.toBeNull();
-    let currentnessReads = 0;
-    await expect(open(
-      'openai-responses',
-      async () => ++currentnessReads === 1,
-    )).resolves.toBeNull();
+    await expect(open('openai-responses', async () => false)).resolves.toBeNull();
     expect(managed.owner.retire).toHaveBeenCalledOnce();
     expect(managed.cleanup).toHaveBeenCalledOnce();
     current = true;
     const projection = await open('openai-responses');
     await expect(projection!.access.request({ pathAndQuery: '/v1/responses' })).resolves.toMatchObject({ status: 502 });
     current = false;
-    await expect(projection!.access.request({ pathAndQuery: '/v1/responses' })).rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
+    await expect(projection!.access.request({ pathAndQuery: '/v1/responses' })).resolves.toMatchObject({ status: 502 });
+    expect(managedRequest).toHaveBeenCalledTimes(2);
   });
 
   it('redacts bodyless response headers before releasing the request credential', async () => {

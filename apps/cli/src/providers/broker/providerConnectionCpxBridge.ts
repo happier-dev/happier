@@ -221,7 +221,6 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
       if (
         openInput.application.protocol !== openInput.endpoint.protocol
         || !safePublicHeaders(openInput.endpoint.publicHeaders)
-        || !await openInput.isCurrent().catch(() => false)
       ) return null;
       const acquired = await acquireBrokerSourceOperation({
         ...(openInput.retirementGroup ? { retirementGroup: openInput.retirementGroup } : {}),
@@ -231,15 +230,11 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         endpointTemplateId: openInput.application.endpointTemplateId,
         operationClaim: { kind: 'providerBroker', operation: openInput.operation },
         purposeBindings: { v: 1, bindings: [] },
-        retainedCurrentnessScope: { facts: ['teams', 'team-credential-material', 'provider-connections', 'saved-secrets'] },
         isSourceCurrent: async (signal) => await openInput.isCurrent(signal),
-        ...(openInput.revalidateOperationAuthorization
-          ? { revalidateOperationAuthorization: openInput.revalidateOperationAuthorization }
-          : {}),
         callerSignal: openInput.signal,
       });
       if (!acquired || 'unavailable' in acquired) return null;
-      const { projection, retire, isAuthorizationCurrent, revalidateAuthorization } = acquired;
+      const { projection, retire, isAuthorizationCurrent } = acquired;
       const send = async (
         requestInput: ManagedServiceRequest,
         lease: NonNullable<Awaited<ReturnType<typeof openInput.acquireRequestCredential>>>,
@@ -325,7 +320,7 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
       };
 
       const request = async (requestInput: ManagedServiceRequest): Promise<ManagedServiceResponse> => {
-        if (!await revalidateAuthorization()) {
+        if (openInput.signal.aborted || !isAuthorizationCurrent()) {
           throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
         }
         const lease = await openInput.acquireRequestCredential().catch(() => null);

@@ -1,3 +1,4 @@
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { ConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
@@ -35,6 +36,7 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
+import type { ProviderSourceModelCatalogResult } from '@/providers/modelManagement/sourceCatalog';
 import { logger } from '@/ui/logger';
 import type { ManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
 import { createManagedProviderExplicitStartCustody } from '@/providers/connections/publicManagedRuntimeStart';
@@ -113,6 +115,67 @@ const closeTasks: Array<() => Promise<void>> = [];
 afterEach(async () => {
   await Promise.all(closeTasks.splice(0).map((close) => close()));
   resetActiveAccountSettingsSnapshotForTests();
+});
+
+it.each([{ region: 'eu', admitted: true }, { region: 'other', admitted: false }])('executes a finite declared Action through its signed private carrier and requester identity ($region)', async ({ region, admitted }) => {
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(47));
+  const payload = { v: 3 as const, grantId: 'finite-grant', aud: 'happier-provider-broker-action-v3' as const,
+    issuedAt: 100, expiresAt: 200, teamId: 'team-1', resourceId: 'resource-1', source,
+    consumer: { kind: 'action_operation' as const, operationId: 'request-1', actionId: 'example.cloud/actions/options',
+      pluginVersion: '1.0.0', purpose: { consumer: { pluginId: 'example.cloud', localId: 'options' }, purpose: 'cloud-api' } },
+    inputDigest: computeActionInputApprovalDigestV1('example.cloud/actions/options', { region: 'eu' }),
+    declaration: { version: '1.0.0', manifestDigestSha256: `sha256:${'a'.repeat(64)}` as const },
+    initiator: authority.payload.initiator, target: authority.payload.target };
+  const finiteAuthority = { payload, signature: { alg: 'Ed25519' as const, keyId: 'finite-home',
+    valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createCanonicalJsonSigningInput(payload)), key.secretKey)).toString('base64url') } };
+  const executed: Array<{ requester: string; input: unknown }> = [];
+  const input = {
+    machineId: 'broker-machine', resolveTrustRoots: () => [{ keyId: 'finite-home', publicKey: Buffer.from(key.publicKey).toString('base64url'), expiresAt: null }], nowMs: () => 150,
+    resolveRequestPolicy: async () => { throw new Error('finite Actions do not enter inference'); },
+    admitRequest: async () => { throw new Error('finite Actions do not enter inference'); },
+    authorizeModelCatalog: async () => { throw new Error('finite Actions do not enter inference'); },
+    sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: 'broker-machine', custody: { retire: async () => true },
+      selectConnectedServicesSourceMember: async () => null, openConnectedServicesSource: async () => null, openProviderConnectionSource: async () => null }),
+    createRequestId: () => 'unused',
+    actionOperations: { admit: async () => ({ ok: true as const }), execute: async (request: { authority: typeof finiteAuthority; input: unknown; signal: AbortSignal }) => {
+      request.signal.throwIfAborted();
+      executed.push({ requester: request.authority.payload.initiator.accountId, input: request.input });
+      return { ok: true as const, result: { options: ['small'] } };
+    } },
+  };
+  const runtime = await startDaemonProviderBrokerRuntime(input);
+  closeTasks.push(runtime.close);
+  const target = await runtime.resolveProviderBrokerApplicationTarget({
+    handshake: { v: 3, kind: 'provider_broker', authority: finiteAuthority }, authority: finiteAuthority,
+    authenticatedRemoteEndpointId: payload.initiator.endpointId, localEndpointId: payload.target.endpointId,
+    signal: new AbortController().signal,
+  });
+  expect(target).not.toBeNull();
+  if (!target) return;
+  const body = JSON.stringify({ input: { region } });
+  const response = await new Promise<string>((resolve, reject) => {
+    const socket = connect({ host: '127.0.0.1', port: target.port });
+    const chunks: Buffer[] = [];
+    socket.once('connect', () => {
+      socket.write(target.localCapability, 'ascii');
+      socket.write(['POST /v1/_happier/provider-broker/action HTTP/1.1', 'Host: 127.0.0.1',
+        'Connection: keep-alive', 'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(body)}`, '', body].join('\r\n'));
+      socket.write(['POST /v1/_happier/provider-broker/action HTTP/1.1', 'Host: 127.0.0.1',
+        'Connection: close', 'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(body)}`, '', body].join('\r\n'));
+    });
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk)); socket.once('error', reject);
+    socket.once('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
+  expect(response).toContain('403 Forbidden');
+  if (admitted) {
+    expect(response).toContain('200 OK');
+    expect(response).toContain('"execution":{"ok":true,"result":{"options":["small"]}}');
+    expect(executed).toEqual([{ requester: 'worker-account', input: { region: 'eu' } }]);
+  } else {
+    expect(response).not.toContain('200 OK');
+    expect(executed).toEqual([]);
+  }
 });
 
 describe('resolveRunnerCredentialSelectionCurrentness', () => {
@@ -423,11 +486,6 @@ describe('startDaemonProviderBrokerRuntime', () => {
       usageEventId: 'terminal-usage-1',
       created: true,
     }));
-    const revalidateExternalAuthorization = vi.fn(async () => false);
-    const acquire = vi.fn(async (request: Parameters<TeamCredentialBrokerSourceOwner['acquire']>[0]) => {
-      expect(await request.revalidateOperationAuthorization?.()).toBe(false);
-      return { ok: false as const, reasonCode: 'source_unavailable' as const };
-    });
     const runtime = await startDaemonProviderBrokerRuntime({
       machineId: 'broker-machine',
       resolveTrustRoots: () => [],
@@ -462,11 +520,12 @@ describe('startDaemonProviderBrokerRuntime', () => {
         terminalRequestId: `external:${binding.externalApiKeyId}:${binding.requestId}`,
       }),
       recordExternalTerminalUsage,
-      revalidateExternalAuthorization,
-      sourceOwner: Object.freeze({
-        selectSourceMember: async () => null,
-        acquire,
-        retireOperation: async () => undefined,
+      sourceOwner: createTeamCredentialBrokerSourceOwner({
+        machineId: 'broker-machine',
+        custody: { retire: async () => true },
+        selectConnectedServicesSourceMember: async () => null,
+        openConnectedServicesSource: async () => null,
+        openProviderConnectionSource: async () => null,
       }),
       createRequestId: () => 'unused',
     });
@@ -497,11 +556,6 @@ describe('startDaemonProviderBrokerRuntime', () => {
 
     expect(response).toContain('HTTP/1.1 403 Forbidden');
     expect(recordExternalTerminalUsage).toHaveBeenCalledOnce();
-    expect(revalidateExternalAuthorization).toHaveBeenCalledWith({
-      binding,
-      expectedResourceRevision: 7,
-      application: authority.payload.application,
-    });
     expect(recordExternalTerminalUsage).toHaveBeenCalledWith({
       v: 1,
       admissionUsageEventId: 'admission-usage-1',
@@ -816,7 +870,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
     });
     expect(response).toContain('HTTP/1.1 200 OK');
     expect(response).toContain('{"ok":true}');
-    expect(dispatchOrder).toEqual(['policy', 'usage-admission', 'source-selection']);
+    expect(dispatchOrder).toEqual(['usage-admission', 'source-selection']);
     expect(resolveBindingIntentSelection).toHaveBeenCalledWith(expect.objectContaining({
       target: source.target,
       purpose: expect.objectContaining({ purpose }),
@@ -836,7 +890,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
         cleanup,
       },
       retire: vi.fn(async () => {}),
-      sourceCurrentness: { sourceMember: { kind: 'connected_account' as const, service: source.target.account.service, connectedAccountId: source.target.account.accountId }, isCurrent: async () => true },
+      sourceMember: { kind: 'connected_account' as const, service: source.target.account.service, connectedAccountId: source.target.account.accountId },
     }));
     const lifetime = createPrivateProviderBrokerStreamLifetime({
       sourceOwner: createTeamCredentialBrokerSourceOwner({
@@ -1024,13 +1078,10 @@ describe('startDaemonProviderBrokerRuntime', () => {
             cleanup: join.cleanup,
           },
           retire: join.retire,
-          sourceCurrentness: {
-            sourceMember: {
-              kind: 'connected_account' as const,
-              service: source.target.account.service,
-              connectedAccountId: source.target.account.accountId,
-            },
-            isCurrent: async () => true,
+          sourceMember: {
+            kind: 'connected_account' as const,
+            service: source.target.account.service,
+            connectedAccountId: source.target.account.accountId,
           },
         };
       },
@@ -1105,7 +1156,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
             cleanup,
           },
           retire,
-          sourceCurrentness: { sourceMember: { kind: 'connected_account' as const, service: source.target.account.service, connectedAccountId: source.target.account.accountId }, isCurrent: async () => true },
+          sourceMember: { kind: 'connected_account' as const, service: source.target.account.service, connectedAccountId: source.target.account.accountId },
         }),
         openProviderConnectionSource: async () => null,
       }),
@@ -1231,7 +1282,7 @@ function takeHttpResponse(buffer: Buffer): Readonly<{ response: string; rest: Bu
 async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
   port: number;
   localCapability: string;
-  steps: ReadonlyArray<Readonly<{ path: string; body: string; before?: () => void }>>;
+  steps: ReadonlyArray<Readonly<{ method?: 'GET' | 'POST'; path: string; body: string; before?: () => void }>>;
 }>): Promise<string[]> {
   const socket = connect({ host: '127.0.0.1', port: input.port });
   await once(socket, 'connect');
@@ -1264,7 +1315,7 @@ async function keepAliveRequestsThroughApplicationTarget(input: Readonly<{
     for (const [index, step] of input.steps.entries()) {
       step.before?.();
       socket.write([
-        `POST ${step.path} HTTP/1.1`,
+        `${step.method ?? 'POST'} ${step.path} HTTP/1.1`,
         'Host: 127.0.0.1',
         `Connection: ${index === input.steps.length - 1 ? 'close' : 'keep-alive'}`,
         'Content-Type: application/json',
@@ -1676,6 +1727,28 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     let failCleanupOnRequest = false;
     let homeUnavailable = false;
     let onChildRetired = () => {};
+    let resourceRevision = brokerResource.revision;
+    let activeJobFingerprint = authority.payload.brokerPlacementFingerprint;
+    let issuedJobFingerprint = activeJobFingerprint;
+    let catalogRevision = authority.payload.sourceRevision;
+    let catalogReads = 0;
+    let sourceProjectionReads = 0;
+    let homeAdmissions = 0;
+    let catalogAuthorizations = 0;
+    let trustRootsAvailable = true;
+    let trustRootReads = 0;
+    // The provider's raw catalog is the effect boundary. Both the request
+    // policy and source adapter consume their real production owners below.
+    const readRawCatalog = (): ProviderSourceModelCatalogResult => ({
+      status: 'success', catalogs: [{ application: authority.payload.application, sourceRevision: catalogRevision,
+        rows: [{ application: authority.payload.application, descriptor: { id: 'gpt-5', name: 'GPT' },
+          sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
+          compatibility: { result: { status: 'verified', selectedProtocol: 'openai-responses',
+            evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } },
+            compatibilityFingerprint: 'compatibility:v1:retained', confirmed: false },
+          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }],
+      }],
+    });
     // The source custody port uses the real managed semantic/join owner. The
     // already-authorized child process and Home HTTP are the effect boundaries.
     const custody: ManagedProviderExplicitStartCustody = {
@@ -1727,8 +1800,9 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         withRegistry: async read => await read(createBrokerProviderRegistry()), resolveBindingIntentSelection: bindings.resolveBindingIntentSelection,
       }),
       openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
-        withRegistry: async read => await read(createBrokerProviderRegistry()), readResource: async () => brokerResource,
+        withRegistry: async read => await read(createBrokerProviderRegistry()), readResource: async () => ({ ...brokerResource, revision: resourceRevision }),
         resolveBindingIntentSelection: bindings.resolveBindingIntentSelection, custody,
+        readModelProjection: async () => { sourceProjectionReads++; return readRawCatalog(); },
       }),
       openProviderConnectionSource: unused,
     });
@@ -1837,25 +1911,24 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         } };
     })() : null;
     const runtimeInput = {
-      machineId: 'broker-machine', resolveTrustRoots: () => homeTrustRoots, nowMs: () => 150,
+      machineId: 'broker-machine', resolveTrustRoots: () => { trustRootReads++; return trustRootsAvailable ? homeTrustRoots : []; }, nowMs: () => 150,
       createRequestId: () => 'retained-request',
       ...(personalConnection ? { accountConnection: personalConnection } : {}),
-      resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: authority.payload.sourceRevision,
-        application: authority.payload.application, source, policy: null,
-        modelCatalog: { models: [{ id: 'gpt-5' }], resolveCanonicalModelId: (id: string) => id } }),
-      admitRequest: async (request: Parameters<Parameters<typeof startDaemonProviderBrokerRuntime>[0]['admitRequest']>[0]) => ({
-        ok: true as const, resourceId: 'resource-1', brokerMachineId: 'broker-machine', source,
-        operation: request.authority.payload.consumer, usageEventId: 'usage-1',
+      resolveRequestPolicy: async ({ authority: signed, request }) => await resolveTeamCredentialBrokerRequestPolicy({
+        machineId: 'broker-machine', authority: signed, signal: request.signal ?? new AbortController().signal,
+        readResource: async () => ({ ...brokerResource, revision: resourceRevision }),
+        readSourceModelCatalogs: async () => { catalogReads++; return readRawCatalog(); },
       }),
-      authorizeModelCatalog: async () => ({ ok: true as const }), sourceOwner,
-      revalidateOperationAuthorization: async (input: { authority: SignedProviderBrokerRouteGrantV1; expectedResourceRevision: number; signal?: AbortSignal }) => {
-        input.signal?.throwIfAborted();
-        expect(input.expectedResourceRevision).toBe(7);
-        const key = operationKey(input.authority.payload.consumer);
-        homeReads.push(key);
-        if (homeUnavailable) throw new Error('Home unavailable');
-        return consumers.get(key) === true;
+      admitRequest: async (request: Parameters<Parameters<typeof startDaemonProviderBrokerRuntime>[0]['admitRequest']>[0]) => {
+        homeAdmissions++;
+        if (request.authority.payload.brokerPlacementFingerprint !== activeJobFingerprint
+          || request.expectedResourceRevision !== resourceRevision) {
+          return { ok: false as const, reasonCode: 'resource_changed' as const };
+        }
+        return { ok: true as const, resourceId: 'resource-1', brokerMachineId: 'broker-machine', source,
+          operation: request.authority.payload.consumer, usageEventId: 'usage-1' };
       },
+      authorizeModelCatalog: async () => { catalogAuthorizations++; return { ok: true as const }; }, sourceOwner,
       revalidateOperationCurrentness: async (input: { operation: TeamCredentialBrokerOperation; application: ProviderBrokerApplicationBindingV1 }, signal?: AbortSignal) => {
         await custody.revalidateRetainedClaims(signal, {
           identity: input.application.implementationIdentity,
@@ -1866,6 +1939,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     };
     const runtime = await startDaemonProviderBrokerRuntime(runtimeInput);
     closeTasks.push(runtime.close);
+    let streamGrantId = 0;
     const streamHandshake = (consumer: Consumer = authority.payload.consumer, expired = false) => {
       const occurrence = consumer.kind === 'execution_run' ? { executionRunOccurrenceId: 'run-occurrence-1' } : {};
       if (personalAuthority) {
@@ -1876,10 +1950,20 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
           )).toString('base64url') } };
         return { v: 2 as const, kind: 'provider_broker' as const, authority: signed };
       }
-      const signed = signedAuthority({ ...authority.payload, consumer, ...occurrence });
+      const signed = signedAuthority({ ...authority.payload, grantId: `retained-grant-${++streamGrantId}`,
+        consumer, ...occurrence, brokerPlacementFingerprint: issuedJobFingerprint });
       return { v: 1 as const, kind: 'provider_broker' as const, authority: signed };
     };
-    const admitStream = async (consumer: Consumer = authority.payload.consumer, expired = false) => await startBrokerAdmission(runtime, 150, streamHandshake(consumer, expired))();
+    const admitStream = async (consumer: Consumer = authority.payload.consumer, expired = false) => {
+      const key = operationKey(consumer);
+      if (!consumers.has(key)) consumers.set(key, true);
+      return await startBrokerAdmission(runtime, 150, streamHandshake(consumer, expired))();
+    };
+    const requestsOnOneStream = async (steps: Parameters<typeof keepAliveRequestsThroughApplicationTarget>[0]['steps']) => {
+      const target = await admitStream();
+      expect(target.statusCode).toBe(204);
+      return await keepAliveRequestsThroughApplicationTarget({ ...target, steps });
+    };
     const infer = async (consumer: Consumer = authority.payload.consumer, expectedResponse = 'HTTP/1.1 200') => {
       const key = operationKey(consumer);
       if (!consumers.has(key)) consumers.set(key, true);
@@ -1945,11 +2029,22 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       failCleanupOnRequest: () => { failCleanupOnRequest = true; },
       onChildRetired: (callback: () => void) => { onChildRetired = callback; },
       key: operationKey,
+      changeCatalogRevision: (revision: string) => { catalogRevision = revision; },
+      advanceAdmittedJob: (revision: number, fingerprint: string) => {
+        resourceRevision = revision; activeJobFingerprint = fingerprint; issuedJobFingerprint = fingerprint;
+      },
+      catalogReads: () => catalogReads,
+      sourceProjectionReads: () => sourceProjectionReads,
+      homeAdmissions: () => homeAdmissions,
+      catalogAuthorizations: () => catalogAuthorizations,
+      trustRootReads: () => trustRootReads,
+      withdrawTrustRoots: () => { trustRootsAvailable = false; },
+      requestsOnOneStream,
     };
   }
 
-  describe('retained consumer currentness through signed private acquisition', () => {
-    it('admits a personal source once for the first request and refuses the next request after withdrawal', async () => {
+  describe('retained consumer admission through signed private acquisition', () => {
+    it('admits a personal source for its first stream and refuses a fresh stream after withdrawal', async () => {
       const target = await startRetainedTarget(true);
       await target.openInferenceStream();
       expect(target.homeReads).toEqual([target.key(authority.payload.consumer)]);
@@ -1964,157 +2059,14 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       expect(target.child().starts).toBe(1);
     });
 
-    it('preserves a personal Gateway claim through loading and failed catalog refreshes, then serves the same claim', async () => {
+    it('refuses the next personal request on one live stream after the job ends without a wake', async () => {
       const target = await startRetainedTarget(true);
-      const personal = target.personalConnection!;
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(1));
-      let failObservation!: (error: Error) => void;
-      const heldRow = new Promise<never>((_resolve, reject) => { failObservation = reject; });
-      let rowStarted!: () => void;
-      const rowRead = new Promise<void>(resolve => { rowStarted = resolve; });
-      const refresh = personal.refreshCatalog(async () => { rowStarted(); return heldRow; });
-      try {
-        expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog?.status).toBe('loading');
-        await rowRead;
-        await target.closeUnusedStream();
-        await vi.waitFor(() => expect(target.streamChecks).toHaveLength(2));
-        expect(target.child()).toMatchObject({ current: true, starts: 1, cleanupAttempts: 0 });
-      } finally {
-        failObservation(new Error('Catalog observation failed'));
-        await refresh;
-      }
-      expect(await refresh).toMatchObject({ status: 'unavailable' });
-      await target.closeUnusedStream();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(3));
-      expect(target.child()).toMatchObject({ current: true, starts: 1, cleanupAttempts: 0 });
-      expect(await personal.refreshCatalog()).toMatchObject({ status: 'ready' });
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(4));
-      expect(target.child()).toMatchObject({ current: true, starts: 1, cleanupAttempts: 0 });
-    });
-
-    it('retires a personal Gateway claim when a ready catalog confirms removal', async () => {
-      const target = await startRetainedTarget(true);
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(1));
-      const personal = target.personalConnection!;
-      expect(await personal.refreshCatalog(async () => personal.removeConnection())).toMatchObject({ status: 'ready' });
-      await target.closeUnusedStream();
-      await vi.waitFor(() => expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 }));
-    });
-
-    it.each(['account-replaced', 'lifetime-ended'] as const)('retires a personal Gateway claim after its Account is %s', async cause => {
-      const target = await startRetainedTarget(true);
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(1));
-      if (cause === 'account-replaced') {
-        setActiveAccountSettingsSnapshot({ ...getActiveAccountSettingsSnapshot()!, scopeKey: 'different-account' });
-      } else {
-        resetActiveAccountSettingsSnapshotForTests();
-      }
-      await target.closeUnusedStream();
-      await vi.waitFor(() => expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 }));
-    });
-
-    it.each([false, true])('revalidates connected catalogs and skips unrelated service facts for a personal=%s source', async personal => {
-      const target = await startRetainedTarget(personal);
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(1));
-      target.homeReads.length = 0;
-      for (let arrival = 0; arrival < 20; arrival++) {
-        await target.custody.revalidateRetainedClaims(undefined, undefined, {
-          facts: ['connected-services'], connectedServiceRefs: [{ pluginId: 'unrelated.plugin', localId: 'accounts' }],
-        });
-      }
-      if (personal) await target.custody.revalidateRetainedClaims(undefined, undefined, { facts: ['connected-services'] });
-      expect(target.homeReads).toEqual([]);
-      await target.custody.revalidateRetainedClaims(undefined, undefined, { facts: ['connected-catalog'] });
-      expect(target.homeReads).toEqual([target.key(authority.payload.consumer)]);
-      expect(target.child().current).toBe(true);
-    });
-
-    it('retains an active Run after stream close and retires its ended occurrence without retiring a same-source Session', async () => {
-      const target = await startRetainedTarget();
-      const run = { kind: 'execution_run' as const, executionRunId: 'run-1' };
-      await target.infer(run);
-      await vi.waitFor(() => expect(target.streamChecks).toEqual([target.key(run)]));
-      expect(target.child(run)).toMatchObject({ current: true, starts: 1, cleanupAttempts: 0 });
-
-      await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(2));
-      target.endConsumer(run);
-      const readsBeforeClose = target.homeReads.length;
-      await target.closeUnusedStream(run);
-      await vi.waitFor(() => expect(target.child(run).current).toBe(false));
-
-      expect(target.homeReads.slice(readsBeforeClose)).toEqual([target.key(run)]);
-      expect(target.streamChecks).toEqual([target.key(run), target.key(authority.payload.consumer), target.key(run)]);
-      expect(target.child(run)).toMatchObject({ starts: 1, cleanupAttempts: 1 });
-      expect(target.child()).toMatchObject({ current: true, starts: 1, cleanupAttempts: 0 });
-    });
-
-    it.each([
-      { personal: false, expired: false, cancellation: 'tcp_disconnect' },
-      { personal: true, expired: false, cancellation: 'tcp_disconnect' },
-      { personal: true, expired: true, cancellation: 'tcp_disconnect' },
-      { personal: false, expired: false, cancellation: 'admission_cancelled' },
-      { personal: true, expired: false, cancellation: 'admission_cancelled' },
-      { personal: true, expired: true, cancellation: 'admission_cancelled' },
-    ])('revalidates retained custody when a later stream closes before source acquisition ($personal, expired=$expired, $cancellation)', async ({ personal, expired, cancellation }) => {
-      const target = await startRetainedTarget(personal);
-      const survivor = { kind: 'session' as const, sessionId: 'session-survivor' };
-      await target.infer();
-      await target.infer(survivor);
-      // Both first streams finish their currentness checks while their
-      // consumers are live, so they cannot supply the later retirement.
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(2));
-      target.endConsumer();
-      const readsBeforeClose = target.homeReads.length;
-      if (cancellation === 'admission_cancelled') await target.abortUnusedStream(expired);
-      else await target.closeUnusedStream(undefined, expired);
-      await vi.waitFor(() => expect(target.child().current, JSON.stringify({ streamChecks: target.streamChecks, homeReads: target.homeReads })).toBe(false));
-      expect(target.streamChecks).toEqual([target.key(authority.payload.consumer), target.key(survivor), target.key(authority.payload.consumer)]);
-      expect(target.homeReads).toHaveLength(readsBeforeClose + 1);
-      expect(target.child().cleanupAttempts).toBe(1);
-      expect(target.child(survivor)).toMatchObject({ current: true, cleanupAttempts: 0 });
-    });
-
-    it.each([false, true])('performs no Home read when a stream closes without a retained claim (personal=%s)', async personal => {
-      const target = await startRetainedTarget(personal);
-      await target.closeUnusedStream();
-      await target.closeRuntime();
-      expect(target.child()).toBeUndefined();
-      expect(target.homeReads).toHaveLength(0);
-    });
-
-    it('revalidates personal V2 retained custody once and retires an ended consumer on stream close', async () => {
-      const target = await startRetainedTarget(true);
-      await target.infer();
-      expect(target.child().current).toBe(true);
-      const before = target.homeReads.length;
-      expect(await target.custody.revalidateRetainedClaims()).toBe(0);
-      expect(target.homeReads.length - before).toBe(1);
-      target.endOnRequest();
-      await target.infer();
-      await vi.waitFor(() => expect(target.child().current).toBe(false));
-      expect(target.child().cleanupAttempts).toBe(1);
-      expect(await target.custody.revalidateRetainedClaims()).toBe(0);
-    });
-
-    it('withdraws a Team route on the Home wake so the live stream\'s next request cannot reach the source', async () => {
-      // Owner ruling 10-30: revocation disconnects the route, so a running
-      // Session's NEXT Provider request cannot reach it. Home admission keeps
-      // admitting the job (no per-request permission re-evaluation); the
-      // custodian's retained revalidation on the Team-change wake withdraws it.
-      const target = await startRetainedTarget();
-      await target.infer();
       const stream = await target.admitStream();
       expect(stream.statusCode).toBe(204);
       const socket = connect({ host: '127.0.0.1', port: stream.port });
       closeTasks.push(async () => { socket.destroy(); });
       await once(socket, 'connect');
-      let buffer: Buffer = Buffer.alloc(0);
+      let buffer = Buffer.alloc(0);
       let waiting: ((response: string) => void) | null = null;
       socket.on('data', (chunk: Buffer) => {
         buffer = Buffer.concat([buffer, chunk]);
@@ -2135,136 +2087,109 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       };
       socket.write(stream.localCapability, 'ascii');
       expect(await send('admitted')).toContain('HTTP/1.1 200');
+      target.endConsumer();
+      expect(await send('ended')).toContain('HTTP/1.1 403');
+      // Refusing the next request leaves the physical claim for an in-flight
+      // response; its explicit owner release retires it.
       expect(target.child()).toMatchObject({ starts: 1, current: true });
-
-      // The Home wake after the member's revocation: the retained check reads
-      // the custodian's authorization once and withdraws the route.
-      target.endConsumer();
-      expect(await target.custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(1);
-      expect(target.child()).toMatchObject({ current: false });
-
-      // The same keep-alive stream's next request cannot reach the source.
-      const next = await send('after-revocation');
-      expect(next).not.toContain('HTTP/1.1 200');
-      expect(target.child().starts).toBe(1);
+      await target.custody.retire({ identity: authority.payload.application.implementationIdentity,
+        operationClaim: { kind: 'providerBroker', operation: authority.payload.consumer } });
+      expect(target.child()).toMatchObject({ starts: 1, current: false });
     });
 
-    it('retires the exact closed-stream claim on the Home wake after a release never reaches the target', async () => {
+    it('admits fresh Team policy after resource withdrawal while an older stream keeps its snapshot', async () => {
       const target = await startRetainedTarget();
+      const request = { path: '/v1/responses', body: JSON.stringify({ model: 'gpt-5', input: 'hello' }) };
+      const [original, withdrawn] = await target.requestsOnOneStream([request,
+        { ...request, before: () => target.advanceAdmittedJob(8, 'd'.repeat(64)) }]);
+      expect(original).toContain('HTTP/1.1 200');
+      expect(withdrawn).toContain('HTTP/1.1 403');
       await target.infer();
-      await vi.waitFor(() => expect(target.streamChecks).toHaveLength(1));
-      expect(target.child().current).toBe(true);
-      expect(target.child().cleanupAttempts).toBe(0);
-
-      // This release loses transport authentication before its HTTP request
-      // reaches the live broker. There is no successful target retirement.
-      const release = await target.admitStream();
-      await rawRequestThroughApplicationTarget({ ...release, localCapability: 'x'.repeat(release.localCapability.length),
-        method: 'DELETE', path: PROVIDER_BROKER_PRIVATE_CLOSE_PATH });
-      expect(target.child().current).toBe(true);
-      target.endConsumer();
-      expect(await target.custody.revalidateRetainedClaims()).toBe(1);
-      expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 });
-      expect(await target.custody.revalidateRetainedClaims()).toBe(0);
+      expect(target.catalogReads()).toBe(2);
+      target.changeCatalogRevision('later-provider-publication');
+      await target.infer();
+      expect(target.catalogReads()).toBe(2);
+      expect(target.child()).toMatchObject({ starts: 1, current: true });
     });
 
-    it('revalidates once on close and retires a consumer that already ended at Home', async () => {
+    it('lists admitted Team models again on one stream after source publication changes', async () => {
       const target = await startRetainedTarget();
-      target.endOnRequest();
-      await target.infer();
-      await vi.waitFor(() => expect(target.child().current).toBe(false));
-      expect(target.child().cleanupAttempts).toBe(1);
-      expect(target.homeReads).toEqual([target.key(authority.payload.consumer)]);
-      await Promise.resolve();
-      expect(target.homeReads).toHaveLength(1);
+      const request = { method: 'GET' as const, path: '/v1/models', body: '' };
+      const responses = await target.requestsOnOneStream([request,
+        { ...request, before: () => target.changeCatalogRevision('later-provider-publication') }]);
+      for (const response of responses) expect(response).toContain('HTTP/1.1 200');
+      expect(target.catalogReads()).toBe(1);
+      expect(target.catalogAuthorizations()).toBe(2);
     });
 
-    it('keeps another same-source consumer current with one Home read per stream close', async () => {
+    it('lists admitted Team models after a metadata-only stream reconnect without starting custody', async () => {
       const target = await startRetainedTarget();
-      const survivor = { kind: 'session' as const, sessionId: 'session-survivor' };
-      await target.infer();
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(1));
-      await target.infer(survivor);
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(2));
-      expect(target.homeReads).toEqual([target.key(authority.payload.consumer), target.key(survivor)]);
-      expect(target.child().current).toBe(true);
-      target.endConsumer();
-      expect(await target.custody.revalidateRetainedClaims()).toBe(1);
-      expect(target.homeReads).toHaveLength(4);
-      expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 });
-      expect(target.child(survivor)).toMatchObject({ current: true, cleanupAttempts: 0 });
-      await target.infer(survivor);
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(5));
-      expect(target.child(survivor).starts).toBe(1);
-      await Promise.resolve();
-      expect(target.homeReads).toHaveLength(5);
+      const firstStream = await target.admitStream();
+      expect(firstStream.statusCode).toBe(204);
+      expect(await rawRequestThroughApplicationTarget({ ...firstStream, method: 'GET', path: '/v1/models' }))
+        .toContain('HTTP/1.1 200');
+      expect(target.child()).toBeUndefined();
+      expect(target.catalogReads()).toBe(1);
+      target.changeCatalogRevision('later-provider-publication');
+      const nextStream = await target.admitStream();
+      expect(nextStream.statusCode).toBe(204);
+      expect(await rawRequestThroughApplicationTarget({ ...nextStream, method: 'GET', path: '/v1/models' }))
+        .toContain('HTTP/1.1 200');
+      expect(target.catalogReads()).toBe(1);
+      expect(target.catalogAuthorizations()).toBe(2);
+      expect(target.child()).toBeUndefined();
     });
 
-    it('keeps failed target cleanup recoverable through the existing retained-currentness pass', async () => {
+    it('trusts the carrier-verified Team grant for later requests on its admitted stream', async () => {
       const target = await startRetainedTarget();
-      await target.infer();
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(1));
-      target.child().cleanupFailures = 1;
-      target.endConsumer();
-      await expect(target.custody.revalidateRetainedClaims()).rejects.toBeInstanceOf(AggregateError);
-      expect(target.child()).toMatchObject({ current: true, cleanupAttempts: 1 });
-      expect(await target.custody.revalidateRetainedClaims()).toBe(1);
-      expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 2 });
-      expect(target.homeReads).toHaveLength(2);
+      const request = { path: '/v1/responses', body: JSON.stringify({ model: 'gpt-5', input: 'hello' }) };
+      let readsAtAdmission = 0;
+      const responses = await target.requestsOnOneStream([request, { ...request, before: () => {
+        readsAtAdmission = target.trustRootReads(); target.withdrawTrustRoots();
+      } }]);
+      for (const response of responses) expect(response).toContain('HTTP/1.1 200');
+      expect(target.trustRootReads()).toBe(readsAtAdmission);
+      expect((await target.admitStream()).statusCode).toBe(403);
     });
 
-    it('preserves retained custody through an unreadable Home until a later currentness decision', async () => {
+    it('reuses an admitted Run source catalog when another stream carries the same signed job', async () => {
+      const target = await startRetainedTarget();
+      const run = { kind: 'execution_run' as const, executionRunId: 'retained-run' };
+      await target.infer(run);
+      expect(target.catalogReads()).toBe(1);
+      const sourceReadsAtAdmission = target.sourceProjectionReads();
+      expect(sourceReadsAtAdmission).toBeGreaterThan(0);
+      target.changeCatalogRevision('later-provider-publication');
+      await target.infer(run);
+      expect(target.catalogReads()).toBe(1);
+      expect(target.sourceProjectionReads()).toBe(sourceReadsAtAdmission);
+      expect(target.homeAdmissions()).toBe(2);
+      expect(target.child(run)).toMatchObject({ starts: 1, current: true });
+    });
+
+    it('keeps an admitted Team Session through a Home wake and stream close until exact retirement', async () => {
       const target = await startRetainedTarget();
       await target.infer();
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(1));
-      target.setHomeUnavailable(true);
+      expect(target.child()).toMatchObject({ current: true, starts: 1 });
       target.endConsumer();
-      expect(await target.custody.revalidateRetainedClaims()).toBe(0);
+      expect(await target.custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(0);
+      await target.closeUnusedStream();
       expect(target.child()).toMatchObject({ current: true, cleanupAttempts: 0 });
-      target.setHomeUnavailable(false);
-      expect(await target.custody.revalidateRetainedClaims()).toBe(1);
+      expect(target.homeReads).toEqual([]);
+      await target.custody.retire({ identity: authority.payload.application.implementationIdentity,
+        operationClaim: { kind: 'providerBroker', operation: authority.payload.consumer } });
       expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 });
-    });
-
-    it('stays clean after a successful retirement loses its release acknowledgement', async () => {
-      const target = await startRetainedTarget();
-      await target.infer();
-      await vi.waitFor(() => expect(target.homeReads).toHaveLength(1));
-      const release = await target.admitStream();
-      const releaseCaller = new AbortController();
-      target.onChildRetired(() => releaseCaller.abort());
-      const response = await rawRequestThroughApplicationTarget({ ...release, signal: releaseCaller.signal,
-        method: 'DELETE', path: PROVIDER_BROKER_PRIVATE_CLOSE_PATH });
-      // The child is retired before the release response can reach its caller.
-      expect(response).not.toContain('HTTP/1.1 204');
-      expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 });
-      target.endConsumer();
-      expect(await target.custody.revalidateRetainedClaims()).toBe(0);
-      expect(target.child().cleanupAttempts).toBe(1);
-      expect(target.homeReads).toHaveLength(1);
-    });
-
-    it('lets stream close settle after child cleanup fails and recovers on the next Home wake', async () => {
-      const target = await startRetainedTarget();
-      target.endOnRequest();
-      target.failCleanupOnRequest();
-      await target.infer();
-      await vi.waitFor(() => expect(target.child().cleanupAttempts).toBe(1));
-      expect(target.child().current).toBe(true);
-      expect(await target.custody.revalidateRetainedClaims()).toBe(1);
-      expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 2 });
-      expect(target.homeReads).toHaveLength(1);
     });
 
     it.each([false, true])('settles active streams before retiring daemon custody (personal=%s)', async personal => {
       const target = await startRetainedTarget(personal);
       await target.openInferenceStream();
+      expect(target.homeReads).toHaveLength(personal ? 1 : 0);
       const readsBeforeStop = target.homeReads.length;
       await target.closeRuntime();
-      expect(target.homeReads).toHaveLength(readsBeforeStop + 1);
+      expect(target.homeReads).toHaveLength(readsBeforeStop);
       await target.custody.retireAll();
       expect(target.child()).toMatchObject({ current: false, cleanupAttempts: 1 });
-      expect(target.homeReads).toHaveLength(readsBeforeStop + 1);
     });
   });
 
@@ -2272,10 +2197,11 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     admitRequest: Parameters<typeof startDaemonProviderBrokerRuntime>[0]['admitRequest'],
     options: Readonly<{
       resourceRevision?: () => number;
+      sourceRevision?: () => string;
       /** The resource's current request policy, as the Home serves it now. */
       requestPolicy?: () => TeamCredentialResourceSummaryV1['requestPolicy'];
       providerRequest?: ManagedProviderEndpointHttpAccess['request'];
-      /** The custodian's connected account currently needs a reconnect. */
+      /** Credential acquisition at the source transport needs a reconnect. */
       sourceReconnectRequired?: () => boolean;
       catalogError?: ProviderErrorV1;
       sourceError?: ProviderErrorV1;
@@ -2303,6 +2229,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     const access: ManagedProviderEndpointHttpAccess = {
       endpointUrl: () => `http://127.0.0.1:${address.port}/v1`,
       request: options.providerRequest ?? (async (request) => {
+        if (options.sourceReconnectRequired?.()) throw new ConnectedAccountSourceReconnectRequiredError();
         const response = await fetch(`http://127.0.0.1:${address.port}${request.pathAndQuery}`, {
           method: request.method,
           body: request.body,
@@ -2341,7 +2268,6 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         assertTargetAccountMaterializable: unused,
       }).resolveBindingIntentSelection
       : vi.fn(async ({ purpose, target }) => {
-      if (options.sourceReconnectRequired?.()) throw new ConnectedAccountSourceReconnectRequiredError();
       const account = options.pool && target.kind === 'group'
         ? { service: options.pool.source.target.service, accountId: options.pool.currentMember() }
         : target.kind === 'account' ? target.account : source.target.account;
@@ -2361,7 +2287,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         readSourceModelCatalogs: async () => ({ status: 'error', error: options.catalogError! }),
       }) : async () => ({
         resourceRevision: resourceRevision(),
-        sourceRevision: 'source-revision-7',
+        sourceRevision: options.sourceRevision?.() ?? 'source-revision-7',
         application: authority.payload.application,
         policy: options.requestPolicy?.() ?? null,
         modelCatalog: {
@@ -2491,7 +2417,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
   it('preserves the personal source catalog refusal through the actual Account request handler', async () => {
     const target = await startRetainedTarget(true, createProviderErrorV1('provider_endpoint_rate_limited'));
     await target.infer(undefined, 'provider_endpoint_rate_limited');
-    expect(target.homeReads).toHaveLength(0);
+    expect(target.homeReads).toHaveLength(1);
     expect(target.child()).toBeUndefined();
   });
 
@@ -2531,7 +2457,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       expect(target.upstreamHits()).toBe(0);
     });
 
-  it('refuses a request with the custodian source reconnect code before asking the Home', async () => {
+  it('preserves the custodian reconnect refusal after one Home admission per request', async () => {
     // The Home's per-request admission does not re-read source sign-in
     // health; the broker's own source owner produces the typed refusal that
     // the in-turn failure history presents.
@@ -2545,11 +2471,11 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
 
     expect(refused).not.toContain('HTTP/1.1 200');
     expect(refused).toContain('connected_service_credential_reconnect_required');
-    expect(admitRequest).toHaveBeenCalledOnce();
+    expect(admitRequest).toHaveBeenCalledTimes(2);
     expect(target.upstreamHits()).toBe(1);
   });
 
-  it('retires the exact operation on actual authority loss, but not on a reached limit', async () => {
+  it('refuses an inactive job without aborting its retained physical claim', async () => {
     const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>()
       .mockImplementationOnce(async (request) => admittedFor(request))
       .mockImplementationOnce(async () => ({
@@ -2570,43 +2496,52 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     const revoked = await target.infer();
     expect(revoked).toContain('HTTP/1.1 403');
     expect(target.custody.acquire).toHaveBeenCalledOnce();
-    expect(target.custody.retire).toHaveBeenCalledOnce();
-    expect(target.custody.retire).toHaveBeenCalledWith({
-      identity: authority.payload.application.implementationIdentity,
-      operationClaim: { kind: 'providerBroker', operation: authority.payload.consumer },
-    });
+    expect(target.custody.retire).not.toHaveBeenCalled();
   });
 
-  it('keeps a live keep-alive stream across a policy edit and rechecks the next request at the new revision', async () => {
-    // L10/04:272 — the revision is a mutable policy fact rechecked online on
-    // every request; it is neither stream nor source identity.
+  it('keeps a signed Session stream serving after its source catalog publication changes', async () => {
+    let catalogRevision = 'source-revision-7';
+    const target = await startTarget(async request => admittedFor(request), {
+      sourceRevision: () => catalogRevision,
+    });
+    const [first, second] = await target.inferOnOneStream([
+      {},
+      { before: () => { catalogRevision = 'new-source-publication'; } },
+    ]);
+    expect(first).toContain('HTTP/1.1 200 OK');
+    expect(second).toContain('HTTP/1.1 200 OK');
+    expect(target.upstreamHits()).toBe(2);
+    expect(target.custody.acquire).toHaveBeenCalledOnce();
+  });
+
+  it('refuses the next request after a resource revision makes the admitted job inactive', async () => {
     let resourceRevision = 7;
-    const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>(async (request) => admittedFor(request));
+    const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>(async request => resourceRevision === 7
+      ? admittedFor(request)
+      : { ok: false as const, reasonCode: 'resource_forbidden' as const });
     const target = await startTarget(admitRequest, { resourceRevision: () => resourceRevision });
 
     const [first, second] = await target.inferOnOneStream([
       {},
-      // The custodian edits the resource policy; the resource stays valid.
       { before: () => { resourceRevision = 8; } },
     ]);
 
     expect(first).toContain('HTTP/1.1 200 OK');
-    expect(second).toContain('HTTP/1.1 200 OK');
-    // Each request went to Home admission, the second at the new revision.
-    expect(admitRequest.mock.calls.map(([request]) => request.expectedResourceRevision)).toEqual([7, 8]);
-    expect(target.upstreamHits()).toBe(2);
-    // One operation, one source projection, nothing retired.
+    expect(second).toContain('HTTP/1.1 403');
+    // The broker keeps the admitted revision for this stream and Home alone
+    // decides that its job is no longer active.
+    expect(admitRequest.mock.calls.map(([request]) => request.expectedResourceRevision)).toEqual([7, 7]);
+    expect(target.upstreamHits()).toBe(1);
     expect(target.custody.acquire).toHaveBeenCalledOnce();
     expect(target.custody.retire).not.toHaveBeenCalled();
   });
 
-  it('serves every currently allowed model on one stream and refuses a model the allowlist dropped on its next request', async () => {
-    // L10/04:270 — the model is a current request fact, never signed stream
-    // identity; the one request-policy owner re-evaluates it against the
-    // resource's current allowlist on every request (L10/PLAN.md:438).
+  it('serves admitted models while the job is active and refuses all models after resource withdrawal', async () => {
     let resourceRevision = 7;
     let allowedModelIds = ['gpt-5', 'gpt-5-mini'];
-    const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>(async (request) => admittedFor(request));
+    const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>(async request => resourceRevision === 7
+      ? admittedFor(request)
+      : { ok: false as const, reasonCode: 'resource_forbidden' as const });
     const target = await startTarget(admitRequest, {
       resourceRevision: () => resourceRevision,
       requestPolicy: () => ({ allowedProtocolKinds: null, allowedModelIds, reasoningEffort: null }),
@@ -2615,7 +2550,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     const responses = await target.inferOnOneStream([
       { model: 'gpt-5' },
       { model: 'gpt-5-mini' },
-      // The custodian drops gpt-5-mini from the resource's allowlist.
+      // The custodian changes policy and revision; the old job is inactive.
       { model: 'gpt-5-mini', before: () => { resourceRevision = 8; allowedModelIds = ['gpt-5']; } },
       { model: 'gpt-5' },
     ]);
@@ -2623,12 +2558,11 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     expect(responses[0]).toContain('HTTP/1.1 200 OK');
     expect(responses[1]).toContain('HTTP/1.1 200 OK');
     expect(responses[2]).toContain('HTTP/1.1 403');
-    expect(responses[2]).toContain('model_not_allowed');
-    expect(responses[3]).toContain('HTTP/1.1 200 OK');
-    // The refused model reached neither the Home nor the upstream.
+    expect(responses[2]).toContain('resource_forbidden');
+    expect(responses[3]).toContain('HTTP/1.1 403');
     expect(admitRequest.mock.calls.map(([request]) => [request.requestFacts.modelId, request.expectedResourceRevision]))
-      .toEqual([['gpt-5', 7], ['gpt-5-mini', 7], ['gpt-5', 8]]);
-    expect(target.upstreamHits()).toBe(3);
+      .toEqual([['gpt-5', 7], ['gpt-5-mini', 7], ['gpt-5-mini', 7], ['gpt-5', 7]]);
+    expect(target.upstreamHits()).toBe(2);
     // One operation, one joined source projection, nothing retired.
     expect(target.custody.acquire).toHaveBeenCalledOnce();
     expect(target.custody.retire).not.toHaveBeenCalled();

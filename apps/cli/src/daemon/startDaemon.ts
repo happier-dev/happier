@@ -1176,7 +1176,7 @@ export async function startDaemon(
     });
     const spawnResourceCleanupByKey: SpawnResourceCleanupByKey = new Map();
     const sessionAttachCleanupByKey: SessionAttachCleanupByKey = new Map();
-    const connectedServicesRestartRequestedPids = new Set<number>();
+    const connectedServicesRestartRequestedSessions = new Set<SessionTrackingKey>();
     const connectedServicesMaterializationBaseDir = resolveConnectedServicesMaterializationBaseDir(configuration.happyHomeDir);
     const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
     let connectedServiceMaterializedHomeCleanupInterval: NodeJS.Timeout | null = null;
@@ -1507,6 +1507,9 @@ export async function startDaemon(
         connectedServiceQuotasCoordinator?.updateSpawnTargetSessionId({
           pid: tracked.pid,
           sessionId,
+          spawnTrackingKey: tracked.trackingKey,
+          soleSessionOfProcess:
+            trackedSessionForSingleSessionProcess(trackedSessionsByKey, tracked.pid)?.trackingKey === tracked.trackingKey,
         });
         daemonGuard?.runtime.invalidate();
       },
@@ -2719,7 +2722,7 @@ export async function startDaemon(
       simulatorInputLeaseManager,
       spawnResourceCleanupByKey,
       sessionAttachCleanupByKey,
-      connectedServicesRestartRequestedPids,
+      connectedServicesRestartRequestedSessions,
       loadTerminalHostAdapters,
       startupTerminalRecovery: {
         disconnectedTerminalHostCandidates,
@@ -3433,7 +3436,7 @@ export async function startDaemon(
       publicReleaseChannel,
       admissionDrain,
       isDaemonQuiescing: admissionDrain.isPublicationQuiescing,
-      connectedServicesRestartRequestedPids,
+      connectedServicesRestartRequestedSessions,
       trackedSessionsByKey,
       qualifiedConnectedAccountEstablishedRuntimeOwner:
         establishedConnectedAccountRuntimeOwner,
@@ -3928,11 +3931,6 @@ export async function startDaemon(
                     application: request.application,
                     requestFacts: request.requestFacts,
                   }, { signal: request.request.signal }),
-                  revalidateExternalAuthorization: async (request) => (
-                    revalidateExternalProviderBrokerAuthorization(
-                      await authorizeExternalAuthorization(request),
-                    )
-                  ),
                   retireExternalApiKey: async ({ externalApiKeyId, operationId, application }) =>
                     await brokerManagedProviderCustody.retireExternalApiKey({
                       identity: application.implementationIdentity,
@@ -3984,7 +3982,6 @@ export async function startDaemon(
                 };
                 const runtime = await startDaemonProviderBrokerRuntimeWithCustody({
                   runtime: runtimeInput,
-                  api,
                   apiMachine: brokerApiMachine,
                   custody: brokerManagedProviderCustody,
                 });

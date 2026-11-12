@@ -1,3 +1,8 @@
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, ProviderBrokerActionExecuteRequestV3Schema, ProviderBrokerActionExecuteResponseV3Schema, type SignedProviderBrokerActionRouteGrantV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import fastify, { errorCodes, type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { Readable } from 'node:stream';
 import { constants } from 'node:os';
@@ -31,6 +36,13 @@ export type ProviderBrokerApplicationStreamTarget = Readonly<{
     localCapability: string;
 }>;
 
+export type ProviderBrokerActionStreamContext = Readonly<{
+    kind: 'action_operation';
+    authority: SignedProviderBrokerActionRouteGrantV3;
+    execute(request: Readonly<{ input: JsonValue; signal: AbortSignal }>): Promise<ActionExecuteResult>;
+}>;
+type ApplicationStreamContext = ProviderBrokerAuthenticatedStreamContext | ProviderBrokerActionStreamContext;
+
 export type StartedProviderBrokerApplicationServer = Readonly<{
     app: FastifyInstance;
     /** Runner-owned access endpoint; its request owner obtains current daemon custody. */
@@ -39,6 +51,7 @@ export type StartedProviderBrokerApplicationServer = Readonly<{
         context: ProviderBrokerAuthenticatedStreamContext,
         admissionSignal?: AbortSignal,
     ): Promise<ProviderBrokerApplicationStreamTarget>;
+    createActionStreamTarget(context: ProviderBrokerActionStreamContext, admissionSignal?: AbortSignal): Promise<ProviderBrokerApplicationStreamTarget>;
     close(): Promise<void>;
 }>;
 
@@ -107,7 +120,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         request(request: ManagedServiceRequest): ReturnType<ProviderBrokerRequestHandler>;
     }>;
 }>): Promise<StartedProviderBrokerApplicationServer> {
-    const contextsByRemotePort = new Map<number, ProviderBrokerAuthenticatedStreamContext>();
+    const contextsByRemotePort = new Map<number, ApplicationStreamContext>();
     const proxies = new Set<FirstBytesLocalCapabilityProxy>();
     const streamLifetimes = new Set<Pick<ProviderBrokerApplicationStreamLifetime, 'close' | 'retire'>>();
     const app = fastify({ logger: false });
@@ -131,7 +144,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     const requestDiagnostic = (request: FastifyRequest) => {
         const remotePort = request.raw.socket.remotePort;
         const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
-        if (!context || context.kind === 'external') return { applicationRequestId: request.id };
+        if (!context || context.kind === 'external' || context.kind === 'action_operation') return { applicationRequestId: request.id };
         const consumer = context.authority.payload.consumer;
         const grantId = closeRequestIdSchema.safeParse(context.authority.payload.grantId);
         return { applicationRequestId: request.id,
@@ -246,6 +259,39 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         })()));
     };
 
+    app.post(PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3, async (request, reply) => {
+        const remotePort = request.raw.socket.remotePort;
+        const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
+        if (!context || context.kind !== 'action_operation') return reply.code(403).send({ ok: false, reasonCode: 'resource_forbidden' });
+        const parsed = ProviderBrokerActionExecuteRequestV3Schema.safeParse(request.body);
+        if (!parsed.success) return reply.code(400).send({ ok: false, reasonCode: 'invalid_request' });
+        const actionId = parseQualifiedPluginActionId(context.authority.payload.consumer.actionId);
+        if (!actionId || computeActionInputApprovalDigestV1(formatQualifiedPluginActionId(actionId), parsed.data.input) !== context.authority.payload.inputDigest) {
+            return reply.code(403).send({ ok: false, reasonCode: 'resource_forbidden' });
+        }
+        // One admitted stream executes one finite Action, even when the peer
+        // pipelines HTTP requests on its authenticated TCP connection.
+        contextsByRemotePort.delete(remotePort!);
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        request.raw.once('aborted', abort);
+        reply.raw.once('close', abort);
+        try {
+            const execution = await context.execute({ input: parsed.data.input, signal: controller.signal });
+            controller.signal.throwIfAborted();
+            return reply.send(ProviderBrokerActionExecuteResponseV3Schema.parse({ ok: true, execution }));
+        } catch (error) {
+            const failure = error instanceof ProviderBrokerApplicationFailureError ? error.failure
+                : { ok: false as const, reasonCode: isConnectedAccountSourceReconnectRequiredError(error)
+                    ? 'connected_service_credential_reconnect_required' as const : 'broker_unavailable' as const };
+            return reply.code(failure.reasonCode === 'broker_unavailable' ? 503 : 403)
+                .send(ProviderBrokerActionExecuteResponseV3Schema.parse(failure));
+        } finally {
+            request.raw.off('aborted', abort);
+            reply.raw.off('close', abort);
+        }
+    });
+
     app.post(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, async (request, reply) => {
         const remotePort = request.raw.socket.remotePort;
         const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
@@ -292,7 +338,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                     if (typeof value === 'string') headers[name] = value;
                 }
                 const localConsumer = !context ? input.localConsumer : undefined;
-                if (localConsumer ? !localConsumer.authorize(headers) : !context || context.kind === 'external') {
+                if (localConsumer ? !localConsumer.authorize(headers) : !context || context.kind === 'external' || context.kind === 'action_operation') {
                     return reply.code(403).send();
                 }
                 // The Agent's bearer is its local capability, meaningful only to
@@ -346,7 +392,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
 
     await app.listen({ host: '127.0.0.1', port: 0 });
     const createStreamTarget = async (
-        context: ProviderBrokerAuthenticatedStreamContext,
+        context: ApplicationStreamContext,
         admissionSignal?: AbortSignal,
     ): Promise<ProviderBrokerApplicationStreamTarget> => {
         // Admission owns an unclaimed target. Once the one-shot capability is
@@ -388,6 +434,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         app,
         ...(input.localConsumer ? { localConsumerEndpointUrl: `http://127.0.0.1:${loopbackPort(app)}` } : {}),
         createStreamTarget,
+        createActionStreamTarget: createStreamTarget,
         close: async () => {
             await Promise.all([...proxies].map(async (proxy) => await proxy.close()));
             await Promise.all([...streamLifetimes].map(async (lifetime) => await lifetime.close()));

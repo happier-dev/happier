@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type {
   ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -326,6 +327,10 @@ describe('public managed Provider runtime start coordinator', () => {
   });
 
   it.each([
+    { error: new AggregateError([new PluginError({ code: 'plugin_managed_service_establishment_failed', message: 'Managed authentication refused',
+      failureCause: { phase: 'providers.authenticate', errorClass: 'Error', errorCode: 'provider_endpoint_auth_required',
+        nativeErrorCode: 'GATEWAY_AUTH_DENIED', httpStatus: 401 },
+    }), new Error('Secondary cleanup failure')]), expected: { phase: 'runtime_start', errorClass: 'Error', errorCode: 'plugin_managed_service_establishment_failed', message: 'Managed authentication refused' } },
     { error: new PluginError({ code: 'plugin_managed_service_establishment_failed', message: 'Managed process exited', details: {
       establishmentFailure: { cause: 'process_exited', exitCode: 17, signal: 'SIGTERM', lastStderrLine: 'Error: bind failed; Authorization: Bearer fixture-secret\nsecond stderr line' },
     } }), expected: { phase: 'runtime_start', errorClass: 'Error', errorCode: 'plugin_managed_service_establishment_failed', exitCode: 17, signal: 'SIGTERM', message: 'Managed process exited', stderrLine: expect.stringContaining('Error: bind failed') } },
@@ -345,13 +350,18 @@ describe('public managed Provider runtime start coordinator', () => {
       signal: new AbortController().signal,
       launchResourceScope: createProviderLaunchResourceScope(),
     });
-    expect(result).toEqual({ ok: false, code: 'managed_provider_start_failed', startupFailure: expected });
+    expect(result).toEqual({ ok: false, code: 'managed_provider_start_failed', startupFailure: {
+      ...expected, failureCause: normalizeActionExecutorThrownError(
+        error instanceof AggregateError ? error.errors[0] : error, 'providers.runtime_start',
+      ).failureCause,
+    } });
     expect(JSON.stringify(result)).not.toContain('private');
     expect(JSON.stringify(result)).not.toContain('fixture-secret');
-    expect(JSON.stringify(result)).not.toContain('second stderr line');
+    if (result.ok) throw new Error('Expected runtime startup refusal');
+    expect(result.startupFailure?.stderrLine ?? '').not.toMatch(/[\r\n]/u);
   });
 
-  it('retains a redacted first-line cause for the recorded plain runtime_start Error shape', async () => {
+  it('retains a redacted single-line cause for the recorded plain runtime_start Error shape', async () => {
     const runtime = resolvedRuntime(Object.freeze({ start: async () => {
       throw new Error('CLIProxyAPI managed wrapper identity mismatch; Authorization: Bearer fixture-secret\nignored second line');
     } }));
@@ -367,7 +377,8 @@ describe('public managed Provider runtime start coordinator', () => {
       phase: 'runtime_start', errorClass: 'Error', message: expect.stringContaining('CLIProxyAPI managed wrapper identity mismatch'),
     } });
     expect(JSON.stringify(result)).not.toContain('fixture-secret');
-    expect(JSON.stringify(result)).not.toContain('ignored second line');
+    if (result.ok) throw new Error('Expected runtime startup refusal');
+    expect(result.startupFailure?.message ?? '').not.toMatch(/[\r\n]/u);
   });
 
   it('reports cancellation after Provider admission without misclassifying it as authorization drift', async () => {

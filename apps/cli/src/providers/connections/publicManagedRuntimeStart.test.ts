@@ -34,11 +34,17 @@ import { createPublicManagedProviderRuntimeStartOperation } from './publicManage
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { reloadConfiguration } from '@/configuration';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { createAccountConnectionManagedConsumerSourceOpen } from '@/providers/broker/accountConnectionSource';
+import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from '@/providers/broker/connectedServicesSource';
+import { createTeamCredentialBrokerSourceOwner } from '@/providers/broker/teamCredentialBrokerSourceOwner';
+import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
 import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
 import { createManagedProviderExplicitStartCustody } from './publicManagedRuntimeStart';
@@ -53,10 +59,23 @@ import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settin
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { logger } from '@/ui/logger';
 
+async function withManagedProviderTestHome<T>(
+  options: Parameters<typeof withConfiguredDaemonTestHome>[0],
+  run: (context: { homeDir: string }) => Promise<T>,
+): Promise<T> {
+  return await withConfiguredDaemonTestHome(options, async context => {
+    // A saved Home profile supplies both halves of the Action executor's
+    // exact target, just as a signed-in daemon does in production.
+    await writeDaemonSettingsFixture(context.homeDir);
+    reloadConfiguration();
+    return await run(context);
+  });
+}
+
 it('retains the runtime startup cause in the explicit-start refusal log through the real registry', async () => {
   const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
   onTestFinished(() => diagnostic.mockRestore());
-  await withConfiguredDaemonTestHome({ prefix: 'managed-start-cause-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'managed-start-cause-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir, controller });
     try {
@@ -66,10 +85,13 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
         request: { reason: 'explicitStartLocal', endpointTemplateIds: ['responses'] },
         purposeBindings: { v: 1, bindings: [] }, isAuthorizationCurrent: () => true,
         revalidateAuthorization: async () => true,
-      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+      })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable', failureCause: {
+        phase: 'providers.runtime_start', errorClass: 'Error', errorCode: null, httpStatus: null,
+      } });
       expect(diagnostic).toHaveBeenCalledWith('[Provider] Managed runtime start refused', {
         startFailureCode: 'managed_provider_start_failed',
-        startupFailure: { phase: 'runtime_start', errorClass: 'Error', message: expect.stringContaining('Worker must not start') },
+        startupFailure: { phase: 'runtime_start', errorClass: 'Error', message: expect.stringContaining('Worker must not start'),
+          failureCause: { phase: 'providers.runtime_start', errorClass: 'Error', errorCode: null, httpStatus: null } },
       });
 
     } finally { await fixture.cleanup(); }
@@ -77,7 +99,7 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
 });
 
 it('refuses unavailable Account authority without falling back to the daemon gateway owner', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'managed-start-account-authority-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'managed-start-account-authority-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -97,7 +119,7 @@ it('refuses unavailable Account authority without falling back to the daemon gat
 });
 
 it('finishes an admitted physical gateway Start across policy drift and refuses the next Start', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'managed-start-admission-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'managed-start-admission-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -131,7 +153,7 @@ it('finishes an admitted physical gateway Start across policy drift and refuses 
 it.each(['cold', 'activated'] as const)('acquires connected-account broker custody from a %s runtime without inventing a Provider Connection gateway', async (activation) => {
   const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
   onTestFinished(() => diagnostic.mockRestore());
-  await withConfiguredDaemonTestHome({ prefix: 'broker-operation-consumer-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'broker-operation-consumer-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -178,7 +200,7 @@ it.each(['cold', 'activated'] as const)('acquires connected-account broker custo
 });
 
 it('refuses initial Home consumer admission before starting a physical gateway', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'broker-denied-admission-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'broker-denied-admission-' }, async ({ homeDir }) => {
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller: createPluginReloadController(), physicalGateway: true });
     const gateway = fixture.gateway!;
@@ -202,7 +224,7 @@ it('refuses initial Home consumer admission before starting a physical gateway',
 });
 
 it('revalidates only the exact broker claim and Home consumer before retiring its process', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'broker-exact-currentness-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'broker-exact-currentness-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -261,7 +283,7 @@ it('revalidates only the exact broker claim and Home consumer before retiring it
 it('records only closed broker and Provider reasons when source custody acquisition is refused', async ({ onTestFinished }) => {
   const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
   onTestFinished(() => diagnostic.mockRestore());
-  await withConfiguredDaemonTestHome({ prefix: 'broker-acquisition-diagnostic-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'broker-acquisition-diagnostic-' }, async ({ homeDir }) => {
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller: createPluginReloadController(), physicalGateway: true });
     const gateway = fixture.gateway!;
@@ -285,7 +307,7 @@ it('records only closed broker and Provider reasons when source custody acquisit
 });
 
 it.each([['selection', 1], ['admission', 2]] as const)('preserves a transient Home failure during explicit Start %s and recovers the same connection', async (_phase, failedRead) => {
-  await withConfiguredDaemonTestHome({ prefix: 'gateway-start-home-outage-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'gateway-start-home-outage-' }, async ({ homeDir }) => {
     let reads = 0;
     const resolvedAccounts: string[] = [];
     let unavailable = true;
@@ -345,8 +367,73 @@ it.each([['selection', 1], ['admission', 2]] as const)('preserves a transient Ho
   });
 });
 
+it('rejoins one admitted Run source through real registry custody after Home source publication disappears', async () => {
+  await withManagedProviderTestHome({ prefix: 'broker-run-retained-source-' }, async ({ homeDir }) => {
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller, physicalGateway: true, sourceEnvelopeTransport: 'cpx-v1' });
+    const gateway = fixture.gateway!;
+    const source = { v: 1 as const, kind: 'connected_account' as const,
+      target: gateway.purposeBindings.bindings[0]!.target, credentialIncarnation: 'credential-row-1' };
+    const application = { agentTargetKey: fixture.agentTargetKey, implementationIdentity: gateway.identity,
+      endpointTemplateId: 'api', protocol: 'openai-responses' as const };
+    const resource: TeamCredentialResourceSummaryV1 = {
+      id: 'resource-1', teamId: 'team-1', custodianAccountId: 'custodian-account', sourceOwnerDisplayName: null,
+      displayName: 'Shared gateway', enabled: true, revision: 7, source,
+      sourcePresentation: { kind: 'connected_service', service: source.target.account.service },
+      directExportSupport: 'unsupported', activeUsageLimitCount: 0, requestPolicy: null,
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed',
+      brokerPlacement: { kind: 'machine', machineId: fixture.machineId }, allMembersAllowedRoutes: null,
+      groupGrants: [], memberGrants: [], readiness: { kind: 'available' }, recoveryAction: null,
+      brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
+      capabilities: { manageAudience: false, managePolicy: false, manageLimits: false, updateBrokerPlacement: false,
+        updateDeliveryPolicy: false, narrowDisclosure: false, widenDisclosure: false, refreshDirectMaterial: false,
+        disable: false, enable: false, delete: false },
+      createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+    };
+    const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
+    const withRegistry: Parameters<typeof createConnectedServicesBrokerSourceOpen>[0]['withRegistry'] =
+      async read => await read(fixture.contributes);
+    let sourceAvailable = true;
+    let resourceReads = 0;
+    const sourceOwner = createTeamCredentialBrokerSourceOwner({ machineId: fixture.machineId, custody,
+      selectConnectedServicesSourceMember: createConnectedServicesBrokerSourceMemberSelect({ withRegistry,
+        resolveBindingIntentSelection: gateway.purposeBindingOwner.resolveBindingIntentSelection }),
+      openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({ withRegistry, custody,
+        resolveBindingIntentSelection: gateway.purposeBindingOwner.resolveBindingIntentSelection,
+        readResource: async () => { resourceReads++; return sourceAvailable ? resource : null; } }),
+      openProviderConnectionSource: async () => { throw new Error('Unexpected Provider Connection source'); },
+    });
+    const request = { source, resourceId: resource.id, resourceRevision: resource.revision,
+      brokerMachineId: fixture.machineId, operation: { kind: 'execution_run' as const, executionRunId: 'retained-run' },
+      application, sourceRevision: 'source-revision-1', signal: new AbortController().signal };
+    const invoke = async (opened: Awaited<ReturnType<typeof sourceOwner.acquire>>) => {
+      expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true });
+      if (!opened.ok) throw new Error('Expected admitted source');
+      const response = await opened.projection.access.request({ method: 'POST', pathAndQuery: '/v1/responses',
+        body: new TextEncoder().encode(JSON.stringify({ model: 'example', input: 'hello' })) });
+      expect(response.status).toBe(200);
+      return opened;
+    };
+    try {
+      const first = await invoke(await sourceOwner.acquire(request));
+      const readsAtAdmission = resourceReads;
+      expect(readsAtAdmission).toBeGreaterThan(0);
+      sourceAvailable = false;
+      const joined = await invoke(await sourceOwner.acquire(request));
+      expect(resourceReads).toBe(readsAtAdmission);
+      await joined.projection.cleanup();
+      await first.projection.cleanup();
+      await sourceOwner.retireOperation({ operation: request.operation, application });
+      await expect(sourceOwner.acquire(request)).resolves.toMatchObject({
+        ok: false, reasonCode: 'source_unavailable', sourceOpenFailureReason: 'resource_not_current',
+      });
+    } finally { await fixture.cleanup(); }
+  });
+});
+
 it('G1 releases only the deleted connection explicit Start claim through retained custody', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'gateway-delete-retention-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'gateway-delete-retention-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -408,7 +495,7 @@ it('G1 releases only the deleted connection explicit Start claim through retaine
 });
 
 it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained consumers through %s custody without changing native access or replaying input', async recovery => {
-  await withConfiguredDaemonTestHome({ prefix: 'gateway-outage-recovery-' }, async ({ homeDir }) => {
+  await withManagedProviderTestHome({ prefix: 'gateway-outage-recovery-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true, holdResponseForInput: 'interrupted input' });
@@ -531,6 +618,91 @@ it.each(['Start', 'next-request', 'new-stream'] as const)('G1 recovers retained 
       await Promise.all(consumers.map(consumer => consumer.cleanup()));
       await Promise.all(opened.map(access => access.retire()));
       await fixture.cleanup();
+    }
+  });
+});
+
+it('finishes an in-flight physical response when the admitted job ends, then refuses the next request', async () => {
+  await withManagedProviderTestHome({ prefix: 'gateway-inflight-withdrawal-' }, async ({ homeDir }) => {
+    let releaseBody: (() => void) | undefined;
+    const bodyReleased = new Promise<void>(resolve => { releaseBody = resolve; });
+    let upstreamRequests = 0;
+    const upstream = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* drain the actual upstream request */ }
+      upstreamRequests++;
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('first ');
+      await bodyReleased;
+      response.end('second');
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Missing upstream HTTP boundary');
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+      controller, physicalGateway: true, upstreamUrl: `http://127.0.0.1:${address.port}/v1/responses` });
+    const gateway = fixture.gateway!;
+    const identity = gateway.identity;
+    const declaration = fixture.contributes.providersByContributionKey.get(`${identity.pluginId}/${identity.localId}`)!.definition;
+    const signal = new AbortController().signal;
+    const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
+    const models = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, happyHomeDir: homeDir,
+      featureGate: { isEnabled: () => true }, registry: fixture.contributes, getAccountSettingsSnapshot: () => fixture.snapshot,
+      acquireRuntimeLease: async () => {
+        const lease = controller.tryAcquireRuntimeRegistry();
+        if (!lease) throw new Error('Expected serving fixture registry');
+        return lease;
+      }, resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
+      modelSettingsMutation: async (): Promise<never> => { throw new Error('No model mutation'); },
+    });
+    let admitted = true;
+    const application = { agentTargetKey: fixture.agentTargetKey, implementationIdentity: identity,
+      endpointTemplateId: 'api', protocol: 'openai-responses' as const };
+    const source = { kind: 'account_connection' as const, connectionId: fixture.record.connectionId,
+      expectedConnectionSecurityFingerprint: fixture.record.connectionSecurityFingerprint,
+      expectedManagedRuntimeBindingFingerprint: createProviderManagedRuntimeBindingFingerprintV1({ implementationIdentity: identity,
+        managedRuntime: declaration.managedRuntime!, purposeBindings: gateway.purposeBindings }) };
+    const open = createAccountConnectionManagedConsumerSourceOpen({ homeId: 'home', accountId: 'account', machineId: fixture.machineId,
+      custody, expectedAccountSettingsScopeKey: fixture.snapshot.scopeKey!, getAccountSettingsSnapshot: () => fixture.snapshot,
+      withRegistry: async read => await read(fixture.contributes), resolveBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
+      admitConsumer: async () => admitted,
+      projectModels: request => models.projectModelsForAccount(request, { getAccountSettingsSnapshot: () => fixture.snapshot,
+        resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent, signal, isCurrent: () => admitted }),
+    });
+    const access = await open({ source, application, consumer: { kind: 'session', sessionId: 'inflight-session' },
+      consumerMachineId: fixture.machineId, signal });
+    if (!access) throw new Error('Expected admitted gateway consumer');
+    const consumer = await startManagedProviderConsumerApplication({ signal, endpointUrl: access.access.endpointUrl('api')!,
+      credentialTransport: declaration.credential!.transports[0]!, request: async request => await access.revalidate(request.signal)
+        ? { ok: true, response: await access.access.request(request) } : { ok: false, reasonCode: 'resource_forbidden' } });
+    try {
+      const first = await fetch(`${consumer.endpointUrl}/responses`, { method: 'POST',
+        headers: { authorization: consumer.renderedCredential, 'content-type': 'application/json' },
+        body: JSON.stringify({ input: 'in flight' }) });
+      expect(first.status).toBe(200);
+      const reader = first.body!.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('first ');
+      expect(upstreamRequests).toBe(1);
+      admitted = false;
+      expect(await custody.revalidateRetainedClaims()).toBe(0);
+      const refused = await fetch(`${consumer.endpointUrl}/responses`, { method: 'POST',
+        headers: { authorization: consumer.renderedCredential, 'content-type': 'application/json' },
+        body: JSON.stringify({ input: 'after withdrawal' }) });
+      expect(refused.status).toBe(403);
+      expect(upstreamRequests).toBe(1);
+      const pid = Number(await readFile(join(gateway.directory, 'gateway-started'), 'utf8'));
+      expect(process.kill(pid, 0)).toBe(true);
+      releaseBody();
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe('second');
+      expect((await reader.read()).done).toBe(true);
+    } finally {
+      releaseBody();
+      await consumer.cleanup();
+      await access.retire();
+      await fixture.cleanup();
+      upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
     }
   });
 });

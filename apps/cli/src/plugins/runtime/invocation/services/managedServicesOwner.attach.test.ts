@@ -155,8 +155,7 @@ describe('managed Provider attached endpoint lifetime', () => {
                     protocol: 'openai-responses' },
             }, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: Buffer.alloc(64).toString('base64url') } });
             const unexpectedTeamRequest = async (): Promise<never> => { throw new Error('Personal forwarding entered Team policy'); };
-            const broker = createProviderBrokerRequestHandler({ resolveTrustRoots: () => [], nowMs: Date.now,
-                resolveRequestPolicy: unexpectedTeamRequest, createRequestId: () => 'attached-http', admit: unexpectedTeamRequest });
+            const broker = createProviderBrokerRequestHandler({ resolveRequestPolicy: unexpectedTeamRequest, createRequestId: () => 'attached-http', admit: unexpectedTeamRequest });
             // Authenticated machine-stream admission is the external boundary;
             // the personal handler, sanitizer, managed access and HTTP stay real.
             const remote = await broker({ context: { kind: 'account_connection', authority,

@@ -1,3 +1,4 @@
+import { supportsMachineProviderBrokerProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { createHash } from "node:crypto";
 import { TeamCredentialBrokerPlacementV1Schema, type TeamCredentialBrokerPlacementV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -78,6 +79,17 @@ export function resolveTeamCredentialBrokerPlacementFingerprint(
         resource.id,
         placement.kind,
         placement.kind === "machine" ? placement.machineId : placement.poolId,
+    ])).digest("hex");
+}
+
+/** The signed V1 broker job binds its admitted resource revision as well as its location. */
+export function resolveTeamCredentialBrokerJobFingerprint(
+    placementFingerprint: string | null,
+    resourceRevision: number,
+): string | null {
+    if (placementFingerprint === null) return null;
+    return createHash("sha256").update(JSON.stringify([
+        "team-credential-broker-job-v1", placementFingerprint, resourceRevision,
     ])).digest("hex");
 }
 
@@ -325,6 +337,7 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
         resource: TeamCredentialBrokerPlacementResource;
         presence: MachineDaemonPresenceInventory;
         requestKey: string;
+        requiredProtocolVersion?: 1 | 2 | 3;
         pinnedMachineId?: string | null;
         /** Private peer opens filter before source RPC; relay consumers omit it. */
         poolInitiator?: Readonly<{ machineId: string; endpointId: string }>;
@@ -377,11 +390,18 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
             }
             candidateMachineIds = topologyCandidates;
         }
-        if (input.poolEligibleMachineIds === undefined) {
+        if (input.requiredProtocolVersion !== undefined) {
+            const required = input.requiredProtocolVersion;
+            const compatible = candidateMachineIds.filter(machineId => supportsMachineProviderBrokerProtocolVersion(
+                snapshot.value.machineOperationProtocolCapabilities?.get(machineId), required));
+            if (candidateMachineIds.length > 0 && compatible.length === 0) return { ok: false, error: 'update_required' };
+            candidateMachineIds = compatible;
+        }
+        if (input.poolEligibleMachineIds === undefined && input.requiredProtocolVersion === undefined) {
             return { ok: true, broker: null, poolSnapshot, candidateMachineIds };
         }
         const availableMachineIds = new Set(candidateMachineIds.filter((machineId) => (
-            input.poolEligibleMachineIds!.has(machineId)
+            input.poolEligibleMachineIds?.has(machineId) ?? true
         )));
         selectedMachineId = selectMachinePoolCandidate({
             purpose: "session",
@@ -400,6 +420,7 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
         custodianAccountId: input.resource.custodianAccountId,
         brokerMachineId: selectedMachineId,
         presence: input.presence,
+        ...(input.requiredProtocolVersion === undefined ? {} : { requiredProtocolVersion: input.requiredProtocolVersion }),
     });
     if (!broker.ok) return broker;
     return {

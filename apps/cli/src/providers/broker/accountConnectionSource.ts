@@ -63,6 +63,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
     const captured = input.getAccountSettingsSnapshot();
     if (!captured?.scopeKey || captured.scopeKey !== input.expectedAccountSettingsScopeKey) return null;
     const scopeKey = captured.scopeKey;
+    if (signal.aborted || !await input.admitConsumer(payload, signal)) return null;
     const catalog = captured.providerConnectionsCatalog?.status === 'ready'
       ? captured.providerConnectionsCatalog : await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey });
     if (catalog.status !== 'ready') return null;
@@ -137,21 +138,26 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
       operationClaim: { kind: 'providerBroker', operation: payload.consumer },
       sharedGateway: { homeId: input.homeId, accountId: input.accountId, connectionId: payload.source.connectionId,
         machineId: input.machineId, consumerId: JSON.stringify(payload.consumer) },
-      isSourceCurrent, revalidateOperationAuthorization: async currentSignal => await input.admitConsumer(payload, currentSignal),
-      retainedCurrentnessScope: {
-        facts: ['teams', 'team-credential-material', 'provider-connections', 'saved-secrets', 'connected-services', 'connected-catalog'],
-        connectedServiceRefs: source.purposeBindings.bindings.map(binding => (
-          binding.target.kind === 'account' ? binding.target.account.service : binding.target.service
-        )),
-      },
+      isSourceCurrent,
       callerSignal: signal,
     });
     if (!opened || 'unavailable' in opened) return null;
     return {
       access: opened.projection.access,
       revalidate: async (currentSignal = signal) => {
-        return !currentSignal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === scopeKey
-          && opened.isAuthorizationCurrent();
+        if (currentSignal.aborted || input.getAccountSettingsSnapshot()?.scopeKey !== scopeKey
+          || !opened.isAuthorizationCurrent()) return false;
+        // The Home checks only whether this signed Session/Run is still active.
+        // It does not re-evaluate source or model authority for admitted work.
+        let active: boolean;
+        try {
+          active = await input.admitConsumer(payload, currentSignal);
+        } catch {
+          // Unknown Home liveness refuses this request without withdrawing custody.
+          return false;
+        }
+        if (currentSignal.aborted) return false;
+        return active && opened.isAuthorizationCurrent();
       },
       cleanup: async () => await opened.projection.cleanup(),
       retire: async () => { await opened.retire(); await opened.projection.cleanup(); },

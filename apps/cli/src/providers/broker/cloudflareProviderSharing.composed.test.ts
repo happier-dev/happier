@@ -513,15 +513,7 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
         verifyAuthority: candidate => candidate.signature.valueBase64Url === opened.authority.signature.valueBase64Url }),
       authorizeModelCatalog: async request => authorizeTeamCredentialProviderModelCatalog({ authenticatedBrokerAccountId: home.custodian.id,
         authority: opened.authority, expectedResourceRevision: request.expectedResourceRevision,
-        readCurrentBrokerPresence: async () => brokerPresence(), verifyAuthority: () => true }),
-      // Production wiring (`startDaemonProviderBrokerRuntimeWithCustody`): the
-      // custodian's retained check is the Home catalog authorization.
-      revalidateOperationAuthorization: async ({ authority, expectedResourceRevision }) => {
-        const current = await authorizeTeamCredentialProviderModelCatalog({ authenticatedBrokerAccountId: home.custodian.id,
-          authority, expectedResourceRevision, readCurrentBrokerPresence: async () => brokerPresence(),
-          verifyAuthority: () => true });
-        return current.ok;
-      },
+        verifyAuthority: () => true }),
     });
     onTestFinished(runtime.close);
     const send = async () => {
@@ -565,26 +557,25 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     expect(await send()).toContain('HTTP/1.1 200');
     expect(processRequests).toHaveLength(3);
     expect(processRequests[2]!.headers['x-happier-provider-source-credential']).toBe(`Bearer ${rotatedToken}`);
-    // Tightening the Team sign-in policy is decided at admission only: the
-    // Team wake's retained check keeps this admitted route (the opening
-    // credential presented no evidence and would not qualify now).
+    // Tightening the Team sign-in policy is decided at admission only; a
+    // Team wake does not re-evaluate this route (the opening credential
+    // presented no evidence and would not qualify now).
     await db.team.update({ where: { id: home.team.id }, data: { authenticationPolicy: {
       v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'email_password' }] } } });
     expect(await custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(0);
     expect(await send()).toContain('HTTP/1.1 200');
     expect(processRequests).toHaveLength(4);
     await db.team.update({ where: { id: home.team.id }, data: { authenticationPolicy: { v: 1, mode: 'inherit' } } });
-    // Real audience withdrawal after the catalog/open. Home admission does not
-    // re-authorize each request of the admitted job; the Team-change wake runs
-    // the custodian's retained check, which withdraws the route, so the NEXT
-    // request cannot reach source custody or the process boundary, and a
-    // fresh open is refused at admission.
+    // Audience withdrawal must make the admitted lease inactive at the next
+    // request while a response already in flight can finish.
     expect(await inTx(tx => setTeamCredentialAudienceInTx(tx, { actorAccountId: home.custodian.id,
       authentication: teamAuthentication, input: { resourceId: resource.id, expectedRevision: resource.revision,
         allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] },
     }))).toMatchObject({ ok: true });
-    expect(await custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(1);
-    expect(await send()).not.toContain('HTTP/1.1 200');
+    expect(await custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(0);
+    const withdrawn = await send();
+    expect(withdrawn).toContain('HTTP/1.1 403');
+    expect(withdrawn).toContain('"code":"operation_not_current"');
     expect(processRequests).toHaveLength(4);
     const currentResource = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
     expect(await openTeamCredentialProviderBroker({ actorAccountId: home.creator.id,

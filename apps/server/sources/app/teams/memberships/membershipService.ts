@@ -18,6 +18,7 @@ import {
     type TeamMembershipLifetimeContext,
     resolveTeamMembershipContextInTx,
 } from "./effectiveMembership";
+import { advanceBrokerJobRevisionsForMembershipInTx } from '../credentials/brokerJobWithdrawal';
 
 export type TeamMemberAdmissionOutcome = "added" | "already_member";
 
@@ -212,10 +213,18 @@ export async function setTeamMembershipStatusInTx(
         change: { kind: "teamMembership", teamId: params.teamId },
         sessionAccessImpacts: params.sessionAccessImpacts,
     }, async () => {
+        const current = await tx.teamMembership.findUniqueOrThrow({
+            where: { id: params.membershipId }, select: { status: true },
+        });
         await tx.teamMembership.update({
             where: { id: params.membershipId },
             data: { status: params.status },
         });
+        if (current.status === 'active' && params.status === 'suspended') {
+            await advanceBrokerJobRevisionsForMembershipInTx(tx, {
+                teamId: params.teamId, teamMembershipId: params.membershipId,
+            });
+        }
     });
 }
 

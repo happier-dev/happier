@@ -37,6 +37,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
     catalog?: ProviderContributionV1['catalog'];
     catalogModels?: readonly ProviderCatalogProbeModelV1[];
     connectedAccountModels?: readonly Readonly<{ id: string; name: string }>[];
+    sourceEnvelopeTransport?: 'cpx-v1';
     holdResponseForInput?: string;
     upstreamUrl?: string;
 }>) {
@@ -90,7 +91,8 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
                         capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'supported' } }],
                     catalog: input.catalog ?? { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'example', name: 'Example' }] },
                     managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['api'],
-                        connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'], ...(input.connectedAccountModels ? { staticModels: input.connectedAccountModels, endpointTemplateIds: ['api'] } : {}) }],
+                        ...(input.sourceEnvelopeTransport ? { sourceEnvelopeTransport: input.sourceEnvelopeTransport } : {}),
+                        connectedAccounts: [{ purpose: 'upstream', title: { key: 'upstream.title', fallback: 'Upstream account' }, service: 'accounts', required: false, materializationKinds: ['httpHeaders'], endpointTemplateIds: ['api'], ...(input.connectedAccountModels ? { staticModels: input.connectedAccountModels } : {}) }],
                         requestAuthUses: [{ purpose: 'upstream', materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }] } }],
             } : {},
         }));
@@ -162,7 +164,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
             connectedAccounts: purposeBindingOwner,
             ...(serving ? { servingPluginOccurrences: serving.occurrencesByPluginId, retainedActivationRegistryLeases: serving.leases } : {}),
             managedProviderOperationAuthority: operationAuthority, resolveCurrentMachineId: () => 'machine',
-            externalActionHomeBinding: { serverId: configuration.activeServerId, serverIdentityId: 'home' },
+            externalActionHomeBinding: { serverId: configuration.activeServerId, serverApiUrl: configuration.apiServerUrl, serverIdentityId: 'home' },
             readDaemonRequesterWorkAttribution: () => {
                 const installation = readInstallationIdentityIfExistsSync(join(happyHomeDir, 'installation-identity.json'));
                 return projectDaemonRequesterWorkAttribution(installation ? { serverId: configuration.activeServerId,

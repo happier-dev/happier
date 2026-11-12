@@ -17,8 +17,8 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import {
     PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
-    admitTeamCredentialProviderBrokerRequest as admitTeamCredentialProviderBrokerRequestOwner,
-    authorizeTeamCredentialProviderModelCatalog as authorizeTeamCredentialProviderModelCatalogOwner,
+    admitTeamCredentialProviderBrokerRequest,
+    authorizeTeamCredentialProviderModelCatalog,
     openRunnerTeamCredentialProviderBroker as openRunnerTeamCredentialProviderBrokerOwner,
     openTeamCredentialProviderBroker as openTeamCredentialProviderBrokerOwner,
 } from './providerBrokerAdmission';
@@ -28,9 +28,12 @@ import {
     writeSessionTeamCredentialBindingsInTx,
 } from './sessionBinding';
 import { updateTeamCredentialResourceInTx } from './resourceUpdate';
-import { resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
 import { createExecutionRunBrokerCurrentnessResolver } from './executionRunBrokerAuthorityResolver';
-import { setTeamCredentialAudienceInTx } from './resourceAudience';
+import { revokeTeamCredentialAudienceForMembershipInTx, setTeamCredentialAudienceInTx } from './resourceAudience';
+import { applyTeamGroupContributionInTx } from '../groups/groupContributions';
+import { archiveTeamGroupForActorInTx } from '../groups/groupService';
+import { archiveTeamInTx } from '../lifecycle';
+import { setTeamMembershipStatusInTx } from '../memberships/membershipService';
 import { deleteTeamCredentialResourceInTx } from './resourceDelete';
 import { PrismaClient } from '../../../../generated/sqlite-client';
 import { readTeamCredentialCatalogInTx, readTeamCredentialResourceAdministrationInTx } from './resourceRead';
@@ -164,29 +167,6 @@ function openRunnerTeamCredentialProviderBroker(
     return openRunnerTeamCredentialProviderBrokerOwner(withCurrentPresence(input));
 }
 
-type CatalogInput = Parameters<typeof authorizeTeamCredentialProviderModelCatalogOwner>[0];
-function authorizeTeamCredentialProviderModelCatalog(
-    input: Omit<CatalogInput, 'readCurrentBrokerPresence'> & Partial<Pick<CatalogInput, 'readCurrentBrokerPresence'>> & Readonly<{
-        brokerPresence: import('@/app/machines/machineDaemonPresence').MachineDaemonPresenceInventory;
-    }>,
-) {
-    return authorizeTeamCredentialProviderModelCatalogOwner({
-        ...input,
-        readCurrentBrokerPresence: input.readCurrentBrokerPresence ?? (async () => input.brokerPresence),
-    });
-}
-
-type RequestAdmissionInput = Parameters<typeof admitTeamCredentialProviderBrokerRequestOwner>[0];
-/** Request admission reads no presence: the admitted job's broker is the caller.
- * Older fixtures still name the presence they opened with; it is not an input. */
-function admitTeamCredentialProviderBrokerRequest(
-    input: RequestAdmissionInput
-        & Readonly<{ brokerPresence?: import('@/app/machines/machineDaemonPresence').MachineDaemonPresenceInventory }>,
-) {
-    const { brokerPresence: _openPresence, ...request } = input;
-    return admitTeamCredentialProviderBrokerRequestOwner(request);
-}
-
 const FIXTURE_APPLICATION = {
     agentTargetKey: 'agent:happier.agent.codex/codex',
     implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
@@ -272,6 +252,10 @@ async function createBrokerFixture(
         team,
         broker,
         worker,
+        suspendRequester: async () => await inTx(tx => setTeamMembershipStatusInTx(tx, {
+            teamId: team.id, membershipId: requesterMembership.id,
+            accountId: requester.id, status: 'suspended',
+        })),
         createResource: async (connectionId: string) => await db.teamCredentialResource.create({ data: {
             teamId: team.id,
             custodianAccountId: custodian.id,
@@ -370,7 +354,6 @@ async function createBrokerFixture(
             generation?: boolean;
             modelId?: string;
             sourceMemberKey?: string;
-            brokerPresence?: typeof brokerPresence;
             resolveExecutionRunCurrentness?: OpenInput['resolveExecutionRunCurrentness'];
         }>) => await admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: custodian.id,
@@ -388,7 +371,6 @@ async function createBrokerFixture(
                 },
             },
             observedAt: new Date(Date.UTC(2026, 8, 23, 10, 0, 0, requestSequence += 1)),
-            brokerPresence: input.brokerPresence ?? brokerPresence,
             verifyAuthority: candidate => candidate.payload.grantId === input.authority.payload.grantId,
             ...(input.resolveExecutionRunCurrentness
                 ? { resolveExecutionRunCurrentness: input.resolveExecutionRunCurrentness }
@@ -403,7 +385,6 @@ async function createBrokerFixture(
                 authenticatedBrokerAccountId: custodian.id,
                 authority: input.authority,
                 expectedResourceRevision: input.resource.revision,
-                brokerPresence,
                 verifyAuthority: candidate => candidate.payload.grantId === input.authority.payload.grantId,
                 ...(input.resolveExecutionRunCurrentness
                     ? { resolveExecutionRunCurrentness: input.resolveExecutionRunCurrentness }
@@ -438,6 +419,83 @@ describe('Team credential Provider broker admission', () => {
         });
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['machine-agent37', 'machine-boat'] as const)('admits declared managed provider roles for %s under the requesting native Action', async plugin => {
+        const fixture = await createBrokerFixture(`finite-managed-${plugin}`);
+        const { PLUGIN_MANIFEST } = plugin === 'machine-agent37'
+            ? await import('../../../../../../packages/plugins/machine-agent37/src/manifest')
+            : await import('../../../../../../packages/plugins/machine-boat/src/manifest');
+        const { createReleaseLessDeclarationV1 } = await import('@/app/plugins/availability/currentDeclaration');
+        const { admitTeamCredentialActionDeclarationInTx } = await import('./actionDeclarationAdmission');
+        await db.accountPluginIntent.create({ data: { accountId: fixture.requester.id, pluginId: PLUGIN_MANIFEST.id,
+            enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(PLUGIN_MANIFEST) } });
+        const descriptor = PLUGIN_MANIFEST.contributes.machineProvisioners![0]!;
+        const service = { pluginId: PLUGIN_MANIFEST.id, localId: PLUGIN_MANIFEST.contributes.connectedAccountDescriptors![0]!.id };
+        const source = { v: 1 as const, kind: 'connected_account' as const, credentialIncarnation: 'owner-credential',
+            target: { kind: 'account' as const, account: { service, accountId: 'owner-cloud' } } };
+        for (const role of ['options', 'acquire'] as const) {
+            const localId = descriptor.actions[role]!;
+            const consumer = { kind: 'action_operation' as const, operationId: `native-${role}`,
+                actionId: `${PLUGIN_MANIFEST.id}/actions/${localId}`, pluginVersion: PLUGIN_MANIFEST.version,
+                purpose: { consumer: { pluginId: PLUGIN_MANIFEST.id, localId }, purpose: 'cloud-api' } };
+            const input = { accountId: fixture.requester.id, machineId: fixture.worker.id,
+                rootActionId: role === 'options' ? 'machines.provisioners.options' : 'machines.managed.acquire',
+                pluginVersion: PLUGIN_MANIFEST.version, consumer, source };
+            expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input)))
+                .toMatchObject({ ok: true, action: { id: localId } });
+            expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+                rootActionId: 'machines.managed.get' })))
+                .toEqual({ ok: false, reason: 'action_not_declared' });
+            expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+                consumer: { ...consumer, actionId: 'example.other/actions/options' } })))
+                .toEqual({ ok: false, reason: 'action_not_declared' });
+        }
+    });
+
+    it('admits a finite Action only for its current declared purpose and shared source', async () => {
+        const fixture = await createBrokerFixture('finite-declaration');
+        const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+        const { createReleaseLessDeclarationV1 } = await import('@/app/plugins/availability/currentDeclaration');
+        const { admitTeamCredentialActionDeclarationInTx } = await import('./actionDeclarationAdmission');
+        const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'example.cloud', version: '1.0.0',
+            displayName: 'Cloud', engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
+            hostAccess: { required: [{ id: 'cloud-api', capability: 'connectedAccounts', reason: 'Provision Machines',
+                scope: { serviceRefs: ['cloud'], operations: ['use'] } }], optional: [] },
+            contributes: { actions: [{ id: 'options', title: 'Options', scopes: ['machine'], surfaces: ['plugin'],
+                dangerLevel: 'safe', execution: { target: 'daemon' }, hostAccess: ['cloud-api'],
+                inputSchema: { type: 'object' }, resultSchema: { type: 'object' } }] } });
+        await db.accountPluginIntent.create({ data: { accountId: fixture.requester.id, pluginId: manifest.id,
+            enabled: true, desiredVersion: null, writableCollections: [], releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
+        const consumer = { kind: 'action_operation' as const, operationId: 'finite-request',
+            actionId: 'example.cloud/actions/options', pluginVersion: manifest.version,
+            purpose: { consumer: { pluginId: manifest.id, localId: 'options' }, purpose: 'cloud-api' } };
+        const source = { v: 1 as const, kind: 'connected_account' as const, credentialIncarnation: 'owner-credential',
+            target: { kind: 'account' as const, account: { service: { pluginId: manifest.id, localId: 'cloud' }, accountId: 'owner-cloud' } } };
+        const input = { accountId: fixture.requester.id, machineId: fixture.worker.id, rootActionId: consumer.actionId,
+            pluginVersion: manifest.version, consumer, source };
+        const admitted = await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input));
+        expect(admitted).toMatchObject({ ok: true, declaration: { version: manifest.version,
+            manifestDigestSha256: createReleaseLessDeclarationV1(manifest).manifestDigestSha256 }, action: { id: 'options' } });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+            rootActionId: 'action.invoke' }))).toEqual({ ok: false, reason: 'action_not_declared' });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+            rootActionId: 'action.invoke', admittedReviewedChildActionId: 'example.cloud/actions/other' })))
+            .toEqual({ ok: false, reason: 'action_not_declared' });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+            rootActionId: 'action.invoke', admittedReviewedChildActionId: consumer.actionId })))
+            .toMatchObject({ ok: true, action: { id: 'options' } });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+            consumer: { ...consumer, purpose: { ...consumer.purpose, purpose: 'undeclared' } } })))
+            .toEqual({ ok: false, reason: 'purpose_not_declared' });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, { ...input,
+            source: { ...source, target: { ...source.target, account: { ...source.target.account,
+                service: { pluginId: 'example.other', localId: 'cloud' } } } } })))
+            .toEqual({ ok: false, reason: 'source_not_declared' });
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: fixture.requester.id, pluginId: manifest.id } },
+            data: { enabled: false } });
+        expect(await inTx(tx => admitTeamCredentialActionDeclarationInTx(tx, input)))
+            .toEqual({ ok: false, reason: 'action_not_declared' });
+    });
 
     it.each(['connected_account', 'connected_pool'] as const)('preserves reconnect-required source health in %s broker admission', async kind => {
         const fixture = await createBrokerFixture(`reauth-${kind}`);
@@ -482,12 +540,12 @@ describe('Team credential Provider broker admission', () => {
         await db.serviceAccountToken.update({ where: { id: credential.id }, data: {
             metadata: { ...metadata, health: { v: 1, status: 'needs_reauth', reconnectRequired: true } },
         } });
-        // Admissions (retained check, open) report the reconnect requirement.
-        // A model request of the admitted job does not re-read source health:
-        // the broker's own source owner refuses it with the same code before
-        // asking the Home (CLI `preserves confirmed source reconnect…`).
+        // A fresh open reports source health. An admitted catalog or model
+        // request does not re-read that source's health.
         expect(await fixture.catalog({ resource, authority: opened.authority }))
-            .toMatchObject({ ok: false, reasonCode: 'connected_service_credential_reconnect_required' });
+            .toEqual({ ok: true });
+        expect(await fixture.catalog({ resource, authority: runOpened.authority, resolveExecutionRunCurrentness: resolveRun }))
+            .toEqual({ ok: true });
         expect(await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
             .toMatchObject({ ok: false, reasonCode: 'connected_service_credential_reconnect_required' });
         await db.serviceAccountToken.update({ where: { id: credential.id }, data: { metadata } });
@@ -515,10 +573,10 @@ describe('Team credential Provider broker admission', () => {
         } finally {
             sink.mockRestore();
         }
-        // The custodian's retained revalidation withdraws the existing route;
-        // model requests of the admitted job are not re-authorized.
+        // Machine access is decided on fresh admission; an admitted catalog
+        // read does not repeat that decision.
         await expect(fixture.catalog({ authority: opened.authority, resource }))
-            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+            .resolves.toEqual({ ok: true });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
     });
 
@@ -556,16 +614,13 @@ describe('Team credential Provider broker admission', () => {
                 authenticatedBrokerAccountId: fixture.custodian.id,
                 authority: opened.authority,
                 expectedResourceRevision: resource.revision,
-                brokerPresence: { state: 'known', machineIds: new Set([fixture.broker.id]) } as const,
                 verifyAuthority: (candidate: SignedProviderBrokerRouteGrantV1) => candidate.payload.grantId === opened.authority.payload.grantId,
-                readCurrentBrokerPresence: async (): Promise<never> => { throw new Error('private presence error never logged'); },
             };
             await expect(authorizeTeamCredentialProviderModelCatalog(authorityInput))
-                .resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
-            expectRecord('presence_read_failed', 'catalog');
-            // A model request of the admitted job reads no presence (its
-            // broker is the caller), so the unreadable presence refuses only
-            // the catalog check above and records nothing for the request.
+                .resolves.toEqual({ ok: true });
+            expect(sink).not.toHaveBeenCalled();
+            // Both admitted catalog and request reads use job activity only;
+            // presence is observed during the open above.
             await expect(admitTeamCredentialProviderBrokerRequest({
                 authenticatedBrokerAccountId: authorityInput.authenticatedBrokerAccountId,
                 verifyAuthority: authorityInput.verifyAuthority,
@@ -752,10 +807,10 @@ describe('Team credential Provider broker admission', () => {
             }
             // Source/member withdrawal is not re-read per model request.
             if (kind === 'connected_account') {
-                // A removed account source: the custodian's retained check
-                // withdraws the route and the next acquisition is refused.
+                // Source removal affects the next acquisition. The already
+                // admitted catalog read does not re-read that source.
                 expect(await fixture.catalog({ resource, authority: opened.authority }))
-                    .toEqual({ ok: false, reasonCode: 'resource_unavailable' });
+                    .toEqual({ ok: true });
                 expect(await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
                     .toMatchObject({ ok: false });
             } else {
@@ -1196,7 +1251,7 @@ describe('Team credential Provider broker admission', () => {
         }
     });
 
-    it('admits a view-granted foreign initiator using custodian presence and rechecks Machine grant revocation', async () => {
+    it('admits a view-granted foreign initiator once and enforces Machine grant revocation on fresh opens', async () => {
         const fixture = await createBrokerFixture('foreign-initiator');
         const resource = await fixture.createResource('connection-foreign-initiator');
         const session = await fixture.createSession();
@@ -1270,12 +1325,13 @@ describe('Team credential Provider broker admission', () => {
                 actorAccountId: fixture.custodian.id, machineId: fixture.worker.id,
                 principal: { kind: 'account', accountId: fixture.requester.id },
             }));
-            // Revocation withdraws the route through the retained (catalog)
-            // check; the admitted job's requests are not re-authorized.
-            expect(await fixture.catalog({ resource, authority: opened.authority })).toMatchObject({ ok: false });
+            // Fresh opens re-admit Machine access. The existing job's catalog
+            // read and transport renewal consume the original admission.
+            expect(await fixture.catalog({ resource, authority: opened.authority })).toEqual({ ok: true });
             const readsBeforeRefusal = { projectionReads, presenceReads: presenceRooms.length };
             expect((await open()).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
-            expect((await open(opened.authority)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+            expect({ projectionReads, presenceReads: presenceRooms.length }).toEqual(readsBeforeRefusal);
+            expect((await open(opened.authority)).json()).toMatchObject({ ok: true });
             expect({ projectionReads, presenceReads: presenceRooms.length }).toEqual(readsBeforeRefusal);
             await inTx(tx => setMachineAccessGrantInTx(tx, {
                 actorAccountId: fixture.custodian.id, machineId: fixture.worker.id,
@@ -1431,13 +1487,11 @@ describe('Team credential Provider broker admission', () => {
                     target: { machineId: fixture.worker.id, endpointId: '1'.repeat(64) },
                 } } });
                 expect(projectionReads).toBe(1);
-                const brokerPresence = { state: 'partial' as const, machineIds: new Set([fixture.worker.id]) };
-                await expect(fixture.admit({ authority: opened.authority, resource, brokerPresence, requestId: 'same-machine-before-revocation' }))
+                await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'same-machine-before-revocation' }))
                     .resolves.toMatchObject({ ok: true, brokerMachineId: fixture.worker.id });
-                await db.teamMembership.update({ where: { teamId_accountId: { teamId: fixture.team.id, accountId: fixture.requester.id } },
-                    data: { status: 'suspended' } });
+                await fixture.suspendRequester();
                 await expect(fixture.catalog({ authority: opened.authority, resource }))
-                    .resolves.toMatchObject({ ok: false });
+                    .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             }
         } finally {
             await app.close();
@@ -1472,12 +1526,9 @@ describe('Team credential Provider broker admission', () => {
         });
         await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'before-revocation' }))
             .resolves.toMatchObject({ ok: true, brokerMachineId: fixture.broker.id });
-        await db.teamMembership.update({
-            where: { teamId_accountId: { teamId: fixture.team.id, accountId: fixture.requester.id } },
-            data: { status: 'suspended' },
-        });
+        await fixture.suspendRequester();
         await expect(fixture.catalog({ authority: opened.authority, resource }))
-            .resolves.toMatchObject({ ok: false });
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
     });
 
     it.each(['account', 'terminal'] as const)('ends broker authority when its exact %s credential is revoked', async kind => {
@@ -1543,7 +1594,7 @@ describe('Team credential Provider broker admission', () => {
     });
 
     it.each(['machine-to-pool', 'pool-to-pool', 'pool-to-machine'] as const)(
-        'ends established Session and Run authority on resource relocation %s, not on policy or Pool-member edits',
+        'ends established Session and Run authority on resource relocation %s, not on presentation or Pool-member edits',
         async (relocation) => {
             const fixture = await createBrokerFixture(relocation);
             const pools = await Promise.all(['original', 'replacement'].map(name => db.machinePool.create({ data: {
@@ -1568,9 +1619,10 @@ describe('Team credential Provider broker admission', () => {
                 authentication: TEST_AUTHENTICATION, resolveExecutionRunCurrentness: resolveRun });
             if (!sessionOpen.ok || !runOpen.ok) throw new Error('expected initial broker opens');
 
-            // Revisions and selection membership are not ongoing operation authority.
+            // Presentation and Pool membership do not change the admitted job.
+            // A resource revision change below does end that job.
             resource = await db.teamCredentialResource.update({ where: { id: resource.id }, data: {
-                displayName: 'Updated policy presentation', revision: { increment: 1 },
+                displayName: 'Updated policy presentation',
             } });
             await db.machinePoolMember.deleteMany({ where: { poolId: pools[0].id } });
             await expect(fixture.admit({ authority: sessionOpen.authority, resource, requestId: 'same-placement' }))
@@ -1592,18 +1644,18 @@ describe('Team credential Provider broker admission', () => {
             } });
             const usageBefore = await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } });
             await expect(fixture.admit({ authority: sessionOpen.authority, resource, requestId: 'relocated-session' }))
-                .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.admit({ authority: runOpen.authority, resource, requestId: 'relocated-run',
-                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.catalog({ authority: sessionOpen.authority, resource }))
-                .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.catalog({ authority: runOpen.authority, resource,
-                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
-                refreshAuthority: sessionOpen.authority })).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                refreshAuthority: sessionOpen.authority })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.open({ resource, consumer: runOpen.authority.payload.consumer,
                 authentication: TEST_AUTHENTICATION, refreshAuthority: runOpen.authority,
-                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(usageBefore);
             await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
                 .resolves.toMatchObject({ ok: true });
@@ -1734,7 +1786,11 @@ describe('Team credential Provider broker admission', () => {
             consumer: { kind: 'session' as const, sessionId: session.id },
             application: canonicalApplication,
         };
-        const tryOpen = (request: ProviderBrokerOpenRequestV1, response: unknown) => openTeamCredentialProviderBroker({
+        const tryOpen = (
+            request: ProviderBrokerOpenRequestV1,
+            response: unknown,
+            resolveExecutionRunCurrentness?: OpenInput['resolveExecutionRunCurrentness'],
+        ) => openTeamCredentialProviderBroker({
             actorAccountId: requester.id,
             authentication: { env: process.env, authority: 'present_user', authenticationEvidence: [] },
             request,
@@ -1745,6 +1801,7 @@ describe('Team credential Provider broker admission', () => {
             // Deliberately invalid: any path that reaches signing fails the test.
             signingKey: { keyId: 'must-not-sign', secretKey: new Uint8Array() },
             readProviderProjection: async () => response,
+            ...(resolveExecutionRunCurrentness ? { resolveExecutionRunCurrentness } : {}),
         });
         const connectedServiceSlot = {
             kind: 'connected_service_purpose' as const,
@@ -1900,7 +1957,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority: detachedOpen.authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: resolveDetachedRun,
         })).resolves.toEqual({ ok: true });
@@ -1908,21 +1964,28 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority: detachedOpen.authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: resolveDetachedRun,
         });
         await db.machine.update({ where: { id: worker.id }, data: { revokedAt: new Date(1) } });
-        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: true });
+        await expect(tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun))
+            .resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
         await db.machine.update({ where: { id: worker.id }, data: { revokedAt: null } });
+        // Raw drift does not perform withdrawal: the real membership writer's
+        // revision invalidation is covered by the suspension cases below.
         await db.teamMembership.update({ where: { id: requesterMembership.id }, data: { status: 'suspended' } });
-        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: true });
+        await expect(tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun))
+            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await db.teamMembership.update({ where: { id: requesterMembership.id }, data: { status: 'active' } });
         await db.teamCredentialResource.update({
             where: { id: resource.id },
             data: { sessionUsePolicy: 'team_context_required' },
         });
-        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(authorizeDetachedCatalog()).resolves.toEqual({ ok: true });
+        await expect(tryOpen({ ...openRequest, consumer: detachedOpen.authority.payload.consumer }, projection(), resolveDetachedRun))
+            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await db.teamCredentialResource.update({
             where: { id: resource.id },
             data: { sessionUsePolicy: 'personal_allowed' },
@@ -1944,7 +2007,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: detachedRequest('detached-catalog-request', false),
             observedAt: new Date('2026-09-09T09:26:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: resolveDetachedRun,
         })).resolves.toMatchObject({
@@ -1958,7 +2020,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: detachedRequest('detached-idle-generation', true),
             observedAt: new Date('2026-09-09T09:27:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: resolveDetachedRun,
         })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
@@ -1966,7 +2027,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: detachedRequest('detached-active-generation', true),
             observedAt: new Date('2026-09-09T09:28:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === detachedOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: async () => ({
                 ...await resolveDetachedRun(),
@@ -2051,7 +2111,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority: runOpen.authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === runOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: async ({ expectedOccurrenceId }) => expectedOccurrenceId === 'occurrence-current'
                 ? { ok: true, parentSessionId: session.id, occurrenceId: expectedOccurrenceId, intent: 'agent', runtimeState: 'idle', teamCredentialProviderModel: { resourceId: resource.id, deliveryMode: 'brokered' as const } }
@@ -2074,7 +2133,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: runRequest,
             observedAt: new Date('2026-09-09T09:29:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === runOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: async () => ({
                 ok: true,
@@ -2096,7 +2154,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: runRequest,
             observedAt: new Date('2026-09-09T09:30:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === runOpen.authority.payload.grantId,
             resolveExecutionRunCurrentness: async ({ expectedOccurrenceId }) => {
                 announceAdmissionCurrentness();
@@ -2152,30 +2209,19 @@ describe('Team credential Provider broker admission', () => {
         // Request admission reads no broker presence (the admitted job's broker
         // is the caller), so a disconnected-broker refusal has no request leg.
 
-        const authority: SignedProviderBrokerRouteGrantV1 = {
-            payload: {
-                v: 1,
-                grantId: 'grant-1',
-                aud: 'happier-provider-broker-route-v1',
-                issuedAt: 1,
-                expiresAt: 2,
-                teamId: team.id,
-                resourceId: resource.id,
-                sourceRevision: 'source-revision-1',
-                brokerPlacementFingerprint: resolveTeamCredentialBrokerPlacementFingerprint(resource)!,
-                initiatorTokenEpoch: requester.tokenEpoch,
-                initiator: { accountId: requester.id, machineId: worker.id, endpointId: workerEndpointId },
-                target: { custodianAccountId: custodian.id, machineId: broker.id, endpointId: brokerEndpointId },
-                consumer: { kind: 'session', sessionId: session.id },
-                application: {
-                    agentTargetKey: 'codex',
-                    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-                    endpointTemplateId: 'openai-responses',
-                    protocol: 'openai-responses',
-                },
-            },
-            signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) },
-        };
+        const opened = await openTeamCredentialProviderBroker({
+            actorAccountId: requester.id,
+            authentication: TEST_AUTHENTICATION,
+            request: openRequest,
+            initiatorPresence: { state: 'known', machineIds: new Set([worker.id]) },
+            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
+            nowMs: 1,
+            grantId: 'grant-1',
+            signingKey: { keyId: 'currentness-home', secretKey: currentnessSigningKey.secretKey },
+            readProviderProjection: async () => projection(),
+        });
+        if (!opened.ok) throw new Error(`expected Session broker open: ${opened.reasonCode}`);
+        const authority = opened.authority;
         const request: ProviderBrokerRequestAdmissionV1 = {
             v: 1,
             authority,
@@ -2193,7 +2239,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request,
             observedAt: new Date('2026-09-09T10:00:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         });
 
@@ -2201,7 +2246,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         })).resolves.toEqual({ ok: true });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
@@ -2228,9 +2272,9 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
-        })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        })).resolves.toEqual({ ok: true });
+        await expect(tryOpen(openRequest, projection())).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
         await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
             sessionId: session.id,
@@ -2255,7 +2299,6 @@ describe('Team credential Provider broker admission', () => {
                 authenticatedBrokerAccountId: custodian.id,
                 request: { ...request, requestId, requestFacts },
                 observedAt: new Date('2026-09-09T09:59:00.000Z'),
-                brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
                 verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
             })).resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
         }
@@ -2288,7 +2331,6 @@ describe('Team credential Provider broker admission', () => {
             // A prior admission in the same millisecond is still recorded
             // usage; timestamp equality cannot create a second allowance.
             observedAt: new Date('2026-09-09T10:00:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         })).resolves.toMatchObject({ ok: false, reasonCode: 'team_credential_usage_limit' });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(1);
@@ -2302,15 +2344,14 @@ describe('Team credential Provider broker admission', () => {
                 operationProtocolCapabilitiesRevision: { increment: 1 },
             },
         });
-        // A rotated initiator endpoint ends the route at the retained check;
-        // the transport authenticates the endpoint on every new stream.
+        // The transport authenticates the endpoint on every new stream;
+        // a catalog read does not re-read the Machine endpoint.
         await expect(authorizeTeamCredentialProviderModelCatalog({
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
-        })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        })).resolves.toEqual({ ok: true });
         await db.machine.update({
             where: { id: worker.id },
             data: {
@@ -2325,9 +2366,8 @@ describe('Team credential Provider broker admission', () => {
         // "re-qualifies the credential that opened an operation on every
         // request" below, which uses the real Team policy and factor owners.
 
-        // Clearing the Session's selection through the canonical writer ends
-        // the operation's route at the retained check; the in-progress turn's
-        // witness stays, and the next turn is admitted without this resource.
+        // Clearing the selection affects the next admission. The in-progress
+        // turn witness and admitted catalog remain active.
         const selectProviderModel = async (resourceId: string | null, expectedResourceRevision: number) =>
             await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
                 sessionId: session.id,
@@ -2349,9 +2389,9 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
-        })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        })).resolves.toEqual({ ok: true });
+        await expect(tryOpen(openRequest, projection())).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(1);
         await expect(db.sessionTurn.findUniqueOrThrow({
             where: { sessionId_turnId: { sessionId: session.id, turnId: 'turn-1' } },
@@ -2372,7 +2412,7 @@ describe('Team credential Provider broker admission', () => {
         // policy edit made by the real resource owner".
     });
 
-    it('decides the Session-use policy at admission and withdraws the route on change, not per request', async () => {
+    it('decides Session-use policy at admission and preserves the admitted job when Session context changes', async () => {
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: `Broker session policy ${crypto.randomUUID()}` } });
@@ -2406,7 +2446,7 @@ describe('Team credential Provider broker admission', () => {
                 v: 1,
                 kind: 'provider_connection',
                 connectionId: 'connection-policy',
-                connectionSecurityFingerprint: 'connection-security:v1:policy',
+                connectionSecurityFingerprint: 'connection-security:v1:connection-policy',
                 credentialSlotId: 'apiKey',
             }),
             brokerMachineId: broker.id,
@@ -2453,31 +2493,25 @@ describe('Team credential Provider broker admission', () => {
                 observedAt: 1,
             },
         })).resolves.toMatchObject({ ok: true, didApply: true });
-        await db.session.update({ where: { id: session.id }, data: { primaryTeamId: null } });
-        const authority: SignedProviderBrokerRouteGrantV1 = {
-            payload: {
-                v: 1,
-                grantId: `grant-policy-${requester.id}`,
-                aud: 'happier-provider-broker-route-v1',
-                issuedAt: 1,
-                expiresAt: 2,
-                teamId: team.id,
-                resourceId: resource.id,
-                sourceRevision: 'source-revision-1',
-                brokerPlacementFingerprint: resolveTeamCredentialBrokerPlacementFingerprint(resource)!,
-                initiatorTokenEpoch: requester.tokenEpoch,
-                initiator: { accountId: requester.id, machineId: worker.id, endpointId: workerEndpointId },
-                target: { custodianAccountId: custodian.id, machineId: broker.id, endpointId: brokerEndpointId },
-                consumer: { kind: 'session', sessionId: session.id },
-                application: {
-                    agentTargetKey: 'codex',
-                    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-                    endpointTemplateId: 'openai-responses',
-                    protocol: 'openai-responses',
-                },
+        const open = () => openTeamCredentialProviderBroker({
+            actorAccountId: requester.id,
+            authentication: TEST_AUTHENTICATION,
+            request: {
+                v: 1, resourceId: resource.id, expectedResourceRevision: resource.revision,
+                sourceRevision: 'source-revision-1', modelId: 'model-1', initiatorMachineId: worker.id,
+                consumer: { kind: 'session', sessionId: session.id }, application: FIXTURE_APPLICATION,
             },
-            signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) },
-        };
+            initiatorPresence: { state: 'known', machineIds: new Set([worker.id]) },
+            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
+            nowMs: 1,
+            grantId: crypto.randomUUID(),
+            signingKey: { keyId: 'fixture-home', secretKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(43)).secretKey },
+            readProviderProjection: async () => fixtureProviderProjection('connection-policy'),
+        });
+        const opened = await open();
+        if (!opened.ok) throw new Error(`expected Team-context broker open: ${opened.reasonCode}`);
+        const authority = opened.authority;
+        await db.session.update({ where: { id: session.id }, data: { primaryTeamId: null } });
         const request: ProviderBrokerRequestAdmissionV1 = {
             v: 1,
             authority,
@@ -2486,31 +2520,28 @@ describe('Team credential Provider broker admission', () => {
             requestId: `request-policy-${requester.id}`,
             requestFacts: { generation: false, routeKind: 'openai_responses', modelId: 'model-1', reasoningEffort: null },
         };
-        // The Session binding witness exists and entitlement passes, but the
-        // live Session no longer carries the required Team context. The
-        // custodian's retained revalidation (catalog authorization) refuses it,
-        // which withdraws the route; the admitted job's own request is not
-        // re-evaluated against the policy.
+        // Context policy belongs to admission. Catalog and request reads only
+        // decide whether the previously admitted job is still active.
         const catalog = () => authorizeTeamCredentialProviderModelCatalog({
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: resource.revision,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         });
-        await expect(catalog()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(catalog()).resolves.toEqual({ ok: true });
+        await expect(open()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await expect(admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: custodian.id,
             request,
             observedAt: new Date('2026-09-09T11:00:00.000Z'),
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         })).resolves.toMatchObject({ ok: true, resourceId: resource.id });
-        // Restoring the required Team context makes the route current again.
+        // Restoring Team context admits a fresh job again.
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: team.id } });
-        await expect(catalog()).resolves.toEqual({ ok: true });
+        await expect(open()).resolves.toMatchObject({ ok: true });
     });
 
-    it('keeps an established Session operation usable across a harmless policy edit made by the real resource owner', async () => {
+    it('ends an admitted Session job when the resource owner advances its revision', async () => {
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: `Broker policy edit ${crypto.randomUUID()}` } });
@@ -2586,9 +2617,8 @@ describe('Team credential Provider broker admission', () => {
             }],
             authentication: TEST_AUTHENTICATION,
         }))).resolves.toEqual({ ok: true });
-        // The signed claim comes from a real broker open against the resource
-        // as it was. It names the operation, never the mutable revision
-        // (`04-private-iroh-broker-transport.md:272`).
+        // The signed claim comes from a real broker open and binds the resource
+        // revision inside its opaque job fingerprint.
         const opened = await openTeamCredentialProviderBroker({
             actorAccountId: requester.id,
             authentication: TEST_AUTHENTICATION,
@@ -2627,16 +2657,13 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request,
             observedAt: new Date('2026-09-09T11:00:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
         });
         await expect(admit(requestAt(resource.revision, `request-revision-1-${requester.id}`)))
             .resolves.toMatchObject({ ok: true, resourceId: resource.id });
-        // The custodian (a Team owner) tightens the Session-use policy to the
-        // Team context this Session already has — an authority edit that
-        // advances the revision but still allows this use. Nothing about the
-        // operation's identity changed, and no production writer advances the
-        // Session's witness: the edit goes through the real resource owner only.
+        // The custodian tightens the Session-use policy through the resource
+        // owner. Its revision change ends the existing job even if the new
+        // policy would permit this Session to re-admit.
         const edited = await inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
@@ -2649,7 +2676,7 @@ describe('Team credential Provider broker admission', () => {
         if (!edited.ok) throw new Error(`expected the policy edit to apply: ${edited.error}`);
         expect(edited.revision).toBe(resource.revision + 1);
         await expect(admit(requestAt(edited.revision, `request-revision-2-${requester.id}`)))
-            .resolves.toMatchObject({ ok: true, resourceId: resource.id });
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         // The same Session still passes its per-turn witness check at the
         // canonical Session admission, without re-selecting the resource.
         await expect(inTx(tx => admitSessionTeamCredentialBindingInTx(tx, {
@@ -2659,9 +2686,9 @@ describe('Team credential Provider broker admission', () => {
             deliveryMode: 'brokered',
             authentication: TEST_AUTHENTICATION,
         }))).resolves.toMatchObject({ ok: true, binding: { resourceRevision: edited.revision } });
-        // The request still has to present the resource as it is now.
+        // Presenting the old revision cannot revive the admitted job.
         await expect(admit(requestAt(resource.revision, `request-revision-3-${requester.id}`)))
-            .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         // A credential-identity change is decided by the broker's source owner
         // (it forwards only under the member it selected and acquired) and by
         // the next acquisition, not by a per-request Home source read.
@@ -2677,15 +2704,13 @@ describe('Team credential Provider broker admission', () => {
             },
             authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
         }))).resolves.toMatchObject({ ok: true });
-        // The audience write wakes the custodian, whose retained (catalog)
-        // check withdraws the route.
+        // The audience writer advances the resource revision again.
         await expect(authorizeTeamCredentialProviderModelCatalog({
             authenticatedBrokerAccountId: custodian.id,
             authority,
             expectedResourceRevision: edited.revision + 1,
-            brokerPresence: { state: 'known', machineIds: new Set([broker.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === authority.payload.grantId,
-        })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
     });
 
     it('selects a source-eligible Pool member once and keeps that exact Machine authoritative after membership edits', async () => {
@@ -2991,7 +3016,6 @@ describe('Team credential Provider broker admission', () => {
                 },
             },
             observedAt: new Date(1),
-            brokerPresence: { state: 'known', machineIds: new Set([reviewedRunnerMachineId]) },
             verifyAuthority: candidate => candidate.payload.grantId === runnerOpen.authority.payload.grantId,
         });
         await expect(admitRunner('runner-current')).resolves.toMatchObject({ ok: true });
@@ -3296,7 +3320,6 @@ describe('Team credential Provider broker admission', () => {
             authenticatedBrokerAccountId: custodian.id,
             request: admissionRequest,
             observedAt: new Date('2026-09-11T10:00:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([fallback.id]) },
             verifyAuthority: candidate => candidate.payload.grantId === opened.authority.payload.grantId,
         })).resolves.toMatchObject({ ok: true, brokerMachineId: fallback.id });
 
@@ -3341,21 +3364,9 @@ describe('Team credential Provider broker admission', () => {
         })).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
         await db.machine.update({ where: { id: fallback.id }, data: { revokedAt: null } });
 
-        // A materialized Runner keeps the selection its creator reviewed, while
-        // an established refresh must use the resource's current policy. Editing
-        // that policy cannot require a different activation selection revision.
+        // A materialized Runner keeps the exact Machine its creator reviewed
+        // while renewing the same admitted resource revision.
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: team.id } });
-        const policyEdit = await inTx(tx => updateTeamCredentialResourceInTx(tx, {
-            actorAccountId: custodian.id,
-            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
-            patch: {
-                resourceId: resource.id,
-                expectedRevision: resource.revision,
-                sessionUsePolicy: 'team_context_required',
-            },
-        }));
-        if (!policyEdit.ok) throw new Error(`expected Runner policy edit: ${policyEdit.error}`);
-        expect(policyEdit.revision).toBe(resource.revision + 1);
         const refreshRunner = (
             overrides: Partial<ProviderBrokerOpenRequestV1> = {},
             authority = runnerOpen.authority,
@@ -3393,39 +3404,54 @@ describe('Team credential Provider broker admission', () => {
         });
         const runnerRefreshed = await refreshRunner();
         expect(runnerRefreshed).toMatchObject({ ok: true, target: { brokerMachineId: reviewedRunnerMachineId } });
-        if (!runnerRefreshed.ok) throw new Error(`expected Runner policy refresh: ${runnerRefreshed.reasonCode}`);
+        if (!runnerRefreshed.ok) throw new Error(`expected Runner refresh: ${runnerRefreshed.reasonCode}`);
         expect(runnerRefreshed.authority.payload.grantId).not.toBe(runnerOpen.authority.payload.grantId);
         await expect(refreshRunner({}, runnerRefreshed.authority))
             .resolves.toMatchObject({ ok: true, target: { brokerMachineId: reviewedRunnerMachineId } });
         await expect(admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: custodian.id,
             request: { ...admissionRequest, authority: runnerRefreshed.authority,
-                expectedResourceRevision: policyEdit.revision, requestId: crypto.randomUUID() },
+                expectedResourceRevision: resource.revision, requestId: crypto.randomUUID() },
             observedAt: new Date('2026-09-11T10:01:00.000Z'),
-            brokerPresence: { state: 'known', machineIds: new Set([reviewedRunnerMachineId]) },
             verifyAuthority: candidate => candidate.payload.grantId === runnerRefreshed.authority.payload.grantId,
         })).resolves.toMatchObject({ ok: true, brokerMachineId: reviewedRunnerMachineId });
-        // The retained request revision is still the reviewed activation CAS;
-        // replacing it with the latest policy revision cannot authorize a refresh.
-        await expect(refreshRunner({ expectedResourceRevision: policyEdit.revision }))
-            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
-        await expect(refreshRunner({ refreshAuthority: undefined }))
-            .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
-        await expect(refreshRunner({ modelId: 'forged-model' }))
+        await expect(refreshRunner({ modelId: 'forged-model', refreshAuthority: undefined }))
             .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await expect(refreshRunner({ sourceRevision: 'replaced-source' }))
             .resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
         await expect(refreshRunner({ application: { ...application, endpointTemplateId: 'other-endpoint' } }))
             .resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
-        await db.session.update({ where: { id: session.id }, data: { primaryTeamId: null } });
-        await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
-        await db.session.update({ where: { id: session.id }, data: { primaryTeamId: team.id } });
         await db.machine.update({ where: { id: reviewedRunnerMachineId }, data: { revokedAt: new Date() } });
         await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
         await db.machine.update({ where: { id: reviewedRunnerMachineId }, data: { revokedAt: null } });
         await db.account.update({ where: { id: requester.id }, data: { tokenEpoch: { increment: 1 } } });
         await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         await db.account.update({ where: { id: requester.id }, data: { tokenEpoch: requester.tokenEpoch } });
+
+        const policyEdit = await inTx(tx => updateTeamCredentialResourceInTx(tx, {
+            actorAccountId: custodian.id,
+            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+            patch: {
+                resourceId: resource.id,
+                expectedRevision: resource.revision,
+                sessionUsePolicy: 'team_context_required',
+            },
+        }));
+        if (!policyEdit.ok) throw new Error(`expected Runner policy edit: ${policyEdit.error}`);
+        expect(policyEdit.revision).toBe(resource.revision + 1);
+        await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        await expect(admitTeamCredentialProviderBrokerRequest({
+            authenticatedBrokerAccountId: custodian.id,
+            request: { ...admissionRequest, authority: runnerRefreshed.authority,
+                expectedResourceRevision: policyEdit.revision, requestId: crypto.randomUUID() },
+            observedAt: new Date('2026-09-11T10:01:00.000Z'),
+            verifyAuthority: candidate => candidate.payload.grantId === runnerRefreshed.authority.payload.grantId,
+        })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        // A new resource revision cannot replace the reviewed activation CAS.
+        await expect(refreshRunner({ expectedResourceRevision: policyEdit.revision }))
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        await expect(refreshRunner({ refreshAuthority: undefined }))
+            .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
 
         const beforeDeleteChange = await db.accountChange.findFirst({
             where: { accountId: requester.id, entityId: 'teams' },
@@ -3460,7 +3486,6 @@ describe('Team credential Provider broker admission', () => {
                 authenticatedBrokerAccountId: custodian.id,
                 request: { ...admissionRequest, requestId, expectedResourceRevision },
                 observedAt: new Date('2026-09-11T10:01:00.000Z'),
-                brokerPresence: { state: 'known', machineIds: new Set([fallback.id]) },
                 verifyAuthority: candidate => candidate.payload.grantId === opened.authority.payload.grantId,
             })).resolves.toEqual({ ok: false, reasonCode: 'broker_unavailable' });
         }
@@ -3560,6 +3585,8 @@ describe('Team credential Provider broker admission', () => {
             .resolves.toEqual({ ok: true });
         await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
             .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
+            refreshAuthority: unqualifiedOpen.authority })).resolves.toMatchObject({ ok: true });
         await expect(fixture.admit({ authority: qualifiedOpen.authority, resource, requestId: 'qualified-2' }))
             .resolves.toMatchObject({ ok: true });
         await expect(fixture.catalog({ authority: qualifiedOpen.authority, resource }))
@@ -3569,7 +3596,8 @@ describe('Team credential Provider broker admission', () => {
         // The requester removes the qualifying password factor through the
         // real Account Security route. Qualification is decided at admission,
         // so the admitted route runs on, while the next admission with that
-        // credential (fresh open, grant refresh, turn) is refused.
+        // credential (fresh open or turn) is refused. Transport renewal keeps
+        // the admitted job and does not re-qualify that factor.
         const challenge = await issuePasswordMutationKeyChallengeV1({ env: process.env, mutation: {
             v: 1, action: 'remove', accountId: fixture.requester.id, expectedCredentialRevision: 1,
             normalizedNativeEmail: requesterEmail, newCredentialDigest: null,
@@ -3610,6 +3638,8 @@ describe('Team credential Provider broker admission', () => {
             .resolves.toEqual({ ok: true });
         await expect(fixture.open({ resource, sessionId: session.id, authentication: withPassword }))
             .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(fixture.open({ resource, sessionId: session.id, authentication: withPassword,
+            refreshAuthority: qualifiedOpen.authority })).resolves.toMatchObject({ ok: true });
         expect(await usage()).toBe(5);
 
         // Revoking the credential itself (sign out everywhere through the real
@@ -3679,7 +3709,7 @@ describe('Team credential Provider broker admission', () => {
                 request: { v: 1, authority, expectedResourceRevision: resource.revision,
                     sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-wrong-account',
                     requestFacts: { generation: false, routeKind: 'openai_responses', modelId: 'model-1', reasoningEffort: null } },
-                observedAt: new Date(), brokerPresence: { state: 'known', machineIds: new Set([fixture.broker.id]) },
+                observedAt: new Date(),
                 verifyAuthority: () => true,
             })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
             await expect(admitTeamCredentialProviderBrokerRequest({
@@ -3687,13 +3717,13 @@ describe('Team credential Provider broker admission', () => {
                 request: { v: 1, authority, expectedResourceRevision: resource.revision,
                     sourceMemberKey: providerSourceMemberKey('connection-admitted-job', 'apiKey'), requestId: 'admitted-job-foreign-home',
                     requestFacts: { generation: false, routeKind: 'openai_responses', modelId: 'model-1', reasoningEffort: null } },
-                observedAt: new Date(), brokerPresence: { state: 'known', machineIds: new Set([fixture.broker.id]) },
+                observedAt: new Date(),
                 verifyAuthority: () => false,
             })).resolves.toEqual({ ok: false, reasonCode: 'invalid_request' });
 
             // The custodian revokes the member through the real audience owner.
-            // That write wakes the custodian, whose retained revalidation (the
-            // catalog authorization) withdraws the route; a fresh open is refused.
+            // That write advances the job's resource revision and wakes the
+            // custodian; catalog/request activity and fresh opens refuse it.
             const custodianSeq = async () => (await db.account.findUniqueOrThrow({ where: { id: fixture.custodian.id }, select: { seq: true } })).seq;
             const seqBefore = await custodianSeq();
             await expect(inTx(tx => setTeamCredentialAudienceInTx(tx, {
@@ -3704,9 +3734,12 @@ describe('Team credential Provider broker admission', () => {
             }))).resolves.toMatchObject({ ok: true });
             expect(await custodianSeq()).toBeGreaterThan(seqBefore);
             const current = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
-            await expect(fixture.catalog({ authority, resource: current })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+            await expect(fixture.catalog({ authority, resource: current })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.open({ resource: current, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
                 .resolves.toMatchObject({ ok: false });
+            await expect(fixture.admit({ authority, resource: current, requestId: 'job-after-audience-withdrawal' }))
+                .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+            expect(await usage()).toBe(3);
 
             // A withdrawn resource ends the admitted job on its next request.
             await expect(inTx(tx => deleteTeamCredentialResourceInTx(tx, {
@@ -3720,6 +3753,122 @@ describe('Team credential Provider broker admission', () => {
             db.$transaction = original;
             await client.$disconnect();
         }
+    });
+
+    it.each(['all-members', 'group-derived'] as const)(
+        'withdraws a %s broker job when its Team membership is removed', async audience => {
+        const fixture = await createBrokerFixture(`${audience}-withdrawal`);
+        const created = await fixture.createResource(`connection-${audience}-withdrawal`);
+        const member = await db.teamMembership.findFirstOrThrow({
+            where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true },
+        });
+        await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: created.id } });
+        if (audience === 'all-members') {
+            await db.teamCredentialResource.update({
+                where: { id: created.id }, data: { allMembersDeliveryMode: 'brokered' },
+            });
+        } else {
+            const group = await db.teamGroup.create({ data: {
+                teamId: fixture.team.id, name: 'Broker group', nameKey: 'broker-group',
+            } });
+            await db.teamGroupMembership.create({ data: {
+                teamId: fixture.team.id, teamGroupId: group.id,
+                teamMembershipId: member.id, nativeContribution: true,
+            } });
+            await db.teamCredentialGroupGrant.create({ data: {
+                resourceId: created.id, teamGroupId: group.id, deliveryMode: 'brokered',
+            } });
+        }
+        const resource = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: created.id } });
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
+        await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'before-withdrawal' }))
+            .resolves.toMatchObject({ ok: true });
+        await inTx(async tx => {
+            await revokeTeamCredentialAudienceForMembershipInTx(tx, {
+                teamId: fixture.team.id, teamMembershipId: member.id, accountId: fixture.requester.id,
+                actor: { kind: 'account', accountId: fixture.custodian.id },
+            });
+            await tx.teamMembership.delete({ where: { id: member.id } });
+        });
+        const current = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+        expect(current.revision).toBe(resource.revision + 1);
+        await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-withdrawal' }))
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        },
+    );
+
+    it.each(['last group contribution', 'group archive', 'Team archive'] as const)(
+        'ends an admitted broker job after %s', async withdrawal => {
+            const fixture = await createBrokerFixture(`withdraw-${withdrawal.replaceAll(' ', '-')}`);
+            const created = await fixture.createResource(`connection-${withdrawal.replaceAll(' ', '-')}`);
+            const membership = await db.teamMembership.findFirstOrThrow({
+                where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true },
+            });
+            const group = withdrawal === 'Team archive' ? null : await db.teamGroup.create({ data: {
+                teamId: fixture.team.id, name: `Group ${withdrawal}`, nameKey: `group-${withdrawal}`,
+            } });
+            if (group) {
+                await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: created.id } });
+                await db.teamGroupMembership.create({ data: {
+                    teamId: fixture.team.id, teamGroupId: group.id,
+                    teamMembershipId: membership.id, nativeContribution: true,
+                } });
+                await db.teamCredentialGroupGrant.create({ data: {
+                    resourceId: created.id, teamGroupId: group.id, deliveryMode: 'brokered',
+                } });
+            }
+            const resource = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: created.id } });
+            const session = await fixture.createSession();
+            await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+            const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+            if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
+            await expect(fixture.admit({ authority: opened.authority, resource, requestId: 'before-withdrawal' }))
+                .resolves.toMatchObject({ ok: true });
+
+            if (withdrawal === 'last group contribution' && group) {
+                await expect(inTx(tx => applyTeamGroupContributionInTx(tx, {
+                    teamId: fixture.team.id, teamGroupId: group.id, teamMembershipId: membership.id,
+                    contribution: { kind: 'native' }, desired: 'absent', historyAccess: 'from_membership',
+                }))).resolves.toMatchObject({ outcome: 'removed' });
+            } else if (withdrawal === 'group archive' && group) {
+                await expect(inTx(tx => archiveTeamGroupForActorInTx(tx, {
+                    teamId: fixture.team.id, actorAccountId: fixture.custodian.id, groupId: group.id,
+                    authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+                }))).resolves.toMatchObject({ ok: true });
+            } else {
+                await expect(inTx(tx => archiveTeamInTx(tx, {
+                    teamId: fixture.team.id, actorAccountId: fixture.custodian.id,
+                    authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+                }))).resolves.toMatchObject({ ok: true });
+            }
+            const current = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+            expect(current.revision).toBe(resource.revision + 1);
+            await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-withdrawal' }))
+                .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        },
+    );
+
+    it('ends an admitted broker job when its Team membership is suspended', async () => {
+        const fixture = await createBrokerFixture('suspended-member');
+        const resource = await fixture.createResource('connection-suspended-member');
+        const membership = await db.teamMembership.findFirstOrThrow({
+            where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true },
+        });
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
+        await inTx(tx => setTeamMembershipStatusInTx(tx, {
+            teamId: fixture.team.id, membershipId: membership.id,
+            accountId: fixture.requester.id, status: 'suspended',
+        }));
+        const current = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+        expect(current.revision).toBe(resource.revision + 1);
+        await expect(fixture.admit({ authority: opened.authority, resource: current, requestId: 'after-suspension' }))
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
     });
 
     it('serves each request of an admitted turn with one active-job read and accounting, independent of source and roster', async () => {
@@ -3770,8 +3919,16 @@ describe('Team credential Provider broker admission', () => {
             return { result, total: statements.length, sourceReads: selects.filter(sql => sourceTables.test(sql)).length,
                 activeJobReads: selects.slice(0, accountingStart).length };
         };
+        const measureRenewal = async () => {
+            statements.length = 0;
+            const result = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
+                refreshAuthority: opened.authority });
+            const selects = statements.filter(sql => /^\s*SELECT/i.test(sql));
+            return { result, transactionSelects: selects.length, sourceReads: selects.filter(sql => sourceTables.test(sql)).length };
+        };
         try {
             const small = [await measure('active-job-1'), await measure('active-job-2')];
+            const smallRenewal = await measureRenewal();
             // Twenty more Team members with credential grants: per-request work
             // must not grow with the Team roster.
             for (let index = 0; index < 20; index += 1) {
@@ -3780,6 +3937,7 @@ describe('Team credential Provider broker admission', () => {
                 await db.teamCredentialMemberGrant.create({ data: { resourceId: resource.id, teamMembershipId: membership.id, deliveryMode: 'brokered' } });
             }
             const large = [await measure('active-job-3'), await measure('active-job-4')];
+            const largeRenewal = await measureRenewal();
             const all = [...small, ...large];
             console.info('BROKER_ACTIVE_JOB_STATEMENTS', JSON.stringify(all.map(({ total, sourceReads, activeJobReads }) => ({ total, sourceReads, activeJobReads }))));
             for (const measured of all) {
@@ -3789,6 +3947,13 @@ describe('Team credential Provider broker admission', () => {
             }
             // The same shape for every request, whatever the roster size.
             expect(new Set(all.map(({ total }) => total)).size).toBe(1);
+            // Renewal uses that same single active-job read; endpoint dial
+            // hints come from the transport owner outside this transaction.
+            for (const renewal of [smallRenewal, largeRenewal]) {
+                expect(renewal.result).toMatchObject({ ok: true });
+                expect(renewal.sourceReads).toBe(0);
+                expect(renewal.transactionSelects).toBe(1);
+            }
             // One usage fact per request, attributed to the exact source member.
             await expect(db.usageEvent.findMany({ where: { teamCredentialResourceId: resource.id },
                 select: { teamCredentialSourceCredentialId: true, turnId: true } }))
@@ -3798,16 +3963,24 @@ describe('Team credential Provider broker admission', () => {
             await client.$disconnect();
         }
 
-        // Source change control: the custodian replaces the connected credential
-        // (new incarnation). The custodian's retained check withdraws the route
-        // and a fresh open (the next acquisition) re-admits against the current
-        // source, refusing until the resource names it.
+        // Source change control: an admitted job stays active until its resource
+        // revision changes. A fresh open re-admits against the current source.
         await db.serviceAccountToken.delete({ where: { id: credential.id } });
         await db.serviceAccountToken.create({ data: {
             accountId: fixture.custodian.id, ...createServiceAccountTokenIdentityFields({ ref, authenticationModeId: 'device' }),
             token: Buffer.from('constructed-replacement-token'), metadata,
         } });
-        await expect(fixture.catalog({ authority: opened.authority, resource })).resolves.toMatchObject({ ok: false });
+        await expect(fixture.catalog({ authority: opened.authority, resource })).resolves.toEqual({ ok: true });
+        const renewed = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
+            refreshAuthority: opened.authority });
+        expect(renewed).toMatchObject({ ok: true });
+        if (!renewed.ok) throw new Error(`expected admitted-job transport renewal: ${renewed.reasonCode}`);
+        expect(renewed.authority.payload).toEqual({ ...opened.authority.payload,
+            grantId: renewed.authority.payload.grantId,
+            issuedAt: renewed.authority.payload.issuedAt,
+            expiresAt: renewed.authority.payload.expiresAt,
+        });
+        expect(renewed.authority.payload.grantId).not.toBe(opened.authority.payload.grantId);
         await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
             .resolves.toMatchObject({ ok: false });
         // (The recipient-change control — audience removal → retained check
@@ -3896,7 +4069,7 @@ describe('Team credential Provider broker admission', () => {
             authority: opened.authority,
             resource: await db.teamCredentialResource.findUniqueOrThrow({ where: { id: runResource.id } }),
             resolveExecutionRunCurrentness: resolveRun,
-        })).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         await expect(fixture.open({
             resource: await db.teamCredentialResource.findUniqueOrThrow({ where: { id: runResource.id } }),
             consumer: { kind: 'execution_run', executionRunId: 'run-b' },

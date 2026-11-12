@@ -35,6 +35,7 @@ import {
 import { toTeamViewer } from "./viewer";
 import { resolveTeamCapabilitiesV1 } from "./capabilities";
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from "./groups/effectiveGroupMembership";
+import { advanceBrokerJobRevisionsForTeamInTx } from './credentials/brokerJobWithdrawal';
 
 /**
  * The one Team lifecycle service.
@@ -372,6 +373,7 @@ export async function archiveTeamInTx(tx: Tx, input: ArchiveTeamInput): Promise<
             data: { archivedAt: now },
             select: TEAM_PROJECTION_SELECT,
         });
+        await advanceBrokerJobRevisionsForTeamInTx(tx, input.teamId);
         await revokeActiveTeamInvitationsForTeamInTx(tx, { teamId: input.teamId, now });
         await publishTeamChangedInTx(tx, { teamId: input.teamId });
 

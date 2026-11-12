@@ -170,7 +170,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       additionalRedactionValues: [consumer.credential, consumer.renderedCredential, ...composed.additionalRedactionValues],
       connectedServices, cleanup: async () => { await cleanup(); },
       revalidateBeforeCommit: async currentSignal => !currentSignal?.aborted && consumer.isCurrent()
-        && await source.revalidateSourceCurrentness(currentSignal) === true
+        && source.isAuthorizationCurrent()
         ? { ok: true } : refuse('provider_authorization_changed') };
   } catch (error) {
     const typed = ProviderErrorV1Schema.safeParse(error);

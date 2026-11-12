@@ -14,6 +14,7 @@ import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacemen
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { retainEntitledTeamCredentialRecipientMaterialInTx } from "./recipientMaterial";
 import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
+import { advanceBrokerJobRevisionsForMembershipInTx } from './brokerJobWithdrawal';
 
 export type TeamCredentialAudienceInput = Readonly<{
     resourceId: string;
@@ -109,6 +110,9 @@ export async function revokeTeamCredentialAudienceForMembershipInTx(
     const affectedResources = new Map(
         [...grantedResources, ...materializedResources].map(resource => [resource.id, resource]),
     );
+    await advanceBrokerJobRevisionsForMembershipInTx(tx, {
+        teamId: input.teamId, teamMembershipId: input.teamMembershipId,
+    });
     if (affectedResources.size === 0) return;
 
     await tx.teamCredentialMemberGrant.deleteMany({
@@ -123,12 +127,6 @@ export async function revokeTeamCredentialAudienceForMembershipInTx(
             resource: { teamId: input.teamId },
         },
     });
-    if (grantedResources.length > 0) {
-        await tx.teamCredentialResource.updateMany({
-            where: { id: { in: grantedResources.map(resource => resource.id) } },
-            data: { revision: { increment: 1 } },
-        });
-    }
     for (const resource of affectedResources.values()) {
         await recordTeamCredentialActivityInTx(tx, {
             teamId: input.teamId,

@@ -5,7 +5,6 @@ import type { ManagedProviderExplicitStartCustody } from '@/providers/connection
 import type { TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams';
 
 import {
-  revalidateExternalProviderBrokerAuthorization,
   startDaemonProviderBrokerRuntime,
   type DaemonProviderBrokerRuntime,
 } from './daemonProviderBrokerRuntime';
@@ -31,10 +30,9 @@ export async function readTeamCredentialBrokerResource(
 /** Production composition of broker streams, retained custody and Home wakes. */
 export async function startDaemonProviderBrokerRuntimeWithCustody(input: Readonly<{
   runtime: Omit<BrokerRuntimeInput,
-    'revalidateOperationAuthorization' | 'revalidateOperationCurrentness' | 'accountConnection'> & Readonly<{
+    'revalidateOperationCurrentness' | 'accountConnection'> & Readonly<{
       accountConnection?: Omit<NonNullable<BrokerRuntimeInput['accountConnection']>, 'revalidateCurrentness'>;
     }>;
-  api: Pick<ApiClient, 'authorizeTeamCredentialProviderModelCatalog'>;
   apiMachine: Pick<ApiMachineClient, 'onManagedProviderRetainedCurrentnessInvalidation'>;
   custody: ManagedProviderExplicitStartCustody;
 }>): Promise<DaemonProviderBrokerRuntime & Readonly<{ retireAllClaims(): Promise<void> }>> {
@@ -64,14 +62,6 @@ export async function startDaemonProviderBrokerRuntimeWithCustody(input: Readonl
         },
       },
     } : {}),
-    revalidateOperationAuthorization: async ({ authority, expectedResourceRevision, signal }) =>
-      revalidateExternalProviderBrokerAuthorization(
-        await input.api.authorizeTeamCredentialProviderModelCatalog({
-          v: 1,
-          authority,
-          expectedResourceRevision,
-        }, { signal }),
-      ),
     revalidateOperationCurrentness: async ({ operation, application }, signal) => {
       if (!current) return;
       await input.custody.revalidateRetainedClaims(signal, {

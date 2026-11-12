@@ -26,7 +26,7 @@ import {
   type ProviderProbeHostCredentialReference,
 } from '@/providers/spawn/credentials';
 import { resolveRuntimeProviderCredential } from '@/providers/spawn/runtimeCredential';
-import type { TeamCredentialBrokerSourceOpenInput } from './teamCredentialBrokerSourceOwner';
+import type { TeamCredentialBrokerSourceOpenInput, TeamCredentialBrokerOpenedSource } from './teamCredentialBrokerSourceOwner';
 import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 import {
   isCpxBrokerApplication,
@@ -91,7 +91,6 @@ export type ProviderConnectionCpxBridgeOpenInput = Readonly<{
   endpoint: ProviderConnectionBrokerSourceSnapshot['endpoint'];
   signal: AbortSignal;
   isCurrent(signal?: AbortSignal): Promise<boolean>;
-  revalidateOperationAuthorization?(signal?: AbortSignal): Promise<boolean>;
   acquireRequestCredential(): Promise<RuntimeCredentialLease | null>;
 }>;
 
@@ -581,14 +580,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     protocol: ProviderWireProtocol;
     credentialTransport: ProviderCredentialTransportV1;
   }> | null>;
-}>): (request: ProviderConnectionOpenInput) => Promise<Readonly<{
-  projection: ManagedProviderEndpointAccessProjection;
-  retire(): Promise<void>;
-  sourceCurrentness: Readonly<{
-    sourceMember: TeamCredentialSourceMemberV1;
-    isCurrent(): Promise<boolean>;
-  }>;
-}> | null> {
+}>): (request: ProviderConnectionOpenInput) => Promise<TeamCredentialBrokerOpenedSource | null> {
   return async (request) => {
     if (request.brokerMachineId !== input.machineId || request.signal.aborted) return null;
 
@@ -691,63 +683,58 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       && requestCost.endpointTemplateIds.includes(expected.endpoint.endpointTemplateId)
       ? (usage: unknown) => requestCost.isCurrent() ? requestCost.parse(usage) : null
       : undefined;
-    const isCurrent = async (
-      signal: AbortSignal = request.signal,
-    ): Promise<boolean> => {
-      return !signal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === capture.scopeKey;
-    };
-    const acquireRequestCredential = async (): Promise<RuntimeCredentialLease | null> => {
-      if (!await isCurrent()) return null;
-      try {
-        const materialized = await materializeProviderConnectionBrokerSource({
-          expected,
-          registry: capture.registry,
-          dnsEvidenceByEndpointUrl: capture.dnsEvidenceByEndpointUrl,
-          ...(input.localCandidateUrlsByConnectionId
-            ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
-            : {}),
-          getAccountSettingsSnapshot: () => {
-            const current = input.getAccountSettingsSnapshot();
-            return current?.scopeKey === capture.scopeKey ? current : null;
-          },
-        });
-        if (!materialized.ok) return preserveBrokerSourceHealthFailure(materialized.error);
-        if (request.signal.aborted) { materialized.lease.close(); return null; }
-        return materialized.lease;
-      } catch (error) {
-        return preserveBrokerSourceHealthFailure(error);
-      }
-    };
-    const projection = await input.openCpxProviderConnection({
-      ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
-      application: request.application,
-      operation: request.operation,
-      endpoint: expected.endpoint,
-      signal: request.signal,
-      isCurrent,
-      ...(request.revalidateOperationAuthorization
-        ? {
-            revalidateOperationAuthorization:
-              request.revalidateOperationAuthorization,
-          }
-        : {}),
-      acquireRequestCredential,
-    }).catch(preserveBrokerSourceHealthFailure);
-    if (!projection) return null;
-    if (request.signal.aborted || !projection.isCurrent()) {
-      if (!request.signal.aborted && !projection.isCurrent()) {
-        await projection.retire().catch(() => undefined);
-      }
-      await Promise.resolve(projection.cleanup()).catch(() => undefined);
-      return null;
-    }
-    return Object.freeze({
-      projection: requestCostParser ? Object.freeze({ ...projection, requestCostParser }) : projection,
-      retire: projection.retire,
-      sourceCurrentness: Object.freeze({
-        sourceMember: providerConnectionBrokerSourceMember(request.source),
+    const reopen = async (rejoinSignal: AbortSignal): Promise<TeamCredentialBrokerOpenedSource | null> => {
+      const isCurrent = async (
+        signal: AbortSignal = rejoinSignal,
+      ): Promise<boolean> => {
+        return !signal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === capture.scopeKey;
+      };
+      const acquireRequestCredential = async (): Promise<RuntimeCredentialLease | null> => {
+        if (!await isCurrent()) return null;
+        try {
+          const materialized = await materializeProviderConnectionBrokerSource({
+            expected,
+            registry: capture.registry,
+            dnsEvidenceByEndpointUrl: capture.dnsEvidenceByEndpointUrl,
+            ...(input.localCandidateUrlsByConnectionId
+              ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
+              : {}),
+            getAccountSettingsSnapshot: () => {
+              const current = input.getAccountSettingsSnapshot();
+              return current?.scopeKey === capture.scopeKey ? current : null;
+            },
+          });
+          if (!materialized.ok) return preserveBrokerSourceHealthFailure(materialized.error);
+          if (rejoinSignal.aborted) { materialized.lease.close(); return null; }
+          return materialized.lease;
+        } catch (error) {
+          return preserveBrokerSourceHealthFailure(error);
+        }
+      };
+      const projection = await input.openCpxProviderConnection({
+        ...(request.retirementGroup ? { retirementGroup: request.retirementGroup } : {}),
+        application: request.application,
+        operation: request.operation,
+        endpoint: expected.endpoint,
+        signal: rejoinSignal,
         isCurrent,
-      }),
-    });
+        acquireRequestCredential,
+      }).catch(preserveBrokerSourceHealthFailure);
+      if (!projection) return null;
+      if (rejoinSignal.aborted || !projection.isCurrent()) {
+        if (!rejoinSignal.aborted && !projection.isCurrent()) {
+          await projection.retire().catch(() => undefined);
+        }
+        await Promise.resolve(projection.cleanup()).catch(() => undefined);
+        return null;
+      }
+      return Object.freeze({
+        projection: requestCostParser ? Object.freeze({ ...projection, requestCostParser }) : projection,
+        retire: projection.retire,
+        sourceMember: providerConnectionBrokerSourceMember(request.source),
+        reopen,
+      });
+    };
+    return await reopen(request.signal);
   };
 }

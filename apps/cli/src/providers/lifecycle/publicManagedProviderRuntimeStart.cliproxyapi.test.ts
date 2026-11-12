@@ -272,8 +272,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       };
       const upstream = vi.fn(async () => ({ ok: true, status: 200, statusText: 'OK', headers: {}, body: null }));
       let current = true;
-      const handler = createProviderBrokerRequestHandler({ resolveTrustRoots: () => [], nowMs: () => 150,
-        resolveRequestPolicy: async () => null, createRequestId: () => 'unused',
+      const handler = createProviderBrokerRequestHandler({ resolveRequestPolicy: async () => null, createRequestId: () => 'unused',
         admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }) });
       const context = { kind: 'account_connection' as const, authority: opened.authority,
         authenticatedRemoteEndpointId: opened.authority.payload.initiator.endpointId,
@@ -292,7 +291,8 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
         fetchImpl: async (url, init) => {
           const response = await handler({ context, request: { method: 'GET', pathAndQuery: new URL(String(url)).pathname,
             signal: init?.signal ?? undefined } });
-          return response.ok ? new Response(await readProviderBrokerResponseBody(response.response.body), { status: response.response.status, headers: response.response.headers })
+          return response.ok ? new Response(response.response.body ? await readProviderBrokerResponseBody(response.response.body) : null,
+            { status: response.response.status, headers: response.response.headers })
             : new Response(null, { status: 403 });
         },
       });
@@ -317,7 +317,9 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
           : protocol === 'openai-responses' ? '/v1/responses' : '/v1/chat/completions');
         expect(upstream).not.toHaveBeenCalled();
         current = false;
-        await expect(access.readHttpBinding()).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
+        // Reading the admitted endpoint does not reacquire or revalidate its
+        // source; the next broker request owns its activity boundary.
+        expect(await access.readHttpBinding()).toEqual(binding);
       } finally { await access.cleanup(); }
     }
 

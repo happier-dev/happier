@@ -60,7 +60,7 @@ vi.mock('@/persistence', async importOriginal => ({
   writeAccountChangesCursor: writeCursor,
 }));
 
-it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact close with a %s Home resource-read outcome', async resourceReadFailure => {
+it('keeps admitted Team custody through a missing Home resource on wakes and closes at daemon shutdown', async () => {
   const warnings = vi.spyOn(logger, 'warnLocalFile');
   onTestFinished(() => warnings.mockRestore());
   const previousSnapshot = getActiveAccountSettingsSnapshot();
@@ -209,7 +209,7 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     openProviderConnectionSource: unused,
   });
   const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
-  const runtime = await startDaemonProviderBrokerRuntimeWithCustody({ api, apiMachine, custody, runtime: {
+  const runtime = await startDaemonProviderBrokerRuntimeWithCustody({ apiMachine, custody, runtime: {
     machineId: 'broker-machine', nowMs: () => 150, createRequestId: () => 'request-1', sourceOwner,
     resolveTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
     resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: 'source-revision-7', application, source,
@@ -259,10 +259,8 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
       homeRequests: axiosPost.mock.calls.map(([url]) => new URL(String(url)).pathname),
       warnings: warnings.mock.calls.filter(([label]) => label === '[provider-broker-application]' || label === '[provider-broker-source]') }))
       .toContain('HTTP/1.1 200');
-    const previousReads = homeReads.length;
     socket.destroy();
-    await vi.waitFor(() => expect(homeReads).toHaveLength(previousReads + 1));
-    expect(homeReads.at(-1)).toBe(sessionId);
+    expect(homeReads).toEqual([]);
   };
   expect(homeReads).toEqual([]);
   for (const sessionId of currentConsumers) await infer(sessionId);
@@ -273,33 +271,19 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
   expect(resourceReads).toBe(0);
   expect(homeReads).toEqual([]);
   expect(managed.readRetainedSemanticCustodyCount()).toBe(3);
-  resourceFailure = resourceReadFailure === 'network'
-    ? new Error('Home network unavailable')
-    : createHttpStatusError(resourceReadFailure, 'Home resource read failed');
+  resourceFailure = createHttpStatusError(404, 'Home resource missing');
   await syncChange();
   expect(homeReads).toEqual([]);
-  if (resourceReadFailure === 404) {
-    expect(managed.readRetainedSemanticCustodyCount()).toBe(0);
-    for (const sessionId of currentConsumers) {
-      expect(children.get(sessionId)).toEqual({ current: false, cleanup: 1 });
-    }
-    resourceFailure = null;
-    for (const sessionId of currentConsumers) await infer(sessionId);
-  } else {
-    expect(managed.readRetainedSemanticCustodyCount()).toBe(3);
-    for (const sessionId of currentConsumers) {
-      expect(children.get(sessionId)).toEqual({ current: true, cleanup: 0 });
-    }
-    resourceFailure = null;
+  expect(resourceReads).toBe(0);
+  expect(managed.readRetainedSemanticCustodyCount()).toBe(3);
+  for (const sessionId of currentConsumers) {
+    expect(children.get(sessionId)).toEqual({ current: true, cleanup: 0 });
   }
-  homeReads.length = 0;
   currentConsumers.delete('ended-at-home');
   await syncChange();
-  expect([...homeReads].sort()).toEqual(['ended-at-home', 'still-current', 'stream-ended']);
-  expect(children.get('ended-at-home')).toEqual({ current: false, cleanup: 1 });
-  expect(children.get('still-current')).toEqual({ current: true, cleanup: 0 });
-  expect(children.get('stream-ended')).toEqual({ current: true, cleanup: 0 });
-  expect(managed.readRetainedSemanticCustodyCount()).toBe(2);
+  expect(homeReads).toEqual([]);
+  expect(children.get('ended-at-home')).toEqual({ current: true, cleanup: 0 });
+  expect(managed.readRetainedSemanticCustodyCount()).toBe(3);
   homeReads.length = 0;
   currentConsumers.delete('stream-ended');
   const target = await open('stream-ended');
@@ -309,12 +293,14 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     socket.once('close', resolve);
     socket.once('connect', () => socket.end(target.localCapability, 'ascii'));
   });
-  await vi.waitFor(() => expect(children.get('stream-ended')).toEqual({ current: false, cleanup: 1 }));
-  expect(homeReads).toEqual(['stream-ended']);
+  expect(children.get('stream-ended')).toEqual({ current: true, cleanup: 0 });
+  expect(homeReads).toEqual([]);
   expect(children.get('still-current')).toEqual({ current: true, cleanup: 0 });
   homeReads.length = 0;
   await runtime.close();
   expect(children.get('still-current')).toEqual({ current: false, cleanup: 1 });
+  expect(children.get('ended-at-home')).toEqual({ current: false, cleanup: 1 });
+  expect(children.get('stream-ended')).toEqual({ current: false, cleanup: 1 });
   expect(managed.readRetainedSemanticCustodyCount()).toBe(0);
   // New custody can belong to the replacement broker; the closed instance's
   // listener and feature-disable callback must not act on it.
@@ -339,7 +325,9 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
 it('composes personal stream close with the exact shared gateway selector through real registry custody', async () => {
   const warnings = vi.spyOn(logger, 'warnLocalFile');
   onTestFinished(() => warnings.mockRestore());
-  await withConfiguredDaemonTestHome({ prefix: 'personal-broker-composition-' }, async ({ homeDir }) => {
+  await withConfiguredDaemonTestHome({ prefix: 'personal-broker-composition-',
+    env: { HAPPIER_DAEMON_SERVICE_SERVER_URL: 'https://api.happier.dev' },
+  }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
@@ -394,7 +382,7 @@ it('composes personal stream close with the exact shared gateway selector throug
       });
     };
     const unused = (): never => { throw new Error('Unexpected source effect for an unopened stream'); };
-    const runtime = await startDaemonProviderBrokerRuntimeWithCustody({ api, apiMachine, custody, runtime: {
+    const runtime = await startDaemonProviderBrokerRuntimeWithCustody({ apiMachine, custody, runtime: {
       machineId: fixture.machineId, nowMs: () => 150, createRequestId: () => 'request-1',
       resolveTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
       sourceOwner: createTeamCredentialBrokerSourceOwner({ machineId: fixture.machineId, custody,

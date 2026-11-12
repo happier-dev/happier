@@ -19,7 +19,7 @@ import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/provider
 
 /** Real committed plugin/Agent/Provider source. Only endpoint transport is
  * supplied by each test; no authorization, registry or materializer is mocked. */
-export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; materializationUrl?: string; signedOutAgentCli?: boolean;
+export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; sourceEnvelopeTransport?: 'cpx-v1'; materializationUrl?: string; signedOutAgentCli?: boolean;
   catalogModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['catalogModels'];
   connectedAccountModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['connectedAccountModels'];
   modelLoad?: ProviderModelLoadDescriptorV1;
@@ -49,6 +49,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
     ...(input.catalogModels ? { catalogModels: input.catalogModels } : {}),
     ...(input.connectedAccountModels ? { connectedAccountModels: input.connectedAccountModels } : {}),
+    ...(input.sourceEnvelopeTransport ? { sourceEnvelopeTransport: input.sourceEnvelopeTransport } : {}),
     ...(input.holdResponseForInput ? { holdResponseForInput: input.holdResponseForInput } : {}),
     ...(input.upstreamUrl ? { upstreamUrl: input.upstreamUrl } : {}),
     ...(input.controller ? { controller: input.controller } : {}),

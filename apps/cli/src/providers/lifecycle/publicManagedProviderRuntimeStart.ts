@@ -1,7 +1,8 @@
 import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { constants } from 'node:os';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type {
   ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
@@ -43,6 +44,7 @@ export type PublicManagedProviderRuntimeStartFailure = Readonly<{
 export type PublicManagedProviderRuntimeStartupFailure = Readonly<{
   phase: 'runtime_start';
   errorClass: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>['errorClass'];
+  failureCause: ActionFailureCauseV1;
   errorCode?: string;
   message?: string;
   stderrLine?: string;
@@ -79,6 +81,7 @@ function readStartupFailure(error: unknown): PublicManagedProviderRuntimeStartup
     ? readNativeStartupFailureDetail(terminal.lastStderrLine).providerErrorMessage : undefined;
   return Object.freeze({
     phase: 'runtime_start', errorClass: diagnostic.errorClass,
+    failureCause: normalizeActionExecutorThrownError(cause, 'providers.runtime_start').failureCause,
     ...(message ? { message } : {}),
     ...(stderrLine ? { stderrLine } : {}),
     ...(errorCode ? { errorCode } : {}),
