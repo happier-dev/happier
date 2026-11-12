@@ -213,6 +213,36 @@ describe("Session access grant service (SQLite integration)", () => {
         }))).toMatchObject({ ok: true, changed: true });
     });
 
+    it("keeps an admitted birth during a Team policy flip and applies the required floor to the next birth", async () => {
+        const fixture = await createFixture();
+        let admissions = 0;
+        const create = async (flipPolicy: boolean) => inTx(async tx => {
+            const session = await tx.session.create({ data: {
+                accountId: fixture.owner.id, tag: crypto.randomUUID(), primaryTeamId: fixture.team.id,
+                encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted",
+            } });
+            const result = await applyInitialSessionAccessInTx(tx, {
+                creatorAccountId: fixture.owner.id, sessionId: session.id, initialAccess: { grants: [] },
+            });
+            expect(result.ok).toBe(true);
+            admissions++;
+            if (flipPolicy && admissions === 1) {
+                // The finite birth has already been admitted. A policy change
+                // at this boundary belongs to the next birth, not a replay.
+                await tx.team.update({ where: { id: fixture.team.id }, data: { sessionCreationPolicy: "team_required" } });
+            }
+            return session.id;
+        });
+        const admittedSessionId = await create(true);
+        expect(admissions).toBe(1);
+        expect(await db.sessionTeamGrant.count({ where: { sessionId: admittedSessionId } })).toBe(0);
+        const nextSessionId = await create(false);
+        expect(await db.sessionTeamGrant.findUnique({ where: { sessionId_teamId: {
+            sessionId: nextSessionId, teamId: fixture.team.id,
+        } }, select: { requiredByTeamPolicy: true, accessLevel: true } }))
+            .toEqual({ requiredByTeamPolicy: true, accessLevel: "edit" });
+    });
+
     it("initial access commits overlapping custom grants with one final recipient delta in the outer transaction", async () => {
         const fixture = await createFixture();
         const membership = await db.teamMembership.findUniqueOrThrow({

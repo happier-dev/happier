@@ -97,6 +97,15 @@ each exact read and controls live delivery and stream retirement.
 
 ## One access decision, two presentations
 
+In 0.3 development source, the initial-grant owner admits a Session birth once
+inside its transaction, before the terminal Account publication lock. Materialization
+uses that admission's resolved subjects, required Team floor and recipient envelopes;
+publication does not repeat the permission decision. A Team policy flip after admission
+may leave that birth without the newly required floor: the owner can share the Session,
+or the next Team policy apply supplies it. The next birth admits against the changed
+policy and membership. Account-mode fences and cryptographic recipient checks remain
+separate from this grant decision.
+
 `projectEffectiveSessionAccess` in `sessionAccess.ts` is the only place that turns a loaded
 Session row into an access answer. It collects the applicable grants — the caller's direct
 `SessionShare` rows, then the Team and Group grants whose membership is currently active and

@@ -29,7 +29,7 @@ import { validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAcc
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/app/account/profile/accountDisplayProfile';
-import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from '@/app/changes/markAccountChanged';
+import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
@@ -108,8 +108,8 @@ type MachineResourceFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_RE
 export type MachineAdmissionFacts = MachineFacts;
 /** Permission only: current grants/current membership, never key presence or Session history. */
 export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActor): Promise<MachineAccessRoleV1 | null> {
-    const row = await readFactsInTx(tx, input.machineId, input.actorAccountId);
-    return row ? (await machineRolesInTx(tx, [row], [input.actorAccountId])).get(row.id)?.get(input.actorAccountId) ?? null : null;
+    const roles = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [input.machineId], accountIds: [input.actorAccountId] });
+    return roles.get(input.machineId)?.get(input.actorAccountId) ?? null;
 }
 
 async function machineRolesInTx(tx: Tx, rows: readonly Parameters<typeof readMachineRoleGraphInTx>[1][number][], accountIds: readonly string[]) {
@@ -329,7 +329,8 @@ export type WorkflowMachineAdmission = Exclude<MachineAdmission, { kind: 'admitt
     });
 type WorkflowMachineAdmissionInput = MachineActor & Readonly<{ purpose: 'workflow' }>;
 export async function resolveMachineAdmissionInTx(tx: Tx, input: MachineAdmissionInput): Promise<MachineAdmission> {
-    return resolveMachineAdmissionFromFactsInTx(tx, await readMachineAdmissionFactsInTx(tx, input), input);
+    const admissions = await resolveMachineAdmissionsInTx(tx, { ...input, machineIds: [input.machineId] });
+    return admissions.get(input.machineId)!;
 }
 
 /** Request-local facts serve namespace selection and the single admission decision. */
@@ -427,9 +428,7 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     return result;
 }
 
-type MachineAdmissionsInput = Readonly<{
-    actorAccountId: string; machineIds: readonly string[];
-}>;
+type MachineAdmissionsInput = Omit<MachineAdmissionInput, 'machineId'> & Readonly<{ machineIds: readonly string[] }>;
 /** Set-oriented default-use admission; point and batch readers share every policy decision. */
 export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput & Readonly<{ purpose: 'workflow' }>): Promise<ReadonlyMap<string, WorkflowMachineAdmission>>;
 export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput): Promise<ReadonlyMap<string, MachineAdmission>>;
@@ -438,10 +437,13 @@ export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissi
     if (machineIds.length === 0) return new Map();
     const byId = await readMachineFactsInTx(tx, input.actorAccountId, machineIds);
     const roles = await machineRolesInTx(tx, [...byId.values()], [input.actorAccountId]);
+    const foreignEncryptedIds = [...byId.values()].filter(row => row.accountId !== input.actorAccountId
+        && roles.get(row.id)?.get(input.actorAccountId) && resourceMode(row) === 'e2ee').map(row => row.id);
+    const material = foreignEncryptedIds.length > 0
+        ? await readRecipientAccessMaterialInTx(tx, input.actorAccountId, foreignEncryptedIds) : undefined;
     const result = new Map<string, MachineAdmission | WorkflowMachineAdmission>();
     for (const machineId of machineIds) result.set(machineId, await machineAdmissionFromFactsWithRoleInTx(tx, byId.get(machineId) ?? null,
-        { actorAccountId: input.actorAccountId, machineId, ...(input.purpose === 'workflow' ? { purpose: 'workflow' as const } : {}) },
-        roles.get(machineId)?.get(input.actorAccountId) ?? null));
+        { ...input, machineId }, roles.get(machineId)?.get(input.actorAccountId) ?? null, material));
     return result;
 }
 
@@ -451,8 +453,9 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
     return machineAdmissionFromFactsWithRoleInTx(tx, row, input);
 }
 async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
-    input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null): Promise<MachineAdmission | WorkflowMachineAdmission> {
-    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId, undefined, role);
+    input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
+    material?: Awaited<ReturnType<typeof readRecipientAccessMaterialInTx>>): Promise<MachineAdmission | WorkflowMachineAdmission> {
+    const access = row && await accessFromFactsInTx(tx, row, input.actorAccountId, material, role);
     if (!row || !access) return { kind: 'denied', code: 'access_denied' };
     if (input.purpose === 'workflow' && access.owned) {
         const availability = classifyMachineAvailabilityState(row);
@@ -619,9 +622,8 @@ export async function acquireMachineAccessPublicationLocksInTx(tx: Tx, machineId
     const captured = new Set(await readAudience());
     await acquireAccountChangePublicationLocksInTx(tx, [...captured], { includeSingleAccount: true });
     await lockMachinePublicationInTx(tx, machineId);
-    beforeAccountChangePublication(tx, [...captured], async () => {
-        assertAccountChangePublicationAudienceInTx(tx, await readAudience());
-    });
+    // Materialization consumes the admitted audience; terminal publication
+    // retains its locked CAS checks without repeating recipient discovery.
 }
 /** Idempotent per-principal grants; Manage can delegate Manage without replacing custody. */
 export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin' }>): Promise<MachineAccessMutationResultV1> {

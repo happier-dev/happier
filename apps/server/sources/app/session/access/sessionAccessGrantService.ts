@@ -1,14 +1,13 @@
 import { resolveStructuralSessionAccessForAccountsInTx } from "./sessionAccess";
-import { isDeepStrictEqual } from "node:util";
 import { decodeBase64 } from "privacy-kit";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "./sessionRecipients";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { admitDirectSessionRecipientEnvelope, type DirectSessionRecipientEnvelopeError } from "@/app/session/encryption/sessionDataKeyEnvelopeAdmission";
-import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { ShareAccessLevel, TeamMembershipStatus, TeamSessionCreationPolicy } from "@/storage/prisma";
 import { readTransactionDatabaseTime } from "@/storage/transactionDatabaseTime";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
-import { beforeAccountChangePublication, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
+import { markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import {
     isStructurallyValidSessionDataKeyEnvelope,
     readSessionDataKeyEnvelopeInTx,
@@ -258,7 +257,7 @@ type InitialSessionAccessAdmission = Readonly<{
     envelopeWrites: ReadonlyMap<string, Uint8Array<ArrayBuffer>>;
 }> | Readonly<{ ok: false; error: SessionAccessGrantErrorCode | "session_initial_access_creator_mismatch" }>;
 
-/** Pure creation admission, reused after terminal Account locking without applying grants. */
+/** Final creation admission. Materialization consumes these facts without a later permission read. */
 async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAccessInput): Promise<InitialSessionAccessAdmission> {
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
@@ -373,18 +372,9 @@ export async function applyInitialSessionAccessInTx(
     const admission = await admitInitialSessionAccessInTx(tx, params);
     if (!admission.ok) return admission;
     const { session, primaryTeam, resolved, envelopeWrites } = admission;
-    if (params.initialAccess.grants.length > 0 || session.primaryTeamId !== null) {
-        beforeAccountChangePublication(tx, [params.creatorAccountId], async client => {
-            const current = await admitInitialSessionAccessInTx(client, params);
-            if (!current.ok) throw new SessionInitialAccessError(current.error);
-            // Policy changes may alter the implicit required grant/floor. Replay
-            // the whole materialization instead of committing the old grants.
-            if (!isDeepStrictEqual(current.resolved, resolved)
-                || teamPolicyRequiresGrant(current.primaryTeam) !== teamPolicyRequiresGrant(primaryTeam)) {
-                throw new TransactionReplayRequiredError("session-initial-access-admission-changed");
-            }
-        });
-    }
+    // A Team policy change after admission applies to the next birth. If its
+    // newly required floor is absent here, the owner can share this Session or
+    // the next Team policy apply supplies it; do not replay admitted work.
 
     // A private creation with no requested grants has no access transition to
     // publish. In particular, do not invalidate the owner's roster merely

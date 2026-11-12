@@ -1,7 +1,7 @@
 import type { Socket } from 'socket.io';
 import { TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
-import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from '@/app/changes/markAccountChanged';
+import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { resolveCurrentMachineRecipientAccountIdsInTx, lockMachinePublicationInTx } from '@/app/machines/machineAccess';
 import { isPlainMachineDataKeyMarker, decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -29,10 +29,8 @@ export async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: stri
     if (currentAccountIds.some(accountId => !lockedAccountIds.has(accountId))) {
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
-    beforeAccountChangePublication(tx, hintedAccountIds, async () => {
-        const recipients = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-        assertAccountChangePublicationAudienceInTx(tx, recipients);
-    });
+    // The stabilized admission supplies this finite publication. New grants
+    // and withdrawals are observed by the next request, before its writes.
     return currentAccountIds;
 }
 
