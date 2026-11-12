@@ -298,12 +298,29 @@ describe('workflow composer admission', () => {
             serverId={appliedHome.serverId} values={{ reviewer: participant }} onChangeValues={() => {}} onRun={vi.fn()} onCancel={() => {}} />);
         // Closed, the start form mounts no participant control (no listing or machine reads).
         expect(screen.findAllByTestId('workflow-run-inputs-reviewer-picker')).toHaveLength(0);
-        await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
+        await screen.pressByTestIdAsync('workflow-run-inputs-reviewer-chip');
         const pickers = screen.findAllByTestId('workflow-run-inputs-reviewer-picker');
         expect(pickers.length).toBeGreaterThan(0);
         expect(pickers.some((node) => node.props.reading === 'session.collaboration.discussion.participants.session')).toBe(true);
         expect(screen.findAllByTestId('workflow-run-inputs-reviewer').some((node) => typeof node.props.value === 'string'
             && node.props.value.includes('reviewer-session'))).toBe(false);
+    });
+    it('gives each participant input its own chip opening only that input, and keeps scalar inputs in Inputs (dpRev 4)', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'question', valueType: 'string', required: true },
+            { name: 'participants', valueType: 'json', multiple: true, minItems: 2, required: true, inputType: { hostType: 'agentParticipant' } },
+            { name: 'synthesis', valueType: 'boolean', required: false, default: false },
+            { name: 'synthesizer', valueType: 'json', required: false, inputType: { hostType: 'agentParticipant' } }]}
+            serverId={appliedHome.serverId} values={{ question: 'Is the rail pin model right?' }} onChangeValues={() => {}} onRun={vi.fn()} onCancel={() => {}} />);
+        const participantsChip = screen.findByTestId('workflow-run-inputs-participants-chip');
+        // Before a pick the chip says what is needed, by the input's own name.
+        expect(String(participantsChip?.props.accessibilityLabel).toLowerCase()).toMatch(/participants.*needed/);
+        expect(screen.findByTestId('workflow-run-inputs-synthesizer-chip')).not.toBeNull();
+        // The scalar input keeps the Inputs chip, which no longer counts a participant as its own need.
+        expect(screen.findByTestId('workflow-run-inputs-inputs-chip')?.props.accessibilityLabel).not.toContain('needed');
+        await screen.pressByTestIdAsync('workflow-run-inputs-participants-chip');
+        expect(screen.findAllByTestId('workflow-run-inputs-participants-picker').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('workflow-run-inputs-synthesizer-picker')).toHaveLength(0);
+        expect(screen.findAllByTestId('workflow-run-inputs-synthesis:yes')).toHaveLength(0);
     });
     it('reads a built-in\'s inputs in its own words wherever the form opens, without each caller passing them', async () => {
         const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'focus', valueType: 'string', required: false, default: 'Review it' },

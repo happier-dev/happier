@@ -39,7 +39,7 @@ import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
-import { useExecutableParticipantLabel } from '@/components/sessions/authoring/useExecutableParticipantLabel';
+import { useExecutableParticipantLabel, useExecutableParticipantLabels } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { useInlineExecutableParticipantPicker } from '@/components/sessions/authoring/useInlineExecutableParticipantPicker';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces';
@@ -460,11 +460,22 @@ export function WorkflowRunComposer(
   const mainName = findWorkflowMainInput(props.inputs)?.name;
   const main =
     personFields.find((field) => field.definition.name === mainName) ?? null;
-  const remaining = personFields.filter((field) => field !== main);
+  // Each participant input is its own composer chip (dpRev 4); the other inputs share Inputs.
+  const participantFields = React.useMemo(
+    () => personFields.filter((field) => field !== main && isParticipantInput(field.definition)),
+    [personFields, main],
+  );
+  const remaining = personFields.filter((field) => field !== main && !isParticipantInput(field.definition));
+  const participantValues = React.useMemo(
+    () => participantFields.map((field) => field.value),
+    [participantFields],
+  );
+  const participantLabels = useExecutableParticipantLabels(participantValues, props.serverId ?? null);
   const missingFields = fields.filter(
     (field) => field.errorCode === 'missing_required_input',
   );
   const missing = missingFields.length;
+  const inputsMissingFields = missingFields.filter((field) => !isParticipantInput(field.definition));
   // A built-in reads in its own words wherever its form opens; the source it reads options for names it.
   const inputPresentation = React.useMemo(
     () =>
@@ -669,7 +680,45 @@ export function WorkflowRunComposer(
               ),
             }),
           ]),
-      ...(remaining.length === 0 && missing === 0
+      ...participantFields.map((field, index) => {
+        const definition = field.definition;
+        const title = inputTitle(definition);
+        return createExecutionRunStartContentChip({
+          key: `workflow-start-input:${definition.name}`,
+          icon: 'users',
+          controlId: 'workflowInputs',
+          placementId: `workflowInputs:${definition.name}`,
+          pending: true,
+          // The chip reads as who was picked; before a pick, what is needed (dpRev 4).
+          label:
+            participantLabels[index] ??
+            (field.errorCode === 'missing_required_input'
+              ? t('workflows.start.inputNeeded', { name: title })
+              : title),
+          title,
+          testID: `${prefix}-${definition.name}-chip`,
+          revision: JSON.stringify([field.value, locked]),
+          renderContent: (
+            <WorkflowRunInputs
+              fields={[field]}
+              values={values}
+              rawTextValues={rawTextValues}
+              onChangeText={changeText}
+              onChangeValue={changeValue}
+              pending={locked}
+              machineId={props.machineId ?? null}
+              serverId={props.serverId ?? null}
+              prefix={prefix}
+              optionsConsumer={props.optionsConsumer}
+              pickAgentParticipant={props.pickAgentParticipant}
+              {...(inputPresentation === undefined
+                ? {}
+                : { presentation: inputPresentation })}
+            />
+          ),
+        });
+      }),
+      ...(remaining.length === 0 && inputsMissingFields.length === 0
         ? []
         : [
             createExecutionRunStartContentChip({
@@ -679,12 +728,12 @@ export function WorkflowRunComposer(
               placementId: 'workflowInputs',
               pending: true,
               label:
-                missing === 1
+                inputsMissingFields.length === 1
                   ? t('workflows.start.neededNamed', {
-                      name: inputTitle(missingFields[0]!.definition),
+                      name: inputTitle(inputsMissingFields[0]!.definition),
                     })
-                  : missing > 1
-                    ? t('workflows.start.needed', { count: missing })
+                  : inputsMissingFields.length > 1
+                    ? t('workflows.start.needed', { count: inputsMissingFields.length })
                     : t('workflows.start.inputs'),
               title: t('workflows.start.inputs'),
               testID: `${prefix}-inputs-chip`,
@@ -876,6 +925,9 @@ export function WorkflowRunComposer(
       main,
       missing,
       missingFields,
+      inputsMissingFields,
+      participantFields,
+      participantLabels,
       inputPresentation,
       prefix,
       props.extraActionChips,

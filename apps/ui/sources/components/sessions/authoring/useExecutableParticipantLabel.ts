@@ -54,10 +54,23 @@ export function useExecutableParticipantLabel(
   serverId: string | null,
   enabled = true,
 ): string | undefined {
-  const selections = React.useMemo(() => readSelections(value), [value]);
+  const values = React.useMemo(() => [value], [value]);
+  return useExecutableParticipantLabels(values, serverId, enabled)[0];
+}
+
+/**
+ * The same naming for several participant values at once (one chip per participant input): one
+ * Session-title and one Machine subscription for all of them, one label per value.
+ */
+export function useExecutableParticipantLabels(
+  values: readonly unknown[],
+  serverId: string | null,
+  enabled = true,
+): readonly (string | undefined)[] {
+  const selections = React.useMemo(() => values.map(readSelections), [values]);
   const addresses = React.useMemo(
     () =>
-      enabled ? selections.flatMap((selection) =>
+      enabled ? selections.flat().flatMap((selection) =>
         selection.kind === 'session'
           ? [
               {
@@ -70,12 +83,11 @@ export function useExecutableParticipantLabel(
     [enabled, selections],
   );
   const titles = useSessionDisplayTitles(addresses);
-  const machines = useMachineListForServer(serverId ?? '', enabled && selections.some(selection => selection.kind === 'model'));
-  const label = React.useMemo(() => {
+  const machines = useMachineListForServer(serverId ?? '', enabled && selections.some(entries => entries.some(selection => selection.kind === 'model')));
+  const labels = React.useMemo(() => {
     if (!enabled) return undefined;
-    if (selections.length === 0) return undefined;
     let sessionIndex = 0;
-    return selections
+    return selections.map(entries => entries.length === 0 ? undefined : entries
       .map((selection) => {
         if (selection.kind === 'session') {
           return (
@@ -92,10 +104,12 @@ export function useExecutableParticipantLabel(
           machine: (machine ? getMachineDisplayName(machine) : null) ?? t('session.collaboration.unnamed'),
         });
       })
-      .join(', ');
+      .join(', '));
   }, [enabled, machines, selections, titles]);
-  // A retained field keeps its last label while its detail subscriptions are withdrawn.
-  const retainedLabel = React.useRef(label);
-  React.useLayoutEffect(() => { if (enabled) retainedLabel.current = label; }, [enabled, label]);
-  return enabled ? label : retainedLabel.current;
+  // A retained field keeps its last labels while its detail subscriptions are withdrawn.
+  const retainedLabels = React.useRef<readonly (string | undefined)[]>(labels ?? EMPTY_LABELS);
+  React.useLayoutEffect(() => { if (labels) retainedLabels.current = labels; }, [labels]);
+  return labels ?? retainedLabels.current;
 }
+
+const EMPTY_LABELS: readonly (string | undefined)[] = Object.freeze([]);
