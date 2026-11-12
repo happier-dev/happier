@@ -142,6 +142,10 @@ export function presentProviderCliRefusal(error: ProviderErrorV1): readonly stri
       ? 'Select a Team credential explicitly for this Run.'
       : RECOVERY_GUIDANCE[error.action],
     ...(error.savedSecretReason ? [`Saved Secret: ${SAVED_SECRET_REASON_DETAILS[error.savedSecretReason]}`] : []),
+    ...(error.reason ? [presentBoundedCliContext('Reason', error.reason)] : []),
+    ...(error.failureCause ? [presentBoundedCliContext('Cause',
+      `${error.failureCause.phase}: ${error.failureCause.errorCode ?? error.failureCause.errorClass}`)] : []),
+    ...(error.requestId ? [presentBoundedCliContext('Request ID', error.requestId)] : []),
     ...(error.connectionId ? [presentBoundedCliContext('Connection', error.connectionId)] : []),
     ...(error.machineId ? [presentBoundedCliContext('Machine', error.machineId)] : []),
     ...(error.sourceProfileId ? [presentBoundedCliContext('Source profile', error.sourceProfileId)] : []),

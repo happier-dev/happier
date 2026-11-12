@@ -37,12 +37,12 @@ describe('happier providers command boundary', () => {
   });
 
   it('returns typed provider failures with nonzero human and JSON exit status', async () => {
-    const details = {
-      code: 'provider_endpoint_unreachable',
+    const details = createProviderErrorV1('provider_endpoint_unreachable', {
       connectionId: 'pc_1',
       machineId: 'machine-a',
-      actions: [{ kind: 'retry' }],
-    };
+      failureCause: { phase: 'providers.catalog', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null },
+      requestId: 'request-provider-1112',
+    });
     const load = vi.fn(async () => {
       throw new ProviderCliError(
         'provider_endpoint_unreachable',
@@ -52,7 +52,7 @@ describe('happier providers command boundary', () => {
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await handleProvidersCliCommand(context(['probe', 'pc_1']), load);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('Provider operation failed: provider_endpoint_unreachable'));
+    const printed = error.mock.calls.map(([line]) => String(line)).join('\n');
     expect(process.exitCode).toBe(1);
 
     process.exitCode = 0;
@@ -84,6 +84,9 @@ describe('happier providers command boundary', () => {
       },
     });
     expect(process.exitCode).toBe(1);
+    expect(printed).toContain('provider_endpoint_unreachable');
+    expect(printed).toContain('ECONNREFUSED');
+    expect(printed).toContain('Request ID: request-provider-1112');
   });
 
   it('preserves the canonical review_current_state refusal for an unknown mutation outcome', async () => {

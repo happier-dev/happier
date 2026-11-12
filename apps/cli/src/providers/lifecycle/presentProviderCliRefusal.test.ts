@@ -7,6 +7,23 @@ import {
 import { presentProviderCliRefusal } from './presentProviderCliRefusal';
 
 describe('Provider CLI refusal presentation', () => {
+  it('preserves the carried cause, configuration reason, recovery and request correlation', () => {
+    const error = createProviderErrorV1('provider_connection_invalid', {
+      reason: 'managed_deployment_unavailable',
+      failureCause: { phase: 'providers.catalog', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null },
+      requestId: 'request-provider-1112',
+    });
+    const presentation = presentProviderCliRefusal(error).join('\n');
+    expect(presentation).toContain('ECONNREFUSED');
+    expect(presentation).toContain('providers.catalog');
+    expect(presentation).toContain(error.reason);
+    expect(presentation).toContain('Request ID: request-provider-1112');
+    expect(presentation).toContain('Review the Provider connection and try again.');
+
+    const bounded = presentProviderCliRefusal({ ...error, requestId: '\u001b'.repeat(600) });
+    expect(bounded.every(line => line.length <= 512 && !line.includes('\u001b'))).toBe(true);
+  });
+
   it('has a bounded actionable presentation for every closed Provider error code', () => {
     for (const code of ProviderErrorCodeV1Schema.options) {
       const error = createProviderErrorV1(code);
