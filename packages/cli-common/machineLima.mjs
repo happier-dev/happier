@@ -75,11 +75,14 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
   return record;
 }
 
-export async function runLimaCommand({ executor, store, args, input, interactive = false }) {
+function limaStoreOptions(store) {
   // Lima derives socket names from LIMA_HOME without expanding relative roots.
   // Keep retained data in the selected store while native paths stay short.
-  const options = { ...(store === undefined ? {} : { cwd: validateLimaStore(store), env: { LIMA_HOME: '.' } }),
-    ...(input === undefined ? {} : { input }) };
+  return store === undefined ? {} : { cwd: validateLimaStore(store), env: { LIMA_HOME: '.' } };
+}
+
+export async function runLimaCommand({ executor, store, args, input, interactive = false }) {
+  const options = { ...limaStoreOptions(store), ...(input === undefined ? {} : { input }) };
   const result = await executor[interactive ? 'run' : 'capture']('limactl', args, options);
   return result;
 }
@@ -173,21 +176,37 @@ export async function deleteLimaInstance({ executor, instance: rawInstance, stor
   } catch { return { kind: 'unknown' }; }
 }
 
-export async function runLimaGuestCommand({ executor, instance: rawInstance, store, argv, input, workdir, interactive = false }) {
+function limaGuestShellArgs({ instance: rawInstance, argv, workdir }) {
   const instance = validateLimaInstanceName(rawInstance);
   if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== 'string' || arg.includes('\0'))) {
     throw limaError('LIMA_INVALID_COMMAND', 'guest command must be a nonempty argv');
   }
-  return runLimaCommand({ executor, store, args: ['shell', ...(workdir === undefined ? [] : [`--workdir=${workdir}`]), instance, '--', ...argv], input, interactive });
+  return ['shell', ...(workdir === undefined ? [] : [`--workdir=${workdir}`]), instance, '--', ...argv];
 }
 
-export async function execLimaGuest({ executor, instance: rawInstance, store, argv, input }) {
-  const instance = validateLimaInstanceName(rawInstance);
+export async function runLimaGuestCommand({ executor, instance, store, argv, input, workdir, interactive = false }) {
+  return runLimaCommand({ executor, store, args: limaGuestShellArgs({ instance, argv, workdir }), input, interactive });
+}
+
+async function assertLimaGuestRunning({ executor, instance, store }) {
   const current = await getLimaStatus({ executor, instance, store });
   if (!current.exists || current.status.toLowerCase() !== 'running') {
     throw limaError('LIMA_GUEST_UNAVAILABLE', 'native guest execution requires the retained running instance');
   }
+}
+
+export async function execLimaGuest({ executor, instance: rawInstance, store, argv, input }) {
+  const instance = validateLimaInstanceName(rawInstance);
+  await assertLimaGuestRunning({ executor, instance, store });
   return runLimaGuestCommand({ executor, instance, store, argv, input, workdir: '/' });
+}
+
+/** The provisioner `stream` role: one long-lived interactive guest shell process (no PTY). */
+export async function openLimaGuestChannel({ executor, instance: rawInstance, store, argv }) {
+  const instance = validateLimaInstanceName(rawInstance);
+  if (typeof executor.channel !== 'function') throw limaError('LIMA_CHANNEL_UNSUPPORTED', 'this Lima executor carries no live channel');
+  await assertLimaGuestRunning({ executor, instance, store });
+  return executor.channel('limactl', limaGuestShellArgs({ instance, argv, workdir: '/' }), limaStoreOptions(store));
 }
 
 export async function putLimaGuestFile({ executor, instance, store, guestPath, bytes, mode = '0600' }) {

@@ -3,12 +3,12 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import {
   changeLimaPower, createLimaInstance, deleteLimaInstance, execLimaGuest, inspectLimaCapabilities, inspectLimaInstance,
-  limaInstanceField, limaVersionAtLeast, parseLimaVersion, putLimaGuestFile, runLimaCommand,
+  limaInstanceField, limaVersionAtLeast, openLimaGuestChannel, parseLimaVersion, putLimaGuestFile, runLimaCommand,
   validateLimaStore,
 } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import type { LimaCommandResult, LimaExecutor, LimaInstance } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import type { MachineProvisionerOptionsResultV1, MachineProvisionerSizeV1, MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { observeMachineProvisionerNativeRead, MachineProvisionerSizeV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, MachineProvisionerSizeV1Schema, projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { LimaLaunchSchema, LimaOptionsInputSchema, LimaResourceSchema } from './schemas.js';
 import type { LimaLaunch, LimaResource } from './schemas.js';
 import { machinePresentationLabel } from '../ui/translations.js';
@@ -57,7 +57,8 @@ function refusalCode(error: unknown) {
 }
 
 function nativeFailure(error: unknown) {
-  return error instanceof LimaNativeCommandError ? { nativeCause: error.nativeCause } : {};
+  return error instanceof LimaNativeCommandError ? { nativeCause: error.nativeCause }
+    : projectMachineProvisionerActionFailure(error, () => ({}));
 }
 
 function nativeSize(instance: LimaInstance) {
@@ -104,6 +105,9 @@ export function buildCreateArgs(launch: LimaLaunch & Readonly<{ instance: string
     'create', '--name', launch.instance, '--tty=false', '--vm-type', launch.vmType, '--arch', launch.arch,
     '--cpus', String(launch.cpus), '--memory', String(launch.memoryGiB), '--disk', String(launch.diskGiB),
     '--containerd', 'none', '--mount-none',
+    // Lima grants its native login passwordless sudo. Never inherit the host's
+    // username: enrollment's distinct daemon principal owns its admin policy.
+    '--set', `.user.name = ${JSON.stringify(MACHINE_PROVISIONER_CLOUD_SSH_USER)}`,
     '--set', `.images = ${JSON.stringify([{ location: launch.image, arch: launch.arch }])}`,
     '--set', `.mounts = ${JSON.stringify(launch.mounts)}`,
     // Guest services must not claim the controller's loopback ports. Lima's
@@ -116,7 +120,9 @@ export function buildCreateArgs(launch: LimaLaunch & Readonly<{ instance: string
   ];
 }
 
-export function createLimaProvider<TResult extends LimaCommandResult>(executor: LimaExecutor<TResult>, observedAt = Date.now(),
+export function createLimaProvider<TResult extends LimaCommandResult, TChannel = never>(executor: LimaExecutor<TResult> & Readonly<{
+  channel?(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<TChannel>;
+}>, observedAt = Date.now(),
   qemuAvailable?: (dependencyId: string) => Promise<boolean>) {
   async function nativeVersionAvailable() {
     const version = await runLimaCommand({ executor, args: ['--version'] });
@@ -171,7 +177,7 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
           return requireQemu(info.hostArch === 'aarch64' ? 'aarch64' : 'x86_64');
         }
         return info.vmTypes.includes('vz') ? { available: true } : { available: false, code: 'vz_driver_unavailable' };
-      } catch { return { available: false, code: 'lima_unavailable' }; }
+      } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: 'lima_unavailable' })); }
     },
     async options(rawQuery: unknown): Promise<MachineProvisionerOptionsResultV1> {
       let query = LimaOptionsInputSchema.parse(rawQuery);
@@ -182,7 +188,7 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
         if (query.arch === undefined) templateInfo = await nativeInfo();
         let image: string | undefined;
         try { image = await resolveTemplateImage(query.image, query.arch ?? templateInfo?.hostArch); }
-        catch { throw new PluginError({ code: 'lima_image_unavailable' }); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => { throw new PluginError({ code: 'lima_image_unavailable' }); }); }
         if (!image) throw new PluginError({ code: 'lima_image_unavailable' });
         query = { ...query, image };
       }
@@ -260,7 +266,7 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
         }
         if (String(limaInstanceField(created.instance, 'status')).toLowerCase() !== 'running') {
           const started = await changeLimaPower({ executor, ...expected, intent: 'start' });
-          if (started.status.toLowerCase() !== 'running') throw new PluginError({ code: 'lima_start_unconfirmed' });
+          if (started.status.toLowerCase() !== 'running') throw Object.assign(new Error('Lima startup is unconfirmed'), { code: 'lima_start_unconfirmed' });
         }
         return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: expected } };
       } catch (error) {
@@ -286,7 +292,8 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
         if (!native) return { kind: 'rejected' as const, code: 'managed_not_found' as const };
         return { kind: 'bound' as const, resource: { contributionRef, schemaVersion: 1, value: resource } };
       } catch (error) {
-        return { kind: 'unknown' as const, recovery: { reference: `${expected.store}/${expected.instance}`, reason: refusalCode(error) } };
+        return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const,
+          recovery: { reference: `${expected.store}/${expected.instance}`, reason: refusalCode(error) } }));
       }
     },
     async inspect(resource: LimaResource) {
@@ -299,7 +306,8 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
             storage: 'retained' as const, size: nativeSize(native) } : {}),
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const },
         });
-      } catch (error) { return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: refusalCode(error) }); }
+      } catch (error) { return projectMachineProvisionerActionFailure(error,
+        () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: refusalCode(error) })); }
     },
     async resize(rawResource: LimaResource, size: MachineProvisionerSizeV1): Promise<MachineProvisionerResizeResultV1> {
       let issued = false;
@@ -336,12 +344,21 @@ export function createLimaProvider<TResult extends LimaCommandResult>(executor: 
         const result = await deleteLimaInstance({ executor, ...resource });
         return { kind: result.kind === 'absent' ? 'confirmed' as const : 'unknown' as const };
       } catch (error) {
-        return { kind: refusalCode(error) === 'resource_mismatch' || refusalCode(error) === 'LIMA_IDENTITY_MISMATCH' ? 'refused' as const : 'unknown' as const, code: refusalCode(error) };
+        return projectMachineProvisionerActionFailure(error, () => ({
+          kind: refusalCode(error) === 'resource_mismatch' || refusalCode(error) === 'LIMA_IDENTITY_MISMATCH' ? 'refused' as const : 'unknown' as const,
+          code: refusalCode(error) }));
       }
     },
     async exec(rawResource: LimaResource, argv: readonly string[], input?: Uint8Array) {
       const { resource } = await inspectExact(rawResource);
       return execLimaGuest({ executor, ...resource, argv, input });
+    },
+    /** The optional `stream` role: one long-lived guest shell process carrying the invocation channel. */
+    async stream(rawResource: LimaResource, argv: readonly string[]): Promise<TChannel> {
+      const { resource } = await inspectExact(rawResource);
+      const { channel } = executor;
+      if (!channel) throw Object.assign(new Error('native Lima channel is unavailable'), { code: 'LIMA_CHANNEL_UNSUPPORTED' });
+      return openLimaGuestChannel({ executor: { ...executor, channel }, ...resource, argv });
     },
     async putFile(rawResource: LimaResource, guestPath: string, bytes: Uint8Array, mode?: string) {
       const { resource } = await inspectExact(rawResource);

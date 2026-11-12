@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { buildCreateArgs, createLimaProvider } from './provider.js';
 import { LimaLaunchSchema } from './schemas.js';
+import { MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerObservationV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const launch = LimaLaunchSchema.parse({
@@ -88,6 +89,17 @@ describe('public Lima native leaf', () => {
     expect(JSON.parse(forwarding!.slice('.portForwards = '.length))).toEqual([
       { guestIP: '0.0.0.0', guestIPMustBeZero: false, proto: 'any', guestPortRange: [1, 65535], ignore: true },
     ]);
+  });
+
+  it.each(['vz', 'qemu'] as const)('keeps the generated %s bootstrap sudo grant off the daemon identity', vmType => {
+    const args = buildCreateArgs({ ...launch, instance: 'happier-ask-user-test', vmType });
+    const assignments = args.filter((_, index) => args[index - 1] === '--set');
+    const bootstrapUser = assignments.join(' | ').match(/\.user\.name\s*=\s*("[^"]*")/u);
+    // Lima's cloud-init grants NOPASSWD to user.name (host username when omitted).
+    // Enrollment creates its separate, protocol-owned `happier` daemon principal.
+    expect(bootstrapUser).not.toBeNull();
+    expect(JSON.parse(bootstrapUser![1])).toBe(MACHINE_PROVISIONER_CLOUD_SSH_USER);
+    expect(JSON.parse(bootstrapUser![1])).not.toBe('happier');
   });
 
   it.each(['Stopped', 'Broken'])('recovers the exact existing %s guest without allocating or starting it', async status => {

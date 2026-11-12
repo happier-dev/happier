@@ -21,4 +21,5 @@ export const changeLimaPower: (options: LimaInstanceOptions & { intent: 'start' 
 export const createLimaInstance: (options: LimaInstanceOptions & { createArgs: readonly string[] }) => Promise<{ created: boolean; reconciled: boolean; instance: LimaInstance }> = native.createLimaInstance;
 export const deleteLimaInstance: (options: LimaInstanceOptions) => Promise<{ kind: 'absent' | 'unknown' }> = native.deleteLimaInstance;
 export const execLimaGuest: <TResult extends LimaCommandResult>(options: LimaIdentity & { executor: LimaExecutor<TResult>; argv: readonly string[]; input?: string | Uint8Array }) => Promise<TResult> = native.execLimaGuest;
+export const openLimaGuestChannel: <TChannel>(options: LimaIdentity & { executor: LimaExecutor & { channel(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<TChannel> }; argv: readonly string[] }) => Promise<TChannel> = native.openLimaGuestChannel;
 export const putLimaGuestFile: (options: LimaInstanceOptions & { guestPath: string; bytes: Uint8Array; mode?: string }) => Promise<{ kind: 'written' | 'unknown' }> = native.putLimaGuestFile;

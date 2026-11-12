@@ -2,6 +2,8 @@ export type LimaCommandResult = Readonly<{ exitCode: number | null; out?: string
 export type LimaExecutor<TResult extends LimaCommandResult = LimaCommandResult> = Readonly<{
   capture(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
   run(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
+  /** Optional live channel process (the provisioner `stream` role). */
+  channel?(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<unknown>;
 }>;
 export type LimaInstance = Record<string, unknown>;
 export type LimaIdentity = Readonly<{ instance: string; store?: string }>;
@@ -22,4 +24,5 @@ export function createLimaInstance(options: LimaInstanceOptions & { createArgs: 
 export function deleteLimaInstance(options: LimaInstanceOptions): Promise<{ kind: 'absent' | 'unknown' }>;
 export function runLimaGuestCommand<TResult extends LimaCommandResult>(options: LimaIdentity & { executor: LimaExecutor<TResult>; argv: readonly string[]; input?: string | Uint8Array; workdir?: string; interactive?: boolean }): Promise<TResult>;
 export function execLimaGuest<TResult extends LimaCommandResult>(options: LimaIdentity & { executor: LimaExecutor<TResult>; argv: readonly string[]; input?: string | Uint8Array }): Promise<TResult>;
+export function openLimaGuestChannel<TChannel>(options: LimaIdentity & { executor: LimaExecutor & { channel(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<TChannel> }; argv: readonly string[] }): Promise<TChannel>;
 export function putLimaGuestFile(options: LimaInstanceOptions & { guestPath: string; bytes: Uint8Array; mode?: string }): Promise<{ kind: 'written' | 'unknown' }>;
