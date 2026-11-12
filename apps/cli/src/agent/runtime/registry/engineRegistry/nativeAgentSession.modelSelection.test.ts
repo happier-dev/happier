@@ -23,12 +23,15 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
     };
     const opens: AgentSessionOpenRequest[] = [];
     let observedModelId = providerBinding?.model.id ?? selection.modelId;
+    let admittedModelId = providerBinding?.model.id;
     const modelListeners = new Set<() => void>();
     // The executable Agent is the external boundary; host configuration and Protocol parsing remain real.
     const nativeSession: AgentSessionRuntime = {
         send: async () => ({ status: 'admitted' }), watch: () => ({ dispose() {} }), dispose: async () => undefined,
         updateConfiguration: async request => {
-            if (providerBinding && request.model.value !== providerBinding.model.id) throw new Error('Bound model configuration is not selectable');
+            const nextModelId = request.providerBinding?.model.id ?? admittedModelId;
+            if (nextModelId && request.model.value !== nextModelId) throw new Error('Bound model configuration is not selectable');
+            admittedModelId = nextModelId;
             return { status: 'applied', changed: ['model'] };
         },
     };
@@ -112,6 +115,10 @@ async function readOpenedConfiguration(metadata: Readonly<Record<string, unknown
             expect(permissionOutcome?.status).toBe('applied');
             const rebound = await created.operations.updateSessionRuntimeConfig?.({ modelId: selection.modelId, providerBinding });
             expect(rebound?.status).toBe('applied');
+            const replacementBinding = { ...providerBinding, model: { id: 'replacement', name: 'Replacement' } };
+            expect((await created.operations.updateSessionRuntimeConfig?.({ modelId: 'custom/replacement',
+                providerBinding: replacementBinding }))?.status).toBe('applied');
+            expect((await created.operations.updateSessionRuntimeConfig?.({ modelId: 'custom/replacement' }))?.status).toBe('applied');
         }
         return AgentSessionConfigurationSnapshotV1Schema.parse(opens[0]!.configuration);
     } finally {
