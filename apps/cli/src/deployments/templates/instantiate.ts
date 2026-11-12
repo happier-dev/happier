@@ -43,7 +43,6 @@ import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest, type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
-import { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
@@ -56,7 +55,7 @@ const deploymentTemplateBindingsChildRole = 'template.bindings';
 function deploymentTemplateReviewedChildren(review: DeploymentTemplateInstantiationReviewV1): HostReviewedChildrenPreparationV1 {
     const children = review.domains.map(domain => ({ action: 'deployments.domains.add' as const,
         role: deploymentTemplateDomainChildRole(domain.key) }));
-    return { children: [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: deploymentTemplateBindingsChildRole }, ...children, ...(review.repositoryChange ? REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1 : []), ...(review.deploy ? [{ action: 'deployments.deploy' as const,
+    return { children: [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: deploymentTemplateBindingsChildRole }, ...children, ...(review.deploy ? [{ action: 'deployments.deploy' as const,
         role: 'template.deploy' }] : [])] };
 }
 function failure(errorCode: string, error?: unknown): ActionExecuteFailure {
@@ -93,8 +92,8 @@ type Host = Readonly<{
     headers(context: ActionExecutorContext, actionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
     sharedRepositoryWorkspace?: Readonly<{ readWorkspaceRows: CliAdmittedProjectRowsReader; readSource: NonNullable<ActionExecutorDeps['projectSourcesRead']> }>;
-    repositoryFiles?: (cwd: string, context: ActionExecutorContext,
-        executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>) => RepositoryFilesPullRequestHost;
+    /** Every repository effect stays inside the admitted checkout on this Machine. */
+    repositoryFiles?: (cwd: string, context: ActionExecutorContext) => RepositoryFilesPullRequestHost;
     deploy?(input: DeploymentDeployIntentInputV1, context: ActionExecutorContext, source?: Readonly<{ id: string; revision: number }>): ReturnType<NonNullable<ActionExecutorDeps['deploymentAction']>>;
     readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readCreationDefaultInputs(request: DeploymentCreationDefaultRequestForHost): Promise<DeploymentCreationDefaultInputsForHost>;
@@ -190,7 +189,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (resolved.kind !== 'resolved') return refuse(resolved.reason);
             if (resolved.workspace.machineId !== host.machineId) return refuse('target_mismatch');
             repositoryCwd = resolved.workspace.rootPath;
-            repositoryFiles = host.repositoryFiles?.(repositoryCwd, context, executeCanonicalAction) ?? refuse('credential_scope_denied');
+            repositoryFiles = host.repositoryFiles?.(repositoryCwd, context) ?? refuse('credential_scope_denied');
             const native = await validateAdmittedRepositoryWorkspace({ workspace: resolved.workspace,
                 projectSourceId: source.source.id, sourceRevision: destination.sourceRevision, repository: destination.repository,
                 baseCommit: destination.baseCommit, context, readSource: ports.readSource, admittedSource: source.source,
@@ -383,7 +382,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             if (input.destination.kind === 'repositoryPullRequest') {
                 phase = 'repository';
                 const repositoryReview = plan.repositoryReview ?? refuse('workspace_unavailable');
-                const files = host.repositoryFiles?.(repositoryReview.cwd, context, executeCanonicalAction) ?? refuse('credential_scope_denied');
+                const files = host.repositoryFiles?.(repositoryReview.cwd, context) ?? refuse('credential_scope_denied');
                 effectIssued = true;
                 const published = await openRepositoryFilesPullRequest(repositoryReview, files);
                 repositoryChange = published;

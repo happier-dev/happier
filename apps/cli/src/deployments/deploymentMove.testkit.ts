@@ -17,9 +17,8 @@ import { createBareGitRemoteFixture, createLocalScmRepositoryFixture, runScmExec
 import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
 import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
 import { createLocalGitForgeHostConfig, createLocalGitForgeTransport } from '@/testkit/scm/localGitForgeTransport';
-import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
-import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import { createDeploymentMoveToRepositoryForHost } from './moveToRepository';
+import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { assertDeploymentContentAuthorityForHost, resolveDeploymentDefinitionRoleForHost } from './deploymentDefinitionAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
@@ -85,36 +84,14 @@ export async function createDeploymentMoveFixture({ attach, create, existingChec
     },
     readWorkspaceRows: async () => ({ workspaceRefs: [workspace], relationships: [], source: 'network',
       organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 1, scopeKey: 'home:account' }), scmRegistry: registry,
-    repositoryFiles: (cwd, _context, invoke) => {
-      const execute: typeof invoke = (action, input) => invoke(action, input);
-      const unwrap = async (result: ReturnType<typeof invoke>) => {
-        const output = await result;
-        if (!output.ok) throw Object.assign(new Error(output.errorCode), { code: output.errorCode });
-        return output.result;
-      };
-      return { executeScm: (action, input) => unwrap(execute(action, { cwd, ...Object(input) })),
-        writeFile: input => unwrap(execute('daemon.filesystem.writeFile', input)),
-        deleteFile: (input: { rootPath: string; path: string; recursive: false }) => unwrap(execute('daemon.filesystem.delete', input)) };
-    },
+    // The installed daemon's one checkout scope, with the forge and OS Git remote as boundaries.
+    repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry }),
     createContent: async content => { const id = `candidate-${candidates.size}`; candidates.set(id, content);
       return { contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1 }; },
   });
   const executor = createActionExecutor({ deploymentMoveToRepository: move, deploymentAction: storage, isActionApprovalRequired: () => false,
     prepareHostReviewedChildren: async ({ actionId, input }) => actionId === 'deployments.environments.moveToRepository'
       ? deploymentMoveToRepositoryReviewedChildrenV1(DeploymentMoveToRepositoryInputV1Schema.parse(input)) : null,
-    scmActionExecute: ({ actionId, input, context }) => executeScmActionOperation({ actionId, input,
-      registry, workingDirectory: git.rootPath, signal: context.signal }),
-    filesystemActionExecute: async ({ actionId, input }) => {
-      if (actionId === 'daemon.filesystem.delete') {
-        const deletion = (await import('@happier-dev/protocol/actions/filesystemActionFamily')).FilesystemDeleteInputSchema.parse(input);
-        await rm(join(deletion.rootPath, deletion.path), { recursive: deletion.recursive });
-        return { success: true };
-      }
-      if (actionId !== 'daemon.filesystem.writeFile') throw new Error('Unexpected filesystem effect');
-      const write = (await import('@happier-dev/protocol/actions/filesystemActionFamily')).FilesystemWriteFileInputSchema.parse(input);
-      return commitGuardedFileReplace({ destPath: join(write.rootPath, write.path), expectation: write.expectedHash,
-        source: { kind: 'bytes', bytes: Buffer.from(write.content, 'base64') } });
-    },
     resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async () => { throw new Error('Use metadata boundary'); },
       async () => ({ ok: true, environment: { id: 'environment', projectSourceId: 'source', purpose: 'standard' } })) });
   const context = { serverId: 'home', runtimeAccountId: 'account', surface: 'cli' as const, authority: 'account_automation' as const,

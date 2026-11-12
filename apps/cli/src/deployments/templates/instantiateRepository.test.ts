@@ -11,21 +11,17 @@ import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSe
 import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { createLocalGitForgeHostConfig, createLocalGitForgeTransport } from '@/testkit/scm/localGitForgeTransport';
 import { createDeploymentGitRegistry } from '../targets/ownServer/exactCommitRelease.testkit';
-import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
-import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { createDeploymentTemplateInstantiationForHost } from './instantiate';
+import { createAdmittedCheckoutRepositoryFiles } from '../admittedCheckoutRepositoryFiles';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
-import { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1, REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1,
-    repositoryFilesPullRequestChildRoleV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { FilesystemWriteFileInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
 import { createCliDeploymentActionDeps } from '../createCliDeploymentActionDeps';
 import { createPrepareDeploymentBindingsForHost } from '../secrets/prepareDeploymentBindingsForHost';
@@ -103,7 +99,6 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
             snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
                 scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
         const writes: unknown[] = [];
-        const scmReads: unknown[] = [];
         const bindingStorage = createCliDeploymentActionDeps({ serverHttpBaseUrl: fixture.origin,
             admitAccount: async () => null, resolveRequestHeaders: async () => ({}),
             prepareBindings: createPrepareDeploymentBindingsForHost({ credentials, serverId: 'home',
@@ -116,19 +111,8 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
             readEnvironment: async () => current, readCreationDefaultInputs: async () => ({}),
             sharedRepositoryWorkspace: { readWorkspaceRows: async selection => fixture.inHome(() => readProjectAccountRows({ credentials, serverId: 'home', selection })),
                 readSource: sources.projectSourcesRead! },
-            repositoryFiles: (cwd, context, executeCanonicalAction) => {
-                const invoke = async (action: Parameters<NonNullable<typeof executeCanonicalAction>>[0], input: unknown) => {
-                    const role = repositoryFilesPullRequestChildRoleV1(action);
-                    if (!role) throw new Error('Undeclared repository child');
-                    const result = executeCanonicalAction ? await executeCanonicalAction(action, input)
-                        : await context.hostReviewedChild!.invoke({ action, role, input });
-                    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                    return result.result;
-                };
-                return { executeScm: (action, input) => invoke(action, { cwd, ...(input && typeof input === 'object' ? input : {}) }),
-                    writeFile: input => invoke('daemon.filesystem.writeFile', input),
-                    deleteFile: input => invoke('daemon.filesystem.delete', input) };
-            },
+            // The installed daemon's one checkout scope; the forge and OS Git remote are the boundaries.
+            repositoryFiles: (cwd, context) => createAdmittedCheckoutRepositoryFiles({ root: cwd, context, registry: nativeRegistry }),
             createContent: async () => { throw new Error('Bindings Action must prepare its own content'); },
             storage: async () => { throw new Error('Repository definition must use SCM'); },
         });
@@ -144,9 +128,6 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
                 async () => ({ ok: true, environment: { id: current.environment.id, projectSourceId: 'project', purpose: 'standard' } })),
             isActionApprovalRequired: () => false,
             prepareDeploymentTemplateInstantiation: request => templates.prepare(request.input, request.context, request.executeCanonicalAction),
-            prepareHostReviewedChildren: async request => request.actionId === 'deployments.templates.instantiate'
-                && DeploymentTemplateInstantiateInputV1Schema.parse(request.input).mode === 'preview'
-                ? { children: REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1 } : null,
             deploymentTemplateInstantiate: (input, context) => templates.instantiate(input, context),
             // Observe the reviewed operand while the actual deployment adapter owns execution.
             deploymentAction: async (action, input, context) => {
@@ -154,34 +135,18 @@ it.each(['pullRequest', 'bindings'] as const)('retains the repository owner and 
                 writes.push(input);
                 return bindingStorage.deploymentAction!(action, input, context);
             },
-            // The native SCM/filesystem adapters are real OS boundaries beneath Action policy and review.
-            scmActionExecute: async args => {
-                const result = await executeScmActionOperation({ ...args, registry: nativeRegistry, workingDirectory: git.rootPath });
-                if (result && typeof result === 'object' && 'success' in result) {
-                    scmReads.push({ action: args.actionId, success: result.success,
-                        errorCode: 'errorCode' in result ? result.errorCode : undefined });
-                }
-                return result;
-            },
-            filesystemActionExecute: async args => {
-                if (args.actionId !== 'daemon.filesystem.writeFile') throw new Error('Unexpected filesystem effect');
-                const input = FilesystemWriteFileInputSchema.parse(args.input);
-                return commitGuardedFileReplace({ destPath: join(input.rootPath, input.path), expectation: input.expectedHash ?? null,
-                    source: { kind: 'bytes', bytes: Buffer.from(input.content, 'base64') } });
-            },
         });
         const context = { serverId: 'home', runtimeAccountId: 'account-cli-fixture', surface: 'cli' as const,
             authority: 'account_automation' as const, actionCaller: { kind: 'host' as const }, actionRequestId: 'add-database',
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
-                ...Object.fromEntries(REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1.map(child => [child.action, ['cli']])),
                 'deployments.bindings.set': ['cli'],
             } }) };
         const preview = await fixture.inHome(() => executor.execute('deployments.templates.instantiate', { ...input, mode: 'preview' }, context));
-        expect(preview, JSON.stringify({ scmReads })).toMatchObject({ ok: true, result: { kind: 'preview', review: { repositoryChange: { baseCommit,
+        expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true, result: { kind: 'preview', review: { repositoryChange: { baseCommit,
             files: [expect.objectContaining({ path: git.trackedPath, before: document })] } } } });
         expect(fixture.writes).toHaveLength(0);
         const executed = await fixture.inHome(() => executor.execute('deployments.templates.instantiate', input, context));
-        expect(executed, JSON.stringify({ scmReads, httpRequests: forge.httpRequests, tokenRequests: forge.tokenRequests() })).toMatchObject({ ok: false, details: { kind: 'partial', phase: failurePhase === 'bindings' ? 'bindings' : 'repository',
+        expect(executed, JSON.stringify({ executed, httpRequests: forge.httpRequests, tokenRequests: forge.tokenRequests() })).toMatchObject({ ok: false, details: { kind: 'partial', phase: failurePhase === 'bindings' ? 'bindings' : 'repository',
             errorCode: failurePhase === 'bindings' ? 'deployment_content_unavailable' : 'COMMAND_FAILED',
             savedSecrets: [{ name: 'DB_PASSWORD' }], repositoryChange: failurePhase === 'bindings'
                 ? { kind: 'pullRequest', pullRequest: { url: 'https://github.com/example/app/pull/4' }, headCommit: expect.any(String) }

@@ -107,9 +107,8 @@ export * from './deploymentMoveToRepositoryV1.js';
 export { ScmRepositoryFilesPullRequestPartialV1Schema, type ScmRepositoryFilesPullRequestPartialV1,
   ScmRepositoryFilesPullRequestSuccessV1Schema, type ScmRepositoryFilesPullRequestSuccessV1,
   ScmRepositoryFilesPullRequestResultV1Schema, type ScmRepositoryFilesPullRequestResultV1 } from '../scm/repositoryFilesPullRequest.js';
-export { REPOSITORY_FILES_PULL_REQUEST_CHILDREN_V1, REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1, repositoryFilesPullRequestChildRoleV1,
-  deploymentMoveToRepositoryReviewedChildrenV1, deploymentMoveToRepositoryChildRoleV1, DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1,
-  type DeploymentMoveToRepositoryChildActionIdV1, type RepositoryFilesPullRequestChildActionIdV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
+export { deploymentMoveToRepositoryReviewedChildrenV1, deploymentMoveToRepositoryChildRoleV1, DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1,
+  type DeploymentMoveToRepositoryChildActionIdV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema,
   DeploymentTemplateInstantiationReviewV1Schema, readDeploymentTemplateCreationOperationRequestIdV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from './deploymentPublishPreparationV1.js';

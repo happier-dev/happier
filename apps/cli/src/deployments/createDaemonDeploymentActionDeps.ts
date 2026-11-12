@@ -117,8 +117,7 @@ import { readProjectAccountRows, createProjectAccountSnapshotMutation } from '@/
 import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import type { RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
-import { deploymentMoveToRepositoryReviewedChildrenV1,
-    REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { deploymentMoveToRepositoryReviewedChildrenV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { executePreviewTemplateCreationForHost, type PreviewTemplateCreationPlanForHost } from './templates/previewCreate';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -1531,9 +1530,6 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (request.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
                 // Existing Environment upgrades also enroll retained Domains during their reviewed deploy child.
                 const input = DeploymentTemplateInstantiateInputV1Schema.parse(request.input);
-                if (input.mode === 'preview' && input.destination.kind === 'repositoryPullRequest') return {
-                    children: REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1,
-                };
                 if (input.mode !== 'apply' || input.environment.kind !== 'existing' || input.target.kind !== 'existing' || !input.deploy) return null;
                 try { return await prepareOwnServerMembershipDomainReviewedChildren({
                     environmentId: input.environment.environmentId, targetLinkId: input.target.targetLinkId,

@@ -36,8 +36,7 @@ type Host = Readonly<{
     context: ActionExecutorContext): Promise<void>;
   readWorkspaceRows: CliAdmittedProjectRowsReader;
   scmRegistry?: ScmBackendRegistry;
-  repositoryFiles(cwd: string, context: ActionExecutorContext,
-    executeCanonicalAction: Parameters<NonNullable<ActionExecutorDeps['deploymentMoveToRepository']>>[2]): RepositoryFilesPullRequestHost;
+  repositoryFiles(cwd: string, context: ActionExecutorContext): RepositoryFilesPullRequestHost;
   createContent(content: unknown, kind: string, context: ActionExecutorContext,
     owner: DeploymentEnvironmentDetailV1['environment']['owner'], environmentId: string): Promise<DeploymentArtifactContentReferenceV1>;
 }>;
@@ -71,7 +70,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
           readWorkspaceRows: host.readWorkspaceRows, fallbackActionId: 'deployments.environments.moveToRepository' });
         if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
         if (placed.workspace.machineId !== host.machineId) return fail('target_mismatch');
-        const filesHost = host.repositoryFiles(placed.workspace.rootPath, context, executeCanonicalAction);
+        const filesHost = host.repositoryFiles(placed.workspace.rootPath, context);
         const status = ScmStatusSnapshotResponseSchema.parse(await filesHost.executeScm('scm.status.snapshot', { includeWorktreeStatus: false }));
         if (!status.success) return fail(status.errorCode ?? 'COMMAND_FAILED');
         const branch = status.snapshot?.branch;
@@ -96,7 +95,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
         if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
         if (placed.workspace.machineId !== host.machineId) return fail('target_mismatch');
         const provisioned = await provisionRepositoryForDefinition({ checkout: placed.workspace,
-          createRepository: input.createRepository }, host.repositoryFiles(placed.workspace.rootPath, context, executeCanonicalAction), context.signal);
+          createRepository: input.createRepository }, host.repositoryFiles(placed.workspace.rootPath, context), context.signal);
         if (provisioned.kind === 'partial') return { kind: 'partial', phase: provisioned.phase, errorCode: provisioned.errorCode };
         created = provisioned;
         createdWorkspace = placed.workspace;
@@ -116,7 +115,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       if (!('kind' in placed) || placed.kind !== 'resolved') return placed;
       const workspace = placed.workspace;
       if (workspace.machineId !== host.machineId || (!created && workspace.source?.sourceId !== source.id)) return fail('target_mismatch');
-      const filesHost = host.repositoryFiles(workspace.rootPath, context, executeCanonicalAction);
+      const filesHost = host.repositoryFiles(workspace.rootPath, context);
       const validated = created ? { kind: 'validated' as const, source } : await validateAdmittedRepositoryWorkspace({ workspace, projectSourceId: source.id, sourceRevision: source.revision,
         repository: input.repository, ...(!input.continuation && !coldContinuation ? { baseCommit: input.baseCommit } : {}), context, readSource: host.readSource,
         admittedSource: source, readScmStatus: () => filesHost.executeScm('scm.status.snapshot', { includeWorktreeStatus: false }),
