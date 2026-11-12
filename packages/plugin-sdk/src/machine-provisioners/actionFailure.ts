@@ -7,5 +7,8 @@ import { isPluginError } from '../errors.js';
  */
 export function projectMachineProvisionerActionFailure<T>(error: unknown, fallback: () => T | PromiseLike<T>): T | PromiseLike<T> {
   if (isPluginError(error)) throw error;
+  // The native Lima reader adds an inspection error while retaining the
+  // authored refusal in the standard Error cause carrier.
+  if (error instanceof Error && isPluginError(error.cause)) throw error.cause;
   return fallback();
 }
