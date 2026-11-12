@@ -3,6 +3,7 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 // HTTP is the system boundary; Machine RPC and creation projection stay real.
@@ -68,5 +69,30 @@ describe('session creation target preparation transport failures', () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain('private');
+  });
+});
+
+
+it('keeps a typed catalog cause when the selected Agent contribution is absent', async () => {
+  const token = `e30.${Buffer.from(JSON.stringify({ sub: 'missing-agent-test' })).toString('base64url')}.signature`;
+  const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '',
+    serverId: 'missing-agent-home', mode: 'plain', ctx: null,
+    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
+    sessionSpawnDirectTargetTransport: { machineId: 'missing-agent-machine',
+      prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+      spawnedSession: { spawn: async () => { throw new Error('An absent Agent must not reach Session creation'); },
+        resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
+  });
+  const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'missing-agent-catalog',
+    executionTarget: { serverId: 'missing-agent-home', machineId: 'missing-agent-machine' },
+    directory: { kind: 'path', path: '/tmp' },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'missing.agent.plugin', localId: 'missing-agent' } },
+    connectedServices: { v: 2, bindingsByServiceId: {} },
+  });
+  const result = await deps.sessionSpawnNew!({ ...input, actionCaller: { kind: 'host' }, callerSurface: 'cli',
+    sessionCreationTag: 'missing-agent-catalog',
+  });
+  expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'target_unavailable', retryable: false,
+    failureCause: { phase: 'session.agent_target', errorClass: 'Error', errorCode: 'agent_contribution_unavailable', httpStatus: null },
   });
 });

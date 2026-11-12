@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
@@ -30,7 +31,7 @@ import type { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionCon
 import type { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import { configuration } from '@/configuration';
 import type { MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
-import type { isAuthenticationError } from '@/api/client/httpStatusError';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import type { readMachineOperationProtocolCapabilitiesV1 } from '@/api/machine/machineOperationProtocolCapabilities';
 import { SessionInitialAccessUpdateRequiredError } from '@/api/session/sessionCreationInitialAccess';
@@ -527,7 +528,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             return { type: 'error', code: 'invalid_input', retryable: false };
           }
         } catch (error) {
-          const { isAuthenticationError } = await import("@/api/client/httpStatusError");
           return isAuthenticationError(error)
             ? { type: 'error', code: 'permission_denied', retryable: false }
             : { type: 'error', code: 'spawn_failed', retryable: true };
@@ -569,7 +569,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             }
             return { type: 'error', code: 'cancelled', retryable: true };
           }
-          const { isAuthenticationError } = await import("@/api/client/httpStatusError");
           if (isAuthenticationError(error)) {
             return { type: 'error', code: 'permission_denied', retryable: false };
           }
@@ -634,7 +633,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const { resolveSessionCreationAgentTarget } = await import("@/session/creation/resolveSessionCreationAgentTarget");
       const resolvedAgentTarget = resolveSessionCreationAgentTarget(agentTarget);
       if (!resolvedAgentTarget) {
-        return { type: 'error', code: 'target_unavailable', retryable: false };
+        return { type: 'error', code: 'target_unavailable', retryable: false,
+          failureCause: projectActionFailureCauseV1({ name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target') };
       }
       const { backendTarget } = resolvedAgentTarget;
       // The receiving daemon resolves unset facets once. UI preview values
@@ -906,7 +906,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             sourceSessionId: sourceContext.sourceSessionId,
           });
         } catch (error) {
-          const { isAuthenticationError } = await import("@/api/client/httpStatusError");
           return isAuthenticationError(error)
             ? { type: 'error', code: 'permission_denied', retryable: false }
             : { type: 'error', code: 'spawn_failed', retryable: true };
@@ -1153,7 +1152,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           if (signal?.aborted || code === 'cancelled') {
             return { type: 'error', code: 'cancelled', retryable: true };
           }
-          const [{ isAuthenticationError }, { projectSessionSpawnFailure }] = await Promise.all([import("@/api/client/httpStatusError"), import("@/session/creation/projectSessionSpawnFailure")]);
+          const { projectSessionSpawnFailure } = await import("@/session/creation/projectSessionSpawnFailure");
           if (isAuthenticationError(error) || code === 'permission_denied' || code === 'run_access_denied'
             || code === 'visible_team_not_granted') {
             return { type: 'error', code: 'permission_denied', retryable: false };
@@ -1174,7 +1173,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             errorMessage: readRecord(error).message });
         }
         const details = readRecord(readRecord(error).details);
-        const [{ readSessionCreationTerminalSpawnErrorDetail }, { isAuthenticationError }, { SPAWN_SESSION_ERROR_CODES }, { readMachineRpcRequestDisposition }, { projectSessionSpawnFailure }] = await Promise.all([import("@/api/session/sessionCreationTerminalSpawnErrorDetail"), import("@/api/client/httpStatusError"), import("@/session/shared/spawnSessionContract"), import("@/session/transport/rpc/machineRpc"), import("@/session/creation/projectSessionSpawnFailure")]);
+        const [{ readSessionCreationTerminalSpawnErrorDetail }, { SPAWN_SESSION_ERROR_CODES }, { readMachineRpcRequestDisposition }, { projectSessionSpawnFailure }] = await Promise.all([import("@/api/session/sessionCreationTerminalSpawnErrorDetail"), import("@/session/shared/spawnSessionContract"), import("@/session/transport/rpc/machineRpc"), import("@/session/creation/projectSessionSpawnFailure")]);
         const spawnErrorDetails = [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, readRecord(details.spawnResponse).errorDetail]
           .map(normalizeSpawnSessionErrorDetail);
         if (spawnErrorDetails.some(detail => SessionCreationTerminalSpawnErrorDetailSchema.safeParse(detail).success)) {

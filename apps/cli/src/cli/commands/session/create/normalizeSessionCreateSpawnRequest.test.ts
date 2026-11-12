@@ -51,6 +51,29 @@ function createDeps(
 }
 
 describe('normalizeSessionCreateSpawnRequest', () => {
+
+  it.each([
+    ['not-a-target', 'claude', [], 'agent_target_parse_failed'],
+    ['backend:pi', 'pi', [{ id: 'pi' }], 'agent_identity_unavailable'],
+    [null, 'custom-acp', [{ id: 'custom-acp', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 }], 'agent_execution_target_unavailable'],
+  ] as const)('distinguishes executable Agent refusal %s / %s', async (backendTargetKey, defaultAgentId, definitions, reason) => {
+    await expect(normalizeSessionCreateSpawnRequest({ directory: '/repo/project', backendTargetKey }, createDeps({
+      defaultAgentId, readAgentDefinitions: () => definitions,
+    }))).rejects.toMatchObject({
+      message: 'Invalid session create argument: --backend does not identify an executable Agent.',
+      details: { reason },
+    });
+  });
+
+  it.each(['pi', 'opencode'])('normalizes the real catalog Agent selected by --agent %s', async agentId => {
+    const parsed = parseSessionCreateSpawnOptions(['create', '--path', '/repo/project', '--agent', agentId]);
+    const normalized = await normalizeSessionCreateSpawnRequest(parsed.spawnRequest, createDeps({
+      readAgentDefinitions: () => readAgentCatalogSnapshot().agentDefinitionsById.values(),
+    }));
+    expect(normalized.agentId).toBe(agentId);
+    expect(normalized.input.agentTarget).toMatchObject({ kind: 'agent', identity: { localId: agentId } });
+  });
+
   it.each(['approval-delivery-1110', 'qa-fixtures-1103-a'])('seals the current Home before the %s CLI recipe reaches another daemon profile', async identity => {
     const activeServerId = `stack_agent-qa-servers-deploy__id_${identity}`;
     const serverIdentityId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';

@@ -71,7 +71,7 @@ function nonEmptyString(value: unknown): string | null {
 
 type SessionCreateArgumentDetails =
   | Readonly<{ field: 'serverId'; allowedValues: readonly string[] }>
-  | Readonly<{ reason: UnavailableAgentPlugin['code'] }>;
+  | Readonly<{ reason: UnavailableAgentPlugin['code'] | 'agent_target_parse_failed' | 'agent_identity_unavailable' | 'agent_execution_target_unavailable' }>;
 
 function invalidSessionCreateArgument(
   message: string,
@@ -194,7 +194,7 @@ async function resolveAgentTarget(
           const parsed = parseBackendTargetKeyV2(BackendTargetKeyV2InputSchema.parse(request.backendTargetKey));
           return parseBackendTargetKeyV2(buildBackendTargetKeyV2(parsed));
         } catch {
-          return invalidSessionCreateArgument('--backend does not identify an executable Agent.');
+          return invalidSessionCreateArgument('--backend does not identify an executable Agent.', { reason: 'agent_target_parse_failed' });
         }
       })()
     : null;
@@ -227,12 +227,12 @@ async function resolveAgentTarget(
           : 'Invalid session create argument: Account plugin execution is unavailable.'),
         { details: { reason: unavailable.code } });
     }
-    invalidSessionCreateArgument('--backend does not identify an executable Agent.');
+    invalidSessionCreateArgument('--backend does not identify an executable Agent.', { reason: 'agent_identity_unavailable' });
   }
   const agentTarget = requestedTarget?.kind === 'agent'
     ? { ...requestedTarget, identity: agent.identity }
     : listAgentExecutionTargetsV1(agent.identity)[0];
-  if (!agentTarget) invalidSessionCreateArgument('--backend does not identify an executable Agent.');
+  if (!agentTarget) invalidSessionCreateArgument('--backend does not identify an executable Agent.', { reason: 'agent_execution_target_unavailable' });
   return {
     agentId: agent.id,
     agentTarget,
