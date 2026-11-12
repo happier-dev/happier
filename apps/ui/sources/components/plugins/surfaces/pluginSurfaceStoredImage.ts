@@ -41,8 +41,6 @@ export function createPluginSurfaceStoredImageOwner(input: Readonly<{
                 if (!current()) return createPluginSurfaceHostApiError('stale_surface', ['plugin_surface_retired']);
                 if (signal?.aborted) return createPluginSurfaceHostApiError('unavailable', ['aborted']);
                 return result.ok ? result.image : createPluginSurfaceHostApiError('unavailable', [result.code]);
-            } catch {
-                return createPluginSurfaceHostApiError('unavailable', ['plugin_session_media_unavailable']);
             } finally {
                 merged.dispose();
             }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { DaemonPluginStoredImageReadResponse} from '@happier-dev/protocol/daemon/pluginStoredImage';
 import type { SessionImageMediaReferenceV1 } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
 import { PluginUiSurfaceContextV1Schema, type PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginSurfaceStoredImageOwner } from './pluginSurfaceStoredImage';
+import { settlePluginSurfaceHostApiRequest } from './createPluginSurfaceHostApi';
 
 const media: SessionImageMediaReferenceV1 = {
     mediaId: 'image-1', mediaKind: 'image', width: 100, height: 60, sizeBytes: 24,
@@ -19,6 +21,20 @@ function request(image = media): PluginUiHostApiRequestEnvelopeV1 {
 const image = { bytesBase64: 'cG5n', mimeType: 'image/png' as const, width: 100, height: 60 };
 
 describe('mounted stored image authority', () => {
+    it('preserves a typed transport refusal through the shared Host API settlement', async () => {
+        const failureCause = { phase: 'session.media.read', errorClass: 'Error', errorCode: 'forbidden', httpStatus: 403 } as const;
+        const owner = createPluginSurfaceStoredImageOwner({ pluginId: 'acme.capture', occurrenceId: 'occ-1',
+            machineId: 'machine-1', serverId: null, isCurrent: () => true, lifetimeSignal: new AbortController().signal,
+            read: async () => { throw new PluginError({ code: 'forbidden', message: 'Read refused', retryable: false,
+                details: { requestId: 'daemon-read-request', effectAttempted: false }, failureCause }); } });
+        const envelope = request();
+        const response = await settlePluginSurfaceHostApiRequest(envelope, () => owner.readStoredImage(envelope));
+        expect(response).toMatchObject({ kind: 'error', payload: {
+            code: 'forbidden', requestId: 'daemon-read-request', retryable: false, effectAttempted: false, failureCause,
+        } });
+        owner.dispose();
+    });
+
     it('hands the same native reference to Session admission across remounts and plugin handoff', async () => {
         const received: unknown[] = [];
         for (const pluginId of ['acme.capture', 'acme.capture', 'other.capture']) {
