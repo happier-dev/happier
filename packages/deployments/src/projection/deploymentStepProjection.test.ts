@@ -32,6 +32,24 @@ function harness(receipts: Map<string, DeploymentReceiptDetailV1>) {
 }
 
 describe('receipt-derived current member versions', () => {
+    it('marks only a proved older active version behind the newest proved member, leaving unknown and joining quiet', () => {
+        const link = createDeploymentTargetLinkHeaderV1({ machines: members.map(member => member.machineId), members, activeDeploymentId: 'u1' });
+        const uniform = receipt('u1', 1, members.map((_member, index) => result(index, 'u1')), 'succeeded');
+        const mixed = receipt('v2', 2, [result(0, 'v2'), result(1, 'u1', { activation: 'failed' }),
+            result(2, 'u1', { activation: 'outcome_unknown' })]);
+        const versions = deriveDeploymentMemberVersionsV1(link, [uniform, mixed]);
+        expect(versions['machine-a']).toMatchObject({ deploymentId: 'v2', uncertain: false });
+        expect(versions['machine-a']?.behind).not.toBe(true);
+        expect(versions['machine-b']).toMatchObject({ deploymentId: 'u1', uncertain: false, behind: true });
+        expect(versions['machine-c']).toMatchObject({ deploymentId: 'u1', uncertain: true });
+        expect(versions['machine-c']?.behind).not.toBe(true);
+        expect(deriveDeploymentMemberVersionsV1({ ...link, members: link.members.map(member => ({ ...member, state: 'joining' })) },
+            [uniform, mixed])['machine-b']?.behind).not.toBe(true);
+        const current = receipt('u3', 3, members.map((_member, index) => result(index, 'u3')), 'succeeded');
+        expect(Object.values(deriveDeploymentMemberVersionsV1({ ...link, activeDeploymentId: 'u3' }, [uniform, mixed, current]))
+            .some(member => member.behind)).toBe(false);
+    });
+
     it.each(['succeeded', 'failed', 'outcome_unknown'] as const)('ends older member proof only for a completed teardown (%s)', state => {
         const link = createDeploymentTargetLinkHeaderV1({ machines: members.map(member => member.machineId), members });
         const teardown = receipt('teardown', 2, [], state);
@@ -151,7 +169,9 @@ describe('receipt-derived current member versions', () => {
         const compensation = controller.acquireReceipt('environment-staging', 'v3', demand);
         await compensation.refresh();
         expect(environment.getSnapshot().value).toMatchObject({ memberVersions: Object.fromEntries(members.map(member => [member.machineId, { deploymentId: 'u1', uncertain: false }])) });
-        expect(environment.getSnapshot().value!.memberVersions['machine-b']).toBe(unchanged);
+        // Restoration makes this member current again, so its behind fact changes.
+        expect(unchanged?.behind).toBe(true);
+        expect(environment.getSnapshot().value!.memberVersions['machine-b']?.behind).not.toBe(true);
         const published = vi.fn();
         environment.subscribe(published);
         receipts.set('v3', { ...receipts.get('v3')!, content: { ...receipts.get('v3')!.content, machineResults: [...receipts.get('v3')!.content.machineResults].reverse() } });

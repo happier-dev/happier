@@ -30,6 +30,7 @@ function recovery(remedy: string, destination: DeploymentFailureRecoveryDestinat
 // Keep diagnostic codes out of the prose; all surfaces consume this one owner.
 const recoveries = {
     restore_snapshot_not_confirmed: recovery('The Machine snapshot was not confirmed. Data has not been replaced. Stop here, or reopen Restore and review continuing without a confirmed snapshot. An agent can review the original restore input with snapshot disabled.', 'settings', 'Review restore'),
+    stateful_service_multi_machine: recovery('A service keeps data on its server, so this Environment cannot run on several servers. Keep one server, or ask an agent to move the data service into a separate Environment and connect this app to it before adding servers.', 'settings', 'Review servers and data'),
     build_platform_unsupported: recovery('The build Machine could not execute a platform required by this build. Open its Setup and check Build emulation, or choose a capable build Machine in Environment Settings. Emulated builds are slower.', 'buildMachineSetup', 'Open build Machine Setup'),
     native_build_failed: recovery('The image build failed. Read its build output to fix the reported command or executable before deploying again.', 'logs', 'Open build output'),
     deployment_source_unavailable: recovery('Open Source details and set the Repository address and default branch or revision. Then open or accept its checkout on the selected Machine. Choose a revision containing your Compose file, then review the deployment again.', 'source', 'Open Source details'),

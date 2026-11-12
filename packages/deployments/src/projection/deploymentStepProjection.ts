@@ -7,6 +7,8 @@ export type DeploymentMemberVersionV1 = Readonly<{
     state: 'joining' | 'active';
     deploymentId: string | null;
     uncertain: boolean;
+    /** Positive proof only: a newer certain active member version exists in demanded history. */
+    behind?: true;
 }>;
 
 function provedVersion(result: DeploymentMachineResultV1): string | undefined {
@@ -74,9 +76,24 @@ export function deriveDeploymentMemberVersionsV1(link: DeploymentTargetLinkHeade
     retainedLinks: readonly DeploymentTargetLinkHeaderV1[] = [],
 ): Readonly<Record<string, DeploymentMemberVersionV1>> {
     const projection = createDeploymentMemberVersionProjectionV1(link, retainedLinks);
-    for (const receipt of [...receipts].sort((left, right) => right.deployment.requestedAtMs - left.deployment.requestedAtMs
-        || right.deployment.id.localeCompare(left.deployment.id))) {
+    const ordered = [...receipts].sort((left, right) => right.deployment.requestedAtMs - left.deployment.requestedAtMs
+        || right.deployment.id.localeCompare(left.deployment.id));
+    for (const receipt of ordered) {
         if (projection.addReceipt(receipt)) break;
     }
-    return projection.getVersions();
+    const versions = projection.getVersions();
+    // Header chronology is already demanded. The uniform pointer alone cannot
+    // compare members after a partial rollout, and missing proof is not behind.
+    const rank = new Map(ordered.map((receipt, index) => [receipt.deployment.id, index]));
+    const certainRank = (member: DeploymentMemberVersionV1) => member.state === 'active' && !member.uncertain && member.deploymentId
+        ? rank.get(member.deploymentId) : undefined;
+    let newest = Infinity;
+    for (const member of Object.values(versions)) {
+        const value = certainRank(member);
+        if (value !== undefined && value < newest) newest = value;
+    }
+    return Object.fromEntries(Object.entries(versions).map(([machineId, member]) => {
+        const value = certainRank(member);
+        return [machineId, value !== undefined && value > newest ? { ...member, behind: true as const } : member];
+    }));
 }
