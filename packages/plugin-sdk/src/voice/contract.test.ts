@@ -504,7 +504,7 @@ describe('Voice author source contract', () => {
     type PreparedSession = Extract<VoiceRealtimePreparation, { kind: 'prepared' }>['session'];
 
     expectTypeOf<keyof ConnectionInput>().toEqualTypeOf<
-      'session' | 'attemptId' | 'mic' | 'interruption' | 'levels' | 'media' | 'tools' | 'ui' | 'signal' | 'execution' | 'credentials'
+      'session' | 'attemptId' | 'mic' | 'interruption' | 'levels' | 'media' | 'tools' | 'ui' | 'signal' | 'execution' | 'credentials' | 'onSyntheticResponseRequested'
     >();
     expectTypeOf<ConnectionInput['signal']>().toEqualTypeOf<AbortSignal>();
     expectTypeOf<ConnectionInput['session']>().toEqualTypeOf<PreparedSession>();
