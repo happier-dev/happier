@@ -165,7 +165,7 @@ export function requireAdmittedTargetedOperationExecutionBinding(
             || currentTarget.occurrenceId !== binding.targetOccurrenceId
             || currentContributor.occurrenceId !== binding.contributorOccurrenceId
             || !binding.targetSourceCustody
-            || !pluginSourceCustodyV1Equal(currentTarget.targetSourceCustody ?? currentTarget.sourceCustody, binding.targetSourceCustody)
+            || !pluginSourceCustodyV1Equal(currentTarget.sourceCustody, binding.targetSourceCustody)
             || !pluginSourceCustodyV1Equal(currentContributor.sourceCustody, binding.operation.contributor.sourceCustody)) {
             throw createPluginActionHandlerNotStartedError({
                 code: 'plugin_action_generation_retired',

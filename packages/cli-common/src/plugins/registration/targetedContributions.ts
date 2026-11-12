@@ -95,7 +95,7 @@ export function projectAdmittedTargetedContributionSnapshot(
     readPluginSourceCustody: (pluginId: string, occurrenceId: string) => import('@happier-dev/protocol').PluginSourceCustodyV1 | null,
     selectedTargetSourceCustody?: import('@happier-dev/protocol').PluginSourceCustodyV1,
 ): TargetedContributionSnapshot<unknown> {
-    const rawTargetSourceCustody = selectedTargetSourceCustody ?? readPluginSourceCustody(snapshot.target.pluginId, snapshot.target.occurrenceId);
+    const rawTargetSourceCustody = readPluginSourceCustody(snapshot.target.pluginId, snapshot.target.occurrenceId);
     if (!rawTargetSourceCustody) throw targetedContributionsUnavailable();
     const targetSourceCustody = normalizePluginSourceCustodyV1(rawTargetSourceCustody);
     const contributions = snapshot.contributions.map((contribution) => {
@@ -161,7 +161,10 @@ export function projectAdmittedTargetedContributionSnapshot(
     });
     return Object.freeze({
         occurrenceId: snapshot.target.occurrenceId,
-        sourceCustody: targetSourceCustody,
+        // Portable selections name the selected Machine; opaque handles retain
+        // the custody of the target occurrence that actually admitted them.
+        sourceCustody: selectedTargetSourceCustody === undefined ? targetSourceCustody
+            : normalizePluginSourceCustodyV1(selectedTargetSourceCustody),
         contributions: Object.freeze(contributions),
         ...(snapshot.unavailablePlugins?.length ? { unavailablePlugins: snapshot.unavailablePlugins } : {}),
     });

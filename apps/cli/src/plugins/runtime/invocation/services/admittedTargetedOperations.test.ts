@@ -3,7 +3,7 @@ import { definePlugin, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sd
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
-import { createManifestTargetedContributionsService, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
+import { createManifestTargetedContributionsService, mergeTargetedContributionManifestDeclarations, requireAdmittedTargetedOperationExecutionBinding, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import {
     defineProtocolJsonValue,
@@ -31,6 +31,52 @@ function permissiveTargetProtocol(role: string) {
 }
 
 describe('admitted targeted-operation execution', () => {
+    it('keeps Account operation custody stable when Machine declarations arrive, while retiring replaced contributors', async () => {
+        const schema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
+        const protocol = defineContributionProtocol({ id: 'arrival', version: 1, operations: {
+            inspect: { required: true, input: { kind: 'protocolDefined', schema }, resultSchema: schema,
+                action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
+        } });
+        const target = definePlugin({ id: 'acme.arrival-target', version: '1.0.0', contributionPoints: { sources: protocol.point() } });
+        const provider = definePlugin({ id: 'acme.arrival-source', version: '1.0.0', actions: {
+            inspect: { title: 'Inspect', surfaces: ['plugin'], dangerLevel: 'safe', inputSchema: schema, resultSchema: schema,
+                execution: { target: 'account', account: { artifactId: 'runtime', exportName: 'activate' } },
+                run: async input => input },
+        }, contributesTo: { [target.manifest.id]: { sources: {
+            primary: protocol.contribute({ operations: { inspect: protocol.operations.inspect.bind('inspect') } }),
+        } } } });
+        const accountDeclarations = [target, provider].map(plugin => ({ manifest: normalizePluginManifestV2(plugin.manifest),
+            occurrenceId: `${plugin.manifest.id}:account`, sourceCustody: createManagedPluginSourceCustody(`${plugin.manifest.id}:account`) }));
+        let machineDeclarations: readonly TargetedContributionManifestDeclaration[] = [];
+        const declarations = () => mergeTargetedContributionManifestDeclarations({ targetPluginId: target.manifest.id,
+            accountDeclarations, machineDeclarations });
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: declarations,
+            subscribeToCatalogChanges: () => () => {} }).bind({ pluginId: target.manifest.id,
+            signal: new AbortController().signal, isCurrent: () => true }).observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
+        const seed = { plugin: { id: target.manifest.id }, occurrenceId: accountDeclarations[0]!.occurrenceId };
+        try {
+            const before = await observation.readCurrent();
+            const operation = before.contributions[0]!.operations.inspect;
+            machineDeclarations = accountDeclarations.map(row => ({ ...row, occurrenceId: `${row.manifest.id}:machine`,
+                sourceCustody: createManagedPluginSourceCustody(`${row.manifest.id}:machine`) }));
+            const after = await observation.readCurrent();
+            // Portable selection still names the Machine target, while Account execution keeps its own authority.
+            expect(after.sourceCustody).toEqual(machineDeclarations[0]!.sourceCustody);
+            expect(requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations()).action)
+                .toEqual({ pluginId: provider.manifest.id, localId: 'inspect' });
+            expect(requireAdmittedTargetedOperationExecutionBinding(after.contributions[0]!.operations.inspect, seed, declarations()).action)
+                .toEqual({ pluginId: provider.manifest.id, localId: 'inspect' });
+            const originalTarget = accountDeclarations[0]!;
+            accountDeclarations[0] = { ...originalTarget, sourceCustody: createManagedPluginSourceCustody('replacement-target') };
+            expect(() => requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations()))
+                .toThrow(expect.objectContaining({ code: 'plugin_action_generation_retired' }));
+            accountDeclarations[0] = originalTarget;
+            accountDeclarations[1] = { ...accountDeclarations[1]!, occurrenceId: 'replacement' };
+            expect(() => requireAdmittedTargetedOperationExecutionBinding(operation, seed, declarations()))
+                .toThrow(expect.objectContaining({ code: 'plugin_action_generation_retired' }));
+        } finally { observation.dispose(); }
+    });
+
     it('retains read observation only for the original admitted handle and retires it with demand', async () => {
         const controller = new AbortController();
         let active = 0;
