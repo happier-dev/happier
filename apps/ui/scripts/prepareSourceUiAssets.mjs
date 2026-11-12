@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, normalize, relative, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -36,10 +36,7 @@ export async function publishSourceUiAssets({ recordPath, outputPath = recordPat
     if (!prepared) throw new Error(`Missing prepared UI assets: ${recordPath}`);
     for (const { candidatePath, outputPath: publicationPath } of prepared.publications) {
         const contents = await readFile(candidatePath, 'utf8');
-        if (publicationPath.endsWith(normalize(SOURCE_UI_ASSET_OUTPUT_PATHS.locales))) {
-            const { publishLocaleAssets } = await import('./prepareLocaleAssets.mjs');
-            await publishLocaleAssets({ outputPath: publicationPath, contents });
-        } else await writeChanged(publicationPath, contents);
+        await writeChanged(publicationPath, contents);
     }
     const { publications, ...published } = prepared;
     await writeChanged(outputPath, `${JSON.stringify(published)}\n`);
