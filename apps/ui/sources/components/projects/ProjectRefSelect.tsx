@@ -29,6 +29,8 @@ export const ProjectRefSelect = React.memo(function ProjectRefSelect(
     value: string | null;
     /** What "the default" reads as ("v0.3 (default)", "Repository default"). */
     defaultLabel: string;
+    /** The default row only asks for a branch ("Choose a branch"): a prompt, never a checked current value. */
+    defaultIsPrompt?: boolean;
     /** A ref suggestion for the Other prompt (the default ref). */
     placeholder?: string;
     disabled?: boolean;
@@ -40,13 +42,13 @@ export const ProjectRefSelect = React.memo(function ProjectRefSelect(
   const [open, setOpen] = React.useState(false);
   const items = React.useMemo(
     (): DropdownMenuItem[] => [
-      { id: DEFAULT_ID, title: props.defaultLabel, checked: value === null },
+      { id: DEFAULT_ID, title: props.defaultLabel, checked: value === null, ...(props.defaultIsPrompt ? { prompt: true } : {}) },
       ...(value !== null
         ? [{ id: `ref:${value}`, title: value, checked: true }]
         : []),
       { id: OTHER_ID, title: t('projects.open.otherRef') },
     ],
-    [props.defaultLabel, value],
+    [props.defaultIsPrompt, props.defaultLabel, value],
   );
   const select = React.useCallback(
     (id: string) => {

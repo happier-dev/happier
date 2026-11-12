@@ -8,7 +8,7 @@ import { useSessionSelector } from '@/sync/store/hooks';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { InlineTextField } from '@/components/ui/text/InlineTextField';
 import { t } from '@/text';
 import { useBotTemplateEditorValue } from './useBotTemplateEditor';
@@ -26,7 +26,8 @@ export function BotTemplateAgentSection({ buffer, save }: Readonly<{ buffer: Bot
     const entries = open ? getResolvedAgentCatalogEntries({ enabledAgentIds: AGENT_IDS,
         mergedBackendProjectionById: catalog.inputs?.mergedBackendProjectionById,
         mergedProviderProjectionById: catalog.inputs?.mergedProviderProjectionById }) : [];
-    const items = [{ id: '', title: t('botTemplates.chooseAgent') }, ...entries.map(entry => ({ id: entry.agentId, title: entry.title }))];
+    // "Choose an agent" asks for a value; it is never the checked current one.
+    const items: DropdownMenuItem[] = [{ id: '', title: t('botTemplates.chooseAgent'), prompt: true }, ...entries.map(entry => ({ id: entry.agentId, title: entry.title }))];
     if (suggestion && !items.some(item => item.id === suggestion.agentId)) items.push({ id: suggestion.agentId,
         title: selected.entry.title });
     // The section names the suggestion; its rows name what they set (Agent, Model), never the section again.

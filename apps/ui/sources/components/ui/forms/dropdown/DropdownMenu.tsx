@@ -52,6 +52,11 @@ export type DropdownMenuItem = Readonly<{
     /** Current choice state, independent of keyboard highlight. */
     checked?: boolean;
     /**
+     * A prompt row ("Choose a branch", "Choose an agent") asks for a value; it is never a current value, so it is never
+     * checked, even when the select has no value or the caller marks it. An explicit "None" choice is not a prompt.
+     */
+    prompt?: boolean;
+    /**
      * One of several independent on/off choices (a menu's filters): a box that checks, announced as a checkbox,
      * so siblings that are on together never read as one radio choice.
      */
@@ -441,7 +446,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
     // A select (an item trigger naming a value) checks its current value as the one choice among its rows, searched or
     // not. An empty value is a choice too when a row stands for it (an explicit "None"); otherwise it means nothing is chosen.
     const selectValue = props.itemTrigger && typeof props.selectedId === 'string' ? props.selectedId.trim() : null;
-    const selectCheckedId = selectValue !== null && (selectValue !== '' || findMenuItem('') !== undefined) ? selectValue : null;
+    const emptyRow = selectValue === '' ? findMenuItem('') : undefined;
+    const selectCheckedId = selectValue !== null && (selectValue !== '' || (emptyRow !== undefined && emptyRow.prompt !== true)) ? selectValue : null;
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
@@ -452,7 +458,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 accessibilityLabel: item.accessibilityLabel,
                 category: item.category,
                 disabled: item.disabled,
-                checked: item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
+                checked: item.prompt === true ? undefined : item.checked ?? (selectCheckedId === null ? undefined : item.id === selectCheckedId),
                 multiSelect: item.multiSelect,
                 swatch: item.swatch,
                 left: item.icon ?? null,

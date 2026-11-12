@@ -611,6 +611,7 @@ export const DeploymentEnvironmentDraft = React.memo(
                     })
                   : t('projects.deployments.branchChoose')
               }
+              defaultIsPrompt={!source?.defaultRef}
               compact={props.phone}
               onChange={setRef}
             />

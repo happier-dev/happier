@@ -158,3 +158,43 @@ it('checks a searchable select’s current value, including an explicit None cho
   expect(checked('none')).toBe(true);
   expect(checked('web')).toBe(false);
 });
+
+it('never checks a prompt row ("Choose…") as the current value, while an explicit None stays checkable', async () => {
+  const { DropdownMenu } = await import('./DropdownMenu');
+  const { ListPresentationProvider } =
+    await import('@/components/ui/lists/listPresentation');
+  const render = (prompt: boolean) => renderScreen(
+    <ListPresentationProvider value="page">
+      <DropdownMenu
+        open
+        onOpenChange={() => {}}
+        // A caller's own explicit check on its prompt row is overruled too.
+        items={[{ id: '', title: prompt ? 'Choose an agent' : 'None', testID: 'member:empty', ...(prompt ? { prompt: true, checked: true } : {}) },
+          ...MEMBERS]}
+        selectedId=""
+        onSelect={() => {}}
+        itemTrigger={{ title: 'Agent' }}
+      />
+    </ListPresentationProvider>,
+  );
+  const checked = (screen: Awaited<ReturnType<typeof render>>, id: string) =>
+    screen
+      .findAllHostsByTestId(`member:${id}`)
+      .map(
+        (node) =>
+          (node.props.accessibilityState as { checked?: boolean } | undefined)
+            ?.checked ?? node.props['aria-checked'],
+      )
+      .find((value) => value !== undefined);
+  const promptScreen = await render(true);
+  await vi.waitFor(() =>
+    expect(promptScreen.findAllHostsByTestId('member:empty').length).toBeGreaterThan(0),
+  );
+  expect(checked(promptScreen, 'empty')).not.toBe(true);
+  await promptScreen.unmount();
+  const noneScreen = await render(false);
+  await vi.waitFor(() =>
+    expect(noneScreen.findAllHostsByTestId('member:empty').length).toBeGreaterThan(0),
+  );
+  expect(checked(noneScreen, 'empty')).toBe(true);
+});
