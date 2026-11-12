@@ -49,7 +49,9 @@ export async function resolveMuseTurnInput(input: AgentSessionSendRequest['input
   const parsed = HappierStructuredInputV1Schema.safeParse(input.structuredInput);
   if (!parsed.success) return null;
   const { v: _version, imageInputs, skillMentions: _skills, vendorPluginMentions: _plugins,
-    mentions: _mentions, ...unsupported } = parsed.data;
+    // The host has already rendered resolved attachment context into input.text.
+    // Its dispatch metadata is not another native input part.
+    mentions: _mentions, resolvedComposerAttachments: _attachments, ...unsupported } = parsed.data;
   if (Object.keys(unsupported).length) return null;
   const selections = readStructuredInputMentionSourcesV1(parsed.data);
   if (selections.mentions.length || selections.vendorPluginMentions.length) return null;
