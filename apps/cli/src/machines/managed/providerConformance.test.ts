@@ -77,16 +77,25 @@ for (const leaf of leaves) {
                         : await kit.invokeAction(id, JSON.parse(JSON.stringify(body)) as JsonValue, { surface: 'plugin' }); outputs.push(value); return value; }
                     catch (error) { outputs.push(error instanceof Error ? { ...error, message: error.message } : error); throw error; }
                 };
+                let reviewedEffectDigest: string | undefined;
                 if (leaf === 'devcontainer') {
                     const options = await invoke('options', vendor.launch);
-                    if (!options || typeof options !== 'object' || !('base' in options) || !options.base || typeof options.base !== 'object' || !('launch' in options.base)) throw new Error('Missing reviewed Devcontainer launch');
-                    Object.assign(vendor.launch, options.base.launch);
+                    const reviewed = MachineProvisionerOptionsResultV1Schema.parse(options).base;
+                    if (!reviewed?.launch || !reviewed.effectReview) throw new Error('Missing reviewed Devcontainer launch');
+                    Object.assign(vendor.launch, reviewed.launch);
+                    reviewedEffectDigest = reviewed.effectReview.reviewedEffectDigest;
                 }
                 let row = ManagedMachineV1Schema.parse({ id: MANAGED_ID, homeId: 'conformance-home', custodianAccountId: 'owner',
                     ...(options.accountOnly ? {} : { controller: { machineId: 'controller', installationId: 'installation' } }),
                     launch: { provider: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: provisioner.schemaVersion, name: 'Conformance', choices: vendor.launch },
                     allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
-                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                    ...(reviewedEffectDigest ? { reviewedFacts: {
+                        launch: { provider: { pluginId: manifest.id, localId: provisioner.id }, schemaVersion: provisioner.schemaVersion,
+                            name: 'Conformance', choices: vendor.launch },
+                        provisioner, reviewedEffectDigest, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+                        retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                    } } : {}) });
                 const correlation: ManagedMachineReconciliation['home']['correlation'] = machine => ({ homeId: machine.homeId, managedId: machine.id,
                     expectedIntentRevision: machine.intentRevision, requestId: 'conformance', controller: machine.controller });
                 // The Home transport is a persistence boundary. Keep its row replies separate from real provider results.

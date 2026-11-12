@@ -1,4 +1,8 @@
 import { railwayVendor } from '../../../../../packages/plugins/machine-railway/testkit/vendor.js';
+import { Agent37LaunchSchema } from '../../../../../packages/plugins/machine-agent37/src/machine/schemas.js';
+import { MaritimeLaunchSchema } from '../../../../../packages/plugins/machine-maritime/src/machine/schemas.js';
+import { CoderLaunchSchema, ACCOUNT_SERVICE as CODER_ACCOUNT_SERVICE } from '../../../../../packages/plugins/machine-coder/src/machine/schemas.js';
+import { coderWorkspaceName } from '../../../../../packages/plugins/machine-coder/src/machine/nativeClient.js';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { PluginExecSpawnRequest, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -48,6 +52,9 @@ export function cloudFixture(leaf: string, contribution: string) {
     const commands = new Map<string, { command: string; args: string[]; stdin: Buffer[]; output?: string; stderr?: string; exitCode?: number }>();
     let flyConfig: unknown = {};
     const launch: Record<string, unknown> = leaf === 'machine-boat' ? { size: 'small', source: { kind: 'blank' } }
+        : leaf === 'machine-agent37' ? Agent37LaunchSchema.parse({ kind: 'vm', size: '2-4', region: 'us' })
+        : leaf === 'machine-maritime' ? MaritimeLaunchSchema.parse({ kind: 'agent-box', memMb: 2048, diskGb: 5, alwaysOn: true, templateId: 'zeroclaw' })
+        : leaf === 'machine-coder' ? CoderLaunchSchema.parse({ organizationId: 'org', templateId: 'template', templateVersionId: 'version', agentName: 'main', parameterValues: [] })
         : leaf === 'machine-e2b' ? { templateId: 'base', timeoutSeconds: 300 }
         : leaf === 'machine-freestyle' ? { snapshotId: 'freestyle/ubuntu' }
         : leaf === 'machine-railway' ? { environmentId: 'environment-one' }
@@ -84,8 +91,12 @@ export function cloudFixture(leaf: string, contribution: string) {
         processes.push(request);
         if (failure) return { ...result(PRIVATE_BINDING, 1), stderr: text.encode(PRIVATE_BINDING) };
         const args = request.args ?? [];
-        if (request.executable.kind === 'systemTool') return result(`203.0.113.8 ${PUBLIC_KEY}\n`);
+        if (request.executable.kind === 'systemTool' && request.executable.id === 'ssh-keyscan') return result(`203.0.113.8 ${PUBLIC_KEY}\n`);
         if (leaf === 'machine-lume') return result(''); // native public-key installation over Lume SSH
+        if (leaf === 'machine-coder') {
+            if (args[0] === 'ssh') return guest(['sh', '-c', args.slice(args.indexOf('--') + 1).join(' ')], request.stdin);
+            throw new Error(`Unexpected Coder command ${JSON.stringify(args)}`);
+        }
         if (leaf === 'machine-lima') {
             const verb = args[0];
             if (verb === '--version') return result('limactl version 2.2.1');
@@ -173,7 +184,60 @@ export function cloudFixture(leaf: string, contribution: string) {
         if (failure) return { status: 503, finalUrl: request.url, headers: {}, body: text.encode(JSON.stringify({
             error: { code: PRIVATE_BINDING, message: PRIVATE_BINDING }, message: PRIVATE_BINDING, code: PRIVATE_BINDING, id: PRIVATE_BINDING,
         })) };
-        if (leaf === 'machine-superserve') {
+        if (leaf === 'machine-agent37') {
+            const native = () => ({ id: 'ab12cd34ef', status: power === 'running' ? 'running' : 'stopped', type: 'vm', auto_sleep: false });
+            if (path.endsWith('/exec')) {
+                const completed = guest(['sh', '-c', String(body(request).command)]);
+                value = { exit_code: completed.termination.observed.kind === 'exit' ? completed.termination.observed.exitCode : 1,
+                    stdout: decode.decode(completed.stdout), stderr: decode.decode(completed.stderr), truncated: false };
+            } else if (path === '/v1/instances' && method === 'POST') { present = true; owned.add('instance'); value = native(); status = 201; }
+            else if (path === '/v1/instances') value = { data: present ? [native()] : [] };
+            else if (path.endsWith('/stop') || path.endsWith('/start')) { power = path.endsWith('/stop') ? 'stopped' : 'running'; value = native(); }
+            else if (method === 'DELETE') { present = false; owned.delete('instance'); value = { id: 'ab12cd34ef', deleted: true }; }
+            else { status = present ? 200 : 404; value = present ? native() : { error: { code: 'not_found' } }; }
+        } else if (leaf === 'machine-maritime') {
+            const native = () => ({ id: 'box-one', name: MANAGED_ID, externalId: MANAGED_ID, framework: 'zeroclaw', tier: 'always_on',
+                status: power === 'running' ? 'active' : power === 'suspended' ? 'sleeping' : 'stopped', invocationCount: 0, createdAt: '2026-11-05T00:00:00Z', updatedAt: '2026-11-05T00:00:00Z' });
+            if (path === '/api/v1/account/limits') value = { plan: 'growth', machines: 0, awakeMachines: 0 };
+            else if (path.endsWith('/exec')) {
+                const command = body(request).command;
+                if (!Array.isArray(command) || !command.every(arg => typeof arg === 'string')) throw new Error('Invalid Maritime argv');
+                const completed = guest(command.map(arg => arg.replaceAll('/data', directory)));
+                value = { executionId: 'execution-one', status: 'completed', exitCode: completed.termination.observed.kind === 'exit' ? completed.termination.observed.exitCode : 1,
+                    stdout: command[0] === 'mktemp' ? decode.decode(completed.stdout).replaceAll(directory, '/data') : decode.decode(completed.stdout),
+                    stderr: decode.decode(completed.stderr) };
+            } else if (path.endsWith('/resize')) value = { ok: true, alwaysOn: true, memMb: null, diskGb: null, appliesOn: 'immediate', billingPreview: null };
+            else if (path.endsWith('/files/upload')) {
+                const form = await new Response(new Uint8Array(request.body!), { headers: request.headers }).formData();
+                const file = form.get('file');
+                if (!(file instanceof File) || typeof form.get('dest_dir') !== 'string') throw new Error('Invalid Maritime upload');
+                writeFileSync(join(String(form.get('dest_dir')).replaceAll('/data', directory), file.name), new Uint8Array(await file.arrayBuffer())); status = 204;
+            } else if (path.endsWith('/files')) { writeFileSync(url.searchParams.get('path')!, request.body!); status = 204; }
+            else if (path === '/api/agents' && method === 'POST') { present = true; owned.add('box'); value = native(); status = 201; }
+            else if (path === '/api/agents') value = present ? [native()] : [];
+            else if (path.endsWith('/stop') || path.endsWith('/sleep') || path.endsWith('/start') || path.endsWith('/wake')) {
+                power = path.endsWith('/stop') ? 'stopped' : path.endsWith('/sleep') ? 'suspended' : 'running'; value = native();
+            } else if (method === 'DELETE') { present = false; owned.delete('box'); status = 204; }
+            else { status = present ? 200 : 404; value = native(); }
+        } else if (leaf === 'machine-coder') {
+            const build = () => ({ id: `build-${power}`, workspace_id: 'workspace', template_version_id: 'version',
+                transition: power === 'stopped' ? 'stop' : 'start', status: power, job: { status: 'succeeded' },
+                resources: [{ agents: [{ id: 'agent-main', name: 'main', status: 'connected', directory }] }] });
+            const workspace = () => ({ id: 'workspace', owner_id: 'user-a', owner_name: 'alice', organization_id: 'org', template_id: 'template',
+                name: coderWorkspaceName(MANAGED_ID), dormant_at: null, latest_build: build() });
+            if (path === '/api/v2/users/me') value = { id: 'user-a', username: 'alice' };
+            else if (path === '/api/v2/templateversions/version') value = { id: 'version', template_id: 'template', organization_id: 'org' };
+            else if (path === '/api/v2/organizations/org/templates') value = [{ id: 'template', name: 'Template', organization_id: 'org', active_version_id: 'version' }];
+            else if (path.endsWith('/rich-parameters')) value = [];
+            else if (method === 'POST' && path.endsWith('/workspaces')) { present = true; owned.add('workspace'); value = workspace(); status = 201; }
+            else if (method === 'POST' && path.endsWith('/builds')) {
+                const transition = body(request).transition;
+                if (transition === 'delete') { present = false; owned.delete('workspace'); }
+                else power = transition === 'stop' ? 'stopped' : 'running';
+                value = { ...build(), transition }; status = 201;
+            } else if (path.startsWith('/api/v2/workspacebuilds/')) value = build();
+            else { status = present ? 200 : 404; value = workspace(); }
+        } else if (leaf === 'machine-superserve') {
             // Superserve OpenAPI 0.1.0 / sandbox ee91ea60f1e1, 2026-11-01.
             const native = () => ({ id: 'ssb_owned', name, status: power === 'running' ? 'active' : 'paused',
                 vcpu_count: 1, memory_mib: 1024, created_at: '2026-11-01T00:00:00Z',
@@ -284,10 +348,10 @@ export function cloudFixture(leaf: string, contribution: string) {
             else if (method === 'DELETE') { present = false; owned.delete('sandbox'); value = { ...native(), state: 'destroyed' }; }
             else { status = present ? 200 : 404; value = present ? native() : { message: 'Sandbox not found' }; }
         } else if (leaf === 'machine-boat') {
-            const native = () => ({ id: 'bx_23456789', state: power === 'running' ? 'ready' : 'archived',
+            const native = () => ({ id: 'bx_23456789', state: power === 'running' ? 'ready' : 'archived', ttlSeconds: null,
                 ...(evidence ? { stoppedAt: '2026-11-01T12:00:00Z', archiveAfter: new Date(NATIVE_EXPIRY).toISOString() } : {}) });
-            if (path.endsWith('/limits') && method === 'GET') value = { ok: true, type: 'limits.info', sandboxPlanDollars: 100, canStart: true, activeSandboxes: 0, maxActiveSandboxes: 100, billingStatus: 'active' };
-            else if (path.endsWith('/named-snapshots') && method === 'GET') value = { ok: true, type: 'snapshot.named.list', snapshots: [{ name: 'ready-one', status: 'ready', sourceSandboxId: 'bx_23456789', createdAt: '2026-10-12T00:00:00Z' }] };
+            if (path.endsWith('/limits') && method === 'GET') value = { ok: true, type: 'limits.info', sandboxPlanKey: 'box_100', sandboxPlanDollars: 100, canStart: true, activeSandboxes: 0, maxActiveSandboxes: 100, billingStatus: 'active' };
+            else if (path.endsWith('/saved-snapshots') && method === 'GET') value = { ok: true, type: 'snapshot.named.list', snapshots: [{ name: 'ready-one', status: 'ready', sourceSandboxId: 'bx_23456789', createdAt: '2026-10-12T00:00:00Z' }] };
             else if (path.endsWith('/sandboxes') && method === 'GET') value = { ok: true, type: 'sandbox.list', sandboxes: [{ id: 'bx_23456789', state: 'ready' }] };
             else if (path.endsWith('/sandboxes') && method === 'POST') { present = true; owned.add('sandbox'); value = { ok: true, sandbox: native() }; status = 202; }
             else if (path.endsWith('/sshkey')) value = { ok: true, type: 'ssh_key.configured', success: true, machineIp: '203.0.113.8', sshUser: 'user', hostKey: PUBLIC_KEY };
@@ -302,7 +366,7 @@ export function cloudFixture(leaf: string, contribution: string) {
             if (method === 'GET' && ['/v1/server_types', '/v1/images', '/v1/locations', '/v1/pricing'].includes(path)) {
                 const pair = { net: '0.02', gross: '0.02' };
                 value = { server_types: [{ id: 114, name: 'cx23', cores: 2, memory: 4, disk: 40, architecture: 'x86', locations: [{ name: 'fsn1', available: true, deprecation: null }], prices: [{ location: 'fsn1', price_hourly: pair, price_monthly: pair }] }],
-                    images: [{ id: 1, name: null, description: '', architecture: 'x86', type: 'snapshot', status: 'available', deprecated: null, os_flavor: 'ubuntu' }, { id: 2, name: 'ubuntu', description: '   ', architecture: 'x86', type: 'system', status: 'available', deprecated: null, os_flavor: 'ubuntu' }],
+                    images: [{ id: 1, name: 'ubuntu-24.04', description: '', architecture: 'x86', type: 'system', status: 'available', deprecated: null, os_flavor: 'ubuntu' }, { id: 2, name: 'ubuntu-22.04', description: '   ', architecture: 'x86', type: 'system', status: 'available', deprecated: null, os_flavor: 'ubuntu' }],
                     locations: [{ id: 1, name: 'fsn1', description: 'Falkenstein', country: null }], pricing: { currency: 'USD' }, meta: { pagination: { next_page: null } } };
             } else if (path === '/v1/servers' && method === 'POST') { present = true; owned.add('/v1/primary_ips/9'); value = { server: server() }; status = 201; }
             else if (path.includes('/actions/')) { if (method === 'POST') power = path.endsWith('/shutdown') ? 'stopped' : 'running'; value = { action: { id: 10, status: 'success', command: power === 'running' ? 'poweron' : 'shutdown', resources: [{ id: 41, type: 'server' }] } }; }
@@ -364,17 +428,20 @@ export function cloudFixture(leaf: string, contribution: string) {
                 else { finish(); value = commandResponse(id!, c.exitCode!); }
             } else throw new Error(`Unexpected Vercel HTTP ${method} ${path}`);
         } else if (leaf === 'machine-lume') {
+            const native = () => ({ name, locationName: 'external_disk', status: power, os: 'linux', cpuCount: 2,
+                memorySize: 4 * 1024 ** 3, diskSize: { allocated: 1024 ** 3, total: 20 * 1024 ** 3 }, ipAddress: '203.0.113.8', sshAvailable: true });
             if (url.hostname === 'ghcr.io' && path === '/token') value = { token: 'public-fixture-token' };
             else if (url.hostname === 'ghcr.io' && path.endsWith('/tags/list')) value = { name: path.slice('/v2/'.length, -'/tags/list'.length), tags: [] };
             else if (path.endsWith('/host/status')) value = { version: '0.6.1' };
             else if (path.endsWith('/config/locations')) value = [{ name: 'external_disk' }];
             else if (path.endsWith('/config')) value = { cachingEnabled: true };
-            else if (path.endsWith('/pull')) { present = true; power = 'stopped'; owned.add('vm'); value = { name, image: 'linux:prepared' }; }
+            else if (path === '/lume/vms') value = present ? [native()] : [];
+            else if (path.endsWith('/pull')) { present = true; power = 'stopped'; owned.add('vm'); value = { name, image: body(request).image }; }
             else if (path.endsWith('/run')) { power = 'running'; value = {}; status = 202; }
             else if (path.endsWith('/stop')) { power = 'stopped'; value = {}; }
             else if (method === 'DELETE') { present = false; owned.delete('vm'); value = {}; }
             else if (method === 'PATCH') value = {};
-            else { status = present ? 200 : 400; value = present ? { name, locationName: 'external_disk', status: power, os: 'linux', cpuCount: 2, memorySize: 4 * 1024 ** 3, diskSize: { allocated: 1024 ** 3, total: 20 * 1024 ** 3 }, ipAddress: '203.0.113.8', sshAvailable: true } : { message: `Virtual machine not found: ${name}` }; }
+            else { status = present ? 200 : 400; value = present ? native() : { message: `Virtual machine not found: ${name}` }; }
         } else if (railway) {
             const response = await railway.request(request.url, { method, body: typeof request.body === 'string' ? request.body : decode.decode(request.body) });
             return { status: response.status, finalUrl: request.url, headers: { 'content-type': 'application/json' }, body: new Uint8Array(await response.arrayBuffer()) };
@@ -384,17 +451,27 @@ export function cloudFixture(leaf: string, contribution: string) {
     // Host credential storage is a system boundary. No role or native client is replaced.
     const services = {
         http: { request },
-        exec: { run: processRequest, systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'ssh-keyscan' } }) } },
+        exec: { run: processRequest, systemTools: { resolve: async (request: { toolId: string }) => ({ executable: { kind: 'systemTool', id: request.toolId } }) } },
         managedServices: { dependencies: { status: async (id: string) => ({ state: 'ready', version: '0.5.0', executable: { kind: 'managedDependency', id: { pluginId: leaf === 'devcontainer' ? 'happier.devcontainer' : `happier.machine.${leaf.slice(8)}`, localId: id } } }) } },
         connectedAccounts: {
-            getBinding: async () => ({ account: { service: { pluginId: 'happier.machine.crabbox', localId: 'coordinator' }, accountId: 'selected' } }),
+            getBinding: async () => ({ account: { service: leaf === 'machine-coder' ? CODER_ACCOUNT_SERVICE
+                : { pluginId: 'happier.machine.crabbox', localId: 'coordinator' }, accountId: 'selected' } }),
             materialize: async (_purpose: string, request: { kind: string }) => request.kind === 'environment'
                 ? { kind: 'environment', env: { VERCEL_TEAM_ID: 'team_one', VERCEL_PROJECT_ID: 'prj_one', FLY_ORGANIZATION: 'test-org',
-                    CUA_HOME: directory, CUA_CREDENTIAL_STORE: 'file', MODAL_TOKEN_ID: 'fixture-token', MODAL_TOKEN_SECRET: PRIVATE_BINDING, MODAL_SERVER_URL: 'https://modal.example.test',
+                    CUA_HOME: directory, CUA_CREDENTIAL_STORE: 'file', CODER_URL: 'https://coder.example.test', CODER_SESSION_TOKEN: PRIVATE_BINDING,
+                    MODAL_TOKEN_ID: 'fixture-token', MODAL_TOKEN_SECRET: PRIVATE_BINDING, MODAL_SERVER_URL: 'https://modal.example.test',
                     CRABBOX_COORDINATOR_URL: 'https://coordinator.example.test/native', CRABBOX_COORDINATOR_TOKEN: PRIVATE_BINDING, CRABBOX_ORG: 'test-org' } }
-                : { kind: 'httpHeaders', headers: ['machine-e2b', 'machine-superserve'].includes(leaf) ? { 'x-api-key': PRIVATE_BINDING } : leaf === 'machine-upstash-box' ? { 'x-box-api-key': PRIVATE_BINDING } : { authorization: `Bearer ${PRIVATE_BINDING}` } },
+                : { kind: 'httpHeaders', headers: ['machine-e2b', 'machine-superserve'].includes(leaf) ? { 'x-api-key': PRIVATE_BINDING }
+                    : leaf === 'machine-agent37' ? { authorization: `Bearer ${PRIVATE_BINDING}`, 'x-agent37-key': PRIVATE_BINDING }
+                    : leaf === 'machine-upstash-box' ? { 'x-box-api-key': PRIVATE_BINDING } : { authorization: `Bearer ${PRIVATE_BINDING}` } },
         },
-        machineProvisioners: { withBootstrapCredentialFile: async (request: { relativePath: string }, effect: (credential: { path: string }) => Promise<unknown>) => effect({ path: join(directory, request.relativePath) }), materializeGuestHostCredential: async () => ({ kind: 'bytes', bytes: text.encode('private-guest-host-key'), dispose: async () => {} }) },
+        machineProvisioners: { materializeBootstrapCredential: async (request: { kind: 'file' | 'bytes' }) => {
+            const bytes = text.encode('private-bootstrap-fixture-key');
+            if (request.kind === 'bytes') return { kind: 'bytes' as const, bytes, dispose: async () => { bytes.fill(0); } };
+            const path = join(directory, 'bootstrap-key');
+            writeFileSync(path, bytes, { mode: 0o600 });
+            return { kind: 'file' as const, path, dispose: async () => { rmSync(path, { force: true }); } };
+        }, withBootstrapCredentialFile: async (request: { relativePath: string }, effect: (credential: { path: string }) => Promise<unknown>) => effect({ path: join(directory, request.relativePath) }), materializeGuestHostCredential: async () => ({ kind: 'bytes', bytes: text.encode('private-guest-host-key'), dispose: async () => {} }) },
         logger: Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, (...values: unknown[]) => { logs.push(values); }])),
     } as unknown as PluginTestServicesFixture;
     return { directory, launch, services, calls, processes, logs, modalPreload, modalState, modalEntry,
