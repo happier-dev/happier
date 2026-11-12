@@ -53,7 +53,7 @@ const setupAction = (event: EventId) => ({
             const read = await context.services.actions.execute('deployments.observation.get', {
                 serverId: scope.serverId, environmentId: scope.environmentId, targetLinkId: scope.targetLinkId,
             }, { signal: context.signal });
-            if (!read.ok) throw new PluginError({ code: read.error });
+            if (!('ok' in read) || !read.ok) throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' });
             if (read.environment.id !== scope.environmentId || read.environment.runtimeTargetLinkId !== scope.targetLinkId
                 || read.targetLink.id !== scope.targetLinkId || read.targetLink.role !== 'runtime' || read.targetLink.source.kind !== 'plugin') {
                 throw new PluginError({ code: 'deployment_target_unavailable' });
@@ -258,13 +258,13 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const result = await context.services.actions.execute('deployments.receipts.observe', {
                             serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal });
-                        if (!result.ok) throw new PluginError({ code: result.error });
+                        if (!('ok' in result) || !result.ok) throw new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' });
                         if ('state' in result && !inProgressStates.has(result.state)) {
                             state.observing.delete(receipt.id);
                             const read = await context.services.actions.execute('deployments.receipts.get', {
                                 serverId: source.serverId, environmentId: source.environmentId, deploymentId: receipt.id,
                             }, { signal: context.signal });
-                            if (!read.ok) throw new PluginError({ code: read.error });
+                            if (!('ok' in read) || !read.ok) throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable' });
                             receipts[index] = { ...read.deployment, failureSummary: read.failureSummary };
                             pending.get(receipt.id)!.receipt = receipts[index];
                         }
@@ -286,7 +286,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                         const result = receipt.failureSummary === undefined ? await context.services.actions.execute('deployments.receipts.get', {
                             serverId: source.serverId, environmentId: receipt.environmentId, deploymentId: receipt.id,
                         }, { signal: context.signal }) : { ok: true as const, failureSummary: receipt.failureSummary };
-                        if (!result.ok) throw new PluginError({ code: result.error });
+                        if (!('ok' in result) || !result.ok) throw new PluginError({ code: 'ok' in result ? result.error : 'deployment_unavailable' });
                         if (result.failureSummary === undefined) throw new PluginError({
                             code: 'deployment_content_unavailable', message: 'Deployment failure detail is unavailable.',
                         });
@@ -322,8 +322,8 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
         async retire({ context, definitions }) {
             const current = new Set<string>();
             for (const definition of definitions) {
-                const assigned = definition.observationTransport.kind === 'checkpointedPull'
-                    ? definition.observationTransport.watcherMaterializationRef : definition.observationTransport.consumerMaterializationRef;
+                if (definition.observationTransport.kind !== 'checkpointedPull') continue;
+                const assigned = definition.observationTransport.watcherMaterializationRef;
                 if (!context.materialization || !arePluginMachineMaterializationRefsEqual(context.materialization, assigned)) continue;
                 const source = decode(definition);
                 if (source) { adopt(definition, source); current.add(definition.sourceInstanceId); }
