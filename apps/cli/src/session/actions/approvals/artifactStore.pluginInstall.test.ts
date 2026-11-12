@@ -19,6 +19,7 @@ import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
 import { PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
@@ -143,6 +144,82 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+
+  it.each(['approve', 'changed-review'] as const)('rejoins an installed update review after native Install confirmation: %s', async outcome => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-installed-update-confirmation-'));
+    const happyHomeDir = join(root, 'home');
+    const source = join(root, 'plugin.tgz');
+    const pluginId = 'acme.confirmed-update';
+    const store = createStore();
+    await mkdir(happyHomeDir, { recursive: true });
+    const writeCandidate = async (version: string) => writeFile(source, await createTestNpmTarball([
+      { name: 'package/package.json', body: JSON.stringify({ name: '@acme/confirmed-update', version,
+        keywords: ['happier-plugin'], files: ['.happier-plugin'], happier: { manifest: '.happier-plugin/plugin.json' } }) },
+      { name: 'package/.happier-plugin/plugin.json', body: JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, version, entrypoints: undefined, engines: undefined,
+      })) },
+    ]));
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController, staleCandidateCleanup: 'disabled',
+      approvalStore: store,
+      connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      managedResourcePreflight: { credentials: credentials(), serverUrl: 'http://plugin-approval.invalid',
+        homeId: 'home-identity', controller: { machineId: 'machine-1', installationId: 'installation-1' } },
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-1', serverIdentityId: 'home-identity' }),
+    });
+    const app = createDaemonControlApp({ machineId: 'machine-1', controlToken: 'test-control',
+      getChildren: () => [], stopSession: async () => { throw new Error('Unexpected stop'); },
+      spawnSession: async () => { throw new Error('Unexpected spawn'); }, requestShutdown: () => {},
+      onHappySessionWebhook: () => {}, pluginChangeService: owner.changeService });
+    // Substitute local HTTP only; the daemon routes and change owner stay real.
+    const control = vi.spyOn(daemonHttp, 'daemonPost').mockImplementation(async (path, body) => {
+      const response = await app.inject({ method: 'POST', url: path,
+        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body === undefined ? {} : { payload: body }) });
+      return response.json();
+    });
+    try {
+      await writeCandidate('1.0.0');
+      const initial = await owner.changeService.requestPluginChange({ kind: 'installArchive', locator: source });
+      if (initial.kind !== 'reviewRequired') throw new Error(JSON.stringify(initial));
+      expect(await owner.changeService.decidePluginChange({ pendingChangeId: initial.pendingChangeId, decision: 'installAndTrust' }))
+        .toMatchObject({ kind: 'committed' });
+      await writeCandidate('1.1.0');
+      const deps = createCliActionDeps({ token, credentials: credentials(), sessionId: 'cli-global', mode: 'plain', ctx: null,
+        serverId: 'home-1', serverHttpBaseUrl: 'http://plugin-approval.invalid', happyHomeDir,
+        pluginChangeService: owner.changeService });
+      const executor = createActionExecutor({ ...deps, ...store });
+      const input = { machineId: 'machine-1', source: { kind: 'installed', pluginId } };
+      const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
+        serverId: 'home-1', serverIdentityId: 'home-identity', runtimeAccountId: 'account-1',
+        actionRequestId: 'installed-update', interactivePresentation: 'unavailable' as const };
+      const review = await executor.execute('plugins.install', input, context);
+      expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+      if (review.ok || typeof review.details?.reviewDigest !== 'string') throw new Error(JSON.stringify(review));
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+      const confirmed = await executor.execute('plugins.install', input, { ...context,
+        presentUserConfirmation: { actionId: 'plugins.install', accountId: 'account-1', serverId: 'home-identity',
+          requestId: context.actionRequestId, inputDigest: computeActionInputApprovalDigestV1('plugins.install', input),
+          reviewDigest: outcome === 'approve' ? review.details.reviewDigest : '0'.repeat(64) },
+      });
+      if (outcome === 'approve') {
+        expect(confirmed, JSON.stringify(confirmed)).toMatchObject({ ok: true, result: { ok: true, outcome: 'applied' } });
+        expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.1.0');
+        expect(await owner.changeService.listPendingPluginChanges()).toEqual({ changes: [] });
+      } else {
+        expect(confirmed, JSON.stringify(confirmed)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+        const pending = await owner.changeService.listPendingPluginChanges();
+        expect(pending.changes).toHaveLength(1);
+      }
+    } finally {
+      control.mockRestore();
+      await app.close();
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['plain', 'e2ee'] as const)('reads persisted %s mode for cold install approval without a supplied mode', async mode => {
     accountMode = mode;
     const store = createCliApprovalsArtifactStore({ credentials: credentials() });

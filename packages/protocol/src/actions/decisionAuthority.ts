@@ -2,6 +2,7 @@ import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '../auth/apiTokenG
 import type { ActionRequiredAuthority } from './metadata.js';
 import type { ActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
+import type { QualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { DECISION_ACTION_IDS } from './actionIds.js';
 export { DECISION_ACTION_IDS } from './actionIds.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
@@ -74,7 +75,7 @@ export function isAutomationApprovalRequestSurface(
 }
 
 /** Exact admitted operands, including their domain revision, bound by the approval owner. */
-export function computeActionInputApprovalDigestV1(actionId: ActionId, input: unknown,
+export function computeActionInputApprovalDigestV1(actionId: ActionId | QualifiedPluginActionId, input: unknown,
   sessionTargetsV1?: import('./sessionTargetV1.js').ActionResolvedSessionTargetsV1): string {
   // Native schema outputs may retain optional undefined members that transport omits.
   const parts = [actionId, createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(input))];
@@ -104,6 +105,11 @@ export function canRequestPresentUserApprovalForActionInputV1(
 ): boolean {
   return !(DECISION_ACTION_IDS as readonly string[]).includes(spec.id)
     && requiresPresentUserExecutionAuthorityForActionInputV1(spec, input);
+}
+
+/** Rejecting or cancelling an approval never authorizes its requested effect. */
+export function isApprovalWithdrawalDecisionV1(decision: unknown): boolean {
+  return decision === 'reject' || decision === 'cancel';
 }
 
 export function canCredentialDecideV1(input: Readonly<{ authority: ActionRequiredAuthority; grant: ApiTokenGrantV1 | null }>): boolean {

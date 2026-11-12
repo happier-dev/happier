@@ -1,3 +1,4 @@
+import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
@@ -221,7 +222,7 @@ import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRef
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1 } from '../computer/v1.js';
 import { isSessionFollowActionIdV1, SessionFollowActionInputSchemasV1 } from '../sessions/follow/actions.js';
 import { evaluateApiTokenGrantV1, isApiTokenGrantActionAllowedV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
-import { resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, requiresPresentUserExecutionAuthorityForActionInputV1, computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from './decisionAuthority.js';
+import { isApprovalWithdrawalDecisionV1, resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, requiresPresentUserExecutionAuthorityForActionInputV1, computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from './decisionAuthority.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { SessionNeedsYouRaiseInputV1Schema } from '../sessions/permissions/questionV1.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
@@ -2336,6 +2337,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Resolve declared operands before exact domain schemas parse them. The
     // snapshot is also the sole selection used by preparation and replay.
     let admittedInput: unknown = bound.input ?? {};
+    if (!existingAdmission && isDeploymentActionIdV1(actionId)) {
+      const home = admitDeploymentHomeInputV1(admittedInput, ctx, deps.resolveServerProfileScopeId);
+      if ('errorCode' in home) return home;
+      admittedInput = home.input;
+    }
     const sessionTarget = readActionSessionTargetDeclaration(actionId, admittedInput, ctx);
     if (ctx.expectedSessionAddress && !sessionTarget && !hostInternal && !options?.sessionTargetLeaf) {
       return { ok: false, errorCode: 'session_address_unsupported', error: 'session_address_unsupported' };
@@ -3307,6 +3313,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       if ('ok' in review) return review;
       if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
+      const pluginInstallReview = actionId === 'plugins.install'
+        ? readPluginInstallApprovalPendingReview(review.preview) : null;
+      if (pluginInstallReview) ctx = { ...ctx, approvedActionReplay: {
+        ...ctx.approvedActionReplay, pluginInstallReview,
+      } };
       if (requiredHandoffTargetApproval) ctx = { ...ctx, handoffTargetReplacementApproval: requiredHandoffTargetApproval };
     }
     if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction
@@ -4917,7 +4928,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const modelParticipant = reservation.data.modelParticipant;
             if (reservation.data.discussionId !== invite.discussionId || !modelParticipant
               || modelParticipant.participant.participantSlotId !== invite.participant.participantSlotId) {
-              return invalidActionOutputFailure(reservation.success ? undefined : reservation.error);
+              return invalidActionOutputFailure();
             }
             const started = await executeHostChild('session.spawn_new', projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
               ...modelParticipant.launch,
@@ -4953,7 +4964,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (owned && (owned.discussionId !== removal.discussionId
             || (removal.participant.kind === 'model' ? owned.participantSlotId !== removal.participant.participantSlotId
               : removal.participant.kind !== 'session' || owned.sessionId !== removal.participant.sessionId))) {
-            return invalidActionOutputFailure(response.success ? undefined : response.error);
+            return invalidActionOutputFailure();
           }
           if (owned) ownedSessions = [owned];
         } else if (discussionActionId === 'discussion.archive') {
@@ -5986,7 +5997,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentBackupAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
-          if (!isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const result = await deps.deploymentBackupAction(actionId, input, ctx);
           return 'errorCode' in result ? result : { ok: true, result };
         }
@@ -5994,7 +6004,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentRestore) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.backups.restore' };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
-          if (!isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const result = await deps.deploymentRestore(input, ctx);
           return 'errorCode' in result ? result : { ok: true, result };
         }
@@ -6002,9 +6011,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentMoveToRepository) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.environments.moveToRepository' };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
-          if (!isSameHome(input.serverId, ctx.serverId, ctx)
-            || input.workspace && !isSameHome(input.workspace.serverId, ctx.serverId, ctx))
-            return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const result = await deps.deploymentMoveToRepository(input, ctx, (childId, childInput) => {
             const role = deploymentMoveToRepositoryChildRoleV1(childId);
             if (!role) return Promise.resolve({ ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${childId}` });
@@ -6017,7 +6023,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentTemplateInstantiate) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.templates.instantiate' };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
-          if (!isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const review = deploymentReview === undefined ? undefined : DeploymentTemplateInstantiationReviewV1Schema.parse(deploymentReview);
           const result = await deps.deploymentTemplateInstantiate(input, ctx, review);
           return projectDeploymentTemplateInstantiationResultV1(result);
@@ -6026,8 +6031,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!ctx.serverId || !ctx.runtimeAccountId) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
           if (!deps.deploymentPrepare) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:deployments.prepare' };
           const input = data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>;
-          if (!isSameHome(input.workspace.serverId, ctx.serverId, ctx))
-            return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
           const result = await deps.deploymentPrepare(input, ctx,
             (childId, childInput) => invokeHostReviewedChildV1({
               parent: { actionId, input: projectNativeJsonValueForTransport(input) as Record<string, JsonValue> },
@@ -6666,7 +6669,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (actionId === 'approval.request.decide') {
-        const delegatedHostDecision = resolveHostStampedAuthority(ctx) !== 'present_user'
+        const withdrawal = isApprovalWithdrawalDecisionV1(data.decision);
+        const delegatedHostDecision = !withdrawal && resolveHostStampedAuthority(ctx) !== 'present_user'
           && (ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'cli') && !ctx.externalActionCredential;
         // Decisions cannot request another approval. Only an explicit persisted
         // waiver delegates ordinary decisions; bypass/replay hints never do.
@@ -6765,7 +6769,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const narrowsInput = data.narrowedInput !== undefined;
         const requestedActionId = ActionIdSchema.safeParse(existing.actionId);
         const requestedSpec = requestedActionId.success ? getActionSpec(requestedActionId.data) : null;
-        const draftReviewFailure = await requireDiscussionDraftReviewAuthority(existing, ctx);
+        const draftReviewFailure = withdrawal ? null : await requireDiscussionDraftReviewAuthority(existing, ctx);
         if (draftReviewFailure) return draftReviewFailure;
         if (delegatedHostDecision) {
           const origin = existing.v === 2 ? existing.executionOriginV1 : null;
@@ -6796,7 +6800,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         // Live CLI decisions require a person. Scoped credentials cannot
         // approve person-class targets.
-        if ((decision !== 'cancel' && readLiveCliApprovalOriginScope(existing) !== null
+        if ((!withdrawal && readLiveCliApprovalOriginScope(existing) !== null
           && resolveHostStampedAuthority(ctx) !== 'present_user')
           || (decision === 'approve' && ctx.externalActionCredential && requestedSpec
             && requiresPresentUserExecutionAuthorityForActionInputV1(requestedSpec, existing.actionArgs))) {

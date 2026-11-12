@@ -81,7 +81,10 @@ buildApprovalPreview: async ({ actionId, input, context, defaultPreview, machine
           input,
           happyHomeDir: params.happyHomeDir,
           workspaceRoot,
-          context,
+          // Preparing disclosure must not consume a native confirmation or an
+          // Artifact decision. Only the admitted effect settles this review.
+          context: { ...(context.signal ? { signal: context.signal } : {}),
+            ...(context.actionCaller ? { actionCaller: context.actionCaller } : {}) },
         }, {
           ...pluginInstallApprovalChangeServices,
           ...(registry ? { marketplaceIndexService: (await import('@/plugins/store/marketplace/service')).createMarketplaceIndexService({
