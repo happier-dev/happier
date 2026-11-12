@@ -48,6 +48,7 @@ type Binding = Awaited<ReturnType<
 type OpenCodeAccountLaunchRequest = Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding' | 'configuration'>;
 type OpenCodeAccountLaunchContext = Readonly<{
   signal?: AbortSignal;
+  catalogObservation?: true;
   services: Readonly<{ connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'> }>;
 }>;
 
@@ -249,10 +250,10 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
 
     const hasSelectedAccount = bindingEntries.some(([, binding]) => Boolean(binding));
     const selectedModel = normalizeOpenCodePromptConfigUpdate({ modelId: request.configuration?.model.value }).model;
-    // Native saved/default models may target another provider. A selected
-    // Account needs a concrete model of its declared provider before secrets.
-    // A resolved helper/Session model remains concrete when its source is inherited.
-    if (hasSelectedAccount && (!selectedModel || !OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
+    // Session/Run launches need a concrete model of the selected Account provider;
+    // native saved/default models may target another provider. Catalog observation
+    // prepares credentials before the person can choose a model.
+    if (!context.catalogObservation && hasSelectedAccount && (!selectedModel || !OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
       (row) => bindings[row.declaration.purpose] && openCodeAccountProviders(row).some(provider => provider === selectedModel.providerID),
     ))) {
       throw modelSelectionRequired();

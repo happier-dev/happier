@@ -98,7 +98,7 @@ export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
       } }),
     }, {
-      signal, services: { connectedAccounts },
+      signal, catalogObservation: true, services: { connectedAccounts },
     });
     return { environment: prepared.request.launchEnvironment?.values ?? environment,
       unset: prepared.request.launchEnvironment?.unset, dispose: prepared.dispose };

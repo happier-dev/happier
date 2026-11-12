@@ -73,7 +73,8 @@ it('leaves managed Muse source credentials to its Provider catalog owner', async
 
 it.each([
   { purpose: 'xai-api-key', service: { pluginId: 'happier.agent.grok', localId: 'xai' }, modelId: 'xai/grok-4', key: 'XAI_API_KEY', provider: 'xai' },
-])('prepares selected $provider catalog credentials with the explicit model', async row => {
+  { purpose: 'github-copilot', service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, modelId: 'github-copilot/fixture-model', key: 'COPILOT_GITHUB_TOKEN', provider: 'github-copilot' },
+].flatMap(row => [row, { ...row, modelId: undefined }]))('prepares selected $provider catalog credentials with model $modelId', async row => {
   const controls: AgentPreflightSessionControlsContributionV1 = OPENCODE_PREFLIGHT_SESSION_CONTROLS;
   const prepare = controls.prepareLaunchEnvironment!;
   // Connected-account custody is the boundary; native qualification and auth assembly stay real.
@@ -84,6 +85,8 @@ it.each([
       async materialize() { return { kind: 'environment', env: { [row.key]: 'fake-selected' } }; },
       watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} }; },
     } });
-  try { expect(JSON.parse(prepared.environment.OPENCODE_AUTH_CONTENT!)[row.provider]).toEqual({ type: 'api', key: 'fake-selected' }); }
+  try { expect(JSON.parse(prepared.environment.OPENCODE_AUTH_CONTENT!)[row.provider]).toEqual(row.provider === 'github-copilot'
+    ? { type: 'oauth', refresh: 'fake-selected', access: '', expires: 0 }
+    : { type: 'api', key: 'fake-selected' }); }
   finally { await prepared.dispose(); }
 });
