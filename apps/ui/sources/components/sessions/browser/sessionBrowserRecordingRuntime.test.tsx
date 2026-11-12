@@ -803,7 +803,7 @@ describe('session browser recording runtime', () => {
         }));
     });
 
-    it('presents Ask-first recording consent in place and starts only after its visible approval', async () => {
+    it('presents Ask-first recording consent and starts only after its visible approval', async () => {
         await registerNativeCaptureHandler();
         await homes.requireUiApproval(homeId, 'browser.recording.start');
         machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: { status: 'started', recording: recording() } });
@@ -822,18 +822,21 @@ describe('session browser recording runtime', () => {
         }
         const screen = await renderRecordingScreen(<ModalProvider><Probe /></ModalProvider>);
         await screen.pressByTestIdAsync('start-recording');
-        await waitForHomeGovernance(() => expect(homes.artifacts(homeId).list()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy());
+        expect(homes.artifacts(homeId).list()).toHaveLength(0);
         expect(machineRpcMock.start).not.toHaveBeenCalled();
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('none');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.approve')).toBeTruthy());
-        await screen.pressByTestIdAsync('approvals.approve');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await waitForHomeGovernance(() => expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1'));
-        expect(screen.findByTestId('approvals.in-place')).toBeNull();
+        expect(screen.findByTestId('actions.confirmation-review')).toBeNull();
+        expect(homes.artifacts(homeId).list()).toHaveLength(0);
     });
 
     it('retains an Ask-first start until approval settles or its mounted session retires', async () => {
         await registerNativeCaptureHandler();
         await homes.requireUiApproval(homeId, 'browser.recording.start');
+        const { ModalProvider } = await import('@/modal');
+        const screen = await renderScreen(<ModalProvider />);
         const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
         const hook = await renderHook(({ sessionId }) => useSessionBrowserRecordingRuntime({
             enabled: true, scopeKey: sessionId, sessionId, machineId: 'machine_1', serverId: 'srv_recording',
@@ -845,8 +848,9 @@ describe('session browser recording runtime', () => {
         await act(async () => {
             pending = hook.getCurrent()?.browserShellRecording.onStartRecording?.(nativeRecordingRequest);
             void Promise.resolve(pending).then(() => { settled = true; });
-            await waitForHomeGovernance(() => expect(homes.artifacts(homeId).list()).toHaveLength(1));
         });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy());
+        expect(homes.artifacts(homeId).list()).toHaveLength(0);
         expect(settled).toBe(false);
         expect(machineRpcMock.start).not.toHaveBeenCalled();
         expect(hook.getCurrent()?.state.activeRecordingIdByViewId.view_1).toBeUndefined();
@@ -855,7 +859,8 @@ describe('session browser recording runtime', () => {
         await pending;
         expect(settled).toBe(true);
         expect(machineRpcMock.start).not.toHaveBeenCalled();
-        expect(homes.artifacts(homeId).list()).toHaveLength(1);
+        expect(screen.findByTestId('actions.confirmation-review')).toBeNull();
+        expect(homes.artifacts(homeId).list()).toHaveLength(0);
     });
 
     it('tells the user when stopping a recording fails instead of failing silently (H-UX F-4)', async () => {

@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionFixture, renderHook, renderScreen } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -12,6 +13,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
 const { useLocalServiceInventoryHasRunningServices, useLocalServiceInventoryRunningCount } = await import('./useLocalServiceInventoryRunningCount');
 const { SessionServicesRailBadge } = await import('@/components/sessions/panes/SessionResourceRailBadge');
 const { resetLocalServiceInventoryStoreForTests } = await import('./sharedStore');

@@ -29,6 +29,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import {
@@ -86,11 +87,16 @@ const modalShowMock = vi.hoisted(() => vi.fn<IModal['show']>(() => 'modal-id'));
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
+    const boundary = createModalModuleMock({
         confirmResult: true,
-        spies: { confirm: modalConfirmMock, show: modalShowMock, alert: modalAlertMock },
-    }).module;
+        renderCustomModals: true,
+        spies: { confirm: modalConfirmMock, alert: modalAlertMock },
+    });
+    modalShowMock.mockImplementation(boundary.spies.show);
+    return { ...boundary.module, Modal: { ...boundary.module.Modal, show: modalShowMock } };
 });
+
+const { Modal, ModalProvider } = await import('@/modal');
 
 async function publishFeatures(serverId: string, publicPreviewEnabled: boolean) {
     const features = createRootLayoutFeaturesResponse({ capabilities: {
@@ -136,6 +142,7 @@ function buildPublicPreviewLauncherState() {
         updatedAt: 3_000,
         runTargets: [],
         inventoryEntries: [buildLocalServiceInventoryRow({ id: 'project-feed', port: 3000,
+            classification: { kind: 'vite', displayName: 'Vite', confidence: 'high', lowSignal: false, signals: ['vite'] },
             provenance: { session: { id: 'session-a' } } })],
         previewResources: [{
             previewId: publicPreviewId,
@@ -195,8 +202,8 @@ describe('ProjectRightPanelServicesView', () => {
         modalConfirmMock.mockClear();
         navigation.push.mockClear();
         modalAlertMock.mockClear();
-        modalShowMock.mockReset();
-        modalShowMock.mockImplementation(() => 'modal-id');
+        modalShowMock.mockClear();
+        Modal.hideAll();
     });
     afterEach(async () => { await connection?.dispose(); connection = undefined; await home.reset(); });
 
@@ -352,12 +359,10 @@ describe('ProjectRightPanelServicesView', () => {
             detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
             commands: [{ name: 'web', usage: 'service', source, availability: 'available', invocation: { tool: 'npm', args: ['run', 'dev'], cwd: '.' } }],
         });
-        home.answer(serverId, '/v1/machines/machine-a', { body: { machine: createPlainMachineRowFixture({ id: 'machine-a', accountId: 'project-account' }) } });
-        home.answer(serverId, '/v1/actions/projects.inspect', { select: body => {
-            const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
-            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect', requestId: request.requestId,
-                execution: { ok: true, result: inspection } }) };
-        } });
+        await answerExternalActionAccountForHome(home, serverId, {
+            machineId: 'machine-a', actionId: 'projects.inspect', tokenEpoch: 0,
+            requesterInvocation: 'none', execute: () => inspection,
+        });
         rpc.machine.mockImplementation(async ({ method }) => {
             if (method === 'daemon.projects.inspect.v1') return inspection;
             throw new Error(`unexpected_rpc:${method}`);
@@ -414,7 +419,6 @@ describe('ProjectRightPanelServicesView', () => {
         const readApprovalPreference = () => readExplicitActionApprovalPreferenceV1('localServices.launcher.start',
             storage.getState().settings.actionsSettingsV1, { surface: 'ui' });
         expect(readApprovalPreference()).toBe(true);
-        modalConfirmMock.mockResolvedValueOnce(accepted);
         await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'project-account', machineId: workspace.machineId,
             runtimeActionExecute: createDefaultRuntimeActionExecutor() });
         const running = { ...target, state: 'available' as const, serviceState: 'running' as const, actions: ['manage' as const] };
@@ -438,19 +442,25 @@ describe('ProjectRightPanelServicesView', () => {
             });
             throw new Error(`unexpected_rpc:${method}`);
         });
-        const screen = await renderScreen(<ProjectRightPanelServicesView machineId={workspace.machineId} serverId={serverId}
+        const screen = await renderScreen(<ModalProvider><ProjectRightPanelServicesView machineId={workspace.machineId} serverId={serverId}
             inventoryState={buildLocalServiceInventoryState({ rows: [] })}
             launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
                 v: 1, machineId: workspace.machineId, updatedAt: 1, targets: [target],
-            })} />);
+            })} /></ModalProvider>);
         try {
-            await screen.pressByTestIdAsync('project-rightpanel-services-row:declared:web-start');
-            expect(modalConfirmMock).toHaveBeenCalledTimes(1);
+            const start = screen.pressByTestIdAsync('project-rightpanel-services-row:declared:web-start');
+            await vi.waitFor(() => expect(rpc.machine.mock.calls.some(([request]) =>
+                request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT && request.payload.startReview)).toBe(true));
+            await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+            expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START))
+                .toHaveLength(0);
+            await screen.pressByTestIdAsync(`actions.confirmation-review.decision-${accepted ? 'approve' : 'reject'}`);
+            await start;
             expect(readApprovalPreference()).toBe(true);
             expect(home.artifacts(serverId).list()).toEqual([]);
             expect(navigation.push).not.toHaveBeenCalled();
-            expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START))
-                .toHaveLength(accepted ? 1 : 0);
+            await vi.waitFor(() => expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START))
+                .toHaveLength(accepted ? 1 : 0));
             expect(modalAlertMock).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });

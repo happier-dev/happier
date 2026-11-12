@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
@@ -10,18 +10,24 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync
 
 import { BrowserViewHost } from './BrowserViewHost';
 import type { BrowserDiagnosticsEngineBridgeConfig } from './frame/types';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { applyLocalServicePreviewSnapshot, createLocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 
 const previewHttp = vi.hoisted(() => ({ fetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
     token: 'header.eyJzdWIiOiJ2aWV3ZXItYWNjb3VudCJ9.signature' }));
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: Parameters<typeof previewHttp.fetch>) => previewHttp.fetch(...args) }));
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
     const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
-        getCredentialsForServerUrl: async () => ({ token: previewHttp.token }),
-    } });
+    return createTokenStorageModuleMock({ importOriginal });
 });
+
+const homes = createHomeGovernanceHarness();
+async function addPreviewHome(options: Readonly<{ serverUrl: string }>) {
+    const id = await homes.addHome({ name: 'Preview Home', serverUrl: options.serverUrl,
+        serverIdentityId: `browser-view:${new URL(options.serverUrl).hostname}`,
+        accountId: 'viewer-account', currentAccount: true, credentials: { token: previewHttp.token } });
+    return { id };
+}
 
 const simulatorTargetProps: Array<Readonly<Record<string, unknown>>> = [];
 const desktopWebViewTargetProps: Array<Readonly<Record<string, unknown>>> = [];
@@ -314,7 +320,7 @@ function createReachableCollectorFrame(origin: string) {
             this.dataTransfer = options.dataTransfer;
         }
     }
-    const documentBoundary = {
+    const documentBoundary = Object.assign(new EventTarget(), {
         title: 'Same-origin preview', readyState: 'complete', documentElement: { nodeType: 1 },
         querySelectorAll: (selector: string) => selector === '#source' ? [input] : selector === '#destination' ? [destination] : [],
         createElement: () => ({ textContent: '', remove() {} }),
@@ -324,7 +330,7 @@ function createReachableCollectorFrame(origin: string) {
                 { getEntriesByType: () => [] }, Event, BrowserActionEvent, BrowserActionEvent, BrowserDataTransfer, File,
             );
         } },
-    };
+    });
     const frame = Object.assign(new EventTarget(), {
         document: documentBoundary, location: { href: `${origin}/`, origin },
         localStorage: { length: 0 }, sessionStorage: { length: 0 },
@@ -335,14 +341,23 @@ function createReachableCollectorFrame(origin: string) {
 }
 
 describe('BrowserViewHost', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await homes.reset();
         simulatorTargetProps.length = 0;
         desktopWebViewTargetProps.length = 0;
         previewHttp.fetch.mockReset();
+        previewHttp.token = createAccountTokenForTests('viewer-account', { currentAccount: true });
+        setRuntimeFetch(async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            return new URL(url).pathname.startsWith('/v1/local-services/preview/')
+                ? await previewHttp.fetch(url, init) : await homes.request(input, init);
+        });
     });
 
+    afterEach(async () => { await homes.reset(); });
+
     it('ends a mounted preview when its authoritative snapshot removes it without another access request', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'http://localhost:3030' });
+        const home = await addPreviewHome({ serverUrl: 'http://localhost:3030' });
         const view = createLocalPreviewView();
         const resource = { previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
             owner: { kind: 'session' as const, id: 'session_1' },
@@ -380,7 +395,7 @@ describe('BrowserViewHost', () => {
     });
 
     it('shows Can\u2019t reach with Retry for a preview that failed in transport, even while its access URL remains', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'http://localhost:3030' });
+        const home = await addPreviewHome({ serverUrl: 'http://localhost:3030' });
         const base = createLocalPreviewView();
         const view = { ...base, loadingState: 'failed' as const, lastError: 'preview_transport_unavailable' };
         const resource = { previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
@@ -407,7 +422,7 @@ describe('BrowserViewHost', () => {
     });
 
     it('admits a sessionless web frame through the actual viewer Home credential without a native descriptor', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'https://viewer-home.example.test' });
+        const home = await addPreviewHome({ serverUrl: 'https://viewer-home.example.test' });
         const view = { ...createLocalPreviewView(), target: { ...createLocalPreviewView().target, sessionId: undefined },
             currentUrl: 'https://preview.example.test/?previewToken=custodian', securityOrigin: 'https://preview.example.test' };
         const resource = { previewId: 'preview_1', machineId: 'machine_1', owner: { kind: 'user' as const, id: 'starter' },
@@ -433,7 +448,7 @@ describe('BrowserViewHost', () => {
     });
 
     it('resolves a registered target-only web preview at the Home without manufacturing a daemon snapshot', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'https://target-only-home.example.test' });
+        const home = await addPreviewHome({ serverUrl: 'https://target-only-home.example.test' });
         const view: BrowserControlViewState = { ...createLocalPreviewView(), target: {
             kind: 'localServicePreview', targetId: 'preview_1', machineId: 'machine_1', display: { title: 'Web' } },
             currentUrl: null, securityOrigin: null };
@@ -456,7 +471,7 @@ describe('BrowserViewHost', () => {
         { status: 403, error: 'preview_access_denied', reasonCode: 'preview_ended' },
         { status: 503, error: 'preview_transport_unavailable', reasonCode: 'preview_transport_unavailable' },
     ])('reports the preview admission refusal rather than an unavailable desktop engine ($status)', async ({ status, error, reasonCode }) => {
-        const home = await upsertServerProfile({ serverUrl: 'https://refused-preview-home.example.test' });
+        const home = await addPreviewHome({ serverUrl: 'https://refused-preview-home.example.test' });
         const view = { ...createLocalPreviewView(), currentUrl: null, securityOrigin: null };
         const onViewLifecycle = vi.fn();
         previewHttp.fetch.mockImplementation(async (url) => url.endsWith('/v1/local-services/preview/preview_1/access')
@@ -487,7 +502,7 @@ describe('BrowserViewHost', () => {
         type BrowserControlState = import('@/sync/domains/browser/control').BrowserControlState;
         type BrowserViewLifecycleSignal = import('@/sync/domains/browser/control').BrowserViewLifecycleSignal;
         type BrowserViewLifecycleTarget = import('@/sync/domains/browser/control').BrowserViewLifecycleTarget;
-        const home = await upsertServerProfile({ serverUrl: 'https://retry-preview-home.example.test' });
+        const home = await addPreviewHome({ serverUrl: 'https://retry-preview-home.example.test' });
         const initialView = createLocalPreviewView();
         const initial = openBrowserTarget(createBrowserViewState(), initialView.target, {
             browserSessionId: initialView.browserSessionId, viewId: initialView.viewId, platform: 'web', currentUrl: '/last-page?query=1#section',
@@ -595,7 +610,7 @@ describe('BrowserViewHost', () => {
      * the way that works — never a generic "unavailable" or "Page failed to load".
      */
     it('says where a private preview runs when this device has no way to open it', async () => {
-        const home = await upsertServerProfile({ serverUrl: 'https://private-preview-home.example.test' });
+        const home = await addPreviewHome({ serverUrl: 'https://private-preview-home.example.test' });
         previewHttp.fetch.mockImplementation(async (url) => url.endsWith('/v1/local-services/preview/preview_1/access')
             // The server's typed refusal (registerRoutes: no isolated preview origin on this Home).
             ? Response.json({ error: 'preview_transport_unavailable', reasonCode: 'preview_private_route_unavailable' }, { status: 503 })

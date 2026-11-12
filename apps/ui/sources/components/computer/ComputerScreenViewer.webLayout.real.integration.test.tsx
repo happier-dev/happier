@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { installWebLayoutBridge, measureWebLayout, type WebLayoutMeasurement } from '@/dev/testkit/render/measureWebLayout';
+import { t } from '@/text';
 
 /**
  * A Computer state that is not a picture, drawn in the floating viewer's body at the size the frame
@@ -32,7 +33,8 @@ afterEach(async () => {
 
 type State = 'permission' | 'not-shared';
 
-const PERMISSION_HEADING = 'Allow Screen Recording on MacBook Pro to watch its windows or display.';
+// Locate the permission state's current heading; this suite owns geometry, not its prose.
+const PERMISSION_HEADING = t('computerUse.permission.title', { machine: 'MacBook Pro' });
 const NOT_SHARED_ACTION = 'Choose a window';
 
 /** The frame's body at `width` before the source reports a picture: `minBody` is what the source asked for. */
@@ -90,6 +92,7 @@ describe('a Computer state that is not a picture, in the floating viewer body', 
         const body = layout.rect('body');
         const heading = layout.textRects(PERMISSION_HEADING)[0]!;
         expect(heading.top).toBeGreaterThanOrEqual(body.top);
+        expect(heading.bottom).toBeLessThanOrEqual(body.bottom);
         for (const id of ['v-permission-card-open-settings', 'v-permission-card-check-again']) {
             const action = layout.rect(id);
             expect(action.top).toBeGreaterThanOrEqual(body.top);
