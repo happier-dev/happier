@@ -196,3 +196,40 @@ export function createReactNativeAppStateEmitter(
         },
     };
 }
+
+/**
+ * Android `BackHandler` boundary: listeners run newest-first and the first one returning `true`
+ * consumes the press, matching React Native's dispatch order. `press()` reports whether any
+ * listener consumed it (the platform would otherwise run its default back action).
+ */
+export function createReactNativeBackHandlerEmitter() {
+    const listeners: Array<() => boolean | null | undefined> = [];
+    const backHandler = {
+        addEventListener(eventName: string, listener: () => boolean | null | undefined) {
+            if (eventName !== 'hardwareBackPress') {
+                return { remove: () => {} };
+            }
+            listeners.push(listener);
+            return {
+                remove: () => {
+                    const index = listeners.lastIndexOf(listener);
+                    if (index >= 0) listeners.splice(index, 1);
+                },
+            };
+        },
+        exitApp: () => {},
+    };
+
+    return {
+        backHandler,
+        press(): boolean {
+            for (const listener of [...listeners].reverse()) {
+                if (listener()) return true;
+            }
+            return false;
+        },
+        getListenerCount() {
+            return listeners.length;
+        },
+    };
+}

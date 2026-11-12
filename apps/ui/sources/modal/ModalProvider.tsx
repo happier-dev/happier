@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { BackHandler, Platform } from 'react-native';
 import { ModalConfig, ModalContextValue } from './types';
 import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
@@ -184,6 +185,25 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         });
     }, []);
 
+    // The single user-dismiss path for every modal type: backdrop, Escape, close button, injected
+    // `onClose`, and Android back all resolve the modal's pending result the same way.
+    const dismissModal = useCallback((modal: ModalConfig) => {
+        if (modal.type === 'alert') {
+            Modal.resolveAlert(modal.id);
+        } else if (modal.type === 'confirm') {
+            Modal.resolveConfirm(modal.id, false);
+        } else if (modal.type === 'prompt') {
+            Modal.resolvePrompt(modal.id, null);
+        } else if (modal.type === 'custom') {
+            try {
+                modal.onRequestClose?.();
+            } catch {
+                // ignore
+            }
+        }
+        hideModal(modal.id);
+    }, [hideModal]);
+
     useEffect(() => {
         if (!active) {
             return undefined;
@@ -209,6 +229,27 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
         modal.visible ? index : topIndex
     ), -1);
+    const hasVisibleModal = topVisibleIndex >= 0;
+
+    // Android hardware back / back gesture dismisses the topmost visible modal with the same
+    // semantics as Escape on web (`closeOnBackdrop` only gates backdrop taps). One listener for the
+    // whole stack, held only while a modal is visible; it registers after navigation's listener,
+    // so it wins React Native's newest-first dispatch and navigation never pops behind a modal.
+    useEffect(() => {
+        if (Platform.OS !== 'android' || !active || !hasVisibleModal) return undefined;
+        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            const modals = stateRef.current.modals;
+            for (let index = modals.length - 1; index >= 0; index -= 1) {
+                const modal = modals[index];
+                if (modal.visible) {
+                    dismissModal(modal);
+                    return true;
+                }
+            }
+            return false;
+        });
+        return () => subscription.remove();
+    }, [active, hasVisibleModal, dismissModal]);
     const zIndexStep = 10;
     const zIndexBase = 100000;
     const screenOverlayPortalZIndex = zIndexBase - 10000;
@@ -237,10 +278,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             <WebAlertModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => {
-                                    Modal.resolveAlert(modal.id);
-                                    hideModal(modal.id);
-                                }}
+                                onClose={() => dismissModal(modal)}
                                 showBackdrop={showBackdrop}
                                 zIndexBase={modalZIndexBase}
                             />
@@ -252,10 +290,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             <WebAlertModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => {
-                                    Modal.resolveConfirm(modal.id, false);
-                                    hideModal(modal.id);
-                                }}
+                                onClose={() => dismissModal(modal)}
                                 onConfirm={(value) => {
                                     Modal.resolveConfirm(modal.id, value);
                                     hideModal(modal.id);
@@ -271,10 +306,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             <WebPromptModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => {
-                                    Modal.resolvePrompt(modal.id, null);
-                                    hideModal(modal.id);
-                                }}
+                                onClose={() => dismissModal(modal)}
                                 onConfirm={(value) => {
                                     Modal.resolvePrompt(modal.id, value);
                                     hideModal(modal.id);
@@ -290,7 +322,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             <CustomModal
                                 key={modal.id}
                                 config={modal}
-                                onClose={() => hideModal(modal.id)}
+                                onClose={() => dismissModal(modal)}
                                 showBackdrop={showBackdrop}
                                 visible={modal.visible}
                                 zIndexBase={modalZIndexBase}
