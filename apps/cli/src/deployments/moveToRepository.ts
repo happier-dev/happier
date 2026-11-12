@@ -21,6 +21,7 @@ import { admitStoredComposeDefinition, parseNativeComposeSource, storedComposeDe
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest,
   type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
 import { previewRepositoryForDefinition, provisionRepositoryForDefinition } from '@/scm/actions/provisionRepositoryForDefinition';
+import { ADMITTED_CHECKOUT_OWNER_REQUIRED } from './admittedCheckoutRepositoryFiles';
 
 /** A definition Move reads Environment content only, never runtime target-link content. */
 type MoveEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'>;
@@ -153,7 +154,12 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       return { kind: 'pullRequest', continuation: continuation(), ...(created ? { repository: {
         repository: created.repository, baseCommit: created.baseCommit, baseBranch: created.baseBranch, workspace: input.workspace,
       } } : {}) };
-    } catch (error) { return fail(context.signal?.aborted ? 'cancelled' : codeOf(error)); }
+    } catch (error) {
+      if (context.signal?.aborted) return fail('cancelled');
+      const code = codeOf(error);
+      // The reviewed checkout belongs to another Account's Machine: a typed refusal, before any repository effect.
+      return code === ADMITTED_CHECKOUT_OWNER_REQUIRED ? { kind: 'refused', reason: code } : fail(code);
+    }
   };
 
   async function continueMove(input: DeploymentMoveToRepositoryInputV1, continuation: DeploymentMoveToRepositoryContinuationV1 | undefined,

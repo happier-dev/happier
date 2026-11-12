@@ -1142,6 +1142,17 @@ of that comparison. Repository creation, Source attachment and cold apply remain
 under implementation; the owner-level continuation checks do not establish those
 publication flows or a loaded native journey.
 
+Move runs on the Machine that holds the selected checkout. After Home admits the
+root once, every repository effect of preview, apply and the merge continuation
+(status, file reads, worktree, file writes, commit, push, pull request, fetch)
+runs through that Machine's own SCM and filesystem owners. Those owners are
+narrowed to exactly the admitted checkout root (`createAdmittedCheckoutRepositoryFiles`),
+so a path that leaves it through `..`, a symlink or a sibling checkout is refused.
+Only the Environment switch returns to Home, as the reviewed Environment update.
+A Move into a checkout on another Account's Machine is not supported: it is refused
+as `checkout_owner_required` before any repository effect. Template instantiation
+into a repository pull request uses the same scope.
+
 The Iroh export contract is development-only. Activation requires one effective loopback
 TCP publication for the exported container port, bound to a literal loopback
 address with an actual host port. Host networking cannot establish that mapping.

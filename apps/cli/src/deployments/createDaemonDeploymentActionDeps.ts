@@ -1,5 +1,4 @@
 import { projectDeploymentFailure } from './deploymentFailure';
-import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readExpectedDownDomainReferencesForHost } from './targets/ownServer/domainRouteSelection';
 import { resolvePrivateServiceExportAdmissionForHost } from './targets/ownServer/privateServiceReference';
@@ -113,11 +112,12 @@ import { createDaemonDeploymentChildExecutor, readDeploymentChildResult as readC
 import { projectDeploymentTransitionOutcomeUnknownForHost, projectDeploymentTransitionResultForHost } from './deploymentTransitionResult';
 import { createDeploymentTemplateInstantiationForHost } from './templates/instantiate';
 import { createDeploymentMoveToRepositoryForHost } from './moveToRepository';
+import { createAdmittedCheckoutRepositoryFiles } from './admittedCheckoutRepositoryFiles';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation } from '@/workspaces/projectAccountRows';
 import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import type { RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
-import { repositoryFilesPullRequestChildRoleV1, deploymentMoveToRepositoryReviewedChildrenV1,
+import { deploymentMoveToRepositoryReviewedChildrenV1,
     REPOSITORY_FILES_PULL_REQUEST_READ_CHILDREN_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { executePreviewTemplateCreationForHost, type PreviewTemplateCreationPlanForHost } from './templates/previewCreate';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -228,6 +228,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     captureNativeSetup?: () => import('./targets/ownServer/ownServerDomainNative').DomainNativeSetupForHost;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     executeSourceReadAction?: import('@/scm/hostingProviders/resolveRefForHost').ExecuteScmSourceReadAction;
+    /** The Machine's SCM backends for reviewed checkout work; absent uses the installed runtime. */
+    scmRegistry?: import('@/scm/registry').ScmBackendRegistry;
     teardownBoundary?: DeploymentTeardownBoundary;
     /** Re-enters the incumbent executor's policy/review path, not another operation runner. */
     executePreparedPendingDeploy?(input: DeploymentDeployInputV1, context: ActionExecutorContext):
@@ -975,45 +977,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             : { credentials: host.credentials, serverId: host.serverId, selection, signal }));
     const sharedRepositoryWorkspace = { readWorkspaceRows: readRepositoryWorkspaceRows,
         readSource: publicationSources.projectSourcesRead! };
-    const repositoryFiles = (cwd: string, context: ActionExecutorContext,
-        executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['deploymentMoveToRepository']>>[2]): RepositoryFilesPullRequestHost => {
-        const execute = async (action: Parameters<NonNullable<typeof executeCanonicalAction>>[0], input: unknown) => {
-            const role = repositoryFilesPullRequestChildRoleV1(action);
-            if (!role) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
-            const result = executeCanonicalAction ? await executeCanonicalAction(action, input)
-                : await context.hostReviewedChild?.invoke({ action, role, input: normalizeStrictJsonValue(input) });
-            if (!result) throw Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
-            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
-            return result.result;
-        };
-        // The placed executor reads the admitted checkout itself, as the Machine's
-        // SCM handler would, narrowed to that one root. Home admitted this root
-        // once; it admits no per-child SCM hop. Another Account's live work keeps
-        // the receiving identity's child path.
-        const binding = context.externalActionExecutionAuthorization?.binding;
-        const admission = (context as RpcActionExecutorContext).machineAdmission;
-        const ownCheckoutRead = (action: string, input: Readonly<Record<string, unknown>>) =>
-            (action === 'scm.status.snapshot' || action === 'scm.file.read') && input.cwd === cwd
-            && (binding ? binding.accountId === binding.custodianAccountId
-                : !admission || admission.actorAccountId === admission.custodianAccountId);
-        const readOwnCheckout = async (action: 'scm.status.snapshot' | 'scm.file.read', input: unknown) => {
-            context.signal?.throwIfAborted();
-            const [{ executeScmActionOperation }, { resolveCwd }, { resolveFilesystemAccessPolicy }] = await Promise.all([
-                import('@/scm/actions/executeScmActionOperation'), import('@/scm/runtime'),
-                import('@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy')]);
-            const scoped = resolveCwd(cwd, cwd, resolveFilesystemAccessPolicy());
-            return executeScmActionOperation({ actionId: action, input, workingDirectory: cwd,
-                accessPolicy: { kind: 'restrictedRoots', roots: scoped.ok ? [scoped.cwd] : [] },
-                ...(context.signal ? { signal: context.signal } : {}) });
-        };
-        return { executeScm: (action, input) => {
-                const scoped = { cwd, ...Object(input) };
-                return ownCheckoutRead(action, scoped)
-                    ? readOwnCheckout(action as 'scm.status.snapshot' | 'scm.file.read', scoped) : execute(action, scoped);
-            },
-            writeFile: input => execute('daemon.filesystem.writeFile', input),
-            deleteFile: input => execute('daemon.filesystem.delete', input) };
-    };
+    // Every repository effect of a reviewed composition stays inside its admitted checkout.
+    const repositoryFiles = (cwd: string, context: ActionExecutorContext): RepositoryFilesPullRequestHost =>
+        createAdmittedCheckoutRepositoryFiles({ root: cwd, context, ...(host.scmRegistry ? { registry: host.scmRegistry } : {}) });
     const moveToRepository = createDeploymentMoveToRepositoryForHost({ ...host, assertCurrent, requireDefinitionManage,
         ...sharedRepositoryWorkspace, repositoryFiles,
         // A definition Move consumes only Environment content; Home admits no target-link reads for it.

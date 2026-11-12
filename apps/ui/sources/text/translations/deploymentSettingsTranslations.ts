@@ -30,6 +30,7 @@ const moveToRepositoryCopy = {
   useMerged: 'Use the merged version',
   switched: 'Definition moved to repository',
   refused: 'Could not move the definition',
+  checkoutOwnerRequired: 'Only the owner of this checkout’s Machine can move a definition into it. Choose a checkout on a Machine you own, or ask its owner to move it.',
   approval: 'Review required',
   approvalBody: 'Open the exact Action review to continue.',
 };

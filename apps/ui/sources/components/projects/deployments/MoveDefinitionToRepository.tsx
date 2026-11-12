@@ -247,6 +247,7 @@ function MoveRepositoryFields(props: Props & Readonly<{ lifetime: ServerAccountS
         {result?.kind === 'switched' ? <SurfaceStateCard size="line" kind="success" title={t(`${COPY}.switched`)} /> : null}
         {issue ? <SurfaceStateCard testID={`${ID}.refused`} size="line" kind="error"
             title={t(`${COPY}.refused`)} diagnosticCode={issue}
+            {...(issue === 'checkout_owner_required' ? { reason: t(`${COPY}.checkoutOwnerRequired`) } : {})}
             {...(retryInput ? { action: { label: t('common.retry'), onPress: () => { void run(retryInput); } } } : {})} /> : null}
         {failure?.kind === 'approval' ? <SurfaceStateCard testID={`${ID}.approval`} size="line" kind="warning"
             title={t(`${COPY}.approval`)} reason={t(`${COPY}.approvalBody`)}

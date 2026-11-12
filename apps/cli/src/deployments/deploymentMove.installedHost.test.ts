@@ -13,14 +13,22 @@ import {
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { StoredCredentials } from '@/persistence';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { ScmBackendRegistry } from '@/scm/registry';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import {
+  createBareGitRemoteFixture,
   createLocalScmRepositoryFixture,
   runScmExecutable,
 } from '@/testkit/scm/scmBackendContractFixtures';
+import { createGithubForgeHttpFixture } from '@/testkit/scm/githubForgeHttp';
+import {
+  createLocalGitForgeHostConfig,
+  createLocalGitForgeTransport,
+} from '@/testkit/scm/localGitForgeTransport';
 import {
   createPlainProjectAccountRefRow,
   projectAccountRowsReadHttpResponse,
@@ -30,17 +38,25 @@ import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAc
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
+import { createDeploymentGitRegistry } from './targets/ownServer/exactCommitRelease.testkit';
 import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/ownServerDeploymentHostRuntime';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   withdrawActiveProjectAccountRowsSnapshot();
 });
 // The installed daemon's own plugin runtime supplies the Git backend and forge.
-let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
+let runtime: Awaited<
+  ReturnType<typeof createAdmittedPluginRuntimeFixture>
+> | null = null;
 beforeAll(async () => {
-  runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.scm.backend.git', 'happier.scm.forge.github'] } });
+  runtime = await createAdmittedPluginRuntimeFixture({
+    controller: pluginReloadController,
+    runtimeOptions: {
+      pluginIds: ['happier.scm.backend.git', 'happier.scm.forge.github'],
+    },
+  });
 });
 afterAll(async () => {
   await runtime?.dispose();
@@ -54,13 +70,17 @@ const repository = {
 };
 
 /**
- * The installed daemon host with its real Move, Environment, Source and Account-row
- * owners. Home HTTP is the boundary. It admits a Move root's Artifact reads only for
- * the Environment content and its candidate (server
+ * The installed daemon host with its real Move, Environment, Source, Account-row,
+ * SCM and filesystem owners. Home HTTP is the boundary. It admits a Move root's
+ * Artifact reads only for the Environment content and its candidate (server
  * readDeploymentMoveToRepositoryHttpPurpose).
  */
 async function createInstalledMoveHost(
-  checkout?: Readonly<{ rootPath: string }>,
+  options: Readonly<{
+    checkout?: Readonly<{ rootPath: string }>;
+    scmRegistry?: ScmBackendRegistry;
+    admission?: RpcActionExecutorContext['machineAdmission'];
+  }> = {},
 ) {
   const detail = createDeploymentEnvironmentDetailV1();
   const environment = {
@@ -85,6 +105,7 @@ async function createInstalledMoveHost(
     encryption: null,
   };
   const artifactReads: string[] = [];
+  const artifactWrites: string[] = [];
   vi.spyOn(axios, 'get').mockImplementation(async (url) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/encryption/currentness')
@@ -127,13 +148,13 @@ async function createInstalledMoveHost(
       },
     };
   });
-  const rows = checkout
+  const rows = options.checkout
     ? [
         createPlainProjectAccountRefRow({
           id: 'workspace',
           serverId: 'home',
           machineId: 'controller',
-          rootPath: checkout.rootPath,
+          rootPath: options.checkout.rootPath,
           createdAtMs: 1,
           repositoryIdentity: repository,
           source: { sourceId: 'source', revision: 2 },
@@ -141,6 +162,19 @@ async function createInstalledMoveHost(
       ]
     : [];
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    if (
+      String(url).endsWith('/v1/artifacts') &&
+      body &&
+      typeof body === 'object' &&
+      'id' in body &&
+      typeof body.id === 'string'
+    ) {
+      artifactWrites.push(body.id);
+      return {
+        status: 200,
+        data: { id: body.id, headerVersion: 1, bodyVersion: 1 },
+      };
+    }
     if (!String(url).includes(PROJECT_ACCOUNT_ROWS_ROUTE_V1))
       throw new Error(`Unexpected Home write ${String(url)}`);
     return projectAccountRowsReadHttpResponse(rows, String(url), body);
@@ -206,13 +240,17 @@ async function createInstalledMoveHost(
       throw new Error('Move cannot execute native effects');
     },
   });
-  const deps = createDaemonDeploymentActionDeps({ ...host, runtime });
+  const deps = createDaemonDeploymentActionDeps({
+    ...host,
+    runtime,
+    ...(options.scmRegistry ? { scmRegistry: options.scmRegistry } : {}),
+  });
   const context = {
     serverId: 'home',
     runtimeAccountId: 'account',
     surface: 'cli' as const,
     authority: 'account_automation' as const,
-    machineAdmission: {
+    machineAdmission: options.admission ?? {
       actorAccountId: 'account',
       custodianAccountId: 'account',
       machineId: 'controller',
@@ -222,7 +260,46 @@ async function createInstalledMoveHost(
     },
     verifyMachineAdmissionCurrent: async () => true,
   } satisfies RpcActionExecutorContext;
-  return { deps, context, environment, definition, artifactReads };
+  return {
+    deps,
+    context,
+    environment,
+    definition,
+    artifactReads,
+    artifactWrites,
+  };
+}
+
+/**
+ * In the signed UI path this is the reviewed-child transport. Home refuses its
+ * SCM and filesystem children (effect_family, REPLAY-129-UI af8da82f) and admits
+ * only Move's reviewed Environment update (server isDeploymentMoveToRepositoryHttpEffect).
+ */
+function createHomeChildTransport(revision: number) {
+  const transported: string[] = [];
+  const execute = async (
+    action: string,
+    input: unknown,
+  ): Promise<ActionExecuteResult> => {
+    transported.push(action);
+    if (action !== 'deployments.environments.update')
+      return {
+        ok: false,
+        errorCode: 'action_forbidden',
+        error: 'action_forbidden',
+      };
+    const update = DeploymentEnvironmentUpdateInputV1Schema.parse(input);
+    expect(update.expectedRevision).toBe(revision);
+    return {
+      ok: true,
+      result: {
+        ok: true,
+        environmentId: update.environmentId,
+        revision: revision + 1,
+      },
+    };
+  };
+  return { transported, execute };
 }
 
 it('moves a stored definition through the installed host without opening target-link content', async () => {
@@ -273,20 +350,8 @@ it('previews the file changes by reading the reviewed checkout on the placed Mac
       'https://github.com/owner/app.git',
     ]);
     const { deps, context, environment, definition } =
-      await createInstalledMoveHost(git);
-    // In the signed UI path this transport is the reviewed-child SCM hop. Home refuses it
-    // (effect_family on GET /v1/machines/<id>, REPLAY-129-UI af8da82f), so any use fails.
-    const transported: string[] = [];
-    const refusedByHome = async (
-      action: string,
-    ): Promise<ActionExecuteResult> => {
-      transported.push(action);
-      return {
-        ok: false,
-        errorCode: 'action_forbidden',
-        error: 'action_forbidden',
-      };
-    };
+      await createInstalledMoveHost({ checkout: git });
+    const home = createHomeChildTransport(environment.revision);
     const result = await deps.deploymentMoveToRepository!(
       {
         mode: 'preview',
@@ -303,7 +368,7 @@ it('previews the file changes by reading the reviewed checkout on the placed Mac
         baseBranch: git.branchName,
       },
       context,
-      refusedByHome,
+      home.execute,
     );
 
     expect(result, JSON.stringify(result)).toMatchObject({
@@ -321,7 +386,203 @@ it('previews the file changes by reading the reviewed checkout on the placed Mac
         ],
       },
     });
-    expect(transported).toEqual([]);
+    expect(home.transported).toEqual([]);
+  } finally {
+    await rm(git.rootPath, { recursive: true, force: true });
+  }
+});
+
+it('previews, opens the pull request and switches after merge inside the reviewed checkout', async () => {
+  const git = createLocalScmRepositoryFixture({
+    executable: 'git',
+    repoMode: '.git',
+    prefix: 'deployment-move-journey-',
+  });
+  const remote = createBareGitRemoteFixture('deployment-move-journey-remote-');
+  const url = 'https://github.com/owner/app.git';
+  const hostGit = await createLocalGitForgeHostConfig({
+    url,
+    remotePath: remote.remotePath,
+  });
+  try {
+    vi.stubEnv('GIT_CONFIG_GLOBAL', hostGit.path);
+    for (const [name, value] of [
+      ['GIT_AUTHOR_NAME', 'Move Test'],
+      ['GIT_AUTHOR_EMAIL', 'move@example.test'],
+      ['GIT_COMMITTER_NAME', 'Move Test'],
+      ['GIT_COMMITTER_EMAIL', 'move@example.test'],
+    ] as const)
+      vi.stubEnv(name, value);
+    runScmExecutable(remote.remotePath, 'git', [
+      'symbolic-ref',
+      'HEAD',
+      `refs/heads/${git.branchName}`,
+    ]);
+    runScmExecutable(git.rootPath, 'git', ['remote', 'add', 'origin', url]);
+    runScmExecutable(git.rootPath, 'git', [
+      'push',
+      remote.remotePath,
+      `${git.branchName}:${git.branchName}`,
+    ]);
+    runScmExecutable(git.rootPath, 'git', [
+      'symbolic-ref',
+      'refs/remotes/origin/HEAD',
+      `refs/remotes/origin/${git.branchName}`,
+    ]);
+    // Forge HTTP and the OS Git remote are the external boundaries.
+    const forge = createGithubForgeHttpFixture({
+      nameWithOwner: 'owner/app',
+      cloneUrl: url,
+    });
+    const scmRegistry = createDeploymentGitRegistry(
+      { resolveScmHostingProviderRegistry: async () => forge.hosting },
+      createLocalGitForgeTransport({ url, remotePath: remote.remotePath }),
+    );
+    const { deps, context, environment, definition, artifactWrites } =
+      await createInstalledMoveHost({ checkout: git, scmRegistry });
+    const home = createHomeChildTransport(environment.revision);
+    const input = {
+      mode: 'preview' as const,
+      serverId: 'home',
+      environmentId: environment.id,
+      definition: {
+        contentRevision: definition.contentRevision,
+        composeDigest: definition.composeDigest,
+      },
+      path: git.trackedPath,
+      workspace: {
+        kind: 'workspace-ref' as const,
+        serverId: 'home',
+        id: 'workspace',
+      },
+      repository,
+      baseCommit: git.headCommit,
+      baseBranch: git.branchName,
+    };
+
+    const preview = await deps.deploymentMoveToRepository!(
+      input,
+      context,
+      home.execute,
+    );
+    expect(preview, JSON.stringify(preview)).toMatchObject({
+      kind: 'preview',
+      review: { before: 'base\n' },
+    });
+
+    const opened = await deps.deploymentMoveToRepository!(
+      { ...input, mode: 'apply' },
+      context,
+      home.execute,
+    );
+    expect(opened, JSON.stringify(opened)).toMatchObject({
+      kind: 'pullRequest',
+      continuation: {
+        pullRequest: { number: 4, state: 'open', baseBranch: git.branchName },
+        document: definition.document,
+      },
+    });
+    if (!('kind' in opened) || opened.kind !== 'pullRequest')
+      throw new Error('Expected an opened pull request');
+    const { continuation } = opened;
+    // The branch reached the remote and its commit holds the exported definition.
+    expect(
+      runScmExecutable(remote.remotePath, 'git', [
+        'show',
+        `${continuation.headCommit}:${git.trackedPath}`,
+      ]),
+    ).toBe(definition.document.trimEnd());
+    // The worktree the writer created inside the checkout is removed again.
+    expect(
+      runScmExecutable(git.rootPath, 'git', [
+        'worktree',
+        'list',
+        '--porcelain',
+      ]).match(/^worktree /gmu),
+    ).toHaveLength(1);
+
+    // The forge merges the pull request into the base branch.
+    runScmExecutable(remote.remotePath, 'git', [
+      'update-ref',
+      `refs/heads/${git.branchName}`,
+      continuation.headCommit,
+    ]);
+    forge.setPullRequest({
+      ...continuation.pullRequest,
+      state: 'merged',
+      headSha: continuation.headCommit,
+      mergeCommitSha: continuation.headCommit,
+    });
+    const switched = await deps.deploymentMoveToRepository!(
+      { ...input, mode: 'apply', continuation },
+      context,
+      home.execute,
+    );
+    expect(switched, JSON.stringify(switched)).toEqual({
+      kind: 'switched',
+      environmentId: environment.id,
+      revision: environment.revision + 1,
+      commitSha: continuation.headCommit,
+    });
+    expect(artifactWrites).toHaveLength(1);
+    expect(home.transported).toEqual(['deployments.environments.update']);
+  } finally {
+    await hostGit.cleanup();
+    await rm(git.rootPath, { recursive: true, force: true });
+    await rm(remote.remotePath, { recursive: true, force: true });
+  }
+});
+
+it("refuses a Move into another Account's checkout with a typed reason before any repository effect", async () => {
+  const git = createLocalScmRepositoryFixture({
+    executable: 'git',
+    repoMode: '.git',
+    prefix: 'deployment-move-member-',
+  });
+  try {
+    runScmExecutable(git.rootPath, 'git', [
+      'remote',
+      'add',
+      'origin',
+      'https://github.com/owner/app.git',
+    ]);
+    const { deps, context, environment, definition } =
+      await createInstalledMoveHost({
+        checkout: git,
+        admission: {
+          actorAccountId: 'account',
+          custodianAccountId: 'machine-owner',
+          machineId: 'controller',
+          installationId: 'installation',
+          role: 'manage',
+          encryptionMode: 'plain',
+        },
+      });
+    const home = createHomeChildTransport(environment.revision);
+    const result = await deps.deploymentMoveToRepository!(
+      {
+        mode: 'preview',
+        serverId: 'home',
+        environmentId: environment.id,
+        definition: {
+          contentRevision: definition.contentRevision,
+          composeDigest: definition.composeDigest,
+        },
+        path: git.trackedPath,
+        workspace: { kind: 'workspace-ref', serverId: 'home', id: 'workspace' },
+        repository,
+        baseCommit: git.headCommit,
+        baseBranch: git.branchName,
+      },
+      context,
+      home.execute,
+    );
+
+    expect(result).toEqual({
+      kind: 'refused',
+      reason: 'checkout_owner_required',
+    });
+    expect(home.transported).toEqual([]);
   } finally {
     await rm(git.rootPath, { recursive: true, force: true });
   }
