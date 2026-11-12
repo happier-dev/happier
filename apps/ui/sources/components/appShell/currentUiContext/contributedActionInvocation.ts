@@ -4,7 +4,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientActionRegistration, type PluginUiClientActionRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientActionRegistration, resolvePluginUiClientActionRefusal, type PluginUiClientActionRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { isPluginUiClientActionPending, isPluginUiClientExecutableAccountCurrent, type PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
 import { createPluginConnectionSettlement } from '@/components/plugins/surfaces/connectionSettlement';
 import { readPluginUiAccountExecutableOrigin, type PluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
@@ -62,6 +62,9 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         // declaration through replacement, including a temporary discovery gap;
         // only the returned registration pins an observation to an occurrence.
         if (resolveCurrentContributedAction(input.readProjection, input.identity)) return false;
+        // The exact executable's terminal refusal settles acquisition even
+        // while unrelated declarations are still establishing.
+        if (admission && action && resolvePluginUiClientActionRefusal({ action, platform: admission.platform })) return false;
         // Declaration and executable-Artifact publication can advance separately.
         // A missing exact activation target cannot establish settled absence
         // while its declaration source is still establishing.
