@@ -290,11 +290,7 @@ it('shows the declared login username and first-admin warning with the serving i
     await screen.pressByTestIdAsync('project-deployments.environment.services.firstRun.domains');
     await waitForHomeGovernance(async () => {
       await act(async () => {});
-      const { Modal } = await import('@/modal');
-      expect(screen.findHostByTestId('project-deployments.environment.tab:domains')?.props.accessibilityState?.selected,
-        JSON.stringify({ alerts: vi.mocked(Modal.alert).mock.calls.map(call => call.slice(0, 2)),
-          presentations: vi.mocked(Modal.show).mock.calls.map(call => call[0]?.component?.name),
-          requests: homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`) })).toBe(true);
+      expect(screen.findHostByTestId('project-deployments.environment.tab:domains')?.props.accessibilityState?.selected).toBe(true);
     });
   } finally { await act(async () => { controller.retire(); }); }
 });
@@ -305,7 +301,8 @@ beforeEach(async () => {
     accountId: scope.accountId, serverIdentityId: 'srv_environment_navigation', currentAccount: true });
   const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
   const resolution = await resolveServerCredentialAccountScope(scope.serverId);
-  expect(resolution.kind).toBe('bound');
+  if (resolution.kind !== 'bound') throw new Error('Expected the Environment Account scope');
+  scope.serverId = resolution.scope.serverId;
 });
 
 /** The network boundary only; the shared controller, projections and page composition run for real. */
