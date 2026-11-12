@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDataKeyAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
@@ -17,7 +18,6 @@ import { encryptLegacy } from '../../../../../cli/src/api/encryption';
 import { prepareMachineDataKeyEnvelopesForScope, prepareMachineDataKeyEnvelopesForMachines } from './machineDataKeyEnvelopesApi';
 import { createMachineFixture, createDeferred } from '@/dev/testkit';
 import { executeMachineAccessHttpAction } from './machineAccessApi';
-import * as network from '@/utils/system/runtimeFetch';
 import { Encryption } from '@/sync/encryption/encryption';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { flushHookEffects } from '@/dev/testkit';
@@ -42,7 +42,9 @@ describe('captured Machine recipient preparation transport', () => {
             metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
             dataEncryptionKey: envelope, keyBasis: { dataEncryptionKey: envelope, metadataVersion: 1, daemonStateVersion: 0 } };
         const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://recipient-unknown-fact.test',
-            accountId: 'alice', accountMode: 'e2ee', credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
+            accountId: 'alice', accountMode: 'e2ee',
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
             route: request => request.path.endsWith('/data-key-envelopes') ? Response.json({
                 machineId: id, custodianAccountId: 'carol', encryptionMode: 'e2ee',
                 machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(envelope)),
@@ -78,7 +80,9 @@ describe('captured Machine recipient preparation transport', () => {
         }));
         const rowsById = () => new Map(machines.map(machine => [machine.id, machine]));
         const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://recipient-scale.test',
-            accountId: 'alice', accountMode: 'e2ee', credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
+            accountId: 'alice', accountMode: 'e2ee',
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
             route: request => {
                 if (!request.path.endsWith('/data-key-envelopes')) return undefined;
                 const machine = rowsById().get(request.path.split('/')[3]!);
@@ -139,7 +143,9 @@ describe('captured Machine recipient preparation transport', () => {
         }));
         let rows: readonly FetchedMachineRow[] = [];
         const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://sync-recipient-pass.test',
-            accountId: 'alice', accountMode: 'e2ee', credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
+            accountId: 'alice', accountMode: 'e2ee',
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
             route: request => {
                 if (request.path === '/v1/machines') return Response.json(rows);
                 if (!request.path.endsWith('/data-key-envelopes')) return undefined;
@@ -175,7 +181,9 @@ describe('captured Machine recipient preparation transport', () => {
                 homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }, secret)),
             metadataVersion: 1, daemonState: null, daemonStateVersion: 0, access };
         const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: `https://retired-${retirement}.test`,
-            accountId: 'alice', accountMode: 'e2ee', credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
+            accountId: 'alice', accountMode: 'e2ee',
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
             route: request => request.path === '/v1/machines/retired-machine'
                 ? Response.json({ machine: row }) : Response.json({ kind: 'refused', code: 'machine_unavailable' }) });
         const scope = { serverId: home.homes.resource!.id, accountId: 'alice' };
@@ -205,7 +213,9 @@ describe('captured Machine recipient preparation transport', () => {
                 homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }, secret)),
             metadataVersion: 1, daemonState: null, daemonStateVersion: 0, access, recipientWorkPending: true, recipientWorkCursor: 0 });
         const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://fleet-read.test',
-            accountId: 'alice', accountMode: 'e2ee', credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
+            accountId: 'alice', accountMode: 'e2ee',
+            encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } }],
             // This device does not hold the key yet, so the preparation ends pending rather than prepared.
             route: request => request.path.endsWith('/data-key-envelopes') ? Response.json({
                 machineId: request.path.split('/')[3], custodianAccountId: 'carol', encryptionMode: 'e2ee',
@@ -251,6 +261,9 @@ describe('captured Machine recipient preparation transport', () => {
             access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage' as const, resourceMode: 'e2ee' as const, accessState: 'ready' as const } });
         const home = await serveAccountHomes({ homes: [
             { key: 'resource', serverUrl: 'https://machine-custodian.test', accountId: 'alice', accountMode: 'e2ee',
+                encryptionCurrentness: () => usesDataKey
+                    ? createDataKeyAccountEncryptionCurrentnessFixture({ machineKey: owner.secretKey, publicKey: owner.publicKey })
+                    : createLegacyAccountEncryptionCurrentnessFixture({ secret }),
                 credentials: usesDataKey ? { token: createAccountTokenForTests('alice'), encryption: { publicKey: encodeBase64(owner.publicKey), machineKey: encodeBase64(owner.secretKey) } }
                     : { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret) } },
             { key: 'focused', serverUrl: 'https://machine-focused-custodian.test', accountId: 'cara' },
@@ -297,8 +310,6 @@ describe('captured Machine recipient preparation transport', () => {
             return undefined;
         } });
         const machineRequests = () => home.requests.filter(request => request.path.startsWith('/v1/machines/'));
-        // Observe the real HTTP boundary, including the harness's mode route.
-        const fetches = vi.spyOn(network, 'runtimeFetch');
         try {
             if (variant === 'malformed-present') {
                 expect(await prepareMachineDataKeyEnvelopesForScope({ scope: { serverId: home.homes.resource!.id, accountId: 'alice' }, machineId: 'machine' })).toMatchObject({ kind: 'unavailable' });
@@ -343,10 +354,8 @@ describe('captured Machine recipient preparation transport', () => {
                 // The fresh census fences a stale list observation before disclosure.
                 // A later unseeded attempt still uses the ordinary fresh owner path.
                 expect(await prepareMachineDataKeyEnvelopesForScope({ scope, machineId: 'machine' })).toEqual({ kind: 'prepared' });
-                const accountModeReads = () => fetches.mock.calls.filter(([url]) => {
-                    const target = new URL(String(url));
-                    return target.origin === new URL(home.homes.resource!.serverUrl).origin && target.pathname === '/v1/account/encryption';
-                }).length;
+                const accountModeReads = () => home.httpRequests.filter(request =>
+                    request.home === 'resource' && request.path === '/v1/account/encryption').length;
                 const beforeRepeatedPreparation = accountModeReads();
                 for (let pass = 0; pass < 3; pass += 1) {
                     expect(await prepareMachineDataKeyEnvelopesForScope({ scope, machineId: 'machine' })).toEqual({ kind: 'prepared' });
@@ -354,7 +363,7 @@ describe('captured Machine recipient preparation transport', () => {
                 // Explicit current Machine mode owns these resource reads. Repeated
                 // invalidation must not perform an unrelated Account-mode N+1.
                 expect(accountModeReads() - beforeRepeatedPreparation).toBe(0);
-                expect(fetches.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/machines/machine')).toHaveLength(4);
+                expect(home.httpRequests.filter(request => request.path === '/v1/machines/machine')).toHaveLength(4);
                 expect(machineRequests().filter(request => request.method === 'POST')).toHaveLength(1);
                 const machine = createMachineFixture({ id: 'machine', active: false, dataEncryptionKey: ownerEnvelope,
                     keyBasis: row().keyBasis, metadataVersion: revision, daemonStateVersion: revision, access: { ...row().access, role: 'manage',
@@ -437,6 +446,6 @@ describe('captured Machine recipient preparation transport', () => {
                     .toMatchObject({ kind: 'unavailable' });
                 expect(machineRequests().slice(beforeRetiredScope)).toEqual([]);
             }
-        } finally { fetches.mockRestore(); await home.dispose(); }
+        } finally { await home.dispose(); }
     });
 });
