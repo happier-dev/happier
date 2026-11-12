@@ -1498,6 +1498,7 @@ export type SessionSpawnNewInputV2 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -1523,6 +1524,7 @@ export type SessionSpawnNewInputV2 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -1566,6 +1568,7 @@ export type SessionSpawnNewInputV2 = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: (string) | undefined;
                 effort?: string | undefined;
             };
             runsAs?: undefined | {
@@ -6641,6 +6644,7 @@ export type SessionServerStartSpawnDraftV1 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -6666,6 +6670,7 @@ export type SessionServerStartSpawnDraftV1 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -6709,6 +6714,7 @@ export type SessionServerStartSpawnDraftV1 = {
             engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
+                providerConnectionId?: (string) | undefined;
                 effort?: string | undefined;
             };
             runsAs?: undefined | {
@@ -8433,6 +8439,7 @@ export type UsageCoachEvaluation = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -8458,6 +8465,7 @@ export type UsageCoachEvaluation = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -9604,6 +9612,7 @@ export type PluginActionWorkflowDefinitionV1 = {
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         runsAs?: undefined | {
@@ -9629,6 +9638,7 @@ export type PluginActionWorkflowDefinitionV1 = {
         engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
+            providerConnectionId?: (string) | undefined;
             effort?: string | undefined;
         };
         profileId?: string | undefined;
@@ -14561,6 +14571,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
         } | {
             environmentId: string;
         } | {
+            expectedRevision: number;
+            requestKey: string;
+            environmentId: string;
+            targetLinkId: string;
+            expectedTargetLinkRevision: number;
+            kind: 'domainDns';
+            actionId: 'deployments.domains.verify';
+        } | {
             kind: 'backupConfigure';
             actionId: 'deployments.backups.configure';
             environmentId: string;
@@ -15362,6 +15380,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
             };
         } | {
             environmentId: string;
+        } | {
+            expectedRevision: number;
+            requestKey: string;
+            environmentId: string;
+            targetLinkId: string;
+            expectedTargetLinkRevision: number;
+            kind: 'domainDns';
+            actionId: 'deployments.domains.verify';
         } | {
             kind: 'backupConfigure';
             actionId: 'deployments.backups.configure';
@@ -16218,6 +16244,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
             };
         } | {
             environmentId: string;
+        } | {
+            expectedRevision: number;
+            requestKey: string;
+            environmentId: string;
+            targetLinkId: string;
+            expectedTargetLinkRevision: number;
+            kind: 'domainDns';
+            actionId: 'deployments.domains.verify';
         } | {
             kind: 'backupConfigure';
             actionId: 'deployments.backups.configure';
@@ -22357,6 +22391,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 machineId: string;
                                 environmentId?: string | undefined;
                                 composeService?: string | undefined;
+                                preflight?: undefined | {
+                                    ports: number[];
+                                    nativeNames: {
+                                        adapter: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        nativeResourceId: string;
+                                    }[];
+                                };
                             };
                         } | {
                             hostRead: 'machines.services.logs';
@@ -22432,6 +22476,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 machineId: string;
                                 environmentId?: string | undefined;
                                 composeService?: string | undefined;
+                                preflight?: undefined | {
+                                    ports: number[];
+                                    nativeNames: {
+                                        adapter: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        nativeResourceId: string;
+                                    }[];
+                                };
                             };
                         } | {
                             hostRead: 'machines.services.logs';
@@ -22507,6 +22561,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 machineId: string;
                                 environmentId?: string | undefined;
                                 composeService?: string | undefined;
+                                preflight?: undefined | {
+                                    ports: number[];
+                                    nativeNames: {
+                                        adapter: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        nativeResourceId: string;
+                                    }[];
+                                };
                             };
                         } | {
                             hostRead: 'machines.services.logs';
@@ -22583,6 +22647,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 machineId: string;
                                 environmentId?: string | undefined;
                                 composeService?: string | undefined;
+                                preflight?: undefined | {
+                                    ports: number[];
+                                    nativeNames: {
+                                        adapter: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        nativeResourceId: string;
+                                    }[];
+                                };
                             };
                         } | {
                             hostRead: 'machines.services.logs';
@@ -25460,6 +25534,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
                 } | {
                     environmentId: string;
                 } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
+                } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
                     environmentId: string;
@@ -25843,6 +25925,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -25863,6 +25946,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     runsAs?: undefined | {
@@ -25893,6 +25977,7 @@ export type ExternalActionExecutionAuthorizationV1 = {
                     engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
+                        providerConnectionId?: (string) | undefined;
                         effort?: string | undefined;
                     };
                     profileId?: string | undefined;
@@ -27134,6 +27219,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             } | {
                                 environmentId: string;
                             } | {
+                                expectedRevision: number;
+                                requestKey: string;
+                                environmentId: string;
+                                targetLinkId: string;
+                                expectedTargetLinkRevision: number;
+                                kind: 'domainDns';
+                                actionId: 'deployments.domains.verify';
+                            } | {
                                 kind: 'backupConfigure';
                                 actionId: 'deployments.backups.configure';
                                 environmentId: string;
@@ -27935,6 +28028,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                 };
                             } | {
                                 environmentId: string;
+                            } | {
+                                expectedRevision: number;
+                                requestKey: string;
+                                environmentId: string;
+                                targetLinkId: string;
+                                expectedTargetLinkRevision: number;
+                                kind: 'domainDns';
+                                actionId: 'deployments.domains.verify';
                             } | {
                                 kind: 'backupConfigure';
                                 actionId: 'deployments.backups.configure';
@@ -28792,6 +28893,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
                             } | {
                                 environmentId: string;
                             } | {
+                                expectedRevision: number;
+                                requestKey: string;
+                                environmentId: string;
+                                targetLinkId: string;
+                                expectedTargetLinkRevision: number;
+                                kind: 'domainDns';
+                                actionId: 'deployments.domains.verify';
+                            } | {
                                 kind: 'backupConfigure';
                                 actionId: 'deployments.backups.configure';
                                 environmentId: string;
@@ -29103,6 +29212,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         machineId: string;
                                         environmentId?: string | undefined;
                                         composeService?: string | undefined;
+                                        preflight?: undefined | {
+                                            ports: number[];
+                                            nativeNames: {
+                                                adapter: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                nativeResourceId: string;
+                                            }[];
+                                        };
                                     };
                                 } | {
                                     hostRead: 'machines.services.logs';
@@ -29178,6 +29297,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         machineId: string;
                                         environmentId?: string | undefined;
                                         composeService?: string | undefined;
+                                        preflight?: undefined | {
+                                            ports: number[];
+                                            nativeNames: {
+                                                adapter: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                nativeResourceId: string;
+                                            }[];
+                                        };
                                     };
                                 } | {
                                     hostRead: 'machines.services.logs';
@@ -29253,6 +29382,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         machineId: string;
                                         environmentId?: string | undefined;
                                         composeService?: string | undefined;
+                                        preflight?: undefined | {
+                                            ports: number[];
+                                            nativeNames: {
+                                                adapter: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                nativeResourceId: string;
+                                            }[];
+                                        };
                                     };
                                 } | {
                                     hostRead: 'machines.services.logs';
@@ -29329,6 +29468,16 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                         machineId: string;
                                         environmentId?: string | undefined;
                                         composeService?: string | undefined;
+                                        preflight?: undefined | {
+                                            ports: number[];
+                                            nativeNames: {
+                                                adapter: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                nativeResourceId: string;
+                                            }[];
+                                        };
                                     };
                                 } | {
                                     hostRead: 'machines.services.logs';
@@ -32206,6 +32355,14 @@ export type ExternalActionExecutionAuthorizationV1 = {
                         } | {
                             environmentId: string;
                         } | {
+                            expectedRevision: number;
+                            requestKey: string;
+                            environmentId: string;
+                            targetLinkId: string;
+                            expectedTargetLinkRevision: number;
+                            kind: 'domainDns';
+                            actionId: 'deployments.domains.verify';
+                        } | {
                             kind: 'backupConfigure';
                             actionId: 'deployments.backups.configure';
                             environmentId: string;
@@ -34027,140 +34184,6 @@ export type ExternalActionExecutionAuthorizationV1 = {
                                     localId: string;
                                 };
                                 schemaVersion: number;
-                            };
-                            recovery?: undefined | {
-                                reference: string;
-                                reason: string;
-                                consoleUrl?: string | undefined;
-                            };
-                            bootstrapCredentialRef?: undefined | {
-                                kind: 'shared_resource';
-                                resourceId: string;
-                            };
-                            bootstrapInstalled?: true | undefined;
-                            resource?: undefined | {
-                                contributionRef: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                schemaVersion: number;
-                                value: PluginJsonValueV2;
-                                devcontainerObservation?: undefined | {
-                                    nativeResourceId: string;
-                                    user: string;
-                                    workspaceFolder: string;
-                                    storage: {
-                                        kind: 'bind';
-                                        hostPath: string;
-                                        childPath: string;
-                                    } | {
-                                        kind: 'child';
-                                        childPath: string;
-                                    };
-                                };
-                            };
-                            devcontainerChild?: undefined | {
-                                relation: {
-                                    managedMachineId: string;
-                                    managedMachineKind: 'devcontainer';
-                                    parentMachineId: string;
-                                };
-                                observation: {
-                                    nativeResourceId: string;
-                                    user: string;
-                                    workspaceFolder: string;
-                                    storage: {
-                                        kind: 'bind';
-                                        hostPath: string;
-                                        childPath: string;
-                                    } | {
-                                        kind: 'child';
-                                        childPath: string;
-                                    };
-                                };
-                            };
-                            enrolledMachineId?: string | undefined;
-                            desiredAfterMs?: number | undefined;
-                            archivedAt?: number | undefined;
-                            submittedNativeEffect?: undefined | {
-                                intentRevision: number;
-                                requestId: string;
-                                intent: 'delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend';
-                                controller?: undefined | {
-                                    machineId: string;
-                                    installationId: string;
-                                };
-                                reviewedEffectDigest?: string | undefined;
-                            };
-                            creationScopeRetention?: undefined | {
-                                effect: 'delete' | 'stop';
-                                afterMs?: number | undefined;
-                                source?: undefined | {
-                                    kind: 'run';
-                                    source: {
-                                        kind: 'workflow_run';
-                                        runId: string;
-                                    };
-                                } | {
-                                    kind: 'session';
-                                    sessionId: string;
-                                };
-                                endedAt?: number | undefined;
-                            };
-                            observation?: undefined | {
-                                observedAt: number;
-                                availability: 'absent' | 'present' | 'unavailable';
-                                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
-                                storage?: 'lost' | 'retained' | 'unknown' | undefined;
-                                billing?: undefined | {
-                                    location: 'cloud' | 'local' | 'unknown';
-                                    stoppedBilling: 'billed' | 'not-billed' | 'unknown';
-                                    storageCharges?: undefined | {
-                                        amount: string;
-                                        currency: string;
-                                        unit: string;
-                                        source: string;
-                                        observedAt: number;
-                                        label?: string | undefined | {
-                                            key: string;
-                                            fallback: string;
-                                            params?: Record<string, number | string> | undefined;
-                                        };
-                                    }[];
-                                };
-                                prices?: undefined | {
-                                    amount: string;
-                                    currency: string;
-                                    unit: string;
-                                    source: string;
-                                    observedAt: number;
-                                    label?: string | undefined | {
-                                        key: string;
-                                        fallback: string;
-                                        params?: Record<string, number | string> | undefined;
-                                    };
-                                }[];
-                                size?: undefined | {
-                                    cpuCores?: number | undefined;
-                                    memoryBytes?: number | undefined;
-                                    diskBytes?: number | undefined;
-                                };
-                                nativeExpiry?: number | undefined;
-                                deletionNotices?: undefined | {
-                                    kind: 'stopped-storage';
-                                    rule: {
-                                        kind: 'after-stop';
-                                        afterMs: number;
-                                    };
-                                    consequence: 'disk-deleted';
-                                    at?: number | undefined;
-                                }[];
-                                reason?: string | undefined;
-                                nativeCause?: any | undefined | {
-                                    httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
-                                    code?: 'forbidden' | 'unavailable' | 'unknown' | any | undefined;
-                                    fields?: ('name' | 'public_net' | any)[] | undefined;
-                                };
                             };
                             cleanup?: undefined | {};
                         };

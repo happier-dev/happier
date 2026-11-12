@@ -1,3 +1,4 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
   WorkflowConversationSelection,
   WorkflowProgressEnvelopeV1,
@@ -11,7 +12,8 @@ export { workflowBodyOwnsConversation } from '@happier-dev/protocol/workflows/wo
 
 export class WorkflowSessionCompositionError extends Error {
   constructor(readonly code: string, message = code, readonly details?: WorkflowConversationUnavailableDetailsV1,
-    readonly launchFailure?: SessionLaunchRetiredV1, readonly runtimeIssueV1?: SessionRuntimeIssueV1) {
+    readonly launchFailure?: SessionLaunchRetiredV1, readonly runtimeIssueV1?: SessionRuntimeIssueV1,
+    readonly failureCause?: ActionFailureCauseV1) {
     super(message);
     if (details) logger.infoFile(JSON.stringify({ event: 'workflow_conversation_refused', errorCode: code, ...details }));
   }

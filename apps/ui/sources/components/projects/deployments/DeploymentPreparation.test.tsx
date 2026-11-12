@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import { t } from '@/text';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, standardCleanup, waitForTestEvent, createPlainProjectAccountRowListFixture } from '@/dev/testkit';
@@ -95,7 +96,7 @@ describe('deployment preparation entry', () => {
         expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
       });
       expect(received).toMatchObject({ projectSourceId: 'project', sourceRevision: 3,
-        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'checkout' } });
+        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: `srv_${'7'.repeat(32)}`, id: 'checkout' } });
       expect(received).not.toHaveProperty('environmentId');
       expect(homes.artifacts(serverId).list()).toEqual([]);
     } finally { await screen.unmount(); account.dispose(); }
@@ -200,9 +201,10 @@ describe('deployment preparation entry', () => {
           expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
         }
       });
+      if (kind === 'partial') expect(screen.getTextContent()).not.toContain(t('projects.deployments.unavailableTitle'));
       expect(received).toEqual({ projectSourceId: 'project', sourceRevision: 3,
         repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
-        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'checkout' },
+        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: 'srv_' + '7'.repeat(32), id: 'checkout' },
         importFrom: { tool: 'Coolify', configurationPaths: ['compose.yaml', 'config/coolify.json'] } });
       if (kind === 'partial') {
         expect(screen.findByTestId('project-deployments.import.tool')?.props.value).toBe('Coolify');

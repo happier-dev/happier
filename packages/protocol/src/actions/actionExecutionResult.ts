@@ -167,6 +167,8 @@ type KnownActionFailureCauseV1 = Readonly<{
   errorClass: ActionErrorClassV1;
   errorCode: string | null;
   httpStatus: number | null;
+  /** Provider-authored code, independent of Happier error classification. */
+  nativeErrorCode?: string;
 }>;
 export const UNKNOWN_ACTION_FAILURE_CAUSE_V1 = Object.freeze({
   kind: 'unknown', phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'unknown_failure_cause', httpStatus: null,
@@ -175,10 +177,13 @@ export type ActionFailureCauseV1 = KnownActionFailureCauseV1 | typeof UNKNOWN_AC
 const ActionFailurePhaseV1Schema = lazyZodSchema(() => z.union([z.literal('dispatch'), z.literal('execution_authorization'), ActionIdSchema,
   z.string().check(z.regex(/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/u))]));
 
+const ActionNativeErrorCodeV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^[a-z0-9_.:-]+$/iu)));
+
 export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = lazyZodSchema(() => z.union([z.strictObject({
   phase: ActionFailurePhaseV1Schema,
   errorClass: ActionErrorClassV1Schema,
   errorCode: z.nullable(z.string()),
+  nativeErrorCode: z.optional(ActionNativeErrorCodeV1Schema),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
 }).check(z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
   name: value.errorClass, code: value.errorCode,
@@ -198,7 +203,26 @@ export const ActionFailureCauseV1ProtocolSchema = lazyDefinition(() => projectZo
 /** Optional diagnostic reads degrade explicitly; unknown content is never retained. */
 export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
   const parsed = ActionFailureCauseV1Schema.safeParse(value);
-  return parsed.success ? parsed.data : UNKNOWN_ACTION_FAILURE_CAUSE_V1;
+  if (parsed.success) return parsed.data;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return UNKNOWN_ACTION_FAILURE_CAUSE_V1;
+  const record = value as Readonly<Record<string, unknown>>;
+  const phase = ActionFailurePhaseV1Schema.safeParse(record.phase);
+  const errorClass = ActionErrorClassV1Schema.safeParse(record.errorClass);
+  if (!phase.success && !errorClass.success) return UNKNOWN_ACTION_FAILURE_CAUSE_V1;
+  const settledPhase = phase.success ? phase.data : 'dispatch';
+  const settledClass = errorClass.success ? errorClass.data : 'UnknownThrownValue';
+  // Normalize each authored leaf independently; a bad code cannot erase status.
+  const native = ActionNativeErrorCodeV1Schema.safeParse(record.nativeErrorCode);
+  const nativeErrorCode = native.success ? native.data
+    : typeof record.errorCode === 'string' && /^\d+$/u.test(record.errorCode) ? record.errorCode : undefined;
+  const candidate = { phase: settledPhase, errorClass: settledClass,
+    errorCode: record.errorCode, httpStatus: null };
+  const code = ActionFailureCauseV1Schema.safeParse(candidate);
+  const status = ActionFailureCauseV1Schema.safeParse({ ...candidate, errorCode: null, httpStatus: record.httpStatus });
+  return { phase: settledPhase, errorClass: settledClass,
+    errorCode: code.success ? code.data.errorCode : null,
+    httpStatus: status.success ? status.data.httpStatus : null,
+    ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }) };
 }
 
 export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
@@ -356,7 +380,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     ...(result.requestId === undefined ? {} : { requestId: result.requestId }),
     ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}),
     ...(result.details === undefined ? {} : { details: result.details }),
-    ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+    ...(result.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(result.failureCause) }),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
   });
   return projected.success ? projected.data : null;

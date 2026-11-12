@@ -1,3 +1,4 @@
+import { previewOwnServerDomainDns } from './ownServerDomainDnsPreview';
 import { deploymentOutputValidationFailure } from '../../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
@@ -6,7 +7,7 @@ import {
     DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentDomainDiscoverChildRpcV1Schema,
     isDeploymentDomainChildActionIdV1, isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1,
     type DeploymentDomainChildActionIdV1, type DeploymentTeardownInputV1,
-    type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainChildRpcV1, type DeploymentDomainDiscoverChildRpcV1,
+    type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainChildRpcV1, type DeploymentDomainDiscoverChildRpcV1, type DeploymentDomainDnsChildRpcV1,
 } from '@happier-dev/protocol';
 import {
     DeploymentDomainObservationV1Schema, DeploymentDomainTransitionInputV1Schema,
@@ -24,7 +25,7 @@ import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/proto
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
-import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -36,14 +37,14 @@ type DomainNativeFailureScope = Readonly<{ environmentId: string; domainId: stri
 const failure = (reason: string, details?: unknown, failureCause?: unknown, effectAttempted?: unknown, nativeScope?: DomainNativeFailureScope) => {
     const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required'
         : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
-    const parsedCause = ActionFailureCauseV1Schema.safeParse(failureCause);
+    const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
     const scoped = nativeScope && (!isRecord(details) || typeof details.step !== 'string')
         ? { ...(isRecord(details) ? details : {}), ...nativeScope } : details;
     const recovery = isRecord(scoped) && scoped.step === 'native_execution'
         ? projectDeploymentFailureRecoveryV1(scoped) : scoped;
     return { ok: false as const, errorCode, error: errorCode, ...(recovery === undefined ? {} : { details: recovery }),
         ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
-        ...(parsedCause.success ? { failureCause: parsedCause.data } : {}) };
+        ...(parsedCause === undefined ? {} : { failureCause: parsedCause }) };
 };
 
 type DomainDiscoveryHost = Readonly<{
@@ -318,7 +319,7 @@ export function createOwnServerDomainActions(host: Readonly<{
     installedCredentials?: StoredCredentials;
     serverHttpBaseUrl: string;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
-    dispatch(job: DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
+    dispatch(job: DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1 | DeploymentDomainDnsChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
     readEnvironment: OwnServerDeploymentTargetHostInput['readEnvironment'];
     readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
@@ -340,7 +341,9 @@ export function createOwnServerDomainActions(host: Readonly<{
         let issued = false;
         let nativeScope: DomainNativeFailureScope | undefined;
         try {
-            let input = DeploymentActionInputSchemasV1[actionId].parse(raw);
+            const parsed = DeploymentActionInputSchemasV1[actionId].parse(raw);
+            if ('mode' in parsed) return await previewOwnServerDomainDns(parsed, context, host);
+            let input = parsed;
             let topology: DeploymentDomainTopologyV1 | undefined;
             if (isDeploymentDomainAddActionIdV1(actionId)) {
                 if (!context.externalActionExecutionAuthorization || !context.originalActionEnvelope) return failure('action_forbidden');

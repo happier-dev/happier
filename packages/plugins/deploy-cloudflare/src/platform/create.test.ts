@@ -60,7 +60,7 @@ it('retains Cloudflare refusal status and native code', async () => {
   } });
   try {
     await expect(kit.invokeAction('workers-create', input('workers-create'))).rejects.toMatchObject({ code: 'deployment_access_denied',
-      data: { failureCause: { httpStatus: 403, errorCode: '10000' } } });
+      data: { failureCause: { httpStatus: 403, errorCode: null, nativeErrorCode: '10000' } } });
   } finally { await kit.dispose(); }
 });
 

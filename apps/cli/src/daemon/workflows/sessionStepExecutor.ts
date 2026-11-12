@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { parsePermissionIntentAlias, resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
@@ -10,7 +11,7 @@ import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows/
 import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
-import { createSpawnedSession, type CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
+import type { CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
 import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
 import { createSessionCreationSpawnNonce } from '@/session/shared/spawnNonce';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
@@ -254,9 +255,12 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         || await isServerProfileHomeIdentity(deps.serverId, deps.discussionOrigin.discussion.serverId);
       if (!sameHome) throw new WorkflowSessionCompositionError('target_unavailable');
     }
+    if (!retainedStartupOperation && (!deps.action || !startupAuthorization || !deps.sessionStartup)) {
+      throw new WorkflowSessionCompositionError('approval_context_unavailable');
+    }
+    let discussionStartupContext: ActionExecutorContext | undefined;
     if (discussionParticipant && launch && !retainedStartupOperation) {
-      if (!deps.action || !startupAuthorization) throw new WorkflowSessionCompositionError('approval_context_unavailable');
-      const context = await deps.action.buildContext({ runId: deps.originRunId, authorization: startupAuthorization,
+      const context = await deps.action!.buildContext({ runId: deps.originRunId, authorization: startupAuthorization!,
         workDepth: deps.workDepth, workspace, ...(acceptedOrigin ? { origin: acceptedOrigin } : {}),
         ...(selection.approvalProfileId === undefined ? {} : { approvalProfileId: selection.approvalProfileId }),
         ...(deps.originSessionId ? { originSessionId: deps.originSessionId } : {}), ...(signal ? { signal } : {}) });
@@ -268,12 +272,13 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         // confirmed Second opinion path already supplies invited Sessions.
         authority: 'account_automation' as const,
         actionRequestId, actionCaller: { kind: 'workflowRun' as const,
-        runId: deps.originRunId, authorization: startupAuthorization,
+        runId: deps.originRunId, authorization: startupAuthorization!,
         ...(context.actionCaller?.kind === 'workflowRun' && context.actionCaller.authenticatedStarterV1
           ? { authenticatedStarterV1: context.actionCaller.authenticatedStarterV1 } : {}),
         discussionModelReservation: {
           ...discussionParticipant, ...(policy?.surface ? { policySurface: policy.surface } : {}),
         } } };
+      discussionStartupContext = actionContext;
       const input = { discussionId: discussionParticipant.discussionId,
         participant: { kind: 'model', participantSlotId: creationKey, launch: projectNativeJsonValueForTransport(launch) } };
       const execute = async (actionId: 'discussion.invite' | 'approval.request.get', input: unknown) => {
@@ -346,7 +351,9 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     const resolvedAgent = selection.agentTarget
       ? resolveSessionCreationAgentTarget(selection.agentTarget)
       : null;
-    if (!resolvedAgent) throw new WorkflowSessionCompositionError('target_unavailable');
+    if (!resolvedAgent) throw new WorkflowSessionCompositionError('target_unavailable', 'target_unavailable',
+      undefined, undefined, undefined,
+      projectActionFailureCauseV1({ name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target'));
     if (retainedStartupOperation) {
       if (!deps.sessionStartup) throw new WorkflowSessionCompositionError('workflow_session_startup_observation_unavailable');
       const created = await deps.sessionStartup({ creationKey, retainedOperation: retainedStartupOperation,
@@ -441,17 +448,12 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     if (frozenRole) initialSessionRolesV1 = { ...(initialSessionRolesV1 ?? {
       overrides: {}, sessionRoles: { [frozenRole.roleId]: frozenRole }, notes: '',
     }), roleId: frozenRole.roleId };
-    if (!discussionParticipant && (selection.approvalProfileId !== undefined
-      || acceptedOrigin?.actionPolicy?.approvalProfileId !== undefined)
-      && (!deps.action || !startupAuthorization || !deps.sessionStartup)) {
-      throw new WorkflowSessionCompositionError('approval_context_unavailable');
-    }
-    const startupContext = !discussionParticipant && deps.action && startupAuthorization
-      ? await deps.action.buildContext({ runId: deps.originRunId, authorization: startupAuthorization,
+    const startupContext = discussionStartupContext
+      ?? await deps.action!.buildContext({ runId: deps.originRunId, authorization: startupAuthorization!,
         workDepth: deps.workDepth, workspace, ...(acceptedOrigin ? { origin: acceptedOrigin } : {}),
         ...(selection.approvalProfileId === undefined ? {} : { approvalProfileId: selection.approvalProfileId }),
         ...(deps.originSessionId ? { originSessionId: deps.originSessionId } : {}),
-        ...(frozenRole ? { role: frozenRole } : {}), ...(signal ? { signal } : {}) }) : undefined;
+        ...(frozenRole ? { role: frozenRole } : {}), ...(signal ? { signal } : {}) });
     const approvalProfileId = startupContext?.approvalProfileId !== undefined
       ? startupContext.approvalProfileId
       : selection.approvalProfileId !== undefined || acceptedOrigin?.actionPolicy?.approvalProfileId !== undefined
@@ -569,7 +571,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     });
     const creationRequest = { ...request, sessionCreationTag: correspondence.sessionCreationTag,
       sessionCreationCorrespondence: correspondence };
-    const actionAdmission = startupContext ? { context: startupContext,
+    const actionAdmission = { context: startupContext,
       input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
         // Project shared authoring fields from their canonical owner. Workflow-only
         // selection keys and unset nullable Workflow defaults are not Action input.
@@ -589,14 +591,13 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         ...(request.initialAccess ? { initialAccess: request.initialAccess } : {}),
         ...(request.manager ? { manager: request.manager } : {}),
         ...(request.organizationPlacement ? { organizationPlacement: request.organizationPlacement } : {}),
-      })) } : undefined;
+      })) };
     logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: deps.originRunId,
       phase: 'session_spawn_start', timestamp: new Date().toISOString() });
-    const created = await (deps.sessionStartup
-      ? deps.sessionStartup({ creationKey, request: creationRequest, ...(startupAuthorization ? { authorization: startupAuthorization } : {}),
-          ...(actionAdmission ? { actionAdmission } : {}),
-          ...(onStartupObservation ? { onObservation: operation => onStartupObservation(operation, deps.serverId) } : {}) })
-      : createSpawnedSession(creationRequest)).catch((error: unknown) => rethrowWorkflowSessionStartupFailure(
+    const created = await deps.sessionStartup!({ creationKey, request: creationRequest,
+      authorization: startupAuthorization!, actionAdmission,
+      ...(onStartupObservation ? { onObservation: operation => onStartupObservation(operation, deps.serverId) } : {}) })
+      .catch((error: unknown) => rethrowWorkflowSessionStartupFailure(
         error, createSessionCreationSpawnNonce(correspondence.sessionCreationTag),
       ));
     signal?.throwIfAborted();
@@ -843,6 +844,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       }
       if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
         ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
+        ...(error.failureCause ? { failureCause: error.failureCause } : {}),
         ...(error.details ? { reasonDetails: error.details } : {}),
         ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;
@@ -898,6 +900,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       }
       if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
         ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
+        ...(error.failureCause ? { failureCause: error.failureCause } : {}),
         ...(error.details ? { reasonDetails: error.details } : {}),
         ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;

@@ -1,3 +1,4 @@
+import { carryActionFailureDiagnostic, readActionOutputDiagnostic, type ActionOutputDiagnostic } from '../../actions/executor/actionFailureDiagnostic.js';
 import { computeActionInputApprovalDigestV1 } from '../../actions/decisionAuthority.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import type { PluginSourceCustodyV1 } from '../runtime/sourceCustody.js';
@@ -18,7 +19,7 @@ import type { CurrentIntentMismatchV1 } from '../../actions/executor/approvalRev
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { isPluginError, isPluginErrorData } from '../errors.js';
-import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { readActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import type {
   PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
@@ -438,12 +439,12 @@ export function readPluginActionError(error: unknown): Readonly<{
     code: projectPluginActionFailureCode(error.code),
     message: projectPluginActionFailureMessage(error.message),
   });
-  return Object.freeze({
+  return Object.freeze(carryActionFailureDiagnostic({
     code: failure.code,
     message: failure.message,
     retryable: error.retryable,
     ...(data.success ? { data: data.data } : {}),
-  });
+  }, error));
 }
 
 /** Read the dispatch owner's proof from the matching public failure envelope. */
@@ -484,7 +485,7 @@ export function readPluginActionFailureAuthorPayload(
     return Object.freeze({});
   }
   const record = data as Readonly<Record<string, StrictJsonValue | undefined>>;
-  const failureCause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
+  const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
   const remediation = record.remediation === undefined
     ? undefined
     : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation);
@@ -493,7 +494,7 @@ export function readPluginActionFailureAuthorPayload(
     : PluginActionFailureDiagnosticsV1Schema.safeParse(record.diagnostics);
   return Object.freeze({
     ...(record.details === undefined ? {} : { details: record.details }),
-    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+    ...(failureCause === undefined ? {} : { failureCause }),
     ...(remediation?.success ? { remediation: remediation.data } : {}),
     ...(diagnostics?.success ? { diagnostics: Object.freeze(diagnostics.data) } : {}),
   });
@@ -871,6 +872,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
 }
 
 type PluginActionInvocationOptions = Readonly<{
+  recordDiagnostic?(diagnostic: ActionOutputDiagnostic): void;
   signal?: AbortSignal;
   /** Host-only admission that runs after input validation, before handler effects. */
   preDispatch?(input: PluginActionInvocationHandlerInput): (
@@ -963,7 +965,9 @@ export function createPluginActionInvocation(params: Readonly<{
       normalizedResult = parsedNormalizedResult.data;
     }
     if (!validates(resultValidator, normalizedResult)) return invalidResult('Plugin action result does not match its manifest resultSchema');
-    return Object.freeze({ status: 'executed', value: normalizedResult });
+    return Object.freeze(carryActionFailureDiagnostic({ status: 'executed' as const,
+      value: normalizedResult !== null && typeof normalizedResult === 'object'
+        ? carryActionFailureDiagnostic(normalizedResult, value) : normalizedResult }, value));
   };
 
   const prepare = (input: unknown, options: PluginActionInvocationInputOptions = {}): PluginActionInvocationPreparation => {
@@ -1012,6 +1016,14 @@ export function createPluginActionInvocation(params: Readonly<{
       });
   };
   const invokePrepared = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
+    const result = await invokePreparedResult(normalizedInput, options, observation);
+    const diagnostic = readActionOutputDiagnostic(result);
+    if (diagnostic) {
+      try { options.recordDiagnostic?.(diagnostic); } catch { /* Logging cannot replace settlement. */ }
+    }
+    return result;
+  };
+  const invokePreparedResult = async (normalizedInput: StrictJsonValue, options: PluginActionInvocationOptions, observation = false): Promise<PluginActionInvocationResult> => {
       if (!params.isCurrent() || params.occurrenceSignal.aborted) {
         return unavailableBeforeHandler('plugin_action_generation_retired', 'Plugin action occurrenceId is no longer current');
       }
@@ -1101,13 +1113,13 @@ export function createPluginActionInvocation(params: Readonly<{
           // Retirement afterwards cannot erase a known canonical failure.
           const pluginError = readPluginActionError(error);
           if (pluginError) {
-            return Object.freeze({
-              status: 'failed',
+            return Object.freeze(carryActionFailureDiagnostic({
+              status: 'failed' as const,
               code: pluginError.code,
               message: pluginError.message,
               retryable: pluginError.retryable,
               ...(pluginError.data === undefined ? {} : { data: pluginError.data }),
-            });
+            }, pluginError));
           }
           return Object.freeze({
             status: 'failed',

@@ -2,7 +2,6 @@ import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { SavedSecretOperationAdmissionFailureReasonV1Schema } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginSecretSourceFailureV1Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { createConnectedAccountHttpPurposeHost } from '@happier-dev/cli-common/plugins/http';
 import { savedSecretOperationAdmissionStatus } from '@/settings/secrets/savedSecretCatalog';
 import { logger } from '@/ui/logger';
@@ -37,12 +36,10 @@ export function createConnectedAccountPluginHttpPurposeHost(owner: StablePluginC
     });
     const host = createHost(owner);
     const sanitizeFailure = (error: unknown, entered: boolean,
-        containsSensitiveValue: (value: string) => boolean): never => {
-        if (error instanceof CredentialRequestRedirectError) throw error;
-        const code = isPluginError(error) && !containsSensitiveValue(error.code)
-            ? error.code : entered ? 'outcome_unknown' : 'credential_unavailable';
-        const failureCause = isPluginError(error) && error.data.failureCause ? error.data.failureCause
-            : projectActionFailureCauseV1(error, entered ? 'connected_account.http.execute' : 'connected_account.http.materialize');
+        _containsSensitiveValue: (value: string) => boolean, publicFailure: PluginError): never => {
+        const code = publicFailure.code;
+        const failureCause = publicFailure.data.failureCause
+            ?? projectActionFailureCauseV1(error, entered ? 'connected_account.http.execute' : 'connected_account.http.materialize');
         if (code === 'outcome_unknown' || !isPluginError(error)) {
             // Native fetch errors keep their transport code on cause. Record only
             // the existing closed diagnostic vocabulary, never messages or URLs.
@@ -50,10 +47,14 @@ export function createConnectedAccountPluginHttpPurposeHost(owner: StablePluginC
                 logger.warnLocalFile('[connected-account-http-failure]', failureCause);
             } catch { /* Diagnostics cannot change the redacted failure. */ }
         }
-        const details = !entered && isPluginError(error) ? readMaterialSourceFailureDetails(error.details) : undefined;
-        throw new PluginError({ code, message: code === 'credential_unavailable' ? 'Sign in again, then retry.' : code,
+        const details = entered ? publicFailure.details
+            : isPluginError(error) ? readMaterialSourceFailureDetails(error.details) : undefined;
+        throw new PluginError({ code, message: publicFailure.data.message
+            ?? (code === 'credential_unavailable' ? 'Sign in again, then retry.' : code),
+            ...(publicFailure.data.retryable === undefined ? {} : { retryable: publicFailure.data.retryable }),
+            ...(publicFailure.remediation === undefined ? {} : { remediation: publicFailure.remediation }),
             failureCause,
-            ...(details ? { details } : {}) });
+            ...(details === undefined ? {} : { details }) });
     };
     return createConnectedAccountHttpPurposeHost<PluginInvocationServicesSeed, PluginInvocationServiceBinding>({
         captureSubject: binding => binding.exactPurposeBindingSubjectId,

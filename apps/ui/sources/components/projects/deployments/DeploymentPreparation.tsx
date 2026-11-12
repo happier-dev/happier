@@ -198,7 +198,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
                     <FieldTextInput testID="project-deployments.import.paths" value={paths} onChangeText={setPaths} editable={!busy}
                         multiline minLines={3} monospace autoCapitalize="none" accessibilityLabel={t('projects.deployments.preparation.paths')} />} />
             </ItemGroup> : null}
-            {refused ? <SurfaceStateCard testID="project-deployments.prepare.refused" size="line" kind="error" title={t('projects.deployments.unavailableTitle')}
+            {refused ? <SurfaceStateCard testID="project-deployments.prepare.refused" size="line" kind="error" title={t('common.error')}
                 reason={deploymentActionRefusalRemedy(refused)} diagnosticCode={refused}
                 {...(partial?.sessionRef ? { action: { label: t('common.open'), testID: 'project-deployments.prepare.session',
                     onPress: () => { if (partial.sessionRef) openSession(partial.sessionRef); } } } : {})} /> : null}

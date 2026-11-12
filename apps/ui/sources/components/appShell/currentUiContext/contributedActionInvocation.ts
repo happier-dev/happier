@@ -2,7 +2,8 @@ import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/mac
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientActionRegistration, resolvePluginUiClientActionRefusal, type PluginUiClientActionRegistration } from '@/components/plugins/reactNative/clientExecutableContributions';
 import { isPluginUiClientActionPending, isPluginUiClientExecutableAccountCurrent, type PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
@@ -158,8 +159,5 @@ export async function executeCapturedScopeContributedAction(
         ...(request.signal ? { signal: request.signal } : {}), isCurrent,
     });
     if (outcome.ok) return { ok: true, result: outcome.result };
-    const errorCode = outcome.reason === 'plugin_ui_action_outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE : outcome.reason;
-    return { ok: false, errorCode, error: errorCode,
-        ...(outcome.details === undefined ? {} : { details: outcome.details }),
-        ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }) };
+    return { ok: false, ...normalizeActionExecutorThrownError(createPluginSurfaceActionFailureError(outcome)) };
 }

@@ -1857,6 +1857,8 @@ describe('createPluginUiTestkit', () => {
                         code: 'denied',
                         message: 'The host did not admit the Review details panel.',
                         details: { requestId: 'fixture-request-refusal' },
+                        failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
+                        remediation: { kind: 'openSettings', path: '/settings/accounts' },
                         diagnostics: [{ code: 'destination_not_admitted', severity: 'error' }],
                     });
                     throw refusal;
@@ -1874,6 +1876,8 @@ describe('createPluginUiTestkit', () => {
                 code: 'denied',
                 message: 'The host did not admit the Review details panel.',
                 details: { requestId: 'fixture-request-refusal' },
+                data: { failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null } },
+                remediation: { kind: 'openSettings', path: '/settings/accounts' },
                 retryable: false,
                 diagnostics: [{ code: 'destination_not_admitted', severity: 'error' }],
             });

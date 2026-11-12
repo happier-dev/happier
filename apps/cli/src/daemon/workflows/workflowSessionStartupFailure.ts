@@ -31,12 +31,16 @@ function workflowSessionStartupRefusalError(
 ): WorkflowSessionCompositionError {
   const launch = 'launchError' in refusal ? refusal.launchError : undefined;
   const code = launch?.code ?? ('providerError' in refusal ? refusal.providerError?.code : undefined) ?? refusal.code;
+  const actionFailureCause = 'failureCause' in refusal ? refusal.failureCause : undefined;
+  if (actionFailureCause && !launch && !('providerError' in refusal && refusal.providerError)) {
+    return new WorkflowSessionCompositionError(code, code, undefined, undefined, undefined, actionFailureCause);
+  }
   const failureCause = { phase: 'client_start' as const, failureReason: 'unknown' as const,
     code, retryable: refusal.retryable, ...launch?.failureCause };
   const runtimeIssueV1 = projectSessionRuntimeIssueMetadataV1({ v: 1, scope: 'primary_session', status: 'failed',
     code, source: failureCause.failureReason === 'usage_limit' ? 'usage_limit' : 'unknown', occurredAt, failureCause,
     ...('agentId' in refusal && refusal.agentId ? { agentId: refusal.agentId } : {}) });
-  return new WorkflowSessionCompositionError(code, code, undefined, undefined, runtimeIssueV1);
+  return new WorkflowSessionCompositionError(code, code, undefined, undefined, runtimeIssueV1, actionFailureCause);
 }
 
 /** Both live observation and cold recovery consume the original operation's typed result. */

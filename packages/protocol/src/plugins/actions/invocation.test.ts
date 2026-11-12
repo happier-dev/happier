@@ -9,12 +9,20 @@ import {
   fingerprintPluginActionCurrentIntent,
   projectPluginActionUnavailableOutcomeCode,
   readPluginActionFailureHandlerInvocation,
+  readPluginActionFailureAuthorPayload,
 } from './invocation.js';
 import {
   defineProtocolLiteral,
   defineProtocolObject,
   defineProtocolString,
 } from './protocolComposableSchema.js';
+
+it('retains numeric native refusal status through the author payload reader', () => {
+  const failureCause = { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: '10000', httpStatus: 403 };
+  expect(readPluginActionFailureAuthorPayload({ failureCause })).toMatchObject({ failureCause: {
+    phase: failureCause.phase, errorClass: 'Error', errorCode: null, nativeErrorCode: '10000', httpStatus: 403,
+  } });
+});
 
 function currentIntentAuthorizationFacts(generation = '7') {
   return {

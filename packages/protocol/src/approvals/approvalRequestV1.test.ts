@@ -602,6 +602,35 @@ describe('ApprovalRequestV1Schema', () => {
     }
   });
 
+  it.each([
+    ['plugins.dev.publication.inspect', 'plugins_dev_publication_inspect'],
+    ['plugins.dev.publication.prepare', 'plugins_dev_publication_prepare'],
+    ['plugins.dev.publish', 'plugins_dev_publish'],
+    ['plugins.dev.publication.status', 'plugins_dev_publication_status'],
+  ] as const)('retains nested publication diagnostics in the executed %s receipt', (actionId, kind) => {
+    const diagnostic = { code: 'publication_source_invalid', message: 'Select the plugin source before publishing.' };
+    const result = getActionSpec(actionId).outputSchema!.parse({ ok: false, kind,
+      result: { status: 'failed', diagnostics: [diagnostic] } });
+    const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'system' }, actionId, actionArgs: {}, summary: 'Publish plugin',
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true, result } });
+    expect(readApprovalExecutionFailure(request)).toEqual({ ok: false, errorCode: diagnostic.code, error: diagnostic.message });
+    expect(request.execution?.result).toEqual(result);
+    expect(readApprovalExecutionFailure({ ...request, execution: { ...request.execution!, result: { ...result, ok: true } } })).toBeNull();
+  });
+
+  it.each([
+    [{ status: 'authentication_required', code: 'npm_authentication_required' }, 'npm_authentication_required'],
+    [{ status: 'outcome_unknown' }, 'outcome_unknown'],
+  ] as const)('retains a publication effect refusal without diagnostics (%s)', (publication, errorCode) => {
+    const result = getActionSpec('plugins.dev.publish').outputSchema!.parse({ ok: false, kind: 'plugins_dev_publish', result: publication });
+    const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'system' }, actionId: 'plugins.dev.publish', actionArgs: {}, summary: 'Publish plugin',
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true, result } });
+    expect(readApprovalExecutionFailure(request)).toEqual({ ok: false, errorCode, error: errorCode });
+    expect(request.execution?.result).toEqual(result);
+  });
+
   it('reads the typed busy reason from a retained plugin refusal without diagnostics', () => {
     // STORE-REPLAY pl50-cleanup-uninstall-change-refusal.json: this receipt
     // already exists, so a producer-only fix cannot repair its presentation.

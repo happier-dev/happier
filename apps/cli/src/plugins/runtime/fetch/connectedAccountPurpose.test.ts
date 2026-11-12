@@ -9,10 +9,12 @@ import { createPluginInvocationServiceBinding } from '../invocation/services/fac
 import type { PluginInvocationServiceBinding } from '../invocation/services/types';
 import { createConnectedAccountPluginHttpPurposeHost } from './connectedAccountPurpose';
 import { logger } from '@/ui/logger';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materialization-failure', 'invocation-withdrawal', 'cloudflare-expiry',
     'cancelled-seed', 'cancelled-fragment', 'cancelled-stream-seed', 'cancelled-stream-fragment',
-    'request-failure', 'stream-request-failure', 'request-dispatcher-failure'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
+    'request-failure', 'stream-request-failure', 'request-dispatcher-failure',
+    'authored-request-failure', 'authored-stream-failure'] as const)('keeps issued credential custody at the HTTP owner (%s)', async scenario => {
     const pluginId = 'acme.purpose';
     const consumer = { pluginId, localId: 'read' };
     const purpose = { consumer, purpose: 'read-api' };
@@ -46,7 +48,7 @@ it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materializati
             acquisitions++;
             if (scenario === 'stream-materialization-failure' || scenario === 'cancelled-fragment'
                 || scenario === 'cancelled-stream-fragment') throw acquisitionFailure;
-            expect(request).toEqual({ kind: 'httpHeaders', origin, headerNames: ['authorization'] });
+            expect(request).toEqual({ kind: 'httpHeaders', origin: origin, headerNames: ['authorization'] });
             credentialRevisionBasis?.captureCredentialRevision(revision);
             if (scenario === 'cloudflare-expiry') {
                 return cloudflareConnectedAccountRuntime.materialize(
@@ -87,6 +89,28 @@ it.each(['owner', 'origin', 'method', 'stream-withdrawal', 'stream-materializati
     const serviceBinding: PluginInvocationServiceBinding = { ...base,
         connectedAccountScopes: [{ purpose: purpose.purpose, serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] }],
     };
+    if (scenario === 'authored-request-failure' || scenario === 'authored-stream-failure') {
+        const failureCause = { phase: 'plugin.http.execute', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 403 } as const;
+        const details = { nativeCause: { localCause: 'native_options_changed' } };
+        const input = { seed, serviceBinding, signal: seed.signal,
+            request: { url: origin + '/projects', method: 'GET', redirect: 'error', credentialBinding: {
+                kind: 'connectedAccountPurpose', purpose: purpose.purpose, origin, method: 'GET', headerNames: ['authorization'],
+            } } satisfies Parameters<typeof host.request>[0]['request'],
+            async execute(): Promise<never> { sends++; throw new PluginError({ code: 'credential_unavailable',
+                message: 'Sign in to the selected cloud account.', details, failureCause, remediation: { kind: 'retry' },
+                diagnostics: [{ code: 'native_diagnostic', severity: 'error', details: { privateOutput: secret } }],
+            }, { cause: new Error(secret) }); },
+        };
+        let failure: unknown;
+        try { await (scenario === 'authored-request-failure' ? host.request(input) : host.requestStream(input)); }
+        catch (error) { failure = error; }
+        expect(failure).toMatchObject({ code: 'credential_unavailable', message: 'Sign in to the selected cloud account.',
+            data: { details, failureCause, remediation: { kind: 'retry' } } });
+        expect(JSON.stringify(failure)).not.toContain(secret);
+        expect(acquisitions).toBe(1);
+        expect(sends).toBe(1);
+        return;
+    }
     if (scenario === 'request-failure' || scenario === 'stream-request-failure' || scenario === 'request-dispatcher-failure') {
         // The file-log sink and HTTP transport are system boundaries; custody remains real.
         const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
+import { readActionFailureEnvelope } from './executor/actionFailureEnvelope.js';
+import { completeActionResult, normalizeActionExecutorThrownError } from './executor/resultProjection.js';
 import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
 import * as actionResults from './actionExecutionResult.js';
@@ -39,6 +40,32 @@ describe('Action failure error adapter', () => {
 });
 
 describe('Action failure cause projection', () => {
+  it('preserves native codes separately and salvages sibling cause fields', () => {
+    const native = { phase: 'deployment.target.create', errorClass: 'Error', errorCode: null,
+      nativeErrorCode: '10000', httpStatus: 403 } as const;
+    expect(ActionFailureCauseV1Schema.parse(native)).toEqual(native);
+    expect(ActionFailureCauseV1Schema.safeParse({ ...native, errorCode: '10000' }).success).toBe(false);
+    expect(actionResults.readActionFailureCauseV1({ ...native, errorCode: '10000', nativeErrorCode: undefined })).toEqual(native);
+    expect(actionResults.readActionFailureCauseV1({ ...native, errorCode: 'invalid code' })).toEqual(native);
+    expect(actionResults.readActionFailureCauseV1({ ...native, httpStatus: 'invalid' })).toEqual({ ...native, httpStatus: null });
+    expect(actionResults.readActionFailureCauseV1({ ...native, phase: 'invalid phase' })).toEqual({ ...native, phase: 'dispatch' });
+    expect(actionResults.readActionFailureCauseV1({ ...native, errorClass: 'invalid class' })).toEqual({ ...native, errorClass: 'UnknownThrownValue' });
+    for (const errorCode of ['project_already_exists', null]) {
+      const cause = { phase: native.phase, errorClass: native.errorClass, errorCode, httpStatus: 403 };
+      expect(actionResults.readActionFailureCauseV1(cause)).toEqual(cause);
+    }
+  });
+  it('salvages a numeric native cause through public Action settlement and thrown PluginError normalization', () => {
+    const failureCause = { phase: 'deployment.target.create', errorClass: 'Error', errorCode: '10000', httpStatus: 403 };
+    const expected = { ...failureCause, errorCode: null, nativeErrorCode: '10000' };
+    const failure = { ok: false, errorCode: 'provider_refused', error: 'Check the selected account.', failureCause };
+    expect(actionResults.parseActionExecuteFailure(failure)).toMatchObject({ failureCause: expected });
+    expect(readActionFailureEnvelope(failure)).toMatchObject({ failureCause: expected });
+    expect(completeActionResult(failure)).toMatchObject({ failureCause: expected });
+    const error = Object.assign(new Error(failure.error), { name: 'PluginError', code: failure.errorCode, retryable: false,
+      data: { name: 'PluginError', code: failure.errorCode, message: failure.error, failureCause } });
+    expect(normalizeActionExecutorThrownError(error)).toMatchObject({ failureCause: expected });
+  });
   it('retains the Home execution authorization phase without disclosing exception text', () => {
     const cause = projectActionFailureCauseV1(new Error('PRIVATE_MINT_CAUSE'), 'execution_authorization');
     expect(cause).toEqual({ phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null });

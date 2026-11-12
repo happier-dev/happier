@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError, type DeploymentTargetRoleFailureV1 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpRequest, HttpService } from '@happier-dev/plugin-sdk/http';
 import { isObject } from '../connectedAccounts/probe.js';
@@ -8,7 +9,8 @@ type Reply = Readonly<{ value: unknown; resultInfo?: unknown }> | DeploymentTarg
 const origin = 'https://api.cloudflare.com';
 
 export function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase): DeploymentTargetRoleFailureV1 {
-  return { v: 1, code, phase, retryable: false };
+  const result: DeploymentTargetRoleFailureV1 = { v: 1, code, phase, retryable: false };
+  return code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase: `deployment.cloudflare.${phase}`, causeKind: 'not_found' }) : result;
 }
 function accountRoot(accountId: string) { return `${origin}/client/v4/accounts/${encodeURIComponent(accountId)}`; }
 
@@ -64,9 +66,9 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   if (response.status >= 400 && response.status < 500
     || isObject(body) && body.success === false
     || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {
-    throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
+    throw withActionFailureDiagnostic(new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false, details: { phase },
-      failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: nativeCode, httpStatus: response.status } });
+      failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status } }), { phase: `deployment.cloudflare.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
   // Preserve acknowledged results even when local cancellation races with the response.
   if (response.status < 200 || response.status >= 300) return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase);

@@ -1,5 +1,4 @@
 import { homedir } from 'node:os';
-import { readDnsHealthCheckV1 } from '../../healthChecks/finiteNetworkHealthCheck';
 import {
     observeNativeCaddyContainer, connectNativeCaddyNetworks, createNativeCaddyAdminExchange, hashNativeCaddyPassword, checkNativeCaddyPortAvailability,
     type MachineSetupNativeCommand, type MachineSetupNativeCommandResult,
@@ -13,8 +12,9 @@ import {
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1, DeploymentDomainDiscoverChildRpcV1 } from '@happier-dev/protocol';
+import type { DeploymentDomainDnsChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, environmentSecretBindingIdentityV1,
     type DeploymentArtifactDocumentV1, type DeploymentEnvironmentDetailV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { ApiClient } from '@/api/api';
@@ -30,7 +30,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readDomainCaddyStartFirstLegs, resolveDomainIngress, readDomainIngressMembersForHost, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
+import { readDomainCaddyStartFirstLegs, selectDomainPublicCaddyServer, resolveDomainIngress, readDomainIngressMembersForHost, selectEdgeCaddyDomainRoute, selectPrivateCaddyOriginNetwork } from './domainRouteSelection';
 import type { CaddyDomainRouteInput } from './caddyRouteMaterialization';
 import { createNativeCaddyStartFirstRoutes } from '@/machines/reachability/nativeCaddyStartFirst';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRuntime } from './ownServerDeploymentTarget';
@@ -57,7 +57,7 @@ export type DomainNativeSetupForHost = Readonly<{
         'port' | 'readDaemonProof'>): Promise<void>;
 }>;
 
-type DomainJob = DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1;
+type DomainJob = DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1 | DeploymentDomainDnsChildRpcV1;
 const refuse = (code: string, details?: unknown, failureCause?: ActionFailureCauseV1): never => {
     // A fresh, fixed-message stack names the producer even when it supplied no
     // typed diagnostics. Never log the thrown message, arguments or native output.
@@ -73,7 +73,7 @@ const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCa
     const result = { ok: false as const, errorCode, error: errorCode,
         details: parsed.success && parsed.data.step !== 'native_execution' ? parsed.data : projectDeploymentFailureRecoveryV1({
             ...(parsed.success ? parsed.data : details && typeof details === 'object' && !Array.isArray(details) ? details : {}),
-            environmentId: job.input.environmentId, domainId: job.input.domainId, step: 'native_execution' as const,
+            environmentId: job.input.environmentId, domainId: 'domainId' in job.input ? job.input.domainId : undefined, step: 'native_execution' as const,
         }),
         failureCause: failureCause ?? projectActionFailureCauseV1({ code: errorCode }, 'deployment.domain.native_execution') };
     // The file-log boundary projects only closed native facts, not arbitrary
@@ -82,14 +82,14 @@ const failure = (job: DomainJob, errorCode: string, details?: unknown, failureCa
         ? result.details.failure : undefined);
     logger.warnLocalFile('[Deployment] Domain native operation failed', {
         phase: 'deployment.domain.native_execution', kind: job.kind, actionId: job.actionId,
-        environmentId: job.input.environmentId, domainId: job.input.domainId,
+        environmentId: job.input.environmentId, domainId: 'domainId' in job.input ? job.input.domainId : undefined,
         ...(native.success ? { requiredFact: native.data.requiredFact, stepId: native.data.stepId,
             nativeCommand: native.data.nativeCommand, containerExitCode: native.data.containerExitCode,
             containerError: native.data.containerError, port: native.data.port } : {}),
     });
     return result;
 };
-const serviceUnavailable = (job: DomainJob, step: DeploymentDomainFailureStepV1): never => refuse('service_unavailable', {
+const serviceUnavailable = (job: Exclude<DomainJob, DeploymentDomainDnsChildRpcV1>, step: DeploymentDomainFailureStepV1): never => refuse('service_unavailable', {
     environmentId: job.input.environmentId, domainId: job.input.domainId,
     step, requiredFact: deploymentDomainFailureFactsV1[step],
     remedy: 'Inspect the Environment Machine services, restore the unavailable service, then retry the Domain operation.',
@@ -170,12 +170,14 @@ export function createOwnServerDomainNative(host: Readonly<{
         const identity = readInstallationIdentityIfExistsSync();
         if (!identity || job.machineId !== host.machineId || job.installationId !== identity.installationId
             || job.input.serverId !== host.serverId) return refuse('target_mismatch');
-        const contentRef = job.kind === 'domain' ? job.capture.content : job.input;
-        const opened = readDeploymentDomainArtifactV1(contentRef, await host.open(contentRef.contentArtifactId, context));
+        const opened = job.kind === 'domainDns' ? { ok: true as const, content: job.input.content } : await (async () => {
+            const reference = job.kind === 'domain' ? job.capture.content : job.input;
+            return readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, context));
+        })();
         if (!opened.ok) return refuse(opened.error);
         const removing = job.kind === 'domain' ? !job.capture.desired : isDeploymentDomainRemoveActionIdV1(job.actionId);
         const observing = job.kind === 'domain' && job.actionId === 'deployments.domains.verify';
-        const withoutWorkload = removing || observing;
+        const withoutWorkload = removing || observing || job.kind === 'domainDns';
         let environmentContent: DeploymentEnvironmentDetailV1['content'] | undefined;
         let members: Array<{ machineId: string; installationId: string; state: 'active' }> = [];
         if (job.kind === 'domainDiscover') {
@@ -186,7 +188,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             members = (await readDomainIngressMembersForHost(link,
                 'membershipMachines' in job.input ? job.input.membershipMachines : undefined, context, host.readReceipt)).map(member => ({
                 machineId: member.machineId, installationId: member.installationId, state: 'active' }));
-        } else if (!withoutWorkload) {
+        } else if (job.kind === 'domain' && !withoutWorkload) {
             // Accepted work consumes its exact admitted private inputs, never a
             // fresh Source ACL, mutable head reference or target membership.
             const { environmentContent: environmentRef, targetLinkContent: linkRef } = job.capture;
@@ -205,14 +207,15 @@ export function createOwnServerDomainNative(host: Readonly<{
         }
         const member = members.find(member => member.machineId === host.machineId && member.installationId === identity.installationId);
         if (!withoutWorkload && member) await host.ensureServiceObservations?.();
-        const lease = await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
+        const lease = withoutWorkload ? undefined
+            : await (host.acquirePluginRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease)();
         const custody = createProjectNativeInvocationCustody({ signal });
         try {
-            const service = !withoutWorkload && member ? lease.registry.projectManagedServices.listProjectServices().find(service =>
+            const service = !withoutWorkload && member ? lease!.registry.projectManagedServices.listProjectServices().find(service =>
                 service.kind === 'environment' && service.environmentId === job.input.environmentId
                 && service.composeService === opened.content.target.service && service.machineId === host.machineId) : undefined;
             let docker: ProjectNativeDockerPort;
-            if (!withoutWorkload && member) {
+            if (job.kind !== 'domainDns' && !withoutWorkload && member) {
                 if (!service?.readNativeDocker) return serviceUnavailable(job, 'service_docker');
                 docker = await service.readNativeDocker({ signal });
             } else {
@@ -237,11 +240,11 @@ export function createOwnServerDomainNative(host: Readonly<{
                 : (await ApiClient.create(host.credentials)).getMachine(host.machineId, { signal }));
             const privateNetworks = machine?.daemonState?.reachability?.privateNetworks ?? [];
             const observed = service?.readNativeContainers?.();
-            const replicas = observed?.filter(container => container.service === opened.content.target.service).map(container => {
+            const replicas = job.kind === 'domainDns' ? [] : observed?.filter(container => container.service === opened.content.target.service).map(container => {
                 if (!container.containerName || !container.networkNames) return serviceUnavailable(job, 'container_identity');
                 return { containerName: container.containerName, networkNames: [...container.networkNames] };
             }) ?? [];
-            if (!withoutWorkload && member && !replicas.length) return serviceUnavailable(job, 'service_replicas');
+            if (job.kind !== 'domainDns' && !withoutWorkload && member && !replicas.length) return serviceUnavailable(job, 'service_replicas');
             let caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
             const retainedCaddy = caddy.status === 'ready' ? caddy : undefined;
             // Only an admitted Domain add prepares or reconciles infrastructure. Verify,
@@ -281,9 +284,9 @@ export function createOwnServerDomainNative(host: Readonly<{
             const topology = DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
                 installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas });
             return { identity, signal, environmentContent, members, domain: opened.content, docker, run, topology,
-                async release() { try { await custody.release(); } finally { custody.dispose(); await lease.release(); } } };
+                async release() { try { await custody.release(); } finally { custody.dispose(); await lease?.release(); } } };
         } catch (error) {
-            try { await custody.release(); } finally { custody.dispose(); await lease.release(); }
+            try { await custody.release(); } finally { custody.dispose(); await lease?.release(); }
             throw error;
         }
     }
@@ -291,20 +294,27 @@ export function createOwnServerDomainNative(host: Readonly<{
         const acquired = await acquire(job, context);
         try { return acquired.topology; } finally { await acquired.release(); }
     }
+    async function preview(job: DeploymentDomainDnsChildRpcV1, context: ActionExecutorContext) {
+        const acquired = await acquire(job, context);
+        try {
+            const { identity, topology, domain, signal } = acquired;
+            const selection = selectDomainPublicCaddyServer(topology);
+            if (selection.status !== 'ready') return refuse(selection.reason, selection.details);
+            const native = createNativeCaddyRoutes({ machineId: host.machineId, installationId: identity.installationId,
+                privateKey: decodeBase64(identity.privateKey, 'base64url'),
+                exchange: createNativeCaddyAdminExchange(topology.caddy.adminSocketPath) });
+            const health = await native.checkDnsReadiness({ hostname: domain.hostname,
+                nativeServer: selection.nativeServer, listener: 'public', signal });
+            if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
+                'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
+            return { ok: true as const, environmentId: job.input.environmentId,
+                dnsHealth: { status: health.status, evidence: health.evidence } };
+        } finally { await acquired.release(); }
+    }
     async function execute(job: DeploymentDomainChildRpcV1, context: ActionExecutorContext) {
         const acquired = await acquire(job, context);
         try {
             const { domain, topology, signal, identity } = acquired;
-            const readDnsHealth = async () => {
-                const basis = { hostname: domain.hostname, vantage: 'sameMachine' as const,
-                    observer: { machineId: host.machineId, installationId: identity.installationId } };
-                const context = { signal, now: Date.now };
-                const ipv4 = await readDnsHealthCheckV1({ ...basis, recordType: 'A' }, context);
-                const ipv6 = ipv4.status === 'up' ? undefined
-                    : await readDnsHealthCheckV1({ ...basis, recordType: 'AAAA' }, context);
-                const health = !ipv6 ? ipv4 : ipv6.status === 'up' || ipv4.status === 'down' ? ipv6 : ipv4;
-                return { status: health.status, evidence: health.evidence };
-            };
             const machines = job.topology?.machines ?? [topology];
             const members = acquired.members.map(member => ({ machineId: member.machineId, state: member.state,
                 caddy: machines.find(machine => machine.machineId === member.machineId && machine.installationId === member.installationId)?.caddy
@@ -318,6 +328,13 @@ export function createOwnServerDomainNative(host: Readonly<{
                     expectedDomainRevision: job.expectedDomainRevision, observation }), privateKey: identity.privateKey }) });
             const routeIdentity = { domainId: job.input.domainId, domain, listener: job.capture.listener,
                 ...(basicAuth ? { basicAuth } : {}), ...(job.capture.listener === 'public' ? { publicTls } : {}) };
+            const readDnsHealth = async () => {
+                const health = await native.checkDnsReadiness({ hostname: domain.hostname,
+                    nativeServer: job.capture.placement.nativeServer, listener: job.capture.listener, signal });
+                if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
+                    'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
+                return { status: health.status, evidence: health.evidence };
+            };
             const connector = job.cloudflareConnector;
             const settleConnector = async (remove: boolean) => {
                 if (!connector) return;
@@ -470,15 +487,17 @@ export function createOwnServerDomainNative(host: Readonly<{
         } finally { await acquired.release(); }
     }
     return async (job: DomainJob, context: ActionExecutorContext) => {
-        try { return job.kind === 'domainDiscover' ? await discover(job, context) : await execute(job, context); }
+        try { return job.kind === 'domainDns' ? await preview(job, context)
+            : job.kind === 'domainDiscover' ? await discover(job, context) : await execute(job, context); }
         catch (error) {
             const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
                 : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'native_route_unavailable',
                 error, 'deployment.domain.native_execution');
-            const failureCause = ActionFailureCauseV1Schema.safeParse(error instanceof Error && 'failureCause' in error ? error.failureCause : undefined);
+            const failureCause = error instanceof Error && 'failureCause' in error && error.failureCause !== undefined
+                ? readActionFailureCauseV1(error.failureCause) : undefined;
             return { ...failure(job, projected.errorCode,
                 (error instanceof Error && 'details' in error ? error.details : undefined) ?? projected.details,
-                failureCause.success ? failureCause.data : projected.failureCause), error: projected.error,
+                failureCause ?? projected.failureCause), error: projected.error,
                 ...(typeof projected.effectAttempted === 'boolean' ? { effectAttempted: projected.effectAttempted } : {}) }; }
     };
 }

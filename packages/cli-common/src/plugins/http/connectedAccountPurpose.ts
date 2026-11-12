@@ -1,4 +1,5 @@
 import { isPluginError, PluginError } from '../errors.js';
+import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ConnectedAccountMaterialization } from '../../connectedAccounts/establishedRuntimeTypes.js';
 import { ConnectedAccountHttpHeadersRequestSchema, type ConnectedAccountMaterializationRequest } from '@happier-dev/protocol/connect/connected-account-purposes';
@@ -32,18 +33,43 @@ export function createConnectedAccountHttpPurposeHost<
         ): Promise<ConnectedAccountMaterialization>;
     }>;
     captureSubject?(binding: Binding): string | undefined;
-    sanitizeFailure?(error: unknown, entered: boolean, containsSensitiveValue: (value: string) => boolean): never;
+    sanitizeFailure?(error: unknown, entered: boolean, containsSensitiveValue: (value: string) => boolean,
+        publicFailure: PluginError): never;
 }>): StablePluginHttpPurposeHost<Seed, Binding> {
     type RequestContext = Parameters<StablePluginHttpPurposeHost<Seed, Binding>['request']>[0];
-    const sanitizeFailure = params.sanitizeFailure ?? ((error: unknown, entered: boolean,
+    const sanitizeFailure = (error: unknown, entered: boolean,
         containsSensitiveValue: (value: string) => boolean): never => {
         if (error instanceof CredentialRequestRedirectError) throw error;
-        const code = isPluginError(error) && !containsSensitiveValue(error.code)
-            ? error.code : entered ? 'outcome_unknown' : 'credential_unavailable';
-        const failureCause = isPluginError(error) && error.data.failureCause !== undefined
-            ? readActionFailureCauseV1(error.data.failureCause) : undefined;
-        throw new PluginError({ code, ...(failureCause === undefined ? {} : { failureCause }) });
-    });
+        const pluginFailure = isPluginError(error) ? error : undefined;
+        const code = pluginFailure && !containsSensitiveValue(pluginFailure.code)
+            ? pluginFailure.code : entered ? 'outcome_unknown' : 'credential_unavailable';
+        const authored = pluginFailure && code === pluginFailure.code
+            ? readPluginActionFailureAuthorPayload(readPluginActionError(pluginFailure)?.data) : {};
+        // Credential registration includes JSON-escaped values. Admit each public
+        // field independently; private diagnostics and raw Error causes stay local.
+        const safeField = <T>(value: T | undefined): T | undefined => value === undefined
+            || containsSensitiveValue(JSON.stringify(value)) ? undefined : value;
+        const message = pluginFailure && code === pluginFailure.code && pluginFailure.data.message !== undefined
+            && !containsSensitiveValue(pluginFailure.data.message) ? pluginFailure.data.message : undefined;
+        const details = safeField(authored.details);
+        const remediation = safeField(authored.remediation);
+        let failureCause = pluginFailure?.data.failureCause === undefined
+            ? undefined : readActionFailureCauseV1(pluginFailure.data.failureCause);
+        if (failureCause && 'nativeErrorCode' in failureCause && failureCause.nativeErrorCode !== undefined
+            && containsSensitiveValue(failureCause.nativeErrorCode)) {
+            const { nativeErrorCode: _nativeErrorCode, ...safeCause } = failureCause;
+            failureCause = safeCause;
+        }
+        const publicFailure = new PluginError({ code,
+            ...(message === undefined ? {} : { message }),
+            ...(pluginFailure && code === pluginFailure.code ? { retryable: pluginFailure.retryable } : {}),
+            ...(details === undefined ? {} : { details }),
+            ...(remediation === undefined ? {} : { remediation }),
+            ...(failureCause === undefined ? {} : { failureCause }),
+        });
+        if (params.sanitizeFailure) return params.sanitizeFailure(error, entered, containsSensitiveValue, publicFailure);
+        throw publicFailure;
+    };
     // A finite invocation spends the binding admitted by its first acquisition.
     // The incumbent refresh owner requires a current revisioned snapshot and a
     // write-back lease; it cannot refresh this capture after unlink. Expiry is

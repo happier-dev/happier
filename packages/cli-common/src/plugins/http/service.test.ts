@@ -32,6 +32,35 @@ describe('portable HTTP finite custody', () => {
         expect(JSON.stringify(failure)).not.toContain(url);
     });
 
+    it.each((['request', 'requestStream'] as const).flatMap(method =>
+        [undefined, '10000', 'fixture-selected-token'].map(nativeErrorCode => ({ method, nativeErrorCode }))))(
+        'preserves authored repair and excludes a registered secret in the native cause ($method, $nativeErrorCode)', async ({ method, nativeErrorCode }) => {
+        const failureCause = { phase: 'plugin.http.execute', errorClass: 'Error', errorCode: 'EACCES', httpStatus: 403,
+            ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }) } as const;
+        const details = { nativeCause: { localCause: 'native_options_changed' } };
+        const fail = async () => { throw new PluginError({ code: 'credential_unavailable',
+            message: 'Sign in to the selected cloud account.', remediation: { kind: 'retry' }, details, failureCause,
+            diagnostics: [{ code: 'private_native_diagnostic', severity: 'error', details: { privateOutput: 'PRIVATE_DIAGNOSTIC' } }],
+        }, { cause: new Error('PRIVATE_NATIVE_CAUSE') }); };
+        const host = createStablePluginHttpHost({
+            purposeHost: createConnectedAccountHttpPurposeHost({ bind: () => ({
+                async materialize() { return { kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-selected-token' } }; },
+            }) }),
+            adapter: { request: fail, requestStream: fail, async openWebSocket() { throw new Error('Not used'); } },
+        });
+        const http = host.bind({ plugin: { id: 'example.portable' }, signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true }, {});
+        let failure: unknown;
+        try { await http[method]({ url: 'https://api.example.test/body', redirect: 'error', credentialBinding: {
+            kind: 'connectedAccountPurpose', purpose: 'read', origin: 'https://api.example.test', method: 'GET', headerNames: ['authorization'],
+        } }); } catch (error) { failure = error; }
+        const { nativeErrorCode: _nativeCode, ...withoutNativeCode } = failureCause;
+        expect(failure).toMatchObject({ code: 'credential_unavailable', message: 'Sign in to the selected cloud account.',
+            data: { failureCause: nativeErrorCode === 'fixture-selected-token' ? withoutNativeCode : failureCause,
+                details, remediation: { kind: 'retry' } } });
+        expect(JSON.stringify(failure)).not.toMatch(/PRIVATE_NATIVE_CAUSE|PRIVATE_DIAGNOSTIC|fixture-selected-token/);
+    });
+
     it.each(['request', 'requestStream'] as const)('applies a matching request interceptor without a Node operation context (%s)', async method => {
         const contribution = { id: 'headers', origins: ['https://api.example.test'] };
         const host = createStablePluginHttpHost({ adapter: {

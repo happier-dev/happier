@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -160,10 +161,7 @@ export async function runObservedWorkflowSessionStartup(
             // ends observation but cannot cancel or replace admitted startup.
             const create = () => runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createSpawnedSession({
               ...input.request, signal: operation.signal, directTransport: host.transport(operation) }));
-            if (!input.actionAdmission) {
-              const created = await create();
-              return { ok: true, result: { sessionId: created.sessionId } };
-            }
+            if (!input.actionAdmission) throw new WorkflowSessionCompositionError('approval_context_unavailable');
             const { input: actionInput } = input.actionAdmission;
             const context = await enrichCliActionApprovalContext({ context: input.actionAdmission.context,
               fixedServerId: host.serverId, machineId: host.machineId,
@@ -193,7 +191,9 @@ export async function runObservedWorkflowSessionStartup(
               hostActionApprovalLifetime: { operationId, signal: operation.signal },
               sessionSpawnNew: async args => {
                 const selectedAgent = resolveSessionCreationAgentTarget(args.agentTarget);
-                if (!selectedAgent) return { type: 'error', code: 'target_unavailable', retryable: false };
+                if (!selectedAgent) return { type: 'error', code: 'target_unavailable', retryable: false,
+                  failureCause: projectActionFailureCauseV1(
+                    { name: 'Error', code: 'agent_contribution_unavailable' }, 'session.agent_target') };
                 const readiness = await prepareSessionAgentReadiness({
                   machineId: host.machineId, serverId: host.serverId, agentId: selectedAgent.agentId,
                   ...(args.agentTarget.definitionId === undefined ? {} : { definitionId: args.agentTarget.definitionId }),
@@ -202,11 +202,17 @@ export async function runObservedWorkflowSessionStartup(
                   invoke: args.invokeAgentReadinessAction, signal: operation.signal,
                 });
                 if (readiness && 'result' in readiness) return readiness.result;
-                const created = await create();
-                return { type: 'success', disposition: created.disposition, sessionId: created.sessionId,
-                  executionTarget: { serverId: host.serverId, machineId: host.machineId },
-                  organizationPlacement: created.organizationPlacement, initialInput: created.initialInput,
-                  ...(readiness ? { agentUpdate: readiness.agentUpdate } : {}) };
+                try {
+                  const created = await create();
+                  return { type: 'success', disposition: created.disposition, sessionId: created.sessionId,
+                    executionTarget: { serverId: host.serverId, machineId: host.machineId },
+                    organizationPlacement: created.organizationPlacement, initialInput: created.initialInput,
+                    ...(readiness ? { agentUpdate: readiness.agentUpdate } : {}) };
+                } catch (error) {
+                  const refusal = readWorkflowSessionStartupRefusal(error);
+                  if (refusal) return refusal;
+                  throw error;
+                }
               },
             });
             const prepared = await executor.prepare('session.spawn_new', actionInput, {

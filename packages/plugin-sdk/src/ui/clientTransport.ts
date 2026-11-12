@@ -129,13 +129,14 @@ export class PluginUiHostApiClientError extends PluginError {
         code: string,
         message?: string,
         retryable = false,
-        data: Pick<PluginErrorData, 'details' | 'remediation' | 'diagnostics' | 'actionHandlerInvocation'> = {},
+        data: Pick<PluginErrorData, 'details' | 'failureCause' | 'remediation' | 'diagnostics' | 'actionHandlerInvocation'> = {},
     ) {
         super({
             code,
             ...(message === undefined ? {} : { message }),
             retryable,
             ...(data.details === undefined ? {} : { details: data.details }),
+            ...(data.failureCause === undefined ? {} : { failureCause: data.failureCause }),
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
         });

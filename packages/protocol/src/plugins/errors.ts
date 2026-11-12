@@ -1,4 +1,4 @@
-import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
+import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 
 /**
  * The canonical serialized PluginError payload. Recognition only needs the
@@ -45,16 +45,16 @@ export function isPluginErrorData(value: unknown): value is PluginErrorIdentityD
 export function restorePluginErrorFromWire(data: PluginErrorIdentityData): PluginErrorContract & Readonly<{
   failureCause?: ActionFailureCauseV1;
 }> {
-  const failureCause = ActionFailureCauseV1Schema.safeParse('failureCause' in data ? data.failureCause : undefined);
+  const failureCause = 'failureCause' in data && data.failureCause !== undefined ? readActionFailureCauseV1(data.failureCause) : undefined;
   const projected: PluginErrorContractData = {
     name: 'PluginError', code: data.code,
     ...(data.message === undefined ? {} : { message: data.message }),
     ...(data.retryable === undefined ? {} : { retryable: data.retryable }),
-    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+    ...(failureCause === undefined ? {} : { failureCause }),
   };
   return Object.assign(new Error(data.message ?? data.code), {
     name: 'PluginError', code: data.code, retryable: data.retryable ?? false, data: projected,
-    ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+    ...(failureCause === undefined ? {} : { failureCause }),
   });
 }
 

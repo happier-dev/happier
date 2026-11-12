@@ -7,7 +7,7 @@ import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../
 import { getActionSpec } from '../actionSpecs.js';
 import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { resolveWorkflowActionContext } from './callerContext.js';
-import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
   event: 'workflow_action_failure';
@@ -65,8 +65,8 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     : rawCode === 'account_role_overrides_unavailable' ? { reason: rawCode }
     : rawCode === 'event_contribution_not_current' ? { reason: rawCode }
     : error !== null && typeof error === 'object' && 'details' in error ? error.details : undefined;
-  const parsedCause = ActionFailureCauseV1Schema.safeParse(thrown && 'failureCause' in thrown ? thrown.failureCause : undefined);
-  const sourceCause = parsedCause.success ? parsedCause.data : undefined;
+  const sourceCause = thrown && 'failureCause' in thrown && thrown.failureCause !== undefined
+    ? readActionFailureCauseV1(thrown.failureCause) : undefined;
   const projectedCause = sourceCause ?? projectActionFailureCauseV1(error, phase);
   const failureCause = sourceCause !== undefined || projectedCause.errorCode !== null || projectedCause.httpStatus !== null
     ? projectedCause : undefined;

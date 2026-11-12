@@ -1,5 +1,4 @@
 import type { core } from 'zod/mini';
-import { projectActionInputIssues } from './actionInputValidation.js';
 import { isRpcError } from '../../rpc/errors.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '../../plugins/actions/invocation.js';
@@ -16,7 +15,7 @@ import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuth
 import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, ActionFailureCauseV1Schema,
+import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, readActionFailureCauseV1,
   projectActionFailureCauseV1, readActionErrorCodeV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -30,34 +29,10 @@ import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadR
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
 import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 
-/** In-process diagnostics are deliberately absent from JSON and public failure projection. */
-const outputDiagnostic = Symbol('actionOutputDiagnostic');
-export type ActionOutputDiagnostic = Readonly<{
-  source: string;
-  requestId?: string;
-  issues: readonly Readonly<{ path: readonly (string | number)[]; code: string; expected?: string }>[];
-  failureCause?: ActionFailureCauseV1;
-}>;
-type DiagnosticFailure = ActionExecuteFailure & { [outputDiagnostic]?: ActionOutputDiagnostic };
-
-export function readActionOutputDiagnostic(value: unknown): ActionOutputDiagnostic | undefined {
-  try {
-    if (!value || typeof value !== 'object') return undefined;
-    const direct = (value as DiagnosticFailure)[outputDiagnostic];
-    if (direct) return direct;
-    const cause = value instanceof Error ? value.cause : undefined;
-    return cause && typeof cause === 'object' ? (cause as DiagnosticFailure)[outputDiagnostic] : undefined;
-  } catch { return undefined; }
-}
-
-/** One output-failure owner; the input issue projector alone interprets schema issues. */
-export function invalidActionOutputFailure(error?: core.$ZodError, source = 'action.output', thrown?: unknown): DiagnosticFailure {
-  const issues = error ? projectActionInputIssues(error).map(({ path, code, expected }) => ({ path, code,
-    ...(code === 'invalid_type' && expected ? { expected } : {}) })) : [];
-  return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output',
-    [outputDiagnostic]: { source, issues,
-      ...(thrown === undefined ? {} : { failureCause: projectActionFailureCauseV1(thrown, source) }) } };
-}
+import { readActionOutputDiagnostic, invalidActionOutputFailure, carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
+import type { ActionOutputDiagnostic } from './actionFailureDiagnostic.js';
+export { readActionOutputDiagnostic, invalidActionOutputFailure, withActionFailureDiagnostic, carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
+export type { ActionOutputDiagnostic, ActionFailureDiagnosticInput } from './actionFailureDiagnostic.js';
 
 export function isDeferredApprovalResult(result: ActionExecuteResult): boolean {
   return result.ok && isRecord(result.result) && result.result.kind === 'approval_request_created';
@@ -120,14 +95,12 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
 function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | undefined {
   try {
     const record: Readonly<Record<string, unknown>> = isPluginError(error) ? error.data : readRecord(error);
-    const carried = ActionFailureCauseV1Schema.safeParse(record.failureCause);
-    if (carried.success) return carried.data;
+    if (record.failureCause !== undefined) return readActionFailureCauseV1(record.failureCause);
     // Observed on the loaded 0.2 daemon: details carries the same closed cause
     // with an actionException discriminator. No exception text enters this projection.
     const { kind, ...legacyCause } = readRecord(record.details);
     if (kind === 'actionException') {
-      const legacy = ActionFailureCauseV1Schema.safeParse(legacyCause);
-      if (legacy.success) return legacy.data;
+      return readActionFailureCauseV1(legacyCause);
     }
   } catch { /* A diagnostic carrier accessor cannot replace the original Action failure. */ }
   return undefined;
@@ -142,9 +115,9 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
     catch { /* A private cause accessor cannot replace the original failure. */ }
   }
   const failure = carried ?? classifyActionExecutorThrownError(error);
-  const diagnostic = readActionOutputDiagnostic(error);
-  return { ...failure, ...(diagnostic ? { [outputDiagnostic]: diagnostic } : {}), error: redactBugReportSensitiveText(failure.error),
-    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) };
+  // Native Action adapters spread these fields into a failure; terminal projection removes the sidecar.
+  return carryActionFailureDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
+    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) }, error, { enumerable: true });
 }
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {

@@ -41,6 +41,7 @@ import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
+import { PluginPublicationActionOutputSchemas } from '../actions/specs/pluginPublication.js';
 import { DeploymentActionInputSchemasV1, DeploymentBackupFailureDetailsV1Schema, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
   readDeploymentReceiptFailureCodeV1 } from '../deployments/deploymentReceiptResultV1.js';
@@ -203,7 +204,8 @@ function parseStrictApprovalFailure(input: Readonly<{
     const details = (storedRead ? createStoredReadSchema(DeploymentDomainFailureDetailsV1Schema)
       : DeploymentDomainFailureDetailsV1Schema).safeParse(input.failure.details);
     if (details.success) {
-      if (!args.success || details.data.environmentId !== args.data.environmentId
+      // A DNS preview verify names no Domain yet, so no Domain failure can belong to it.
+      if (!args.success || !('domainId' in args.data) || details.data.environmentId !== args.data.environmentId
         || details.data.domainId !== args.data.domainId) return null;
       const operation = 'operation' in details.data ? details.data.operation : undefined;
       if (operation) {
@@ -515,7 +517,10 @@ function readDomainExecutionFailure(request: ApprovalRequest): ActionExecuteFail
     if ('outcome' in result && result.outcome === 'reviewRequired') return null;
     // Diagnostics are opaque in the Action's output contract. Read only the
     // producer's first display code/message; never expose its arbitrary bags.
-    const diagnostic: unknown = 'diagnostics' in result && Array.isArray(result.diagnostics) ? result.diagnostics[0] : null;
+    const publication: unknown = Object.hasOwn(PluginPublicationActionOutputSchemas, request.actionId)
+      && 'result' in result ? result.result : null;
+    const failure = publication && typeof publication === 'object' ? publication : result;
+    const diagnostic: unknown = 'diagnostics' in failure && Array.isArray(failure.diagnostics) ? failure.diagnostics[0] : null;
     // Retained receipts can predate diagnostic projection. Read the existing
     // typed busy fact without rewriting history or exposing arbitrary bags.
     const change: unknown = 'change' in result ? result.change : null;
@@ -525,7 +530,11 @@ function readDomainExecutionFailure(request: ApprovalRequest): ActionExecuteFail
     }
     const errorCode = diagnostic && typeof diagnostic === 'object' && 'code' in diagnostic
       && typeof diagnostic.code === 'string' && diagnostic.code.trim()
-      ? diagnostic.code : 'plugin_change_failed';
+      ? diagnostic.code
+      : publication && typeof publication === 'object' && 'code' in publication
+        && typeof publication.code === 'string' && publication.code.trim() ? publication.code
+        : publication && typeof publication === 'object' && 'status' in publication
+          && typeof publication.status === 'string' ? publication.status : 'plugin_change_failed';
     const error = diagnostic && typeof diagnostic === 'object' && 'message' in diagnostic
       && typeof diagnostic.message === 'string' && diagnostic.message.trim()
       ? diagnostic.message : errorCode;
