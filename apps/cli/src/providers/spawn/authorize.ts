@@ -66,6 +66,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import type { SavedSecretCatalogOperationAdmissionV1 } from '@/settings/secrets/savedSecretCatalogRead';
 import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { logger } from '@/ui/logger';
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 
 type ExternalProviderSpawnAuthorization = Extract<
   ProviderSpawnAuthorization,
@@ -499,10 +500,11 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   const authorizationStartedAt = performance.now();
   const observePhase = async <T>(phase: 'catalog' | 'agent_activation' | 'dns' | 'purpose_bindings' | 'managed_runtime' | 'model_projection', work: () => Promise<T>): Promise<T> => {
     const startedAt = performance.now();
-    const record = (status: 'started' | 'completed' | 'failed', reason?: string) => logger.infoFile('[PROVIDER] Spawn authorization phase', {
+    const record = (status: 'started' | 'completed' | 'failed', reason?: string, detail?: ReturnType<typeof readNativeStartupFailureDetail>) => logger.infoFile('[PROVIDER] Spawn authorization phase', {
       authorizationId, connectionId: input.selection.ref.providerConnectionId, machineId: input.machineId,
       phase, status, durationMs: Math.round(performance.now() - startedAt),
       elapsedMs: Math.round(performance.now() - authorizationStartedAt), ...(reason ? { reason } : {}),
+      ...detail,
     });
     record('started');
     try {
@@ -512,7 +514,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     } catch (error) {
       const parsed = ProviderErrorV1Schema.safeParse(error);
       record('failed', error instanceof ProviderOperationAbandonedError ? error.reason
-        : parsed.success ? parsed.data.code : 'unclassified');
+        : parsed.success ? parsed.data.code : 'unclassified', readNativeStartupFailureDetail(error));
       throw error;
     }
   };
