@@ -137,6 +137,13 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
     },
     decodeControl: (event) => {
       const record = readObject(event);
+      if (record.type === 'elevenlabs.send_error') {
+        return [{ type: 'provider_error', terminal: true,
+          code: record.toolResult === true
+            ? 'voice_tool_result_delivery_unrecoverable'
+            : 'voice_service_unavailable',
+        }];
+      }
       if (record.type === 'elevenlabs.client_tool_call') {
         const call = VoiceRealtimeToolCallV1Schema.parse(record.call);
         // tool_call_id groups this call, but is not an independent response ID.

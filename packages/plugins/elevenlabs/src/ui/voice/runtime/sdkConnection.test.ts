@@ -22,6 +22,26 @@ const { createSdkHandleConnection } = await import(/* @vite-ignore */ hostConnec
 }>;
 
 describe('createElevenLabsSdkConnection', () => {
+  it('turns a synchronous vendor send exception into a typed terminal failure without exposing vendor text', async () => {
+    // Vendor session is the external boundary; keep the real handle and host connection beneath it.
+    const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: async () => ({
+      Conversation: { startSession: async () => ({
+        getId: () => 'failed-send', endSession: async () => {}, setMicMuted: () => {}, setVolume: () => {},
+        sendUserMessage: () => { throw new Error('private-vendor-send-error'); }, sendContextualUpdate: () => {},
+      }) },
+    }) as unknown as Pick<typeof import('@elevenlabs/client'), 'Conversation'> });
+    const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle, startConfig: {}, duckGain: 0.18 });
+    try {
+      await connection.connect(new AbortController().signal);
+      await expect(connection.sendControl({ type: 'voice.user_text', text: 'hello' }))
+        .rejects.toMatchObject({ message: 'voice_service_unavailable' });
+      const control = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
+      await expect(control.next()).resolves.toMatchObject({ value: { type: 'elevenlabs.send_error', toolResult: false } });
+    } finally {
+      await connection.close({ code: 'user_stop' });
+    }
+  });
+
   it.each(['inherited-voice', 'selected-voice'])('sends the prepared %s through the real SDK encoder after settings change', async (voiceId) => {
     const sent: unknown[] = [];
     class ProviderSocket extends EventTarget {

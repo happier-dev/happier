@@ -490,6 +490,50 @@ describe('VoiceConversationController', () => {
     }
   });
 
+  it.each([
+    ['client_tool_result', 'voice_tool_result_delivery_unrecoverable'],
+    ['user_message', 'voice_service_unavailable'],
+  ])('settles ElevenLabs asynchronous %s delivery failure with visible Retry and a clean call', async (messageType, code) => {
+    const { withGeneratedElevenLabsVoiceRuntime } = await import('@/dev/testkit/harness/elevenLabsVoiceRuntime');
+    elevenLabsSdk.startSession
+      .mockResolvedValueOnce(createElevenLabsSdkSession('elevenlabs-dropped-result'))
+      .mockResolvedValueOnce(createElevenLabsSdkSession('elevenlabs-clean-retry'));
+    await withGeneratedElevenLabsVoiceRuntime(async ({ adapter, lifecycle }) => {
+      await lifecycle.toggle(null);
+      expect(adapter.getSnapshot().status).toBe('connected');
+      const callbacks: ElevenLabsSdkStartOptions = elevenLabsSdk.startSession.mock.calls[0]?.[0];
+      if (messageType === 'client_tool_result') {
+        const parameters = {};
+        callbacks.onIncomingEvent?.({ type: 'client_tool_call', client_tool_call: {
+          tool_call_id: 'dropped-tool', tool_name: 'listSessions', parameters,
+        } });
+        const tool = callbacks.clientTools?.listSessions;
+        if (!tool) throw new Error('Expected provider listSessions callback');
+        // The SDK awaits this callback, then sends the result asynchronously.
+        // Its LiveKit reconnect does not publish onDisconnect to the host.
+        await tool(parameters);
+      }
+      callbacks.onDebug?.({ type: 'send_message_error', message: {
+        message: { type: messageType, tool_call_id: 'dropped-tool', result: 'private-tool-output' },
+        error: new Error('Failed to send message via WebRTC: private-vendor-error'),
+      } });
+      await vi.waitFor(() => expect(adapter.getSnapshot()).toMatchObject({ errorCode: code, errorRecoveryAction: 'retry' }));
+      const snapshot = adapter.getSnapshot();
+      expect(snapshot).toMatchObject({ errorCode: code, errorRecoveryAction: 'retry', canStop: false });
+      expect(resolveVoiceSurfaceState(snapshot)).toBe('error');
+      expect(resolveVoiceAttemptControl({ ...snapshot, surfaceState: resolveVoiceSurfaceState(snapshot),
+        tone: 'neutral', muted: false, capturing: false, startAdmitted: true, hasRecovery: true,
+      })).toMatchObject({ primaryAction: 'recover', recoveryAvailable: true });
+      expect(elevenLabsSdk.startSession).toHaveBeenCalledOnce();
+      await lifecycle.retry(snapshot.sessionId ?? '');
+      expect(elevenLabsSdk.startSession).toHaveBeenCalledTimes(2);
+      expect(adapter.getSnapshot().status).toBe('connected');
+      expect(elevenLabsSdk.startSession.mock.calls[1]?.[0]).not.toBe(callbacks);
+      expect(log.getLogs().join('\n')).not.toMatch(/private-tool-output|private-vendor-error/);
+      await adapter.stop({ sessionId: adapter.getSnapshot().sessionId ?? '' });
+    });
+  });
+
   it('retains ElevenLabs user and assistant SDK messages through the generated runtime', async () => {
     const { withGeneratedElevenLabsVoiceRuntime } = await import('@/dev/testkit/harness/elevenLabsVoiceRuntime');
     const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');

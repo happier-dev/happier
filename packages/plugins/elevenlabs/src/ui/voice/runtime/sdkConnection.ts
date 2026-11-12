@@ -9,13 +9,13 @@ import type {
   ElevenLabsConversationHandle,
   ElevenLabsConversationHandleEvent,
 } from './conversationHandle.js';
-function readRecord(value: VoiceRealtimeJsonValue): Readonly<Record<string, VoiceRealtimeJsonValue>> {
+function readRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, VoiceRealtimeJsonValue>>
+    ? value as Readonly<Record<string, unknown>>
     : {};
 }
 
-function readRequiredString(value: VoiceRealtimeJsonValue | undefined, code: string): string {
+function readRequiredString(value: unknown, code: string): string {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) throw new Error(code);
   return text;
@@ -57,6 +57,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   let endSessionPromise: Promise<void> | null = null;
   let endLifecyclePromise: Promise<void> | null = null;
   let closed = false;
+  let publishControl: ((event: unknown) => void) | null = null;
   const lifecycleController = new AbortController();
   const duckGain = Math.max(0, Math.min(1, Number.isFinite(input.duckGain) ? input.duckGain : 0));
 
@@ -87,9 +88,14 @@ export function createElevenLabsSdkConnection(input: Readonly<{
     await endLifecyclePromise;
   };
 
+  const reportSendFailure = (toolResult: boolean): void => {
+    publishControl?.({ type: 'elevenlabs.send_error', toolResult });
+  };
+
   return input.createSdkHandleConnection({
     driver: {
       async open({ signal, onControl, onTransport, onRemoteClose }): Promise<void> {
+        publishControl = onControl;
         let remoteCloseSignalled = false;
         const signalRemoteClose = (reason: string): void => {
           if (remoteCloseSignalled) return;
@@ -134,6 +140,14 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               onControl({ type: 'elevenlabs.mode', mode: event.data.mode });
               return;
             case 'debug':
+              // SDK 1.18.0 completes clientTools before its asynchronous WebRTC
+              // publishData settles. LiveKit reconnects without onDisconnect;
+              // this callback is the SDK's delivery-failure signal. Project only
+              // the failed message kind, never its result or vendor exception.
+              if (readRecord(event.message).type === 'send_message_error') {
+                const failure = readRecord(readRecord(event.message).message);
+                reportSendFailure(readRecord(failure.message).type === 'client_tool_result');
+              }
               return;
             case 'tool_call':
               onControl({ type: 'elevenlabs.client_tool_call', call: event.call });
@@ -187,32 +201,38 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         const handle = activeHandle;
         if (!handle) throw new Error('elevenlabs_handle_not_active');
         const record = readRecord(event);
-        switch (record.type) {
-          case 'voice.tool_result':
-            handle.settleToolResult(VoiceRealtimeToolResultV1Schema.parse(record.result));
-            return;
-          case 'voice.provider_managed_tools':
-            // The installed SDK resumes after its callback promise settles.
-            return;
-          case 'voice.user_text':
-            handle.sendUserMessage(readRequiredString(record.text, 'elevenlabs_user_text_required'));
-            return;
-          case 'voice.context_update':
-            handle.sendContextualUpdate(readRequiredString(record.text, 'elevenlabs_context_update_required'));
-            return;
-          case 'voice.input_muted':
-            if (typeof record.muted !== 'boolean') {
-              throw new Error('elevenlabs_input_mute_unsupported');
-            }
-            handle.setMicMuted(record.muted);
-            return;
-          default:
-            throw new Error('elevenlabs_control_unsupported');
+        try {
+          switch (record.type) {
+            case 'voice.tool_result':
+              handle.settleToolResult(VoiceRealtimeToolResultV1Schema.parse(record.result));
+              return;
+            case 'voice.provider_managed_tools':
+              // The installed SDK resumes after its callback promise settles.
+              return;
+            case 'voice.user_text':
+              handle.sendUserMessage(readRequiredString(record.text, 'elevenlabs_user_text_required'));
+              return;
+            case 'voice.context_update':
+              handle.sendContextualUpdate(readRequiredString(record.text, 'elevenlabs_context_update_required'));
+              return;
+            case 'voice.input_muted':
+              if (typeof record.muted !== 'boolean') {
+                throw new Error('elevenlabs_input_mute_unsupported');
+              }
+              handle.setMicMuted(record.muted);
+              return;
+            default:
+              throw new Error('elevenlabs_control_unsupported');
+          }
+        } catch {
+          reportSendFailure(record.type === 'voice.tool_result');
+          throw new Error('voice_service_unavailable');
         }
       },
       setOutputFocusState,
       async close(): Promise<void> {
         closed = true;
+        publishControl = null;
         lifecycleController.abort();
         const dispose = unsubscribe;
         unsubscribe = null;
