@@ -61,6 +61,7 @@ import { bootstrapAccountSettingsContext } from '../../../../../../cli/src/setti
 import { createAgentInstallJobOwner } from '../../../../../../cli/src/capabilities/installJobs/agentInstallJobOwner';
 import { registerMachineAgentInstallJobRpcHandlers } from '../../../../../../cli/src/api/machine/rpcHandlers.agentInstallJobs';
 import { registerCapabilitiesHandlers } from '../../../../../../cli/src/rpc/handlers/capabilities';
+import { createFilesystemEffectAdmission } from '../../../../../../cli/src/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { invalidateDaemonContributionRegistryProjectionCache, registerDaemonContributionRegistryProjectionHandler } from '../../../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection';
 import { createPluginReloadController, type PluginRuntimeRegistryLease } from '../../../../../../cli/src/plugins/runtime/reload/controller';
 import { resolveExecutablePluginRuntimeRegistry } from '../../../../../../cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -95,6 +96,8 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '../../../../.
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { accountRoutes } from '../account/accountRoutes';
+import { registerPluginAvailabilityRoutes } from '@/app/plugins/availability/routes';
+import * as cliPersistence from '../../../../../../cli/src/persistence';
 import { artifactsRoutes } from './artifactsRoutes';
 import { sessionRoutes } from '../session/sessionRoutes';
 import { featuresRoutes } from '../features/featuresRoutes';
@@ -145,6 +148,7 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
         sessionRoutes(app);
         featuresRoutes(app);
         machinesRoutes(app);
+        registerPluginAvailabilityRoutes(app);
         startSocket(app);
         registerExternalActionRoutes(app);
         await app.listen({ port: 0, host: '127.0.0.1' });
@@ -206,7 +210,7 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
         expect(listed).toMatchObject({ ok: true });
         if (!listed.ok) throw new Error('Expected skill list');
         const stub = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(listed.result).items.find(item => item.skillId === 'happier:happier');
-        expect(stub).toMatchObject({ provenance: { kind: 'first_party' }, rules: [expect.objectContaining({ enabled: true, target: { t: 'allMachines' } })] });
+        expect(stub).toMatchObject({ provenance: { kind: 'first_party' }, rules: [] });
         if (!stub) throw new Error('Bundled skill missing from real host');
         const read = await executor.execute('skills.read', { skillId: stub.skillId, file: 'SKILL.md' }, context);
         expect(read).toMatchObject({ ok: true });
@@ -219,15 +223,15 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
                 .toMatchObject({ ok: false, errorCode: 'first_party_read_only' });
         }
         const off = await executor.execute('skills.rules.set', { items: [{ skillId: stub.skillId }],
-            change: { kind: 'replace', rules: [] } }, context);
+            change: { kind: 'write', write: { place: { t: 'allMachines' }, state: 'off' } } }, context);
         expect(off).toMatchObject({ ok: true, result: { ok: true } });
         const reloaded = await executor.execute('skills.list', {}, context);
         if (!reloaded.ok) throw new Error('Expected reloaded library');
-        expect(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(reloaded.result).items.find(item => item.skillId === stub.skillId)?.rules).toEqual([]);
+        expect(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(reloaded.result).items.find(item => item.skillId === stub.skillId)?.rules).toEqual([expect.objectContaining({ target: { t: 'allMachines' }, enabled: false })]);
         expect(await db.artifact.count({ where: { accountId } })).toBe(beforeArtifacts);
-        // Leave the shared fixture's seed as it was for neighboring tests.
+        // Return the shared built-in to its implicit default for neighboring tests.
         expect(await executor.execute('skills.rules.set', { items: [{ skillId: stub.skillId }],
-            change: { kind: 'write', write: { place: { t: 'allMachines' }, state: 'on' } } }, context)).toMatchObject({ ok: true, result: { ok: true } });
+            change: { kind: 'replace', rules: [] } }, context)).toMatchObject({ ok: true, result: { ok: true } });
     });
 
     it('applies a dollar library pick through the registered Session Action and strict SQLite metadata consumer', async () => {
@@ -254,7 +258,7 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
         } });
         expect(picked).toMatchObject({ ok: true });
         if (!picked.ok) throw new Error(picked.message);
-        expect(MentionRefV1Schema.parse(picked.mention)).toEqual({ kind: 'happier.skill', ref: 'skill:happier:happier', token: '$happier', label: 'happier' });
+        expect(MentionRefV1Schema.parse(picked.mention)).toEqual({ kind: 'happier.skill', ref: 'skill:happier:happier', token: '[happier](happier-ref:skill:happier:happier)', label: 'happier' });
         const stored = await db.session.findUniqueOrThrow({ where: { id: session.id } });
         if (!stored.ownerMetadata) throw new Error('Missing strict owner tuple');
         const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', material: null, envelope: JSON.parse(stored.ownerMetadata) });
@@ -339,7 +343,7 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
         expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true });
         if (!listed.ok) throw new Error('Expected private metadata');
         expect(secretOutputs['secrets.list'].parse(listed.result).secrets).toContainEqual({ secretId: secret.secretId,
-            name: 'Registry private fixture', kind: 'token', updatedAt: 1 });
+            name: 'Registry private fixture', kind: 'token', secretRef: secret.secretRef, updatedAt: 1 });
         expect(JSON.stringify(listed)).not.toContain(originalValue);
         const stale = await privateExecutor.execute('secrets.update', { secretId: secret.secretId, name: 'Stale update', expectedUpdatedAt: 2 }, context);
         expect(stale, JSON.stringify(stale)).toMatchObject({ ok: false, errorCode: 'revision_conflict' });
@@ -695,6 +699,8 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
                 return { stdout: '', stderr: '' };
             } },
         });
+        // Stored sign-in reads are an OS boundary absent from this standalone daemon fixture.
+        const storedCredentials = vi.spyOn(cliPersistence, 'readStoredCredentials').mockResolvedValue(credentials);
         const previousHome = process.env.HAPPIER_HOME_DIR;
         const rpcDiagnostics: unknown[] = [];
         const reloadController = createPluginReloadController({ happyHomeDir: root,
@@ -758,7 +764,11 @@ describe('capability Actions through the production CLI host, HTTP, SQLite and S
             },
         } satisfies RpcHandlerRegistrar;
         registerMachineAgentInstallJobRpcHandlers({ owner, rpcHandlerManager: registrar });
-        registerCapabilitiesHandlers(registrar);
+        // Standalone host fixture supplies its physical identity boundary; RPC admission stays real.
+        registerCapabilitiesHandlers(registrar, { filesystemEffectAdmission: createFilesystemEffectAdmission({
+            resolveHomeServerIdentityId: async () => serverIdentityId,
+            resolveHostIdentity: async () => ({ custodianAccountId: accountId, machineId, installationId }),
+        }) });
         registerDaemonContributionRegistryProjectionHandler(registrar, { processEnv: env,
             resolveRuntimeRegistry: async () => runtimeRegistry,
             resolveGeneration: async () => reloadController.getState().generation,
@@ -980,6 +990,7 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
             await owner.shutdown();
             await runtimeLease?.release();
             await reloadController.shutdown();
+            storedCredentials.mockRestore();
             upstream.mockRestore();
             if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
             else process.env.HAPPIER_HOME_DIR = previousHome;
@@ -1076,7 +1087,7 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
     it('previews an upload without creating content and rejects invalid portable paths before storage', async () => {
         const before = await db.artifact.count({ where: { accountId } });
         const preview = await executor.execute('skills.install', { source: { kind: 'upload', files }, dryRun: true }, context);
-        expect(preview).toMatchObject({ ok: true });
+        expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true });
         if (!preview.ok) throw new Error('Expected upload preview');
         const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.install'].parse(preview.result);
         expect(result).toMatchObject({ items: [expect.objectContaining({ trust: 'runs_scripts', files })] });
@@ -1087,10 +1098,10 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
         expect(await db.artifact.count({ where: { accountId } })).toBe(before);
     });
 
-    it('runs compiled directory argv with Off, Everywhere and an exact Agent-bridge Session through the real CLI factory', async () => {
+    it('runs compiled directory argv with Off and Everywhere and refuses Account-selected Agent-bridge context', async () => {
         const credentials = { token, encryption: null } as const;
-        // Session capability writes require the actual Agent identity, just as
-        // a runtime-created Session does; anonymous metadata cannot admit one.
+        // Retain real Session selections so a refused Account-selected bridge
+        // cannot silently mutate either Session.
         const initialMetadata = writeSessionCapabilitySelectionToMetadataV1(writeRuntimeDescriptorV1ToMetadata(
             { path: tmpdir(), host: 'capabilities-test' }, { v: 1, agentId: 'claude', agent: {} },
         ), {
@@ -1134,13 +1145,12 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
             completed?.();
             return true;
         });
-        const createArgv = async (name: string, extra: readonly string[], canonicalJson = false) => {
+        const createArgv = async (name: string, extra: readonly string[]) => {
             output = '';
-            const argv = canonicalJson ? ['skills', 'create', '--input-json', JSON.stringify({ name, files })]
-                : ['skills', 'create', name, '--from', directory];
+            const argv = ['skills', 'create', name, '--from', directory];
             expect(await tryHandleSkillsCliCommand({ argv: [...argv, '--server-id', origin, '--json', ...extra], actionExecutionDeps: deps })).toBe(true);
             const envelope: unknown = JSON.parse(output.trim());
-            expect(envelope).toMatchObject({ ok: true });
+            expect(envelope, JSON.stringify(envelope)).toMatchObject({ ok: true });
             if (!envelope || typeof envelope !== 'object' || !('data' in envelope)) throw new Error('Expected a CLI success envelope');
             // The shared CLI success presenter removes the inner domain `ok` bit.
             return lazyZodSchema(() => z.omit(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'], { ok: true })).parse(envelope.data);
@@ -1150,22 +1160,19 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
             await writeFile(join(directory, 'SKILL.md'), markdown);
             await writeFile(join(directory, 'scripts', 'check.sh'), '#!/bin/sh\nexit 0\n');
             await chmod(join(directory, 'scripts', 'check.sh'), 0o755);
-            const rawBridge = await createArgv('argv-raw-session', ['--agent-bridge', '--session-id', sessionId], true);
-            expect(rawBridge, JSON.stringify(rawBridge)).toMatchObject({ includedInSessionId: sessionId });
-            expect(rawBridge.incomplete).toBeUndefined();
-            expect((await readSelection(sessionId)).skills.forceIncludeSkillIds).toEqual(['existing-skill', rawBridge.skillId]);
-            expect((await readRules()).some(rule => rule.skillId === rawBridge.skillId)).toBe(false);
+            // A Session bridge must obtain its authority and Home from Session MCP.
+            // An Account credential plus CLI resource selectors cannot create that admission.
+            expect(await tryHandleSkillsCliCommand({ argv: ['skills', 'create', '--input-json', JSON.stringify({ name: 'argv-raw-session', files }),
+                '--server-id', origin, '--json', '--agent-bridge', '--session-id', sessionId], actionExecutionDeps: deps })).toBe(true);
+            const refused: unknown = JSON.parse(output.trim());
+            expect(refused).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
             const off = await createArgv('argv-off', ['--off']);
             expect(off.incomplete).toBeUndefined();
             expect((await readRules()).some(rule => rule.skillId === off.skillId)).toBe(false);
             const on = await createArgv('argv-on', []);
             expect((await readRules()).filter(rule => rule.skillId === on.skillId)).toMatchObject([{ enabled: true, target: { t: 'allMachines' } }]);
-            const bridge = await createArgv('argv-session', ['--agent-bridge', '--session-id', sessionId]);
-            expect(bridge).toMatchObject({ includedInSessionId: sessionId });
-            expect(bridge.incomplete).toBeUndefined();
-            expect((await readRules()).some(rule => rule.skillId === bridge.skillId)).toBe(false);
             expect((await readSelection(sessionId)).skills).toEqual({ v: 1,
-                forceIncludeSkillIds: ['existing-skill', rawBridge.skillId, bridge.skillId], forceExcludeSkillIds: ['excluded-skill'], excludeNativeSkillNames: ['native-skill'] });
+                forceIncludeSkillIds: ['existing-skill'], forceExcludeSkillIds: ['excluded-skill'], excludeNativeSkillNames: ['native-skill'] });
             expect((await readSelection(otherSessionId)).skills.forceIncludeSkillIds).toEqual(['existing-skill']);
             const read = await executor.execute('skills.read', { skillId: off.skillId, file: 'scripts/check.sh' }, context);
             if (!read.ok) throw new Error('Expected directory skill read');
@@ -1290,6 +1297,7 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
             const item = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(read.result).item;
             expect(item.summary.version).toBe(reviewedCommit);
             head = '2'.repeat(40);
+            currentBytes = bytes.map(file => file.path === 'SKILL.md' ? { ...file, bytes: new TextEncoder().encode(markdown + '\nNew upstream instructions') } : file);
             const installed = await executor.execute('skills.install', { source: { kind: 'registry', sourceId: source.id,
                 itemId: '', version: item.summary.version! } }, context);
             expect(installed).toMatchObject({ ok: true });
@@ -1302,9 +1310,9 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
             const skill = SkillReadResultV1Schema.parse(skillRead.result);
             expect(skill.provenance).toMatchObject({ kind: 'registry', registry: { sourceId: source.id, itemId: '', ref: { commit: reviewedCommit } } });
             expect(skill.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'scripts/check.sh', unixMode: 0o755 })]));
-            expect(upstreamReads.filter(url => url.includes('/commits/')).at(-1)).toContain(`/${reviewedCommit}`);
+            expect(skill.skillMd).toBe(markdown);
+            expect(upstreamReads).toContain(`https://raw.githubusercontent.com/example/skills/${reviewedCommit}/SKILL.md`);
             const skillId = result.skillIds[0]!;
-            currentBytes = bytes.map(file => file.path === 'SKILL.md' ? { ...file, bytes: new TextEncoder().encode(markdown + '\nNew upstream instructions') } : file);
             const checked = await checkThroughHome(skillId);
             expect(checked, JSON.stringify(checked)).toMatchObject({ ok: true });
             if (!checked.ok) throw new Error('Expected registered update checker');
@@ -1337,7 +1345,7 @@ fs.writeFileSync(path.join(process.env.UV_TOOL_BIN_DIR,'fast-agent-acp'),'#!/bin
                 expect(failedCheck, JSON.stringify(failedCheck)).toMatchObject({ ok: true });
                 if (!failedCheck.ok) throw new Error('Expected per-item unchecked observation');
                 expect(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(failedCheck.result).results)
-                    .toEqual([{ kind: 'skill', key: skillId, upstream: { state: 'unchecked', reason: failure.reason } }]);
+                    .toEqual([{ kind: 'skill', key: skillId, sourceId: source.id, sourceTitle: source.title, upstream: { state: 'unchecked', reason: failure.reason } }]);
                 expect(await db.artifact.findUniqueOrThrow({ where: { id: skillId } })).toEqual(beforeRepeat);
             }
             upstreamFailure = null;
