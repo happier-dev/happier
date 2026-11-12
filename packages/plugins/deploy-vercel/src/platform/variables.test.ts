@@ -110,6 +110,39 @@ it('retains only successful per-key provenance when the provider refuses another
   } finally { await kit.dispose(); }
 });
 
+it.each(['set', 'remove'] as const)('retains acknowledged ownership when a received %s refusal races with cancellation', async operation => {
+  const controller = new AbortController();
+  const requests: HttpRequest[] = [];
+  const existing = { key: 'BAD', providerId: 'bad-id', desiredRevision: 1, providerRevision: '20' };
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    if (request.method === 'GET') return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ envs:
+      operation === 'remove' ? [{ ...recordedVercelEnvironment, id: 'bad-id', key: 'BAD', type: 'plain',
+        target: ['production'], updatedAt: 20 }] : [] })) };
+    const key = request.body ? JSON.parse(new TextDecoder().decode(request.body)).key : 'BAD';
+    if (key === 'BAD') {
+      controller.abort();
+      return { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ error: { code: 'forbidden' } })) };
+    }
+    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ created: {
+      ...recordedVercelEnvironment, id: 'good-id', key, type: 'plain', target: ['production'], updatedAt: 30,
+    }, failed: [] })) };
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const acknowledged = { key: 'GOOD', providerId: 'good-id', desiredRevision: 2, providerRevision: '30' };
+    await expect(kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
+      owned: operation === 'remove' ? [existing] : [],
+      set: (operation === 'set' ? ['GOOD', 'BAD'] : ['GOOD']).map(name => ({ purpose: 'variable', phase: 'runtime', name,
+        source: { kind: 'value', value: 'plain' } })), remove: operation === 'remove' ? ['BAD'] : [],
+      useOurs: [], keepTheirs: [] }, { signal: controller.signal })).resolves.toMatchObject({
+      owned: operation === 'remove' ? [existing, acknowledged] : [acknowledged],
+      failures: [{ key: 'BAD', code: 'provider_request_failed' }],
+    });
+    expect(requests.map(request => request.method)).toEqual(['GET', 'POST', operation === 'remove' ? 'DELETE' : 'POST']);
+  } finally { await kit.dispose(); }
+});
+
 it('retains only successful per-key provenance when the provider explicitly refuses deletion', async () => {
   const owned = { key: 'TOKEN', providerId: 'owned', desiredRevision: 1, providerRevision: '20' };
   const http = createPluginHttpFixture({ async request(request) {

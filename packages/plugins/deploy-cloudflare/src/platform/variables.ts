@@ -190,7 +190,6 @@ async function sync(product: Product, input: Sync, context: PluginAccountActionC
         value = await context.services.secrets.readSavedSecret(binding.source.ref,
           { resourceRevision: binding.source.resourceRevision, signal: context.signal });
       } catch (error) {
-        context.signal.throwIfAborted();
         if (isPluginError(error) && (error.code === 'secret_use_client_required' || error.code === 'secret_missing'
           || error.code === 'plugin_secret_custody_unavailable')) {
           failures.push({ key, code: error.code }); continue;

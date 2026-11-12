@@ -128,7 +128,6 @@ async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<Deplo
       owned.set(key, provenance);
       variables.set(key, { ...created, owned: true, drift: created.providerRevision === undefined ? 'unknown' : 'current' });
     } catch (error) {
-      ctx.signal.throwIfAborted();
       failed(key, writeFailureCode(error));
     }
   }
@@ -157,7 +156,7 @@ async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<Deplo
         : await vercelRequest(io(ctx), url.href, 'DELETE');
       if (response.status < 200 || response.status >= 300) { failed(key, 'provider_request_failed'); continue; }
       owned.delete(key); variables.delete(key);
-    } catch (error) { ctx.signal.throwIfAborted(); failed(key, writeFailureCode(error)); }
+    } catch (error) { failed(key, writeFailureCode(error)); }
   }
   return { v: 1, owned: [...owned.values()], variables: [...variables.values()], failures };
 }
