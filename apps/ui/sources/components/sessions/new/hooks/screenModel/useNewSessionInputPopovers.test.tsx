@@ -292,6 +292,38 @@ describe('useNewSessionInputPopovers', () => {
         await hook.unmount();
     });
 
+    it('keeps favorites, managed machines and saved-project rows in New Session\'s pickers (shared placement owner)', async () => {
+        const { useNewSessionInputPopovers } = await import('./useNewSessionInputPopovers');
+        const favorite = createMachineFixture({ id: 'machine-fav' }) as Machine;
+        const toggleFavoriteMachine = vi.fn();
+        const onSelectManagedMachine = vi.fn();
+        const onSelectCandidate = vi.fn();
+        const params = createParams({
+            favoriteMachineItems: [favorite],
+            toggleFavoriteMachine,
+            managedMachines: [],
+            onSelectManagedMachine,
+            placementCandidates: { rows: [{ index: 0, title: 'happier', subtitle: 'Machine 1', candidate: {} as never }] as never, onSelect: onSelectCandidate },
+        });
+        const hook = await renderHook((props: HookParams) => useNewSessionInputPopovers(props), { initialProps: params });
+        const machineContent = hook.getCurrent().machinePopover.renderContent;
+        const pathContent = hook.getCurrent().pathPopover.renderContent;
+        if (typeof machineContent !== 'function' || typeof pathContent !== 'function') throw new Error('Expected popover renderContent');
+        const closeMachine = vi.fn();
+        const machine = (machineContent({ maxHeight: 420, requestClose: closeMachine }) as { props: Record<string, any> }).props;
+        expect(machine.favoriteMachines).toEqual([favorite]);
+        expect(machine.onToggleFavorite).toBe(toggleFavoriteMachine);
+        expect(machine.managedMachines).toEqual([]);
+        machine.onSelectManagedMachine({ selection: {} }, undefined);
+        expect(onSelectManagedMachine).toHaveBeenCalledOnce();
+        expect(closeMachine).toHaveBeenCalledOnce();
+        const closePath = vi.fn();
+        const path = (pathContent({ maxHeight: 420, requestClose: closePath }) as { props: Record<string, any> }).props;
+        expect(path.leadingSections).toHaveLength(1);
+        expect(path.machineBrowse).toEqual({ enabled: true, machineId: 'machine-1', serverId: 'server-a' });
+        await hook.unmount();
+    });
+
     it('threads the mounted Simple/Wizard popover into the existing Machine refresh owner', async () => {
         const { useNewSessionInputPopovers } = await import('./useNewSessionInputPopovers');
         const onRefreshMachines = vi.fn();

@@ -21,6 +21,8 @@ export function createMachineActionChip(params: Readonly<{
     chipStyle: (pressed: boolean) => any;
     textStyle: any;
     onPress: () => void;
+    /** A host whose Machine is fixed shows it without offering a choice. */
+    disabled?: boolean;
 }>): React.ReactNode {
     // `null`: no machine yet, so the chip asks where to run (58d AF1); its picker offers creating or adding one.
     const label = params.machineName === null
@@ -33,9 +35,11 @@ export function createMachineActionChip(params: Readonly<{
             ref={params.anchorRef}
             key="machine"
             testID="agent-input-machine-chip"
-            onPress={params.onPress}
+            onPress={params.disabled ? undefined : params.onPress}
+            disabled={params.disabled === true}
             accessibilityRole="button"
             accessibilityLabel={label}
+            accessibilityState={{ disabled: params.disabled === true }}
             style={(pressed) => [params.chipStyle(pressed), styles.chip]}
         >
             {normalizeNodeForView(<Icon name="desktop" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}

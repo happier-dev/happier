@@ -33,6 +33,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 
 const { Modal, ModalProvider } = await import('@/modal');
 const { WorkflowProjectTargetControl } = await import('@/components/workflows/editor/WorkflowProjectTargetControl');
+const { SessionPlacementChips } = await import('@/components/sessions/new/placement/SessionPlacementChips');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { SessionServerStartDraftRecipeEditor } = await import('@/components/sessions/new/SessionServerStartDraftRecipeEditor');
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -551,9 +552,9 @@ it('adds an agent in place on this Session\'s Machine and folder, keeps its row 
   await vi.waitFor(() => expect(screen.findAllByType(SessionServerStartDraftRecipeEditor)).toHaveLength(1));
   expect(screen.findByType(SessionServerStartDraftRecipeEditor).props).toMatchObject({
     target: { machineId: 'review-machine' }, seed: { directory: '/work' } });
-  // Machine and folder are the one Where owner's chip (Workflows, triggers and run composers use it too).
-  expect(screen.findAllByType(WorkflowProjectTargetControl).filter(control => control.props.presentation === 'chip'
-    && control.props.target?.machineId === 'review-machine' && control.props.target?.directory === '/work')).toHaveLength(1);
+  // Machine and folder are New Session's two chips and pickers (owner 2026-11-12), on the consumer's place.
+  expect(screen.findAllByType(SessionPlacementChips).filter(chips => chips.props.serverId === serverId
+    && chips.props.path === '/work')).toHaveLength(1);
   // The genuine presentation boundary returns the ordinary author's strict draft. It never allocates a Session.
   const draft = SessionServerStartSpawnDraftV1Schema.parse({ executionTarget: { serverId, machineId: 'review-machine' },
     directory: { kind: 'path', path: '/work' }, permissionMode: 'read-only', title: 'Migration reviewer',

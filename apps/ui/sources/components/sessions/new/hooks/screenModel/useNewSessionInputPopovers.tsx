@@ -2,8 +2,6 @@ import * as React from 'react';
 
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
-import { NewSessionPathSelectionContent } from '@/components/sessions/new/components/NewSessionPathSelectionContent';
-import { NewSessionMachineSelectionContent, type NewSessionMachineSelectionContentProps } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import type { ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -12,7 +10,6 @@ import { useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { t } from '@/text';
-import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import type { PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -20,76 +17,15 @@ import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/se
 import type { RunnerArtifactTarget } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import type { ServerScopedMachinePoolGroup } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
-import { useMachinePoolSelection } from '@/components/sessions/new/hooks/machines/useMachinePoolSelection';
 import type { TemporaryComputerAvailability } from '@/components/sessions/new/hooks/useTemporaryComputerAvailability';
 import type { TemporaryComputerLaunchBlock } from '@/components/sessions/new/hooks/temporaryComputerLaunchReadiness';
-import {
-    describeTemporaryComputerLaunchBlock,
-    describeTemporaryComputerUnavailability,
-} from '@/components/sessions/new/hooks/temporaryComputerCopy';
-import { buildTemporaryComputerSelectionRows } from '@/components/sessions/new/components/machineSelection/buildTemporaryComputerSelectionRows';
-import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer, type ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
-import { SELECTION_LIST_LARGE_POPOVER_SIZE } from '@/components/ui/selectionList';
-import { useNewSessionPlacementSessions } from './useNewSessionPlacementSessions';
-import { createNewSessionPlacementCandidatesSection } from '@/components/sessions/new/newSessionPlacementSelectionStep';
+import { useSessionMachineChoicePopover, useSessionPathChoicePopover } from '@/components/sessions/new/placement/sessionPlacementPopovers';
+import { type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer, type ManagedMachineUse } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 import type { SessionPlacementCandidateRow } from '@/components/sessions/new/serverStartDraftCandidateSelection';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
-import { useNewSessionMachinePickerInventory, type NewSessionMachinePickerInventory } from './useNewSessionMachinePickerInventory';
-
-type MachineSelectionContentProps = NewSessionMachineSelectionContentProps<Machine>;
-
-function NewSessionPopoverMachineInventoryContent(params: MachineSelectionContentProps & Readonly<{
-    inventory: NewSessionMachinePickerInventory;
-}>) {
-    const { inventory, ...content } = params;
-    const { groups, poolGroups, recentMachines, favoriteMachineItems } = useNewSessionMachinePickerInventory(inventory);
-    return <NewSessionMachineSelectionContent {...content} groups={groups} poolGroups={poolGroups}
-        recentMachines={recentMachines} favoriteMachines={favoriteMachineItems} />;
-}
-
-function NewSessionPopoverMachineSelectionContent(params: MachineSelectionContentProps & Readonly<{
-    inventory?: NewSessionMachinePickerInventory;
-}>) {
-    const { inventory, ...content } = params;
-    return inventory
-        ? <NewSessionPopoverMachineInventoryContent {...content} inventory={inventory} />
-        : <NewSessionMachineSelectionContent {...content} />;
-}
-
-function NewSessionPopoverPathSelectionContent(params: React.ComponentProps<typeof NewSessionPathSelectionContent> & Readonly<{
-    readRecentPaths?: () => ReadonlyArray<string>;
-}>) {
-    const { readRecentPaths, ...content } = params;
-    useNewSessionPlacementSessions(Boolean(readRecentPaths));
-    return <NewSessionPathSelectionContent {...content} recentPaths={readRecentPaths?.() ?? content.recentPaths} />;
-}
-
-export const LARGE_PICKER_LAYOUT: Pick<
-    AgentInputContentPopoverConfig,
-    'maxHeightCap' | 'maxWidthCap' | 'keyboardShouldPersistTaps' | 'edgeFades' | 'edgeIndicators' | 'initialVisibility'
-> = {
-    ...SELECTION_LIST_LARGE_POPOVER_SIZE,
-    keyboardShouldPersistTaps: 'handled',
-    edgeFades: { top: true, bottom: true, size: 28 },
-    edgeIndicators: true,
-    initialVisibility: { top: true, bottom: true },
-};
+import type { NewSessionMachinePickerInventory } from './useNewSessionMachinePickerInventory';
 
 type ExternalSessionBrowseLockContext = Parameters<typeof resolveExternalSessionBrowseLockedSource>[0];
-
-function buildNewSessionPopoverSignature(value: unknown): string {
-    try {
-        return JSON.stringify(value) ?? 'null';
-    } catch {
-        return 'unserializable';
-    }
-}
-
-function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
-    const ref = React.useRef(value);
-    ref.current = value;
-    return ref;
-}
 
 export function useNewSessionInputPopovers(params: Readonly<{
     selectedMachine: Machine | null;
@@ -173,261 +109,55 @@ export function useNewSessionInputPopovers(params: Readonly<{
 }> {
     const modalPortalTarget = useModalPortalTarget();
     const accountProfile = useAccountProfile();
-    const machinePopoverGroups = params.machineGroups;
-    const executionTargetScopeKey = params.selectedManagedMachine
-        ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
-        : params.managedPlacementPreset
-            ? ['preset', params.managedPlacementPreset.homeId, params.managedPlacementPreset.presetId].join('\u0000')
-        : params.executionTarget?.kind === 'machine'
-        ? [
-            'machine',
-            params.executionTarget.target.serverId,
-            params.executionTarget.target.machineId,
-            params.executionTarget.selectionOrigin?.poolId ?? '',
-        ].join('\u0000')
-        : params.executionTarget?.kind === 'temporary_computer'
-            ? ['temporary_computer', params.executionTarget.serverId, params.executionTarget.artifactTarget].join('\u0000')
-            : 'unselected';
-    const machinePoolSelection = useMachinePoolSelection({
-        requestKey: params.machinePoolRequestKey,
-        requestKeyAlreadyConsumed: params.executionTarget?.kind === 'machine'
-            && params.executionTarget.selectionOrigin?.kind === 'machine_pool',
-        scopeKey: `${params.targetServerId ?? ''}\u0000${executionTargetScopeKey}`,
-        onResolved: params.selectMachinePoolTarget,
+    const pathPopover = useSessionPathChoicePopover({
+        selectedMachine: params.selectedMachine,
+        targetServerId: params.targetServerId,
+        selectedPath: params.selectedPath,
+        setSelectedPath: params.setSelectedPath,
+        setDraftSelectedPath: params.setDraftSelectedPath,
+        noFolderSelected: params.noFolderSelected,
+        onSelectNoFolder: params.onSelectNoFolder,
+        placementCandidates: params.placementCandidates,
+        recentPaths: params.recentPaths,
+        readRecentPaths: params.readRecentPaths,
+        usePathPickerSearch: params.usePathPickerSearch,
+        pathPickerSearchQuery: params.pathPickerSearchQuery,
+        setPathPickerSearchQuery: params.setPathPickerSearchQuery,
+        favoriteDirectories: params.favoriteDirectories,
+        setFavoriteDirectories: params.setFavoriteDirectories,
     });
-    const machinePopoverRenderParamsRef = useLatestRef({
+    const temporaryComputers = React.useMemo(() => ({
+        availability: params.temporaryComputerAvailability,
+        launchBlock: params.temporaryComputerLaunchBlock,
+        select: params.selectTemporaryComputer,
+    }), [params.selectTemporaryComputer, params.temporaryComputerAvailability, params.temporaryComputerLaunchBlock]);
+    const machinePopover = useSessionMachineChoicePopover({
         machineInventory: params.machineInventory,
+        machineGroups: params.machineGroups,
+        selectedMachine: params.selectedMachine,
+        selectedServerId: params.selectedServerId,
+        targetServerId: params.targetServerId,
+        recentMachines: params.recentMachines,
         favoriteMachineItems: params.favoriteMachineItems,
         selectMachineTarget: params.selectMachineTarget,
         toggleFavoriteMachine: params.toggleFavoriteMachine,
-        machinePopoverGroups,
-        machinePoolGroups: params.machinePoolGroups,
-        machinePoolSelection,
-        onRefreshMachines: params.onRefreshMachines,
-        onRefreshMachinePools: params.onRefreshMachinePools,
-        onOpenMachinePoolSettings: params.onOpenMachinePoolSettings,
-        onOpenMachinePresets: params.onOpenMachinePresets,
-        onOpenAddMachine: params.onOpenAddMachine,
-        recentMachines: params.recentMachines,
-        selectedMachine: params.selectedMachine,
-        selectedServerId: params.selectedServerId,
         useMachinePickerSearch: params.useMachinePickerSearch,
         executionTarget: params.executionTarget,
-        temporaryComputerAvailability: params.temporaryComputerAvailability,
-        temporaryComputerLaunchBlock: params.temporaryComputerLaunchBlock,
-        selectTemporaryComputer: params.selectTemporaryComputer,
+        onRefreshMachines: params.onRefreshMachines,
+        machinePoolGroups: params.machinePoolGroups,
+        machinePoolRequestKey: params.machinePoolRequestKey,
+        selectMachinePoolTarget: params.selectMachinePoolTarget,
+        onRefreshMachinePools: params.onRefreshMachinePools,
+        onOpenMachinePoolSettings: params.onOpenMachinePoolSettings,
         managedMachines: params.managedMachines,
         selectedManagedMachine: params.selectedManagedMachine,
         managedPlacementPreset: params.managedPlacementPreset,
         onSelectManagedMachine: params.onSelectManagedMachine,
         managedMachineStartsSession: params.managedMachineStartsSession,
+        temporaryComputers,
+        onOpenMachinePresets: params.onOpenMachinePresets,
+        onOpenAddMachine: params.onOpenAddMachine,
     });
-
-    const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ maxHeight, requestClose }) => (
-            <NewSessionPopoverPathSelectionContent
-                machineHomeDir={params.selectedMachine?.metadata?.homeDir || '/home'}
-                selectedPath={params.selectedPath}
-                initialSuggestionMode="history"
-                onChangeSelectedPath={params.setSelectedPath}
-                onChangeDraftSelectedPath={params.setDraftSelectedPath}
-                // Keep the path popover mounted under the tree-browser modal so
-                // dismissing the browser returns to the same picker state.
-                submitBehavior="confirm"
-                commitDraftOnBlur={true}
-                onSubmitSelectedPath={(nextPath) => {
-                    params.setSelectedPath(nextPath);
-                    announceAccessibilityMessage(t('newSession.folder.a11y.set', { path: nextPath }));
-                    requestClose();
-                }}
-                recentPaths={params.recentPaths}
-                readRecentPaths={params.readRecentPaths}
-                usePickerSearch={params.usePathPickerSearch}
-                searchQuery={params.pathPickerSearchQuery}
-                onChangeSearchQuery={params.setPathPickerSearchQuery}
-                favoriteDirectories={params.favoriteDirectories}
-                onChangeFavoriteDirectories={params.setFavoriteDirectories}
-                focusInputOnSelect={false}
-                leadingSections={params.placementCandidates && params.placementCandidates.rows.length > 0 ? [
-                    createNewSessionPlacementCandidatesSection({
-                        rows: params.placementCandidates.rows,
-                        title: t('newSession.pathPicker.suggestedTitle'),
-                        onSelect: (candidate) => {
-                            params.placementCandidates?.onSelect(candidate);
-                            requestClose();
-                        },
-                    }),
-                ] : undefined}
-                noFolderOption={params.onSelectNoFolder ? {
-                    selected: params.noFolderSelected,
-                    onSelect: () => {
-                        params.onSelectNoFolder?.();
-                        requestClose();
-                    },
-                } : undefined}
-                machineBrowse={{
-                    enabled: true,
-                    machineId: params.selectedMachine?.id ?? null,
-                    serverId: params.targetServerId ?? null,
-                }}
-                maxHeight={maxHeight}
-            />
-        ),
-        ...LARGE_PICKER_LAYOUT,
-        scrollEnabled: false,
-        edgeFades: undefined,
-        edgeIndicators: undefined,
-        initialVisibility: undefined,
-    }), [
-        modalPortalTarget,
-        params.favoriteDirectories,
-        params.noFolderSelected,
-        params.onSelectNoFolder,
-        params.placementCandidates,
-        params.pathPickerSearchQuery,
-        params.recentPaths,
-        params.readRecentPaths,
-        params.selectedMachine?.id,
-        params.selectedMachine?.metadata?.homeDir,
-        params.selectedPath,
-        params.setDraftSelectedPath,
-        params.setFavoriteDirectories,
-        params.setPathPickerSearchQuery,
-        params.setSelectedPath,
-        params.targetServerId,
-        params.usePathPickerSearch,
-    ]);
-
-    const machinePopoverSignature = React.useMemo(() => buildNewSessionPopoverSignature({
-        machineInventory: params.machineInventory,
-        favoriteMachineItems: params.favoriteMachineItems,
-        machinePopoverGroups,
-        machinePoolGroups: params.machinePoolGroups,
-        machinePoolSelectionStatus: machinePoolSelection.status,
-        recentMachines: params.recentMachines,
-        selectedMachineId: params.selectedMachine?.id ?? null,
-        selectedServerId: params.selectedServerId,
-        managedMachines: params.managedMachines,
-        selectedManagedMachine: params.selectedManagedMachine,
-        managedPlacementPreset: params.managedPlacementPreset,
-        useMachinePickerSearch: params.useMachinePickerSearch,
-        temporaryComputerTargets: params.temporaryComputerAvailability.status === 'available'
-            ? params.temporaryComputerAvailability.artifacts.map((artifact) => artifact.identity.target)
-            : [],
-        selectedTemporaryComputer: params.executionTarget?.kind === 'temporary_computer'
-            ? params.executionTarget
-            : null,
-    }), [
-        machinePopoverGroups,
-        params.machineInventory,
-        params.favoriteMachineItems,
-        params.machinePoolGroups,
-        params.recentMachines,
-        params.selectedMachine?.id,
-        params.selectedServerId,
-        params.managedMachines,
-        params.selectedManagedMachine,
-        params.managedPlacementPreset,
-        params.executionTarget,
-        params.temporaryComputerAvailability,
-        params.useMachinePickerSearch,
-        machinePoolSelection.status,
-    ]);
-
-    const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ maxHeight, requestClose, inline }) => {
-            const renderParams = machinePopoverRenderParamsRef.current;
-            // One shared row owner with the full-screen picker: the composer
-            // popover and the picker route must never disagree about whether
-            // Temporary computer is offerable, or why it is not.
-            const temporaryComputers = buildTemporaryComputerSelectionRows({
-                serverId: renderParams.selectedServerId,
-                availability: renderParams.temporaryComputerAvailability,
-                selectedTarget: renderParams.executionTarget?.kind === 'temporary_computer'
-                    ? renderParams.executionTarget
-                    : null,
-                launchBlockText: renderParams.temporaryComputerLaunchBlock
-                    ? describeTemporaryComputerLaunchBlock(renderParams.temporaryComputerLaunchBlock)
-                    : null,
-                unavailableText: describeTemporaryComputerUnavailability(renderParams.temporaryComputerAvailability)
-                    ?? t('newSession.temporaryComputer.unavailable.platformRetired'),
-                onSelect: (artifactTarget, workspace, packageExpiresAt) => {
-                    renderParams.selectTemporaryComputer(artifactTarget, workspace, packageExpiresAt);
-                    requestClose();
-                },
-            });
-            return (
-                <NewSessionPopoverMachineSelectionContent
-                    inventory={renderParams.machineInventory}
-                    groups={renderParams.machinePopoverGroups}
-                    poolGroups={renderParams.machinePoolGroups}
-                    poolSelectionStatus={renderParams.machinePoolSelection.status}
-                    selectedMachine={renderParams.selectedMachine}
-                    selectedServerId={renderParams.selectedServerId}
-                    temporaryComputers={temporaryComputers}
-                    managedMachines={renderParams.managedMachines}
-                    selectedManagedMachine={renderParams.selectedManagedMachine}
-                    managedPlacementPreset={renderParams.managedPlacementPreset}
-                    managedMachineStartsSession={renderParams.managedMachineStartsSession}
-                    onSelectManagedMachine={(draft, options) => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        renderParams.onSelectManagedMachine?.(draft, options);
-                        requestClose();
-                    }}
-                    onOpenManagedPresets={renderParams.onOpenMachinePresets ? () => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        requestClose();
-                        renderParams.onOpenMachinePresets?.();
-                    } : undefined}
-                    // The configurator is its own modal: the picker closes as it opens (lab m-pick).
-                    onConfigureManagedMachine={() => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        requestClose();
-                    }}
-                    onConnectMachine={renderParams.onOpenAddMachine ? () => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        requestClose();
-                        renderParams.onOpenAddMachine?.();
-                    } : undefined}
-                    recentMachines={renderParams.recentMachines}
-                    favoriteMachines={renderParams.favoriteMachineItems}
-                    serverId={renderParams.selectedServerId}
-                    onSelectMachine={(machine) => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        renderParams.selectMachineTarget(machine, renderParams.selectedServerId);
-                        requestClose();
-                    }}
-                    onSelectScopedMachine={(machine) => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        renderParams.selectMachineTarget(machine, machine.serverId);
-                        requestClose();
-                    }}
-                    onSelectPool={async (selection) => {
-                        if (await renderParams.machinePoolSelection.selectPool(selection)) requestClose();
-                    }}
-                    onRefreshMachines={renderParams.onRefreshMachines}
-                    onRefreshPools={renderParams.onRefreshMachinePools}
-                    onOpenPoolSettings={(target) => {
-                        renderParams.machinePoolSelection.cancelPendingSelection();
-                        requestClose();
-                        renderParams.onOpenMachinePoolSettings(target);
-                    }}
-                    onDismissPoolSelection={renderParams.machinePoolSelection.cancelPendingSelection}
-                    onToggleFavorite={renderParams.toggleFavoriteMachine}
-                    showSearch={renderParams.useMachinePickerSearch}
-                    searchPlacement="header"
-                    testIdPrefix="new-session-machine"
-                    maxHeight={maxHeight}
-                    presentation={inline ? 'inline' : undefined}
-                />
-            );
-        },
-        ...LARGE_PICKER_LAYOUT,
-        onRequestClose: machinePoolSelection.cancelPendingSelection,
-    }), [
-        machinePopoverRenderParamsRef,
-        machinePopoverSignature,
-    ]);
 
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
         const browseEnabled = params.externalSessionsFeatureEnabled

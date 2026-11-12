@@ -4,27 +4,19 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SessionAuthoringControls } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import type { SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
-import { PathSelectionList } from './components/PathSelectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Text } from '@/components/ui/text/Text';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { useInlineLevelFocusReturn } from '@/keyboard/focusReturn';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { SESSION_FOLDER_SELECTION_ROOT_ID, resolveSessionFolderSelectionLabel } from '@/components/sessions/organization/sessionFolderSelectionOptions';
 import type { SessionServerStartDraftSeed } from './serverStartDraftComposer';
 import type { SessionServerStartDraftRecipe } from './useSessionServerStartDraftRecipe';
-import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
-import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
+import { SessionPlacementChips } from './placement/SessionPlacementChips';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 /** The recipe fields this composer edits through the Session-owned authoring controls, in reading order. */
@@ -37,12 +29,12 @@ const TOOL_FIELDS: readonly SessionAuthoringFieldId[] = [
 
 /** What an added agent shows as composer chips (lab dpRev `add`): engine, Runs through, permissions. */
 const CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode'];
-const NO_MACHINES: readonly Machine[] = [];
 
 /**
  * The same Session-owned fields inside an inline editor or its returning sheet. `chips` shows them as
- * a new Session's composer does: the shared authoring chips, then the one Where chip (Machine · folder);
+ * a new Session's composer does: the shared authoring chips, then New Session's Machine and folder chips;
  * choosing another Machine there hands the move to `onMoveMachine`, since the recipe belongs to a Machine.
+ * `fields` keeps the same Machine and folder chips above its rows.
  */
 export function SessionServerStartDraftComposerBody(props: Readonly<{
     seed: SessionServerStartDraftSeed;
@@ -54,27 +46,39 @@ export function SessionServerStartDraftComposerBody(props: Readonly<{
     return <ComposerFields seed={props.seed} model={props.model} />;
 }
 
+/** The recipe's folder through the shared folder chip: a typed or picked path, no folder, or a saved project. */
+function useRecipeFolderChoice(model: SessionServerStartDraftRecipe) {
+    const { setDirectory, setDirectoryEdited, setError, setSelectedCandidateIndex, placementRows } = model;
+    const changeDirectory = React.useCallback((next: string) => {
+        setError(false);
+        setDirectory(next);
+        setDirectoryEdited(true);
+    }, [setDirectory, setDirectoryEdited, setError]);
+    const clearDirectory = React.useCallback(() => changeDirectory(''), [changeDirectory]);
+    const placementCandidates = React.useMemo(() => placementRows.length === 0 ? undefined : {
+        rows: placementRows,
+        onSelect: (candidate: (typeof placementRows)[number]['candidate']) => {
+            const row = placementRows.find((entry) => entry.candidate === candidate);
+            if (row) setSelectedCandidateIndex(row.index);
+            changeDirectory(candidate.rootPath);
+        },
+    }, [changeDirectory, placementRows, setSelectedCandidateIndex]);
+    return { changeDirectory, clearDirectory, placementCandidates };
+}
+
 function ComposerChips(props: Readonly<{
     model: SessionServerStartDraftRecipe;
     onMoveMachine?: (machineId: string, directory: string) => void;
 }>) {
-    const { selectedTarget, selectedPlacement, machine, directory, setDirectory, setDirectoryEdited, setError, error, facts,
+    const { selectedTarget, selectedPlacement, machine, directory, error, facts,
         agentTargets, selection, changeFields, changeField, daemonMergedProjection } = props.model;
-    const machines = useMachineListForServer(selectedTarget.serverId) ?? NO_MACHINES;
     const agentsReady = daemonMergedProjection.phase === 'ready' && agentTargets.length > 0;
-    const where = React.useMemo(() => ({ machineId: selectedTarget.machineId, directory: directory.trim() }),
-        [directory, selectedTarget.machineId]);
     const { onMoveMachine } = props;
-    const changeWhere = React.useCallback((next: Parameters<NonNullable<React.ComponentProps<typeof WorkflowProjectTargetControl>['onChange']>>[0]) => {
-        const nextDirectory = isWorkflowProjectTarget(next) ? next.directory : '';
-        if (next.machineId !== selectedTarget.machineId) {
-            onMoveMachine?.(next.machineId, nextDirectory);
-            return;
-        }
-        setError(false);
-        setDirectory(nextDirectory);
-        setDirectoryEdited(true);
-    }, [onMoveMachine, selectedTarget.machineId, setDirectory, setDirectoryEdited, setError]);
+    // Another Machine restarts the recipe there (it belongs to a Machine), keeping its folder.
+    const moveMachine = React.useCallback((next: Machine) => {
+        if (next.id !== selectedTarget.machineId) onMoveMachine?.(next.id, directory.trim());
+    }, [directory, onMoveMachine, selectedTarget.machineId]);
+    const { changeDirectory, clearDirectory, placementCandidates } = useRecipeFolderChoice(props.model);
     return (
         <View testID="server-start-draft-chips" style={styles.chips}>
             {agentsReady ? (
@@ -94,15 +98,15 @@ function ComposerChips(props: Readonly<{
                 <Text style={styles.note}>{daemonMergedProjection.phase === 'unsupported'
                     ? t('newSession.actionMethodUnavailable') : t('errors.daemonUnavailableBody')}</Text>
             )}
-            <WorkflowProjectTargetControl
-                presentation="chip"
-                target={where}
-                machineName={machine ? getMachineDisplayName(machine) : null}
-                machineHomeDir={machine?.metadata?.homeDir ?? null}
-                machines={onMoveMachine ? machines : undefined}
-                directoryEditable
-                onChange={changeWhere}
-                testIDPrefix="participant-recipe"
+            {/* Machine and folder are New Session's two chips and pickers (owner 2026-11-12). */}
+            <SessionPlacementChips
+                serverId={selectedTarget.serverId}
+                machine={machine}
+                path={directory}
+                {...(onMoveMachine ? { onSelectMachine: moveMachine } : {})}
+                onSelectPath={changeDirectory}
+                onSelectNoFolder={clearDirectory}
+                {...(placementCandidates ? { placementCandidates } : {})}
             />
             {selectedPlacement.machineReady ? null : (
                 <Text testID="server-start-draft-machine-not-ready" style={styles.note}>{t('newSession.recipeComposerMachineNotReady')}</Text>
@@ -120,72 +124,12 @@ function ComposerFields(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     model: SessionServerStartDraftRecipe;
 }>) {
-    const { selectedTarget, selectedPlacement, machine, directory, noFolderSelected, setDirectory, setDirectoryEdited,
-        directoryCandidateIndex, setSelectedCandidateIndex, error, setError, facts, agentTargets,
+    const { selectedTarget, selectedPlacement, machine, directory, facts, agentTargets, error,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
-        retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection,
-        placementRows } = props.model;
+        retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection } = props.model;
     const agentsReady = daemonMergedProjection.phase === 'ready' && agentTargets.length > 0;
-    // A folder is a deeper choice: it pushes the browser inside this body with Back (lab flows `browseP`),
-    // so the recipe reads as a few rows instead of a search list.
-    const [browsing, setBrowsing] = React.useState(false);
-    // Back (or a choice) returns focus to the Working directory row the browser replaced.
-    const directoryFocus = useInlineLevelFocusReturn(browsing);
     const [toolsOpen, setToolsOpen] = React.useState(false);
-    const homeDir = machine?.metadata?.homeDir ?? null;
-    if (browsing) {
-        return (
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-                <View style={styles.back}>
-                    <TextLinkButton testID="server-start-draft-directory-back" label={t('common.back')} onPress={() => setBrowsing(false)}
-                        controlRef={directoryFocus.attachEntry} />
-                </View>
-                <ItemGroup title={t('newSession.recipeComposerDirectory')}>
-                    {placementRows.map(({ candidate, index, title, subtitle }) => (
-                        <Item
-                            key={'id' in candidate.projectKey
-                                ? candidate.projectKey.id
-                                : `${candidate.serverId}:${candidate.machineId}:${candidate.rootPath}`}
-                            title={title}
-                            {...(subtitle ? { subtitle, subtitleLines: 2 } : {})}
-                            selected={index === directoryCandidateIndex}
-                            onPress={() => {
-                                setError(false);
-                                setSelectedCandidateIndex(index);
-                                setDirectory(candidate.rootPath);
-                                setDirectoryEdited(true);
-                                setBrowsing(false);
-                            }}
-                            showChevron={false}
-                            showDivider={true}
-                        />
-                    ))}
-                    <PathSelectionList
-                        initialValue={directory}
-                        machineHomeDir={homeDir ?? '/home'}
-                        favorites={[]}
-                        recents={[]}
-                        machineId={machine?.id ?? null}
-                        serverId={selectedTarget.serverId}
-                        machinePlatform={machineMetadataPlatformToTarget(machine?.metadata?.platform)}
-                        onCommit={(value) => {
-                            setError(false);
-                            setDirectory(value);
-                            setDirectoryEdited(true);
-                            setBrowsing(false);
-                        }}
-                        onChangeDraftPath={(value) => {
-                            setError(false);
-                            setDirectory(value);
-                            setDirectoryEdited(true);
-                        }}
-                        onRequestClose={() => setBrowsing(false)}
-                        maxHeight={300}
-                    />
-                </ItemGroup>
-            </ScrollView>
-        );
-    }
+    const { changeDirectory, clearDirectory, placementCandidates } = useRecipeFolderChoice(props.model);
     return (
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
             {/* Who runs it first, then where (lab flows `sel`): the agent's fields lead the recipe. */}
@@ -219,23 +163,23 @@ function ComposerFields(props: Readonly<{
                     />
                 )}
             </ItemGroup>
-            {/* Where the recipe runs and where its sessions are listed. A placement candidate may move it to another Machine. */}
-            <ItemGroup>
-                <Item
-                    testID="server-start-draft-machine"
-                    title={t('newSession.recipeComposerMachine')}
-                    detail={machine ? getMachineDisplayName(machine) : t('common.unavailable')}
-                    {...(selectedPlacement.machineReady ? {} : { subtitle: t('newSession.recipeComposerMachineNotReady'), subtitleLines: 0 })}
-                    showChevron={false}
+            {/* Where the recipe runs: New Session's Machine and folder chips (a saved project may move the Machine). */}
+            <View testID="server-start-draft-placement" style={styles.chips}>
+                <SessionPlacementChips
+                    serverId={selectedTarget.serverId}
+                    machine={machine}
+                    path={directory}
+                    onSelectPath={changeDirectory}
+                    onSelectNoFolder={clearDirectory}
+                    {...(placementCandidates ? { placementCandidates } : {})}
                 />
-                <Item
-                    testID="server-start-draft-directory"
-                    pressableRef={directoryFocus.attachOrigin}
-                    title={t('newSession.recipeComposerDirectory')}
-                    detail={noFolderSelected || !directory.trim() ? t('newSession.folder.noFolder') : formatPathRelativeToHome(directory, homeDir)}
-                    onPress={() => setBrowsing(true)}
-                />
-                {showFolder && folderChoosable ? (
+                {selectedPlacement.machineReady ? null : (
+                    <Text testID="server-start-draft-machine-not-ready" style={styles.note}>{t('newSession.recipeComposerMachineNotReady')}</Text>
+                )}
+            </View>
+            {/* Where its sessions are listed (the Session organization folder, not the working folder). */}
+            {showFolder ? <ItemGroup>
+                {folderChoosable ? (
                     <DropdownMenu
                         testID="server-start-draft-folder"
                         open={folderMenuOpen}
@@ -256,7 +200,7 @@ function ComposerFields(props: Readonly<{
                             organization.setFolderId(folderOptions.find((option) => option.id === id)?.folderId ?? null);
                         }}
                     />
-                ) : showFolder ? (
+                ) : (
                     <Item
                         testID="server-start-draft-folder"
                         title={t('settingsSession.sessionPlacement.title')}
@@ -265,8 +209,8 @@ function ComposerFields(props: Readonly<{
                         subtitleLines={0}
                         showChevron={false}
                     />
-                ) : null}
-            </ItemGroup>
+                )}
+            </ItemGroup> : null}
             {agentsReady ? (
                 // Tools are rarely changed for a recipe: one closed disclosure, as in the lab's "Profile and tools".
                 <ExpandableItem
@@ -318,7 +262,6 @@ const styles = StyleSheet.create((theme) => ({
     chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6, paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
     note: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
     chipError: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
-    back: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, alignItems: 'flex-start' },
     toolsGroup: { paddingTop: 0 },
     error: { marginHorizontal: theme.space.s24, marginTop: theme.space.s12, color: theme.colors.state.danger.foreground },
 }));

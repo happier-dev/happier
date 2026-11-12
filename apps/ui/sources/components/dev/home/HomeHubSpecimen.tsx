@@ -8,7 +8,7 @@ import { HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentatio
 import { AgentInput } from '@/components/sessions/agentInput/AgentInput';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
-import { LARGE_PICKER_LAYOUT } from '@/components/sessions/new/hooks/screenModel/useNewSessionInputPopovers';
+import { LARGE_PICKER_LAYOUT } from '@/components/sessions/new/placement/sessionPlacementPopovers';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { HomeWhereLine } from '@/components/homes/journeys/label/HomeWhereLine';
 import { AlreadyUseHappierTile } from '@/components/homes/journeys/alreadyUse/AlreadyUseHappierTile';

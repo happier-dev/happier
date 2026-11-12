@@ -61,7 +61,8 @@ const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovern
 const { SessionServerStartDraftComposerModal } = await import('./SessionServerStartDraftComposerModal');
 const { useNewSessionOrganizationPlacement } = await import('./organization/useNewSessionOrganizationPlacement');
 const { SessionAuthoringControls } = await import('@/components/sessions/authoring/controls/SessionAuthoringControls');
-const { PathSelectionList } = await import('./components/PathSelectionList');
+const { NewSessionPathSelectionContent } = await import('./components/NewSessionPathSelectionContent');
+const { SessionPlacementChips } = await import('./placement/SessionPlacementChips');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { Item } = await import('@/components/ui/lists/Item');
@@ -70,6 +71,12 @@ const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains
 const { createPluginActionInputSelectionHostApiHandler } = await import('@/components/plugins/surfaces/pluginActionInputSelectionHostApi');
 const { createPluginSurfaceHostApi } = await import('@/components/plugins/surfaces/createPluginSurfaceHostApi');
 const { createCanonicalPluginReactNativeHostApiAdapter } = await import('@/components/plugins/reactNative/hostApi');
+
+/** The recipe's folder is New Session's folder chip and picker (owner 2026-11-12: two chips everywhere). */
+async function chooseRecipeFolder(screen: Awaited<ReturnType<typeof renderScreen>>, path: string) {
+    await screen.pressByTestIdAsync('agent-input-path-chip');
+    await act(async () => { screen.findByType(NewSessionPathSelectionContent).props.onSubmitSelectedPath(path); });
+}
 
 function RecipeRequestingPlugin({ api, request }: Readonly<{ api: PluginUiHostApi; request(): void }>) {
     return <RoundButton title="Choose recipe" onPress={request} disabled={!api.version().methods.includes('selectActionInput')} />;
@@ -144,7 +151,9 @@ describe('mounted Session server-start recipe composer', () => {
             expect(storage.getState().accountSettingsSyncStatus.state).toBe('synced');
             expect(storage.getState().profile.id).toBe(home.accountId);
         });
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() })], true, { sourceServerId: serverId });
+        // Keep the Home-served row (its plain content mode is what admits Machine reads); only refresh its presence.
+        const served = storage.getState().machines['machine-1']!;
+        storage.getState().applyMachines([{ ...createMachineFixture({ id: 'machine-1' }), ...served, active: true, activeAt: Date.now() }], true, { sourceServerId: serverId });
         storage.getState().upsertSessionOrganizationFolderOptimistic(serverId, {
             folderId: 'intake', folderKey: 'intake', parentFolderId: null, parentFolderKey: null,
             sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1,
@@ -320,7 +329,7 @@ describe('mounted Session server-start recipe composer', () => {
                 await waitForHomeGovernance(() => expect(dialog.findAllByType(SessionAuthoringControls).length,
                     dialog.getTextContent()).toBe(2));
                 if (managed) {
-                    expect(dialog.findByTestId('server-start-draft-directory')?.props.detail).toBe('newSession.folder.noFolder');
+                    expect(dialog.findByType(SessionPlacementChips).props.path).toBe('');
                 }
                 const facts = dialog.findAllByType(SessionAuthoringControls)[0]!.props.facts;
                 expect(facts.agentPickerContext).toMatchObject({ serverId, machineId: 'machine-1' });
@@ -333,7 +342,8 @@ describe('mounted Session server-start recipe composer', () => {
                     expect(dialog.findHostByTestId(`server-start-draft-control-${field}-row`)).not.toBeNull();
                 }
                 if (!fresh) expect(dialog.findByTestId('server-start-draft-folder')).not.toBeNull();
-                expect(dialog.findByType(PathSelectionList).props).toMatchObject({ serverId, machineId: 'machine-1' });
+                await dialog.pressByTestIdAsync('agent-input-path-chip');
+                expect(dialog.findByType(NewSessionPathSelectionContent).props.machineBrowse).toEqual({ enabled: true, machineId: 'machine-1', serverId });
                 expect(dialog.findAllByType(Item).some(node => node.props.selected === true && typeof node.props.onPress === 'function')).toBe(!fresh);
                 if (fresh) {
                     await act(async () => {
@@ -450,7 +460,7 @@ describe('mounted Session server-start recipe composer', () => {
             try {
                 await dialog.update(chooser('after-remount'));
                 expect(phase).toEqual({ kind: 'choosing' });
-                await act(async () => { dialog.findByType(PathSelectionList).props.onChangeDraftPath('/repo'); });
+                await chooseRecipeFolder(dialog, '/repo');
                 await waitForHomeGovernance(() => {
                     expect(dialog.findAllByType(SessionAuthoringControls)).toHaveLength(2);
                     if (chrome.current?.kind !== 'card') throw new Error('Missing recipe footer');
@@ -495,7 +505,7 @@ describe('mounted Session server-start recipe composer', () => {
         expect(await mounted.submit()).toEqual(draft);
         await mounted.screen.unmount();
         const changed = await mount(draft);
-        await act(async () => { changed.screen.findByType(PathSelectionList).props.onChangeDraftPath('/elsewhere'); });
+        await chooseRecipeFolder(changed.screen, '/elsewhere');
         expect(await changed.submit()).toEqual({ ...draft, directory: { kind: 'path', path: '/elsewhere' } });
         await changed.screen.unmount();
         for (const existing of [false, true]) {
@@ -577,7 +587,7 @@ describe('mounted Session server-start recipe composer', () => {
         await editingFolder.screen.unmount();
 
         const editingDirectory = await mount(draft);
-        await act(async () => { editingDirectory.screen.findByType(PathSelectionList).props.onChangeDraftPath('/elsewhere'); });
+        await chooseRecipeFolder(editingDirectory.screen, '/elsewhere');
         expect(await editingDirectory.submit()).toEqual({
             ...draft, directory: { kind: 'path', path: '/elsewhere' },
         });
