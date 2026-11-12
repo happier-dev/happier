@@ -2735,12 +2735,17 @@ describe('managed acquisition durable custody', () => {
             .rejects.toMatchObject({ code: 'admission_unavailable' });
         expect(post).not.toHaveBeenCalled();
     });
-    it.each([503, 403, 409])('recovers only transient report delivery within the operation lifetime (HTTP %s)', async status => {
+    it.each([
+        { status: 503, code: 'database_transaction_timeout' },
+        { status: 503, code: 'database_connection_unavailable' },
+        { status: 403, code: 'database_connection_unavailable' },
+        { status: 409, code: 'database_connection_unavailable' },
+    ])('recovers only transient report delivery within the operation lifetime (HTTP $status/$code)', async ({ status, code }) => {
         const stop = new AbortController();
         const bound = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained' },
         } });
-        const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status, data: { error: 'database_transaction_timeout' } })
+        const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status, data: { error: code } })
             .mockResolvedValue({ status: 200, data: { machine: bound } });
         const client = createManagedMachineControllerClient({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller,
             runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry, ...accountInputs,
@@ -2755,6 +2760,25 @@ describe('managed acquisition durable custody', () => {
             await expect(report).rejects.toMatchObject({ status });
             expect(post).toHaveBeenCalledTimes(1);
         }
+    });
+    it('stops connection-unavailable report recovery when the admitted operation is cancelled', async () => {
+        const stop = new AbortController();
+        const bound = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', resource: {
+            contributionRef: input.selection.launch.provider, schemaVersion: 1, value: { id: 'retained' },
+        } });
+        const post = vi.spyOn(axios, 'post')
+            .mockResolvedValueOnce({ status: 503, data: { error: 'database_connection_unavailable' } })
+            .mockImplementation(async () => {
+                stop.abort();
+                return { status: 503, data: { error: 'database_connection_unavailable' } };
+            });
+        const client = createManagedMachineControllerClient({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller,
+            runtimeRegistry: { contributes: createResolvedContributionRegistry({}) } as ResolvedExecutablePluginRuntimeRegistry, ...accountInputs,
+        }, { requestId: 'report-cancel', signal: stop.signal }, 'machines.managed.bootstrap.retry');
+        await expect(client.row('report', { ...client.correlation(bound), result: { kind: 'bound', resource: bound.resource } }, null))
+            .rejects.toMatchObject({ code: 'managed_controller_request_failed', details: { category: 'currentness' } });
+        expect(post).toHaveBeenCalledTimes(2);
+        expect(post.mock.calls[1]![2]?.signal).toBe(stop.signal);
     });
     it('keeps cancellation from discarding a returned native identity report', async () => {
         const canceled = new AbortController();

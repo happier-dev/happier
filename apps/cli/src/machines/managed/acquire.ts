@@ -138,14 +138,15 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         catch (error) {
             const result = body && typeof body === 'object' && 'result' in body ? body.result : null;
             // Preserve the first factual report even after cancellation. Once
-            // Home has rolled back, redelivery belongs to the admitted operation
-            // lifetime, without replaying native work or a credential claim.
+            // Home is unavailable, redelivery of this repeatable fact belongs to
+            // the admitted operation lifetime, without replaying native work or
+            // a credential claim. Connection unavailability need not prove rollback.
             if (path !== '/v1/machines/managed/controller/report'
                 || !body || typeof body !== 'object' || 'credentialDelivery' in body
                 || !result || typeof result !== 'object' || !('kind' in result) || result.kind !== 'bound'
                 || !options.signal || options.signal.aborted
                 || !(error instanceof ManagedMachineControllerError) || error.status !== 503
-                || error.code !== 'database_transaction_timeout') throw error;
+                || (error.code !== 'database_transaction_timeout' && error.code !== 'database_connection_unavailable')) throw error;
             return await retryHomeOperation({ signal: options.signal,
                 pollIntervalMs: REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS },
                 () => requestOnce(path, body, headers, schema, options.signal));
