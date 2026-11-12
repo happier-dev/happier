@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { watchLoadSentinel } from './perf/load-sentinel.mjs';
+import { watchLoadSentinel, formatLoadSentinelResult } from './perf/load-sentinel.mjs';
 import { isPublicRuntimeImportDiagnostic } from './utils/proc/runtimeImportProbe.mjs';
 
 const argv = process.argv.slice(2);
@@ -42,7 +42,7 @@ if (argv.includes('--help')) {
             await postBoardEntry(board, file);
           } catch (error) { error.phase = 'board-write'; throw error; }
         },
-        onResult: result => console.log(JSON.stringify({ graph: result.graph, status: result.status, elapsedMs: result.elapsedMs })),
+        onResult: result => console.log(JSON.stringify(formatLoadSentinelResult(result))),
       });
     } catch (error) {
       if (!controller.signal.aborted) throw error;

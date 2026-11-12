@@ -359,5 +359,68 @@ test('web bundle catches Metro-only declare failure, deduplicates, and clears re
   controller.abort();
   await assert.rejects(loadWebBundle({ repoDir: fixture.root, env, signal: controller.signal }));
   await writeFile(fixture.path('stacks/main/stack.runtime.json'), '{}');
-  assert.equal((await loadWebBundle({ repoDir: fixture.root, env })).loadError.code, 'expo_unavailable');
+  const unavailable = await loadWebBundle({ repoDir: fixture.root, env });
+  assert.equal(unavailable.loadError.code, 'expo_unavailable');
+  assert.equal(unavailable.status, 'unavailable');
+  await sentinel.request();
+  assert.equal(posts.length, 2, 'endpoint outage must not announce a source break');
+});
+
+
+test('web bundle follows checkout identity without a selected stack and preserves breaks across outages', async t => {
+  const { fixture } = await fixtureGraph(t);
+  const { createServer } = await import('node:http');
+  const { once } = await import('node:events');
+  const { resolveRepoStackIdentity } = await import('../utils/stack/repo_stack_identity.mjs');
+  const { formatLoadSentinelResult } = await import('./load-sentinel.mjs');
+  const env = { HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  const identity = resolveRepoStackIdentity({ repoRoot: fixture.root, stacksStorageRoot: env.HAPPIER_STACK_STORAGE_DIR });
+  await mkdir(identity.stackBaseDir, { recursive: true });
+  const statePath = identity.runtimeStatePath;
+  let mode = 'healthy';
+  let bundles = 0;
+  const server = createServer((req, res) => {
+    if (req.url === '/status') return res.end('packager-status:running');
+    if (req.url === '/') {
+      if (mode === 'page-http') { res.writeHead(503); return res.end(); }
+      if (mode === 'missing') return res.end('<html></html>');
+      if (mode === 'origin') return res.end('<script src="http://other.invalid/index.bundle"></script>');
+      return res.end('<script src="/index.bundle?platform=web"></script>');
+    }
+    if (mode === 'bundle-http') { res.writeHead(404); return res.end(); }
+    bundles++;
+    if (mode === 'broken') { res.writeHead(500); return res.end(JSON.stringify({type: 'TransformError', filename: fixture.path('packages/cli-common/controllerErrors.ts'), lineNumber: 2})); }
+    res.end('/* healthy bundle */');
+  });
+  server.listen(0); await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const state = JSON.stringify({expo: {port: server.address().port, webEnabled: true}});
+  const posts = [], results = [];
+  const sentinel = createLoadSentinel({repoDir: fixture.root, env, graphs: sentinelGraphs().filter(g => g.id === 'ui-web-bundle'),
+    signal: t.signal, waitForQuiet: async () => {}, post: async p => posts.push(p), onResult: r => results.push(r)});
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'unavailable');
+  assert.equal(formatLoadSentinelResult(results.at(-1)).code, 'expo_unavailable');
+  assert.equal(posts.length, 0);
+  await writeFile(statePath, state);
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'passed', 'a checkout with running Expo must resolve without stack env');
+  assert.equal(bundles, 1, 'one bundle request per healthy pass');
+  for (const [nextMode, code] of [['page-http', 'expo_http_503'], ['missing', 'expo_bundle_missing'],
+    ['origin', 'expo_bundle_origin_mismatch'], ['bundle-http', 'expo_http_404']]) {
+    mode = nextMode; await sentinel.request();
+    assert.equal(results.at(-1).status, 'unavailable');
+    assert.equal(formatLoadSentinelResult(results.at(-1)).code, code);
+    assert.equal(posts.length, 0, 'endpoint/configuration failure is not a source alert');
+  }
+  mode = 'broken'; await sentinel.request();
+  assert.equal(results.at(-1).status, 'failed');
+  assert.equal(formatLoadSentinelResult(results.at(-1)).code, 'expo_http_500');
+  assert.equal(posts.length, 1); assert.match(posts[0], /URGENT/);
+  await writeFile(statePath, '{}'); await sentinel.request();
+  assert.equal(posts.length, 1, 'unavailability neither breaks nor clears source');
+  await writeFile(statePath, state); await sentinel.request();
+  assert.equal(posts.length, 1, 'the known source break remains deduplicated after an outage');
+  mode = 'healthy'; await sentinel.request();
+  assert.equal(posts.length, 2); assert.match(posts[1], /cleared/);
 });

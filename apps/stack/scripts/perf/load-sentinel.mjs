@@ -30,6 +30,11 @@ function failureIdentity(result) {
     symbol: identifier(result.loadError?.symbol ?? symbol) };
 }
 
+export function formatLoadSentinelResult(result) {
+  return { graph: result.graph, status: result.status, elapsedMs: result.elapsedMs,
+    ...(result.status === 'passed' ? {} : { code: failureIdentity(result).code }) };
+}
+
 function sourcePath(repoDir, value) {
   if (!value) return null;
   const path = relative(repoDir, resolve(repoDir, value)).replaceAll('\\', '/');
@@ -99,6 +104,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
         signal?.throwIfAborted();
         let result = await load(graph);
         await onResult(result);
+        if (result.status === 'unavailable') continue;
         const previous = failures.get(graph.id);
         if (result.status !== 'passed') {
           const { code, symbol } = failureIdentity(result);
@@ -112,6 +118,7 @@ export function createLoadSentinel({ repoDir, graphs = sentinelGraphs(), signal,
             await onResult(result);
           }
         }
+        if (result.status === 'unavailable') continue;
         if (result.status === 'passed') {
           if (previous) {
             for (const [key, details] of previous) {

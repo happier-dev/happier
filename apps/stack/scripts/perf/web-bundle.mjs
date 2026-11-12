@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { join } from 'node:path';
-import { resolveStackBaseDir } from '../utils/paths/paths.mjs';
+import { resolveStackBaseDir, getStacksStorageRoot } from '../utils/paths/paths.mjs';
+import { resolveRepoStackIdentity } from '../utils/stack/repo_stack_identity.mjs';
 import { readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
 import { resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
 
@@ -9,25 +10,31 @@ export const WEB_BUNDLE_GRAPH = Object.freeze({ id: 'ui-web-bundle', entry: 'app
 export async function loadWebBundle({ repoDir, signal, env = process.env }) {
   const started = performance.now();
   const base = { graph: WEB_BUNDLE_GRAPH.id, entry: WEB_BUNDLE_GRAPH.entry, basis: 'loaded-expo' };
-  const failed = (code, details = {}) => ({ ...base, status: 'failed', elapsedMs: performance.now() - started,
-    loadError: { name: 'TransformError', code, message: '' }, ...details });
+  const failed = (code, details = {}, status = 'failed') => ({ ...base, status, elapsedMs: performance.now() - started,
+    loadError: { name: status === 'failed' ? 'TransformError' : 'EndpointUnavailable', code, message: '' }, ...details });
   try {
-    const { baseDir } = resolveStackBaseDir(null, env);
+    // The wrapper need not select a stack. Follow the checkout's existing
+    // identity rather than silently probing main in that cold entry state.
+    const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim() || resolveRepoStackIdentity({
+      repoRoot: repoDir, stacksStorageRoot: getStacksStorageRoot(env), createIfMissing: false,
+    }).stackName;
+    const { baseDir } = resolveStackBaseDir(stackName, env);
     const runtimeState = await readStackRuntimeStateFile(join(baseDir, 'stack.runtime.json'));
     const endpoint = await resolveVerifiedStackUiEndpoint({ baseDir, runtimeState,
       expectedProjectDir: join(repoDir, 'apps/ui'), requireExpoOwnership: false });
-    if (!endpoint.running || !endpoint.url) return failed('expo_unavailable');
+    if (!endpoint.running || !endpoint.url) return failed('expo_unavailable', {}, 'unavailable');
     const page = await fetch(endpoint.url, { signal });
-    if (!page.ok) { await page.body?.cancel(); return failed(`expo_http_${page.status}`); }
+    if (!page.ok) { await page.body?.cancel(); return failed(`expo_http_${page.status}`, {}, 'unavailable'); }
     const html = await page.text();
     const src = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)]
       .map(match => match[1].replaceAll('&amp;', '&')).find(value => value.split('?')[0].endsWith('.bundle'));
-    if (!src) return failed('expo_bundle_missing');
+    if (!src) return failed('expo_bundle_missing', {}, 'unavailable');
     const url = new URL(src, endpoint.url);
     // The page chooses the entry/options, but the check stays on its Expo host.
-    if (url.origin !== new URL(endpoint.url).origin) return failed('expo_bundle_origin_mismatch');
+    if (url.origin !== new URL(endpoint.url).origin) return failed('expo_bundle_origin_mismatch', {}, 'unavailable');
     const response = await fetch(url, { signal });
     if (!response.ok) {
+      if (response.status < 500) { await response.body?.cancel(); return failed(`expo_http_${response.status}`, {}, 'unavailable'); }
       const error = await response.json().catch(() => null);
       const detail = error?.errors?.[0];
       const filename = error?.filename ?? detail?.filename;
@@ -47,6 +54,6 @@ export async function loadWebBundle({ repoDir, signal, env = process.env }) {
     return { ...base, status: 'passed', elapsedMs: performance.now() - started };
   } catch (error) {
     if (signal?.aborted) throw error;
-    return failed('expo_request_failed');
+    return failed('expo_request_failed', {}, 'unavailable');
   }
 }
