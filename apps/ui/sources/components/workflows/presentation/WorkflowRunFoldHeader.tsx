@@ -13,7 +13,7 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { WorkflowPurposeGlyph } from './WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from './WorkflowBuiltinMark';
 import type { WorkflowTriggerRunFoldPresentation } from './workflowTriggerRunFoldPresentation';
 
 const HOST: HappierWorkflowRunFoldHeaderHost = {
@@ -37,10 +37,10 @@ export function WorkflowRunFoldHeader(props: Readonly<{
     space: theme.space,
     borderRadius: theme.borderRadius,
   }), [theme]);
-  const purpose = props.presentation.purpose;
+  const icon = props.presentation.icon;
   return <HappierWorkflowRunFoldHeader {...props} theme={foldTheme} host={HOST}
     openLabel={t('workflows.run.open')}
-    leading={purpose
-      ? <WorkflowPurposeGlyph purpose={purpose} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+    leading={icon
+      ? <WorkflowBuiltinMark icon={icon} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
       : <Icon name="tree-structure" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />} />;
 }

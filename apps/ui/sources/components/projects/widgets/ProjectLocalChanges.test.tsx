@@ -504,7 +504,7 @@ describe('Project Local Changes', () => {
         const screen = await mount('/repo', 'project_checkouts');
         const text = screen.getTextContent();
         expect(text).not.toContain('machine-not-in-inventory-4d2e');
-        expect(text).toMatch(/machine\.unlistedMachine|Unlisted machine/);
+        expect(text).toMatch(/machine\.unlistedMachine|Removed machine/);
     });
     it('publishes Clear only for atomic selection and clears the real shared checkout selection', async () => {
         const scope = { serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo' };

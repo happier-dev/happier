@@ -401,7 +401,8 @@ describe('WorkflowsColumn', () => {
             ] } });
             return answer(actionId, input);
         });
-        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        // The column as the page (no library home beside it) owns the space and its filter (owner 2026-11-12).
+        const screen = await renderScreen(<WorkflowsColumn surface="page" />, { wrapper: TestAuth });
         await vi.waitFor(() => expect(screen.findHostByTestId('workflows-column:library:quiet')).not.toBeNull());
         await vi.waitFor(() => expect(executeMock.mock.calls.some(call => call[0] === 'workflow.run.summaries')).toBe(true));
         const readCount = () => executeMock.mock.calls.filter(call => call[0] === 'workflow.definition.list' || call[0] === 'workflow.run.summaries').length;
@@ -769,7 +770,14 @@ describe('WorkflowsColumn', () => {
 
     it('switches Definitions and Runs inside one list whose switch stays put, with the spaces only over definitions (R8-7)', async () => {
         answerLists();
-        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        // Beside the library home the column is navigation: its switch and rows, no second scope (owner 2026-11-12).
+        const beside = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        expect(beside.findHostByTestId('workflows-column:view:runs')).not.toBeNull();
+        expect(beside.findAllHostsByTestId('workflows-column-space-title')).toHaveLength(0);
+        expect(beside.findAllHostsByTestId('workflows-column-space-filter-open')).toHaveLength(0);
+        await beside.unmount();
+        const screen = await renderScreen(<WorkflowsColumn surface="page" />, { wrapper: TestAuth });
         await act(async () => { await Promise.resolve(); await Promise.resolve(); });
         const list = screen.findHostByTestId('workflows-column:list');
         const tabs = screen.findHostByTestId('workflows-column:view:runs');
@@ -944,7 +952,8 @@ describe('WorkflowsColumn', () => {
             expect(screen.findAllHostsByTestId(`workflow-builtins:${entry.id}:session`)).toHaveLength(0);
             const mark = screen.findAll(node => node.props.testID === `workflows-column:builtin:${entry.id}`)[0]!;
             const marks = mark.findAll(node => typeof node.props.name === 'string').map(node => node.props.name);
-            const expectedMark = { goal: 'target', review: 'shield-check', plan: 'list-checks', pull_request: 'git-pull-request' }[entry.purpose];
+            // Each built-in names its own mark (owner 2026-11-12); the host draws it as that glyph.
+            const expectedMark = entry.icon;
             expect(marks).toContain(expectedMark);
             await screen.pressByTestIdAsync(`workflows-column:builtin:${entry.id}`);
             expect(routerPush).toHaveBeenLastCalledWith(createWorkflowDefinitionRoute(entry.id));

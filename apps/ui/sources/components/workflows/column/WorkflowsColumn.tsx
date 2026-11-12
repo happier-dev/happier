@@ -43,7 +43,7 @@ import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
@@ -178,6 +178,9 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     const definitions = props.view === 'definitions';
     const libraryView = useWorkflowLibraryView(presented && definitions);
     const header = useWorkflowLibrarySpaceHeader(libraryView, 'workflows-column-space');
+    // Beside the page the column is navigation (owner 2026-11-12, anatomy "collection page home"): the library home's
+    // toolbar owns the one scope, filter and search over the same draft, so the column carries no second copy.
+    const spaceControls = definitions && props.surface !== 'plane';
     const { theme } = useUnistyles();
     const viewSwitch = <SegmentedTabBar<WorkflowsColumnView>
         testIDPrefix="workflows-column:view"
@@ -195,16 +198,16 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
         testID="workflows-column:list"
         surface={props.surface}
         title={t('workflows.title')}
-        {...(definitions ? { titleControl: header.titleControl } : {})}
+        {...(spaceControls ? { titleControl: header.titleControl } : {})}
         strip={<>
             <View testID="workflows-column:view-band" style={styles.viewBand}>
-                <View style={styles.viewBandLead}>{definitions ? header.strip : null}</View>
+                <View style={styles.viewBandLead}>{spaceControls ? header.strip : null}</View>
                 {viewSwitch}
             </View>
-            {definitions ? header.conditionRow : null}
-            {header.overlays}
+            {spaceControls ? header.conditionRow : null}
+            {spaceControls ? header.overlays : null}
         </>}
-        headerAction={<View style={styles.headerActions}>{definitions ? header.filterButton : null}{props.headerAction}</View>}
+        headerAction={<View style={styles.headerActions}>{spaceControls ? header.filterButton : null}{props.headerAction}</View>}
         scrollContent={definitions ? <ItemList presentation="grouped" style={styles.definitionsList}>
             <WorkflowsColumnDefinitions libraryView={libraryView} />
         </ItemList> : <SessionsList fixedShow="runs" pathname={props.pathname} />}
@@ -401,7 +404,7 @@ function ColumnBuiltins(props: Readonly<{ selectedDefinitionId: string | null; i
             const href = createWorkflowDefinitionRoute(entry.id);
             return <CollectionNavigationRow key={entry.id} href={href} testID={`workflows-column:builtin:${entry.id}`}
                 rowRole="item"
-                title={tLoose(entry.titleKey)} icon={<WorkflowPurposeGlyph purpose={entry.purpose} />} selected={props.selectedDefinitionId === entry.id}
+                title={tLoose(entry.titleKey)} icon={<WorkflowBuiltinMark icon={entry.icon} />} selected={props.selectedDefinitionId === entry.id}
                 onPress={() => router.push(href as never)} />;
         })}
     </>;

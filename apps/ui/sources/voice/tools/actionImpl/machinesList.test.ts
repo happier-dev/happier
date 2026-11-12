@@ -98,5 +98,5 @@ it('says which input machines carry a real name, so a checkout on any other mach
     expect(byId.get('named')).toMatchObject({ named: true, label: 'Build box · tester.local' });
     expect(byId.get('same-name')).toMatchObject({ named: true, label: 'Build box · other.local' });
     for (const id of ['runner', 'removed', 'hydrating']) expect(byId.get(id), id).toMatchObject({ named: false });
-    expect(result.unlistedLabel).toBe('Unlisted machine');
+    expect(result.unlistedLabel).toBe('Removed machine');
 });

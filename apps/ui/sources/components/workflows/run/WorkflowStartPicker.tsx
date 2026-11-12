@@ -16,7 +16,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from '../library/workflowLibraryReads';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle, resolveWorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
-import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -199,7 +199,7 @@ export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.Reac
             return {
                 // An unavailable pattern says why in place of what it does; the reason is the line that matters here.
                 id: entry.id, label: entry.name,
-                icon: builtin ? <WorkflowPurposeGlyph purpose={builtin.purpose} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined,
+                icon: builtin ? <WorkflowBuiltinMark icon={builtin.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined,
                 subtitle: needsSession ? t('workflows.start.needsSession') : entry.description || asks(entry.definition, entry.id),
                 testID: `workflow-choice:${entry.id}`,
                 detailContent: () => <WorkflowStartPreview selection={entry} />,

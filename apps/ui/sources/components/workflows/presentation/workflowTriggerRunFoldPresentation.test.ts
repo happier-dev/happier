@@ -19,7 +19,7 @@ const settled = (result: unknown, extra: Partial<Parameters<typeof describeWorkf
 describe('trigger-run fold presentation (07 S15)', () => {
     it('maps each Keep going stop arm to its neutral outcome', () => {
         expect(settled({ kind: 'stop_condition', arm: 0 })).toMatchObject({ verb: 'workflows.triggerRunFold.keptGoing',
-            details: ['workflows.triggerRunFold.turns:{"count":3}', 'workflows.triggerRunFold.goalReached'], purpose: 'goal',
+            details: ['workflows.triggerRunFold.turns:{"count":3}', 'workflows.triggerRunFold.goalReached'], icon: 'target',
             meta: 'workflows.triggerRunFold.meta:{"workflow":"workflows.builtins.keepGoing.title","trigger":"workflows.triggerRunFold.trigger.turnEnds"}' });
         expect(settled({ kind: 'stop_condition', arm: 1 }).details[1]).toBe('workflows.triggerRunFold.outOfBudget');
         expect(settled({ kind: 'stop_condition', arm: 2 }, { inputs: { strikes: 2 } }).details[1])
@@ -34,14 +34,14 @@ describe('trigger-run fold presentation (07 S15)', () => {
         const review = (result: unknown, inputs: Record<string, unknown> = { apply: 'fix' }) => settled(result,
             { catalogRef: 'builtin:review-and-converge', turnCount: 2, inputs });
         expect(review({ kind: 'stop_condition', arm: 0 })).toMatchObject({ verb: 'workflows.triggerRunFold.reviewed',
-            details: ['workflows.triggerRunFold.convergedInRounds:{"count":3}'], purpose: 'review' });
+            details: ['workflows.triggerRunFold.convergedInRounds:{"count":3}'], icon: 'shield-check' });
         expect(review({ kind: 'stop_condition', arm: 1 }, { apply: 'report' }).details).toEqual(['workflows.triggerRunFold.findingsReported']);
         expect(review({ kind: 'exhausted', rounds: 3 }).details).toEqual(['workflows.triggerRunFold.reviewDidNotConverge:{"count":3}']);
     });
 
     it('names any other workflow by its own title and reads live or unread runs from the run state word', () => {
         const custom = settled(undefined, { catalogRef: null, workflowTitle: 'Nightly triage', run: { state: 'running', workflowCustodyState: null } });
-        expect(custom).toMatchObject({ verb: 'Nightly triage', purpose: null });
+        expect(custom).toMatchObject({ verb: 'Nightly triage', icon: null });
         expect(custom.details).toEqual(['workflows.triggerRunFold.turns:{"count":3}', 'workflows.runState.running']);
         // No turns yet is no fact: a just-started fold says only its state, in the same anatomy (M8).
         expect(settled(undefined, { turnCount: 0, run: { state: 'running', workflowCustodyState: null } }).details).toEqual(['workflows.runState.running']);

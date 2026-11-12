@@ -12479,6 +12479,7 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
         approvalHelpBody: '“Preguntar primero” muestra una confirmación antes de que esta acción se ejecute desde esa superficie. “Permitido” deja que la acción se ejecute desde esa superficie sin pedir aprobación.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Pregunta primero porque “${setting}” está activado en los ajustes de control de código.`,
+        managedTargetPlacementAsks: 'Los agentes preguntan primero antes de colocar una sesión en uno de tus contenedores. Elige Permitido para que lo hagan sin preguntar.',
         loosening: {
             title: 'Ahora los agentes pueden relajar sus propios límites',
             body: 'Con esto permitido, un agente puede cambiar los ajustes de aprobación, el acceso de administrador y el aislamiento de agentes sin preguntarte, así que también puede relajar sus otros límites.',

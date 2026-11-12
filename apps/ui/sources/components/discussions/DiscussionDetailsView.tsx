@@ -154,7 +154,7 @@ import { DiscussionMessageAttachments, type DiscussionAttachmentReader } from '@
 import { DiscussionDeliveryNotice } from './DiscussionDeliveryNotice';
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance';
-import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
+import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels, type DiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
 import { DiscussionDetailsPanel } from './DiscussionDetailsPanel';
 import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './discussionComposerContextItems';
 import { useDiscussionDraft } from './useDiscussionDraft';
@@ -375,6 +375,8 @@ type DiscussionSurfacePresentation = Readonly<{
     content: React.ReactNode;
     banners: React.ReactNode;
     composer: React.ComponentProps<typeof DiscussionDraftComposer> | null;
+    /** A draft's rail panels (F11): the rail stands beside the draft, so the first send does not move the layout. */
+    panels?: DiscussionRightSidebarPanels;
 }>;
 
 /** One frame and editor seat for the draft and its confirmed thread. */
@@ -518,6 +520,18 @@ function useNewDiscussionPresentation(props: Readonly<{ target: Extract<Discussi
             isSending: mutation?.status === 'sending' || mutation?.status === 'checking',
             onSend: (content, attachments) => void submit(content, attachments),
             draftAddress, invited: composerInvited, contextItems },
+        // What each rail tab holds before the first message: who is invited, that agents join when
+        // mentioned, and that the Discussion's own actions come once it starts.
+        panels: {
+            // Invite stays the header's one control; the panel says who is in and who reads it.
+            discussionParticipants: <EmptyState testID="session-discussion-draft-people" layout="inline"
+                title={rosterLine} subtitle={t('session.collaboration.discussion.participants.privateNote')} />,
+            discussionAgents: <EmptyState testID="session-discussion-draft-agents" layout="inline"
+                title={t('session.collaboration.discussion.participants.noAgents')}
+                subtitle={t('session.collaboration.discussion.composer.mentionHint')} />,
+            discussionDetails: <EmptyState testID="session-discussion-draft-details" layout="inline"
+                title={t('session.collaboration.discussion.draftDetails')} />,
+        },
     };
 }
 
@@ -1259,7 +1273,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
             canManage={canManageParticipants}
         />,
         discussionDetails: <DiscussionDetailsPanel actions={lifecycleActions} />,
-    } : null);
+    } : railHosted ? props.draftPresentation?.panels ?? null : null);
     if (props.draftPresentation) return <DiscussionSurfaceFrame {...props.draftPresentation} drafting
         dataKey={dataKey} eligibleMessageIds={[]} />;
     if (accessRevoked) {

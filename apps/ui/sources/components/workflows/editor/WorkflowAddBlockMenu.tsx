@@ -26,7 +26,7 @@ import {
     type WorkflowReferenceOption,
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
-import { WorkflowPurposeGlyph } from '@/components/workflows/presentation/WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from '@/components/workflows/presentation/WorkflowBuiltinMark';
 import { workflowEditorStyles } from './workflowEditorStyles';
 
 /** What the Add menu asks its list to insert: a structure or Agent step by kind, or a step-kind seed. */
@@ -175,9 +175,9 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             return {
                 id: optionId(`workflow:${option.ref}`),
                 label: option.title,
-                icon: () => option.purpose === undefined
+                icon: () => option.icon === undefined
                     ? <Icon name={WORKFLOW_BLOCK_KIND_GLYPH.workflow} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                    : <WorkflowPurposeGlyph purpose={option.purpose} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
+                    : <WorkflowBuiltinMark icon={option.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
                 ...(option.unavailableReason !== undefined ? { subtitle: option.unavailableReason, disabled: true } : self
                     ? { subtitle: t('workflows.page.blocks.selfRef', { workflow: option.title }), disabled: true }
                     : {}),

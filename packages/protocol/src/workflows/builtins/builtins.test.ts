@@ -17,6 +17,13 @@ function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
 }
 
 describe('built-in workflow catalog', () => {
+  // F5 (owner 2026-11-12): each built-in carries its own presentation mark; several share a purpose.
+  it('gives every built-in its own mark', () => {
+    const icons = catalog.getBuiltinWorkflowCatalogV1().map((entry) => entry.icon);
+    expect(icons.every((icon) => typeof icon === 'string' && icon.length > 0)).toBe(true);
+    expect(new Set(icons).size).toBe(icons.length);
+  });
+
   it('offers independent implementation worktrees followed by read-only human review', () => {
     const definition = catalog.resolveBuiltinWorkflowDefinitionV1('parallel-implementations')?.definition;
     expect(definition).toBeDefined();

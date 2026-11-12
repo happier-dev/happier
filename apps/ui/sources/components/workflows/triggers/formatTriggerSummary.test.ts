@@ -104,10 +104,21 @@ describe('formatTriggerSummary', () => {
         expect(formatTriggerSummary(cron('30 2 * * 3'))).toBe(`workflows.triggers.summary.weeklyAt(day=Wednesday,time=${formatClockTime({ hour: 2, minute: 30 })})`);
         // Sunday may be written 0 or 7.
         expect(formatTriggerSummary(cron('0 18 * * 7'))).toBe(`workflows.triggers.summary.weeklyAt(day=Sunday,time=${formatClockTime({ hour: 18, minute: 0 })})`);
-        // Out-of-range, stepped and day-of-month crons are never guessed at.
-        for (const expression of ['*/5 * * * *', '0 25 * * *', '0 9 1 * *']) {
+        // Out-of-range, stepped and mixed crons are never guessed at.
+        for (const expression of ['*/5 * * * *', '0 25 * * *', '0 9 1 * 1', '0 9 31 2 *']) {
             expect(formatTriggerSummary(cron(expression))).toBe(`workflows.triggers.summary.cron(expression=${expression})`);
         }
+    });
+    // F5 (owner 18:55Z): the yearly, monthly and hourly shapes read as a sentence, with the expression after it.
+    it('reads yearly, monthly and hourly crons as a sentence and keeps the expression as secondary', () => {
+        const yearly = formatTriggerSummary(cron('0 0 1 1 *'));
+        expect(yearly).toMatch(/^workflows\.triggers\.summary\.withExpression\(sentence=workflows\.triggers\.summary\.yearlyAt\(date=.*January.*,time=/);
+        expect(yearly).toContain(`time=${formatClockTime({ hour: 0, minute: 0 })}`);
+        expect(yearly).toContain('expression=0 0 1 1 *');
+        expect(formatTriggerSummary(cron('30 9 15 * *'))).toBe('workflows.triggers.summary.withExpression(sentence='
+            + `workflows.triggers.summary.monthlyAt(day=15,time=${formatClockTime({ hour: 9, minute: 30 })}),expression=30 9 15 * *)`);
+        expect(formatTriggerSummary(cron('5 * * * *'))).toBe('workflows.triggers.summary.withExpression(sentence='
+            + 'workflows.triggers.summary.hourlyAt(minute=05),expression=5 * * * *)');
     });
 
     it('names an interval in hours when it is whole hours', () => {

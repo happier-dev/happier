@@ -12596,6 +12596,7 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
         approvalHelpBody: '“Perguntar primeiro” mostra uma confirmação antes que esta ação seja executada nessa superfície. “Permitido” deixa a ação executar nessa superfície sem pedir aprovação.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Pergunta primeiro porque “${setting}” está ativado nas configurações de controle de código.`,
+        managedTargetPlacementAsks: 'Os agentes perguntam primeiro antes de colocar uma sessão num dos seus contêineres. Escolha Permitido para que façam isso sem perguntar.',
         loosening: {
             title: 'Agora os agentes podem afrouxar os próprios limites',
             body: 'Com isto permitido, um agente pode alterar as configurações de aprovação, o acesso de administrador e o isolamento de agentes sem perguntar, então também pode afrouxar seus outros limites.',

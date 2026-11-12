@@ -12700,6 +12700,7 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
         approvalHelpBody: "“Chiedi prima” mostra una conferma prima che questa azione venga eseguita da quella superficie. “Consentito” permette l’esecuzione da quella superficie senza richiesta di approvazione.",
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Chiede prima perché “${setting}” è attivo nelle impostazioni del controllo del codice sorgente.`,
+        managedTargetPlacementAsks: 'Gli agenti chiedono prima di collocare una sessione in uno dei tuoi container. Scegli Consentito per farlo senza chiedere.',
         loosening: {
             title: 'Ora gli agenti possono allentare i propri limiti',
             body: 'Con questo consentito, un agente può cambiare le impostazioni di approvazione, l’accesso da amministratore e l’isolamento degli agenti senza chiedertelo, e quindi allentare anche gli altri suoi limiti.',

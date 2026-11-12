@@ -2465,6 +2465,7 @@ const connectedServicesSetupTranslations = { 'zh-Hant': {
         keyInUseHere: '此處正在使用',
         keyUsedElsewhereForThis: '已在別處用於此項',
         keySearch: '搜尋金鑰',
+        signInOn: '登入位置',
         accountNew: '新增帳戶',
         accountSaved: '你的帳戶',
         keyTitle: '新增金鑰',
@@ -11094,7 +11095,7 @@ const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it
         participantHeld: ({ participant }: { participant: string }) => `${participant}已暫緩。目前尚不支援來自其他帳戶的請求。`,
         participantPending: ({ participant }: { participant: string }) => `你的請求正在等待傳送給 ${participant}。`,
         listUnavailable: "討論無法使用。", featureUnavailable: "此 Home 尚未啟用對話。", bindingUnavailable: "請重新登入此 Home 以檢視對話。", scopeMismatch: "這些對話屬於此 Home 上的其他帳戶。", modeMismatch: "內容與工作階段的加密模式不符。請重試，或請工作階段管理員檢查存取權。",  title: "討論", newDiscussion: "新討論", create: '建立對話', titlePlaceholder: '對話標題', messagePlaceholder: '撰寫訊息…', active: '進行中', activeDisclosure: '顯示進行中的對話', archived: '已封存', archivedDisclosure: '顯示已封存的對話', emptyActive: '還沒有進行中的對話。', emptyArchived: '沒有已封存的對話。', loading: '正在載入對話…', loadError: '無法載入對話。', retry: '再試一次', checking: '正在檢查更新…', deliveryUnknown: '傳送結果未知 — 重試前請先檢查。', locked: '你可以閱讀此對話，但不能發佈訊息。', offline: '你目前離線。重新連線後即可繼續。', unavailable: '此對話無法使用。', unreadCount: ({ count }) => `${count.toLocaleString()} 則未讀`, unreadMentionCount: ({ count }) => `${count.toLocaleString()} 則未讀提及`,
-        mentioned: '有人提到你', unreadConversations: '未讀對話', messageCount: ({ count }) => `${count.toLocaleString()} 則訊息`, viaAgent: '由 Agent 傳送', externalSender: 'Happier 以外的人', viaExternal: ({ conversation }) => `來自 ${conversation}`, outwardReply: ({ conversation }) => `你的回覆也會傳送到 Happier 以外的 ${conversation}。`, collaborator: '協作者', contentUnavailable: '訊息無法使用', rename: '重新命名討論', archive: '封存討論', restore: '還原討論', selection: { copy: '複製', askAgent: '詢問 Agent', sendToSession: '傳送至工作階段', handoffError: '無法將所選訊息加入工作階段編輯器。' }, titleRequired: '新增標題以開始此對話。', encryptedTitle: '加密對話', rowOnDoc: "關於文件", rowFreshOpinions: ({ count }) => `獨立意見 · ${`${count.toLocaleString()} 則回答`}`, rowFreshOpinionsSynthesis: ({ count }) => `獨立意見 · ${`${count.toLocaleString()} 則回答`}和一份綜合`, rowAnswerReviewSettled: '回答 + 審閱 · 已完成', rowOpenComments: ({ count }) => `${count.toLocaleString()} 則未解決的留言`, archivedNotice: '此對話已封存。', sessionArchived: '此工作階段已封存。', postDenied: '你已無法在此工作階段中發佈訊息。', invalidMention: '你提及的人已無法讀取此工作階段。', invalidContent: '此訊息無法以目前內容傳送。它可能為空或過長。', idempotencyConflict: '此識別碼已用於傳送另一則不同的訊息。', sendFailed: '無法傳送此訊息。', dismiss: '關閉', loadMore: '載入更多對話' } } };
+        mentioned: '有人提到你', unreadConversations: '未讀對話', messageCount: ({ count }) => `${count.toLocaleString()} 則訊息`, viaAgent: '由 Agent 傳送', externalSender: 'Happier 以外的人', viaExternal: ({ conversation }) => `來自 ${conversation}`, outwardReply: ({ conversation }) => `你的回覆也會傳送到 Happier 以外的 ${conversation}。`, collaborator: '協作者', contentUnavailable: '訊息無法使用', rename: '重新命名討論', archive: '封存討論', restore: '還原討論', draftDetails: "開始後即可重新命名、封存或儲存為模式。", selection: { copy: '複製', askAgent: '詢問 Agent', sendToSession: '傳送至工作階段', handoffError: '無法將所選訊息加入工作階段編輯器。' }, titleRequired: '新增標題以開始此對話。', encryptedTitle: '加密對話', rowOnDoc: "關於文件", rowFreshOpinions: ({ count }) => `獨立意見 · ${`${count.toLocaleString()} 則回答`}`, rowFreshOpinionsSynthesis: ({ count }) => `獨立意見 · ${`${count.toLocaleString()} 則回答`}和一份綜合`, rowAnswerReviewSettled: '回答 + 審閱 · 已完成', rowOpenComments: ({ count }) => `${count.toLocaleString()} 則未解決的留言`, archivedNotice: '此對話已封存。', sessionArchived: '此工作階段已封存。', postDenied: '你已無法在此工作階段中發佈訊息。', invalidMention: '你提及的人已無法讀取此工作階段。', invalidContent: '此訊息無法以目前內容傳送。它可能為空或過長。', idempotencyConflict: '此識別碼已用於傳送另一則不同的訊息。', sendFailed: '無法傳送此訊息。', dismiss: '關閉', loadMore: '載入更多對話' } } };
 
 return { sessionCollaborationTranslations };
 })();
@@ -16292,6 +16293,10 @@ const zhHant: WorkflowTriggersCopy = {
         everyDayAt: ({ time }) => `每天 ${time}`,
         weekdaysAt: ({ time }) => `平日 ${time}`,
         weeklyAt: ({ day, time }) => `每${day} ${time}`,
+        hourlyAt: ({ minute }) => `每小時第 :${minute} 分`,
+        monthlyAt: ({ day, time }) => `每月${day}日 ${time}`,
+        yearlyAt: ({ date, time }) => `每年${date} ${time}`,
+        withExpression: ({ sentence, expression }) => `${sentence} · ${expression}`,
         everyMinutes: ({ count }) => (count === 1 ? '每分鐘' : `每 ${count} 分鐘`),
         everyHours: ({ count }) => (count === 1 ? '每小時' : `每 ${count} 小時`),
         cron: ({ expression }) => `依排程 · ${expression}`,

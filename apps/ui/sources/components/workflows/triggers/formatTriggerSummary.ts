@@ -11,7 +11,7 @@ import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations
 import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-import { formatClockTime, parseSimpleSchedule, readOnceScheduleState } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, parseCalendarSchedule, parseSimpleSchedule, readOnceScheduleState } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -113,12 +113,21 @@ export function weekdayName(day: number): string {
 }
 
 /**
- * The common daily, weekday and weekly crons read as a sentence; anything else shows its
- * expression rather than a guess at what it means.
+ * The common daily, weekday and weekly crons read as a sentence; hourly, monthly and yearly ones read as a sentence
+ * followed by their expression (F5); anything else shows its expression rather than a guess at what it means.
  */
 function formatCron(expression: string): string {
     const simple = parseSimpleSchedule(expression);
-    if (simple === null) return t('workflows.triggers.summary.cron', { expression: expression.trim() });
+    if (simple === null) {
+        const calendar = parseCalendarSchedule(expression);
+        if (calendar === null) return t('workflows.triggers.summary.cron', { expression: expression.trim() });
+        const sentence = calendar.repeat === 'hourly'
+            ? t('workflows.triggers.summary.hourlyAt', { minute: String(calendar.minute).padStart(2, '0') })
+            : calendar.repeat === 'monthly'
+                ? t('workflows.triggers.summary.monthlyAt', { day: calendar.day, time: formatClockTime(calendar) })
+                : t('workflows.triggers.summary.yearlyAt', { date: formatCalendarDate(calendar), time: formatClockTime(calendar) });
+        return t('workflows.triggers.summary.withExpression', { sentence, expression: expression.trim() });
+    }
     const time = formatClockTime(simple);
     switch (simple.repeat) {
         case 'daily':

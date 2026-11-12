@@ -14344,6 +14344,7 @@ const enSettingsActions = {
     '"Ask first" shows a confirmation before this action runs from that surface. "Allowed" lets the action run from that surface without an approval prompt.',
   sourceControlAsks: ({ setting }: { setting: string }) =>
     `Asks first because “${setting}” is on in Source Control settings.`,
+  managedTargetPlacementAsks: 'Agents ask first before placing a session in one of your containers. Choose Allowed to let them do it without asking.',
   loosening: {
     title: 'Agents can now loosen their own limits',
     body: 'With this allowed, an agent can change approval settings, administrator access and agent isolation without asking you, so it can loosen its other limits too.',

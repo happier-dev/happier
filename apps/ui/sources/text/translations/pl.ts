@@ -12308,6 +12308,7 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
         approvalHelpBody: '„Najpierw zapytaj” pokazuje potwierdzenie przed uruchomieniem tej akcji z tej powierzchni. „Dozwolone” pozwala uruchamiać akcję z tej powierzchni bez prośby o zatwierdzenie.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Najpierw pyta, bo w ustawieniach kontroli wersji włączono „${setting}”.`,
+        managedTargetPlacementAsks: 'Agenci najpierw pytają, zanim umieszczą sesję w jednym z Twoich kontenerów. Wybierz „Dozwolone”, aby robili to bez pytania.',
         loosening: {
             title: 'Agenci mogą teraz luzować własne ograniczenia',
             body: 'Gdy to jest dozwolone, agent może bez pytania zmienić ustawienia zatwierdzania, dostęp administratora i izolację agentów, a więc poluzować też inne swoje ograniczenia.',

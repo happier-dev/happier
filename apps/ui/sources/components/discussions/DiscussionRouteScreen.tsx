@@ -169,7 +169,8 @@ export function DiscussionRouteScreen(props: Readonly<{
                         : <SurfaceStateCard kind="unavailable" title={t('sessionConversation.discussion.unavailableTitle')} />
             ) : (
                 <DiscussionPaneHost discussionId={kind === 'discussion' ? discussionId! : undefined} scope={binding?.scope ?? null}
-                    paneEnabled={deviceType !== 'phone' && kind === 'discussion'}
+                    // A draft keeps the same rail (draft panels), so its first send does not shift the layout (F11).
+                    paneEnabled={deviceType !== 'phone' && (kind === 'discussion' || kind === 'new')}
                     phoneSurface={phoneSurfaces && kind === 'discussion' ? mobileSurface : null}
                     onSurfaceChange={surface => router.setParams({ mobileSurface: surface === 'chat' ? undefined : surface })}
                     onBackToThread={() => router.setParams({ mobileSurface: undefined })}

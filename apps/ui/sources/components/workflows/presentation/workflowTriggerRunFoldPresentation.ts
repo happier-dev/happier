@@ -1,6 +1,6 @@
 import {
   getBuiltinWorkflowCatalogV1,
-  type BuiltinWorkflowPurposeV1,
+  type BuiltinWorkflowIconV1,
 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type {
   WorkflowRunStateV1,
@@ -40,7 +40,8 @@ export type WorkflowTriggerRunFoldPresentation = Readonly<{
   details: readonly string[];
   /** The trailing fact: the workflow and its trigger ("Keep going until done · on turn end"). */
   meta: string | null;
-  purpose: BuiltinWorkflowPurposeV1 | null;
+  /** The built-in's own mark; `null` for the person's own workflows. */
+  icon: BuiltinWorkflowIconV1 | null;
   /** The workflow's own name ("Review & converge"), when known. */
   workflowName: string | null;
   /** What started the run ("on turn end"), when it was a trigger. */
@@ -152,7 +153,7 @@ export function describeWorkflowTriggerRunFold(
       // A round limit is counted in rounds alone; turns beside it read as a second, disagreeing count.
       details: outcome?.kind === 'exhausted' ? line(said) : line(turns, said),
       meta,
-      purpose: entry.purpose,
+      icon: entry.icon,
       workflowName,
       trigger,
     };
@@ -177,7 +178,7 @@ export function describeWorkflowTriggerRunFold(
       verb: t('workflows.triggerRunFold.reviewed'),
       details: said ? [said] : [],
       meta,
-      purpose: entry.purpose,
+      icon: entry.icon,
       workflowName,
       trigger,
     };
@@ -186,7 +187,7 @@ export function describeWorkflowTriggerRunFold(
     verb: workflowName ?? t('workflows.run.untitled'),
     details: line(turns, stateWord),
     meta: trigger,
-    purpose: entry?.purpose ?? null,
+    icon: entry?.icon ?? null,
     workflowName,
     trigger,
   };

@@ -964,9 +964,9 @@ describe('workflow library page anatomy', () => {
         </AppShellColumnContext.Provider>, { wrapper: Wrapper });
         await vi.waitFor(() => expect(screen.findHostByTestId(`workflows-home:row:${definitionId}`)).not.toBeNull());
         expect(screen.findHostByTestId('workflows-home:idle')).toBeNull();
-        // F5 (WHOLE-PAGE-ACCEPT-1112): the column's scope and search narrow these rows; the page draws no second pair.
-        expect(screen.findHostByTestId('workflows-home:search')).toBeNull();
-        expect(screen.findHostByTestId('workflows-home:scope-line')).toBeNull();
+        // F5 (owner 2026-11-12): the page's toolbar owns the one scope and search beside the column.
+        expect(screen.findHostByTestId('workflows-home:search')).not.toBeNull();
+        expect(screen.findHostByTestId('workflows-home:scope-line')).not.toBeNull();
         // One primary: New workflow opens the blank draft.
         await screen.pressByTestIdAsync('workflows-home:new');
         expect(routerPush).toHaveBeenCalledWith('/workflows/new');

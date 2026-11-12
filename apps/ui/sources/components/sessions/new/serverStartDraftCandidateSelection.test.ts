@@ -20,7 +20,7 @@ describe('Session server-start candidate selection', () => {
             machine: null, machineReady: false,
         });
         expect(presentSessionPlacementCandidates({ candidates: [candidate], ...context })[0]).toMatchObject({
-            title: 'repo', subtitle: 'Unlisted machine · /repo', availability: 'unavailable',
+            title: 'repo', subtitle: 'Removed machine · /repo', availability: 'unavailable',
         });
     });
 
@@ -98,7 +98,7 @@ describe('Session server-start candidate selection', () => {
         expect(present({ ...candidate, label: 'App' }).title).toBe('App');
         // A machine this device cannot see is said so, never named by its id.
         const unseen = present({ ...candidate, machineId: 'unknown-machine' });
-        expect(unseen.subtitle).toBe('Unlisted machine · /Users/ada/code/app');
+        expect(unseen.subtitle).toBe('Removed machine · /Users/ada/code/app');
         expect(unseen.subtitle).not.toContain('unknown-machine');
     });
 
@@ -121,7 +121,7 @@ describe('Session server-start candidate selection', () => {
         // Each row still answers for the candidate it stands for, whatever the order.
         expect(rows.map(row => row.index)).toEqual([2, 3, 1, 0]);
         expect(rows[2]).toMatchObject({ availability: 'unavailable', subtitle: 'Offline · Laptop · ~/notes' });
-        expect(rows[3]).toMatchObject({ availability: 'unavailable', subtitle: 'Unlisted machine · /old/retired' });
+        expect(rows[3]).toMatchObject({ availability: 'unavailable', subtitle: 'Removed machine · /old/retired' });
         // Two machines with one name are told apart the way Sessions and Search do it.
         expect(rows[0]!.subtitle).not.toBe(rows[1]!.subtitle?.replace('~/site', '~/app'));
         for (const row of rows) {

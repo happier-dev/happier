@@ -12345,6 +12345,7 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
         approvalHelpBody: '„Erst fragen“ zeigt eine Bestätigung, bevor diese Aktion von dieser Oberfläche aus läuft. „Erlaubt“ lässt die Aktion ohne Freigabeabfrage laufen.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Fragt zuerst, weil „${setting}“ in den Quellcodeverwaltungs-Einstellungen aktiv ist.`,
+        managedTargetPlacementAsks: 'Agents fragen zuerst, bevor sie eine Sitzung in einem deiner Container platzieren. Wähle „Erlaubt“, damit sie es ohne Nachfrage tun.',
         loosening: {
             title: 'Agenten können jetzt ihre eigenen Grenzen lockern',
             body: 'Wenn das erlaubt ist, kann ein Agent Freigabeeinstellungen, Administratorzugriff und Agenten-Isolierung ändern, ohne dich zu fragen, und so auch seine anderen Grenzen lockern.',

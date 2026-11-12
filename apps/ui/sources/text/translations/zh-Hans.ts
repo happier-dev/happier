@@ -12110,6 +12110,7 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
         approvalHelpBody: "“先询问”会在此操作从该界面运行前显示确认。“允许”则让此操作从该界面运行，而无需批准提示。",
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `因为源代码管理设置中开启了“${setting}”，所以会先询问。`,
+        managedTargetPlacementAsks: '代理在把会话放进你的容器之前会先询问。选择“允许”即可让它们无需询问直接执行。',
         loosening: {
             title: '代理现在可以放宽自己的限制',
             body: '允许后，代理无需询问你即可更改批准设置、管理员访问权限和代理隔离，因此也能放宽它的其他限制。',

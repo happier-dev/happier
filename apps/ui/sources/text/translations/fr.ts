@@ -12317,6 +12317,7 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
         approvalHelpBody: '« Demander d’abord » affiche une confirmation avant que cette action ne s’exécute depuis cette surface. « Autorisé » laisse l’action s’exécuter depuis cette surface sans demande d’approbation.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Demande d’abord, car « ${setting} » est activé dans les réglages du contrôle de code source.`,
+        managedTargetPlacementAsks: 'Les agents demandent d’abord avant de placer une session dans l’un de vos conteneurs. Choisissez Autorisé pour qu’ils le fassent sans demander.',
         loosening: {
             title: 'Les agents peuvent désormais assouplir leurs propres limites',
             body: 'Avec cette autorisation, un agent peut modifier les réglages d’approbation, l’accès administrateur et l’isolation des agents sans vous demander, et donc assouplir aussi ses autres limites.',

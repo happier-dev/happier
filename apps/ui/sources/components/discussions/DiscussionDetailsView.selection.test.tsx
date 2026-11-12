@@ -1011,6 +1011,20 @@ describe('DiscussionDetailsView selection', () => {
     },
   );
 
+  // F11 (owner 2026-11-12): the rail stands beside a draft too, so the first send does not move the layout.
+  it('publishes People, Agents and Details panels in their draft state for a new Discussion beside its rail', async () => {
+    const { createDiscussionRightSidebarPanelsStore, DiscussionRightSidebarPanelsContext } = await import('./discussionRightSidebarPanels');
+    const store = createDiscussionRightSidebarPanelsStore();
+    await renderScreen(
+      <DiscussionRightSidebarPanelsContext.Provider value={store}>
+        <DiscussionDetailsView target={{ kind: 'new', address: { serverId: 'srv_discussion_selection_a' } }} active />
+      </DiscussionRightSidebarPanelsContext.Provider>,
+    );
+    const panels = store.read();
+    expect(panels).not.toBeNull();
+    expect(Object.keys(panels ?? {}).sort()).toEqual(['discussionAgents', 'discussionDetails', 'discussionParticipants']);
+  });
+
   it('keeps a new Home Discussion usable when an optional source Session refuses input', async () => {
     draftState.text = 'Private draft I am still writing';
     const target = { kind: 'new' as const, address: { serverId: 'srv_discussion_selection_a' } };

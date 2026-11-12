@@ -18,7 +18,7 @@ import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/componen
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
-import { WorkflowPurposeGlyph } from '@/components/workflows/presentation/WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from '@/components/workflows/presentation/WorkflowBuiltinMark';
 import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -281,8 +281,8 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
       theme={workTheme}
       host={WORK_HOST}
       renderSurface={renderWorkUpdateCardSurface}
-      mark={props.presentation.purpose
-        ? <WorkflowPurposeGlyph purpose={props.presentation.purpose} size={HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX} color={theme.colors.text.secondary} />
+      mark={props.presentation.icon
+        ? <WorkflowBuiltinMark icon={props.presentation.icon} size={HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX} color={theme.colors.text.secondary} />
         : <Icon name="tree-structure" size={HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX} color={theme.colors.text.secondary} />}
       title={props.presentation.workflowName ?? t('workflows.run.untitled')}
       state={round ?? status.word}

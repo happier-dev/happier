@@ -13,8 +13,15 @@ import { DEBATE_WORKFLOW_V1 } from './debate.js';
 export { WORKFLOW_STARTER_EXAMPLE_KEYS_V1, WORKFLOW_STARTER_EXAMPLES_V1, getWorkflowStarterExamplesV1,
   type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from './examples.js';
 
-/** What a built-in is for, as its row's mark says it (lab `nav-N1`); hosts map it to their own glyph. */
+/** What a built-in is for (lab `nav-N1`): it groups and describes built-ins; several share one purpose. */
 export type BuiltinWorkflowPurposeV1 = 'goal' | 'review' | 'plan' | 'pull_request';
+
+/**
+ * Each built-in's own presentation mark (owner 2026-11-12), named in the shared glyph vocabulary; hosts map it to their
+ * own glyph. Presentation only: it never decides behaviour.
+ */
+export type BuiltinWorkflowIconV1 = 'target' | 'shield-check' | 'list-checks' | 'git-pull-request' | 'users' | 'git-branch'
+  | 'seal-check' | 'scales';
 
 type CatalogEntryFieldsV1 = Readonly<{
   id: `builtin:${string}`;
@@ -22,6 +29,7 @@ type CatalogEntryFieldsV1 = Readonly<{
   titleKey: string;
   descriptionKey: string;
   purpose: BuiltinWorkflowPurposeV1;
+  icon: BuiltinWorkflowIconV1;
   requiresOriginSession: boolean;
   definition: WorkflowDefinitionV1;
   discussionRoundPattern?: DiscussionRoundOutcomeV1['pattern'];
@@ -31,33 +39,33 @@ type CatalogEntryFieldsV1 = Readonly<{
 export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
   { id: 'builtin:keep-going', version: 1,
     titleKey: 'workflows.builtins.keepGoing.title',
-    descriptionKey: 'workflows.builtins.keepGoing.description', purpose: 'goal', requiresOriginSession: true,
+    descriptionKey: 'workflows.builtins.keepGoing.description', purpose: 'goal', icon: 'target', requiresOriginSession: true,
     definition: KEEP_GOING_WORKFLOW_V1 },
   { id: 'builtin:review-and-converge', version: 1,
     titleKey: 'workflows.builtins.reviewAndConverge.title',
-    descriptionKey: 'workflows.builtins.reviewAndConverge.description', purpose: 'review', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.reviewAndConverge.description', purpose: 'review', icon: 'shield-check', requiresOriginSession: false,
     definition: REVIEW_AND_CONVERGE_WORKFLOW_V1 },
   { id: 'builtin:plan-with-a-panel', version: 1,
     titleKey: 'workflows.builtins.planWithAPanel.title',
-    descriptionKey: 'workflows.builtins.planWithAPanel.description', purpose: 'plan', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.planWithAPanel.description', purpose: 'plan', icon: 'list-checks', requiresOriginSession: false,
     definition: PLAN_WITH_A_PANEL_WORKFLOW_V1 },
   { id: 'builtin:open-a-pull-request', version: 1,
     titleKey: 'workflows.builtins.openAPullRequest.title',
-    descriptionKey: 'workflows.builtins.openAPullRequest.description', purpose: 'pull_request', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.openAPullRequest.description', purpose: 'pull_request', icon: 'git-pull-request', requiresOriginSession: false,
     definition: OPEN_A_PULL_REQUEST_WORKFLOW_V1 },
   { id: 'builtin:fresh-opinions', version: 1, titleKey: 'workflows.builtins.freshOpinions.title',
-    descriptionKey: 'workflows.builtins.freshOpinions.description', purpose: 'review', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.freshOpinions.description', purpose: 'review', icon: 'users', requiresOriginSession: false,
     discussionRoundPattern: 'fresh_opinions',
     definition: FRESH_OPINIONS_WORKFLOW_V1 },
   { id: 'builtin:parallel-implementations', version: 1, titleKey: 'workflows.builtins.parallelImplementations.title',
-    descriptionKey: 'workflows.builtins.parallelImplementations.description', purpose: 'review', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.parallelImplementations.description', purpose: 'review', icon: 'git-branch', requiresOriginSession: false,
     definition: PARALLEL_IMPLEMENTATIONS_WORKFLOW_V1 },
   { id: 'builtin:answer-and-review', version: 1, titleKey: 'workflows.builtins.answerAndReview.title',
-    descriptionKey: 'workflows.builtins.answerAndReview.description', purpose: 'review', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.answerAndReview.description', purpose: 'review', icon: 'seal-check', requiresOriginSession: false,
     discussionRoundPattern: 'answer_and_review',
     definition: ANSWER_AND_REVIEW_WORKFLOW_V1 },
   { id: 'builtin:debate', version: 1, titleKey: 'workflows.builtins.debate.title',
-    descriptionKey: 'workflows.builtins.debate.description', purpose: 'review', requiresOriginSession: false,
+    descriptionKey: 'workflows.builtins.debate.description', purpose: 'review', icon: 'scales', requiresOriginSession: false,
     definition: DEBATE_WORKFLOW_V1 },
 ] satisfies readonly CatalogEntryFieldsV1[]);
 

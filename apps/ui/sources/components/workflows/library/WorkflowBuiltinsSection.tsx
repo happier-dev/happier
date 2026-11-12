@@ -15,7 +15,7 @@ import { t, tLoose } from '@/text';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
 import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
-import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
+import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
 /**
@@ -41,7 +41,7 @@ function BuiltinRow({ entry, showDivider }: Readonly<{ entry: BuiltinWorkflowCat
     const phone = useViewportClass() === 'compact';
     return <Item testID={`workflow-builtins:${entry.id}`} title={tLoose(entry.titleKey)} subtitle={tLoose(entry.descriptionKey)} detail={phone ? undefined : count}
         detailTestID={`workflow-builtins:${entry.id}:count`} showDivider={showDivider} showChevron
-        icon={<WorkflowPurposeGlyph purpose={entry.purpose} />}
+        icon={<WorkflowBuiltinMark icon={entry.icon} />}
         onPress={() => router.push(createWorkflowDefinitionRoute(entry.id) as never)} />;
 }
 

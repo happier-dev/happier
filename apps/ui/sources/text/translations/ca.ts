@@ -11655,6 +11655,7 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
         approvalHelpBody: '“Demana primer” mostra una confirmació abans que aquesta acció s’executi des d’aquesta superfície. “Permès” deixa executar l’acció des d’aquesta superfície sense demanar aprovació.',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `Demana primer perquè «${setting}» està activat a la configuració de control de codi.`,
+        managedTargetPlacementAsks: 'Els agents demanen primer abans de col·locar una sessió en un dels teus contenidors. Tria Permès perquè ho facin sense demanar-ho.',
         loosening: {
             title: 'Ara els agents poden afluixar els seus propis límits',
             body: 'Amb això permès, un agent pot canviar la configuració d’aprovació, l’accés d’administrador i l’aïllament d’agents sense preguntar-te, així que també pot afluixar els seus altres límits.',

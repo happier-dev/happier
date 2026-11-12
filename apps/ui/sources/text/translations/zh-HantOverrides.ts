@@ -10265,6 +10265,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         approvalHelpBody: '「先詢問」會在此操作從該介面執行前顯示確認。「允許」則讓此操作從該介面執行，而不需要核准提示。',
         sourceControlAsks: ({ setting }: { setting: string }) =>
           `因為原始碼控制設定中開啟了「${setting}」，所以會先詢問。`,
+        managedTargetPlacementAsks: '代理程式在把工作階段放進你的容器之前會先詢問。選擇「允許」即可讓它們不經詢問直接執行。',
         loosening: {
             title: '代理現在可以放寬自己的限制',
             body: '允許後，代理無需詢問你即可變更核准設定、管理員存取權限與代理隔離，因此也能放寬它的其他限制。',

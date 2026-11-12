@@ -71,6 +71,39 @@ export function parseSimpleSchedule(expression: string): SimpleSchedule | null {
     return null;
 }
 
+/**
+ * The calendar crons the simple editor cannot write but a person still reads as a sentence (F5, owner 2026-11-12):
+ * every hour at a minute, every month on a day, every year on a date. Anything else stays `null`.
+ */
+export type CalendarSchedule =
+    | Readonly<{ repeat: 'hourly'; minute: number }>
+    | Readonly<{ repeat: 'monthly'; day: number; hour: number; minute: number }>
+    | Readonly<{ repeat: 'yearly'; month: number; day: number; hour: number; minute: number }>;
+
+/** Days in each month of a leap year, so 29 February stays a date. */
+const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+export function parseCalendarSchedule(expression: string): CalendarSchedule | null {
+    const fields = expression.trim().split(/\s+/u);
+    if (fields.length !== 5 || fields[4] !== '*') return null;
+    const minute = readNumber(fields[0]!, 59);
+    if (minute === null) return null;
+    if (fields[1] === '*' && fields[2] === '*' && fields[3] === '*') return { repeat: 'hourly', minute };
+    const hour = readNumber(fields[1]!, 23);
+    const day = readNumber(fields[2]!, 31);
+    if (hour === null || day === null || day < 1) return null;
+    if (fields[3] === '*') return { repeat: 'monthly', day, hour, minute };
+    const month = readNumber(fields[3]!, 12);
+    if (month === null || month < 1 || day > MONTH_DAYS[month - 1]!) return null;
+    return { repeat: 'yearly', month, day, hour, minute };
+}
+
+/** "1 January" / "January 1": a yearly date in the person's language, independent of the year. */
+export function formatCalendarDate(schedule: Readonly<{ month: number; day: number }>): string {
+    return formatWithCachedDateTimeFormatter(new Date(Date.UTC(2024, schedule.month - 1, schedule.day)),
+        getPreferredLanguage(), { day: 'numeric', month: 'long', timeZone: 'UTC' });
+}
+
 export function buildSimpleScheduleCron(schedule: SimpleSchedule): string {
     const weekdays = schedule.repeat === 'daily' ? '*' : schedule.repeat === 'weekdays' ? '1-5' : String(schedule.day);
     return `${schedule.minute} ${schedule.hour} * * ${weekdays}`;
