@@ -334,7 +334,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: theme.colors.radio.dot,
+        backgroundColor: theme.colors.radio.active,
     },
     radioUnselected: {
         width: 20,
