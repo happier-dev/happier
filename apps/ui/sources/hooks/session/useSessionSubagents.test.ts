@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { renderHookAndCollectValues } from '@/hooks/server/serverFeatureHookHarness.testHelpers';
-import { getStorage } from '@/sync/domains/state/storage';
+import { getStorage, useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
+import { clearSessionTranscriptDerivedCachesForSession } from '@/sync/runtime/sessionTranscriptDerivedCaches';
 import type { DirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { useSessionSubagents } from './useSessionSubagents';
@@ -10,6 +12,7 @@ import { useSessionSubagents } from './useSessionSubagents';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const initialStorageState = getStorage().getState();
+const SOURCE_SESSION_ID = 's-subagent-hook';
 const directSessionRuntimeState = {
     directSessionLink: null as DirectSessionLink | null,
     status: null as UseDirectSessionRuntimeResult['status'],
@@ -41,7 +44,49 @@ beforeEach(() => {
     runningExecutionRunsState.current = [];
 });
 
+afterEach(() => {
+    standardCleanup();
+    clearSessionTranscriptDerivedCachesForSession(SOURCE_SESSION_ID);
+});
+
 describe('useSessionSubagents', () => {
+    it('receives execution-run start announcements through the producer and source projection', async () => {
+        const now = Date.now();
+        const session = createSessionFixture({ id: SOURCE_SESSION_ID, active: true, activeAt: now });
+        getStorage().getState().applyMessages(SOURCE_SESSION_ID, [{
+            id: 'run-call', localId: null, createdAt: now, role: 'agent', isSidechain: false,
+            content: [{
+                type: 'tool-call', id: 'call_1', name: 'SubAgentRun', input: { runId: 'run_12345678' },
+                description: null, uuid: 'run-call', parentUUID: null,
+            }],
+        }, {
+            id: 'run-interrupted', localId: null, createdAt: now + 1, role: 'agent', isSidechain: false,
+            content: [{
+                type: 'tool-result', tool_use_id: 'call_1', content: { error: 'Request interrupted' },
+                is_error: true, uuid: 'run-interrupted', parentUUID: 'run-call',
+            }],
+        }]);
+        const hook = await renderHook(() => {
+            const messages = useSessionSubagentSourceMessages(SOURCE_SESSION_ID);
+            return {
+                messages,
+                ...useSessionSubagents({ sessionId: SOURCE_SESSION_ID, session, messages, directSessionRuntime: directSessionRuntimeState }),
+            };
+        });
+        expect(hook.getCurrent().subagents).toMatchObject([{ id: 'execution_run:run_12345678', status: 'unknown' }]);
+
+        await act(async () => {
+            getStorage().getState().applyMessages(SOURCE_SESSION_ID, [{
+                id: 'run-announcement', localId: null, createdAt: now + 2, role: 'agent', isSidechain: false,
+                content: [{ type: 'text', text: 'Execution run started: run_12345678', uuid: 'run-announcement', parentUUID: null }],
+            }]);
+        });
+
+        expect(hook.getCurrent().messages).toHaveLength(2);
+        expect(hook.getCurrent().subagents).toMatchObject([{ id: 'execution_run:run_12345678', status: 'running' }]);
+        await hook.unmount();
+    });
+
     it('returns an empty subagent model without crashing when execution runs are disabled', async () => {
         const seen = await renderHookAndCollectValues(() =>
             useSessionSubagents({
@@ -179,182 +224,67 @@ describe('useSessionSubagents', () => {
 
     it('keeps derived participant collections stable when non-subagent text streams', async () => {
         const now = Date.now();
-        const baseMessages: readonly any[] = [{
-            kind: 'tool-call',
-            id: 'tool-call-1',
-            localId: null,
-            createdAt: now,
-            tool: {
-                id: 'toolu_run_1',
-                name: 'SubAgentRun',
-                state: 'running',
-                input: { runId: 'run_1' },
-                createdAt: now,
-                startedAt: now,
-                completedAt: null,
-                description: null,
+        const session = createSessionFixture({ id: SOURCE_SESSION_ID, active: true, activeAt: now });
+        let inputReadCount = 0;
+        let kindReadCount = 0;
+        const input = { runId: 'run_1' };
+        getStorage().getState().applyMessages(SOURCE_SESSION_ID, [{
+            id: 'run-call', localId: null, createdAt: now, role: 'agent', isSidechain: false,
+            content: [{ type: 'tool-call', id: 'call_1', name: 'SubAgentRun', input, description: null, uuid: 'run-call', parentUUID: null }],
+        }]);
+        const published = getStorage().getState().sessionMessages[SOURCE_SESSION_ID];
+        const toolCallMessage = published.messagesById[published.messageIdsOldestFirst[0]];
+        if (toolCallMessage.kind !== 'tool-call') throw new Error('Expected published tool call');
+        Object.defineProperty(toolCallMessage, 'kind', {
+            get() {
+                kindReadCount += 1;
+                return 'tool-call' as const;
             },
-            children: [],
-        }, {
-            kind: 'agent-text',
-            id: 'agent-text-1',
-            localId: null,
-            createdAt: now + 1,
-            text: 'partial',
-            children: [],
-        }];
-        const hook = await renderHook((messages: readonly any[]) =>
-            useSessionSubagents({
-                sessionId: 'session-1',
-                session: {
-                    id: 'session-1',
-                    metadata: {
-                        flavor: 'claude',
-                    },
-                } as any,
+        });
+        Object.defineProperty(toolCallMessage.tool, 'input', {
+            get() {
+                inputReadCount += 1;
+                return input;
+            },
+        });
+        const hook = await renderHook(() => {
+            const messages = useSessionSubagentSourceMessages(SOURCE_SESSION_ID);
+            return {
                 messages,
-                directSessionRuntime: directSessionRuntimeState,
-            }), {
-                initialProps: baseMessages,
-            });
-
+                ...useSessionSubagents({ sessionId: SOURCE_SESSION_ID, session, messages, directSessionRuntime: directSessionRuntimeState }),
+            };
+        });
         const first = hook.getCurrent();
-        await hook.rerender([
-            baseMessages[0],
-            {
-                ...baseMessages[1],
-                text: 'partial response is still streaming',
-            },
-        ]);
-        const second = hook.getCurrent();
+        const initialSourceVersion = getStorage().getState().sessionMessages[SOURCE_SESSION_ID].subagentSourceVersion;
+        const initialMessagesVersion = getStorage().getState().sessionMessages[SOURCE_SESSION_ID].messagesVersion;
+        const readsAfterInitialRender = { input: inputReadCount, kind: kindReadCount };
+        expect(inputReadCount).toBeGreaterThan(0);
+        expect(kindReadCount).toBeGreaterThan(0);
+        expect(first.subagents).toMatchObject([{ id: 'execution_run:run_1', status: 'running' }]);
 
+        for (let token = 0; token < 16; token += 1) {
+            await act(async () => {
+                getStorage().getState().applyMessages(SOURCE_SESSION_ID, [{
+                    id: `text-${token}`, localId: null, createdAt: now + token + 1, role: 'agent', isSidechain: false,
+                    content: [{ type: 'text', text: `synthetic text ${token}`, uuid: `text-${token}`, parentUUID: null }],
+                }]);
+            });
+        }
+        const second = hook.getCurrent();
+        expect(getStorage().getState().sessionMessages[SOURCE_SESSION_ID].messagesVersion).toBeGreaterThan(initialMessagesVersion);
+        expect(getStorage().getState().sessionMessages[SOURCE_SESSION_ID].subagentSourceVersion).toBe(initialSourceVersion);
+        expect(second.messages).toBe(first.messages);
         expect(second.subagents).toBe(first.subagents);
         expect(second.participantTargets).toBe(first.participantTargets);
         expect(second.sidechainIds).toBe(first.sidechainIds);
-        await hook.unmount();
-    });
-
-    it('does not rescan unchanged tool-call payloads when non-subagent text streams', async () => {
-        const now = Date.now();
-        let inputReadCount = 0;
-        const toolCallMessage: any = {
-            kind: 'tool-call',
-            id: 'tool-call-1',
-            localId: null,
-            createdAt: now,
-            tool: {
-                id: 'toolu_run_1',
-                name: 'SubAgentRun',
-                state: 'running',
-                get input() {
-                    inputReadCount += 1;
-                    return { runId: 'run_1' };
-                },
-                createdAt: now,
-                startedAt: now,
-                completedAt: null,
-                description: null,
-            },
-            children: [],
-        };
-        const baseMessages: readonly any[] = [toolCallMessage, {
-            kind: 'agent-text',
-            id: 'agent-text-1',
-            localId: null,
-            createdAt: now + 1,
-            text: 'partial',
-            children: [],
-        }];
-        const hook = await renderHook((messages: readonly any[]) =>
-            useSessionSubagents({
-                sessionId: 'session-1',
-                session: {
-                    id: 'session-1',
-                    metadata: {
-                        flavor: 'claude',
-                    },
-                } as any,
-                messages,
-                directSessionRuntime: directSessionRuntimeState,
-            }), {
-                initialProps: baseMessages,
-            });
-
-        const readsAfterInitialRender = inputReadCount;
-        await hook.rerender([
-            toolCallMessage,
-            {
-                ...baseMessages[1],
-                text: 'partial response is still streaming',
-            },
-        ]);
-
-        expect(inputReadCount).toBe(readsAfterInitialRender);
-        await hook.unmount();
-    });
-
-    it('does not rescan unchanged message prefixes when non-subagent text streams', async () => {
-        const now = Date.now();
-        let kindReadCount = 0;
-        const toolCallMessage: any = {
-            get kind() {
-                kindReadCount += 1;
-                return 'tool-call';
-            },
-            id: 'tool-call-1',
-            localId: null,
-            createdAt: now,
-            tool: {
-                id: 'toolu_run_1',
-                name: 'SubAgentRun',
-                state: 'running',
-                input: { runId: 'run_1' },
-                createdAt: now,
-                startedAt: now,
-                completedAt: null,
-                description: null,
-            },
-            children: [],
-        };
-        const baseMessages: readonly any[] = [toolCallMessage, {
-            kind: 'agent-text',
-            id: 'agent-text-1',
-            localId: null,
-            createdAt: now + 1,
-            text: 'partial',
-            children: [],
-        }];
-        const hook = await renderHook((messages: readonly any[]) =>
-            useSessionSubagents({
-                sessionId: 'session-1',
-                session: {
-                    id: 'session-1',
-                    metadata: {
-                        flavor: 'claude',
-                    },
-                } as any,
-                messages,
-                directSessionRuntime: directSessionRuntimeState,
-            }), {
-                initialProps: baseMessages,
-            });
-
-        const readsAfterInitialRender = kindReadCount;
-        await hook.rerender([
-            toolCallMessage,
-            {
-                ...baseMessages[1],
-                text: 'partial response is still streaming',
-            },
-        ]);
-
-        expect(kindReadCount).toBe(readsAfterInitialRender);
+        expect({ input: inputReadCount, kind: kindReadCount }).toEqual(readsAfterInitialRender);
         await hook.unmount();
     });
 
     it('does not rescan subagent messages when equivalent running execution-run polls arrive', async () => {
         const now = Date.now();
         let inputReadCount = 0;
+        const input = { runId: 'run_1' };
         const messages: readonly any[] = [{
             kind: 'tool-call',
             id: 'tool-call-1',
@@ -366,7 +296,7 @@ describe('useSessionSubagents', () => {
                 state: 'running',
                 get input() {
                     inputReadCount += 1;
-                    return { runId: 'run_1' };
+                    return input;
                 },
                 createdAt: now,
                 startedAt: now,

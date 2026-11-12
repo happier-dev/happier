@@ -3,6 +3,37 @@ import { createReducer, reducer } from './reducer';
 import type { NormalizedMessage } from '../typesRaw';
 
 describe('sidechains (provider-agnostic)', () => {
+  it('publishes the root with current descendants when a nested sidechain tool finishes', () => {
+    const state = createReducer();
+    const input = { prompt: 'Review synthetic files' };
+    function call(id: string, sidechainId?: string): NormalizedMessage {
+      return {
+        id: `message_${id}`, localId: null, createdAt: 1000,
+        role: 'agent', isSidechain: Boolean(sidechainId), sidechainId,
+        content: [{ type: 'tool-call', id, name: 'Task', input, description: null, uuid: id, parentUUID: null }],
+      };
+    }
+    const initial = reducer(state, [call('outer'), call('inner', 'outer'), call('leaf', 'inner')]);
+    const root = initial.messages.find((message) => message.kind === 'tool-call' && message.tool.id === 'outer');
+    if (!root || root.kind !== 'tool-call') throw new Error('Expected root Task');
+    expect(root.children[0]).toMatchObject({ kind: 'tool-call', tool: { id: 'inner' }, children: [{ tool: { id: 'leaf', state: 'running' } }] });
+
+    const result = { output: 'synthetic result' };
+    const updated = reducer(state, [{
+      id: 'leaf_result', localId: null, createdAt: 2000, role: 'agent', isSidechain: true, sidechainId: 'inner',
+      content: [{ type: 'tool-result', tool_use_id: 'leaf', content: result, is_error: false, uuid: 'leaf_result', parentUUID: 'leaf' }],
+    }]);
+    const nextRoot = updated.messages.find((message) => message.id === root.id);
+    expect(nextRoot).toMatchObject({
+      kind: 'tool-call', children: [{ tool: { id: 'inner' }, children: [{ tool: { id: 'leaf', state: 'completed', result } }] }],
+    });
+    if (!nextRoot || nextRoot.kind !== 'tool-call') throw new Error('Expected updated root Task');
+    expect(nextRoot).not.toBe(root);
+    expect(nextRoot.tool.input).toBe(root.tool.input);
+    expect(root.children[0]).toMatchObject({ children: [{ tool: { state: 'running', result: undefined } }] });
+    expect(updated.messages.filter((message) => message.kind === 'tool-call')).toHaveLength(1);
+  });
+
   it('merges streaming sidechain text chunks when happierSidechainStreamKey is shared', () => {
     const state = createReducer();
 
