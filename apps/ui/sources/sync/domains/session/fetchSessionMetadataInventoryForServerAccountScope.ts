@@ -241,9 +241,10 @@ async function fetchSessionMetadataInventoryWithAuthority(params: Readonly<{
                     Object.assign(publishedFullPublicationBaseline, publishedRows.fullPublicationBaseline);
                 }
             }
-            await ensureSessionDisplayProjectionsForRead({ serverId: params.scope.serverId, credentials,
+            const displayOutcome = await ensureSessionDisplayProjectionsForRead({ serverId: params.scope.serverId, credentials,
                 request: (path, init) => params.authority.request(path, init),
                 prefetched: result.prefetchedFullSessionReads, signal: params.signal, isCurrent: shouldContinue });
+            if (displayOutcome === 'unavailable' && shouldContinue()) throw new SessionSnapshotReadError('unavailable');
             const { prefetchedFullSessionReads: _consumedFullReads, ...publishedResult } = result;
             return publishedResult;
         };

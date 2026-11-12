@@ -545,7 +545,7 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         const account = await captureLazyActionAccountContext(serverId);
         try {
             expect(await ensureSessionDisplayProjectionsForRead({ serverId, credentials: account.credentials,
-                request: account.request, sessionIds: [session.id], isCurrent: account.accountLifetime.isCurrent })).toBe(true);
+                request: account.request, sessionIds: [session.id], isCurrent: account.accountLifetime.isCurrent })).toBe('satisfied');
         } finally { account.dispose(); }
         const reviewed = await executor.execute('template.updates.diff', { sessionRef }, context);
         if (!reviewed.ok) throw new Error(`Template review failed: ${reviewed.errorCode}: ${reviewed.error}`);

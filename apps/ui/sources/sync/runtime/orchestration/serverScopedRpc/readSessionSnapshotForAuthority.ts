@@ -203,33 +203,34 @@ export async function ensureSessionDisplayProjectionsForRead(params: Readonly<{
     processingConcurrencyLimit?: number;
     isCurrent: () => boolean;
     signal?: AbortSignal;
-}>): Promise<boolean> {
+}>): Promise<'satisfied' | 'deferred' | 'unavailable'> {
     const sessionIds = [...new Set([...(params.prefetched?.keys() ?? []), ...(params.sessionIds ?? [])])];
-    if (!sessionIds.length) return true;
+    if (!sessionIds.length) return 'satisfied';
     if (!params.serverId || !params.isCurrent() || params.signal?.aborted
-        || readCredentialAuthorityKind(params.credentials.token) !== 'account') return false;
+        || readCredentialAuthorityKind(params.credentials.token) !== 'account') return 'unavailable';
     const scopeKey = resolveAuthCredentialsScopeKey(params.credentials);
     try {
         return await runWithServerRequestAuthorityForServerAccountScope({ serverId: params.serverId,
             activeRequest: (path, init) => params.request(path, init ?? {}) }, async authority => {
             if (!params.isCurrent() || !authority.context.credentials
-                || resolveAuthCredentialsScopeKey(authority.context.credentials) !== scopeKey) return false;
+                || resolveAuthCredentialsScopeKey(authority.context.credentials) !== scopeKey) return 'unavailable';
             const results = await readSessionSnapshotsForAuthority({ authority, sessionIds,
                 awaitDisplayProjectionMaintenance: true,
                 prefetched: params.prefetched, includeTurns: false, signal: params.signal,
                 processingConcurrencyLimit: params.processingConcurrencyLimit ?? loadSyncTuning().resumeConcurrencyLimit,
                 isCurrent: params.isCurrent });
-            const satisfied = params.isCurrent() && [...results.values()].every(result => result.ok
+            if (!params.isCurrent() || [...results.values()].some(result => !result.ok)) return 'unavailable';
+            const satisfied = [...results.values()].every(result => result.ok
                 && (result.snapshot.displayProjectionMaintenance === 'satisfied'
                     || isSessionAccessRecipient(result.snapshot.session.access, result.snapshot.session.accessLevel)));
             if (!satisfied && params.isCurrent()) {
                 console.warn('[SessionDisplay] Full tuple maintenance unavailable; readable list display retained');
             }
-            return satisfied;
+            return satisfied ? 'satisfied' : 'deferred';
         });
     } catch {
         console.warn('[SessionDisplay] Full tuple maintenance deferred; readable list display retained');
-        return false;
+        return 'unavailable';
     }
 }
 

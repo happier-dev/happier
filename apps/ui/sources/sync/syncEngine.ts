@@ -7746,12 +7746,12 @@ class Sync {
             request, token: credentials.token, isCurrent, log,
             migrate: async sessionIds => {
                 consumedOwnPrefetched = true;
-                if (!await maintain(sessionIds)) throw new Error('Session metadata upgrade deferred');
+                if (await maintain(sessionIds) !== 'satisfied') throw new Error('Session metadata upgrade deferred');
             },
         }, force);
         // A joined or already-satisfied census did not consume this caller's
         // captured parts. Do not infer tuple coverage from another caller's IDs.
-        if (!consumedOwnPrefetched && prefetched?.size && !await maintain([])) {
+        if (!consumedOwnPrefetched && prefetched?.size && await maintain([]) !== 'satisfied') {
             this.metadataUpgradeDiscovery.requestRefresh();
         }
     };

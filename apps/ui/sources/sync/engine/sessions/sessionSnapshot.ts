@@ -1698,8 +1698,11 @@ export async function fetchAndApplySessions(params: {
     const fullReadObservationCursors = new Map<string, number>();
     const failedFullSessionReads = new Map<string, import('./sessionById').SessionByIdPrefetchedRead>();
     const buildFetchResult = (): SessionListFetchResult => ({
-        prefetchedFullSessionReads: new Map([...fullRows].map(([id, row]) => [id,
-            { detail: { status: 200, body: { session: row, observationCursor: fullReadObservationCursors.get(id) } } }])),
+        prefetchedFullSessionReads: new Map([
+            ...failedFullSessionReads,
+            ...[...fullRows].map(([id, row]) => [id,
+                { detail: { status: 200 as const, body: { session: row, observationCursor: fullReadObservationCursors.get(id) } } }] as const),
+        ]),
         sessionIds: sessions.map((session) => session.id).filter(isSessionCurrent),
         isSessionCurrent,
         nextCursor: nextCursorForMore,

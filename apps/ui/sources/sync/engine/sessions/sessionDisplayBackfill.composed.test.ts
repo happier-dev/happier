@@ -332,7 +332,7 @@ it.each(['recipient', 'owner-refused'] as const)('keeps actual %s full-read owne
         const credentials = authority.context.credentials;
         if (!credentials) throw new Error('Expected the captured recipient Account credentials');
         expect(await ensureSessionDisplayProjectionsForRead({ serverId: home.id, credentials,
-            request: authority.request, sessionIds: [id], isCurrent: () => true })).toBe(disposition === 'recipient');
+            request: authority.request, sessionIds: [id], isCurrent: () => true })).toBe(disposition === 'recipient' ? 'satisfied' : 'deferred');
     });
     expect(persisted.writes).toEqual([]);
     expect(storage.getState().sessions[id]).toBeUndefined();

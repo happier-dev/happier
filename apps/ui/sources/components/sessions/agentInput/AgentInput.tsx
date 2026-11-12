@@ -4132,6 +4132,32 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         />
     );
 
+    const instrumentStrip = (
+        <SessionInstrumentStrip
+            serverId={props.sessionTypingPresence?.serverId}
+            sessionId={props.sessionId}
+            agentId={sessionAgentId}
+            agentTargetKey={props.agentTargetKey}
+            metadata={props.metadata ?? null}
+            sessionActive={props.sessionActive}
+            currentRunnerProcessIdentity={props.currentRunnerProcessIdentity}
+            connectionStatus={props.connectionStatus ?? null}
+            permission={props.showStatusPermissionMode === false || hasPermissionControl ? null : instrumentStripPermission}
+            quota={props.instrumentQuota ?? null}
+            statusBadges={props.statusBadges}
+            statusRegions={props.statusRegions}
+            statusTrailingActions={showKeyboardAccessory
+                ? <><AgentInputKeyboardAccessory />{props.statusTrailingActions}</>
+                : props.statusTrailingActions}
+            activeStatusBadgeKey={props.activeStatusBadgeKey}
+            onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}
+            onGitPress={props.onFileViewerPress}
+            // A compact composer has no Session to report on: an empty strip reserves no row above it.
+            collapseWhenEmpty={documentPanel || compactControls}
+            contentInsetX={resolveComposerCardContentInsetX(theme, screenWidth)}
+        />
+    );
+
     if (readOnly) {
         // The document owner has already placed and admitted these exact ranges.
         // Reading never searches the live catalog or rebinds a frozen reference.
@@ -4143,6 +4169,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             <AgentInputTextSync textSource={textSource} onText={onControlledText} />
             <TextSelectabilityScope selectable>
                 <View ref={overlayAnchorRef} testID="agent-input-composer" style={[styles.container, documentPanel ? styles.containerDocument : null, { paddingHorizontal: props.contentPaddingHorizontal ?? 0 }]}>
+                    {instrumentStrip}
                     <GlassSurface testID="agent-input-material-surface" {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
@@ -4349,32 +4376,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     />
                 ) : null}
 
-                {/* Session instrument strip: connection status + context gauge, quota ring,
-                    git ±, extension badges, permission chip. Subscribes to the store itself
-                    (F-UI-11) so token ticks never re-render this memoized composer. */}
-                <SessionInstrumentStrip
-                    serverId={props.sessionTypingPresence?.serverId}
-                    sessionId={props.sessionId}
-                    agentId={sessionAgentId}
-                    agentTargetKey={props.agentTargetKey}
-                    metadata={props.metadata ?? null}
-                    sessionActive={props.sessionActive}
-                    currentRunnerProcessIdentity={props.currentRunnerProcessIdentity}
-                    connectionStatus={props.connectionStatus ?? null}
-                    permission={props.showStatusPermissionMode === false || hasPermissionControl ? null : instrumentStripPermission}
-                    quota={props.instrumentQuota ?? null}
-                    statusBadges={props.statusBadges}
-                    statusRegions={props.statusRegions}
-                    statusTrailingActions={showKeyboardAccessory
-                        ? <><AgentInputKeyboardAccessory />{props.statusTrailingActions}</>
-                        : props.statusTrailingActions}
-                    activeStatusBadgeKey={props.activeStatusBadgeKey}
-                    onActiveStatusBadgeKeyChange={props.onActiveStatusBadgeKeyChange}
-                    onGitPress={props.onFileViewerPress}
-                    // A compact composer has no Session to report on: an empty strip reserves no row above it.
-                    collapseWhenEmpty={documentPanel || compactControls}
-                    contentInsetX={resolveComposerCardContentInsetX(theme, screenWidth)}
-                />
+                {instrumentStrip}
 
                 {/* Box 2: Action Area (Input + Send) */}
                 <WebDropTargetView
