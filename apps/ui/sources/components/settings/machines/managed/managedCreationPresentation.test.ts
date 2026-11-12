@@ -57,6 +57,7 @@ describe('managed creation presentation', () => {
     const enrolled = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true };
     expect(canRetryManagedInstallation(enrolled, undefined, { guestPayloadStale: false })).toBe(false);
   });
+
   it.each(['missing', 'failed', 'unavailable', 'projection-unavailable'] as const)('offers Reconnect for retained bootstrap credential refusal with %s operation history', history => {
     const refused: ManagedMachineV1 = { ...machine,
       observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.credential_unavailable' } };
@@ -602,7 +603,7 @@ describe('managed creation presentation', () => {
       ),
     ).toBe(failed);
     // Cancellation before submission confirms absence without a provider read.
-    // Hydrated acquire history must not resurrect its obsolete failure card.
+    // The failed acquire remains the diagnostic authority even when nothing was made.
     const canceled: ManagedMachineV1 = {
       ...removed,
       creationState: 'canceled',
@@ -630,7 +631,7 @@ describe('managed creation presentation', () => {
       word: t('managedMachines.creation.canceledShort'),
       tone: 'neutral',
     });
-    expect(currentManagedCreationOperation(canceled, acquiring)).toBeNull();
+    expect(currentManagedCreationOperation(canceled, acquiring)).toBe(acquiring);
     expect(
       currentManagedCreationOperation(
         {

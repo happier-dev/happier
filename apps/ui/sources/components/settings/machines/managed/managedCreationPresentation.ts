@@ -261,14 +261,12 @@ export function currentManagedCreationOperation(machine: ManagedMachineV1, opera
     // A superseded operation can fail after Delete observed absence. Compare
     // request admission, not settlement. A passive idle failure is obsolete
     // even if it raced the absence report; later actionable requests still
-    // need attention. Cancellation before submission has no native observation;
-    // its confirmed absence supersedes the failed creation. Activity retains it.
+    // need attention. Cancellation before submission confirms only that nothing
+    // was made; the failed creation remains its diagnostic authority.
     if (machine.desired === 'delete' && machine.allocation === 'confirmed-absent'
         && snapshot.state === 'failed'
-        && (machine.creationState === 'canceled'
-            && (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
-            || machine.observation?.availability === 'absent'
-                && (snapshot.createdAt <= machine.observation.observedAt || failedIdleObservation))) return null;
+        && machine.observation?.availability === 'absent'
+        && (snapshot.createdAt <= machine.observation.observedAt || failedIdleObservation)) return null;
     if (snapshot.domainRef?.kind === 'machineSetup') {
         const reference = snapshot.domainRef;
         const scopeMatches = snapshot.actionId === 'machines.setup.apply' && snapshot.scope.machineId === machine.enrolledMachineId

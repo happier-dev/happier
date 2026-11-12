@@ -2920,6 +2920,87 @@ describe('managed Machine detail', () => {
         });
         await screen.unmount();
     });
+    it.each(['active', 'canceled'] as const)('retains a rejected requester acquisition diagnostic when nothing was created (%s)', async creationState => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://creator-rejected-acquisition.test', scope: 'tab' });
+        const homeId = 'srv_creator_rejected_acquisition';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        const token = createAccountTokenForTests('requester', { currentAccount: true });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        const controller = { machineId: 'company-controller', installationId: 'company-installation' };
+        await sodium.ready;
+        const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(7));
+        const machine: ManagedMachineV1 = { id: 'requester-rejected-resource', homeId, custodianAccountId: 'company', enrollmentAccountId: 'requester',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Team sandbox', choices: {} },
+            controller, controllerAccess: { installationPublicKey: encodeBase64(installation.publicKey, 'base64url'), custodian: { accountId: 'company' } },
+            allocation: 'confirmed-absent', creationState, desired: creationState === 'canceled' ? 'delete' : 'start',
+            desiredWhen: 'now', intentRevision: creationState === 'canceled' ? 1 : 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'requester-rejected-acquisition', revision: 1,
+            actionId: 'machines.managed.acquire', state: 'failed', scope: { accountId: 'requester', machineId: controller.machineId },
+            title: 'Create Team sandbox', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+            domainRef: { kind: 'managedMachine', id: machine.id },
+            error: { errorCode: 'provider_unavailable', error: 'provider_unavailable' } };
+        const reads: { actionId: string; input: unknown }[] = [];
+        setRuntimeFetch(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path.endsWith('/execution-authorization')) {
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                const actionId = path.slice('/v1/actions/'.length, -'/execution-authorization'.length);
+                const managedAdmission = envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
+                return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-resource-root', binding: {
+                    serverIdentityId: homeId, accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 0 },
+                    machineId: controller.machineId, installationId: controller.installationId, custodianAccountId: 'company',
+                    accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId, target: envelope.target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    ...(managedAdmission ? { managedAdmission } : {}),
+                } }));
+            }
+            if (path.startsWith('/v1/actions/')) {
+                const actionId = path.slice('/v1/actions/'.length);
+                const body: unknown = JSON.parse(String(init?.body));
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body && typeof body === 'object' && 'envelope' in body ? body.envelope : body);
+                reads.push({ actionId, input: envelope.input });
+                return Response.json({ v: 1, requestId: envelope.requestId, actionId, execution: { ok: true,
+                    result: actionId === 'machines.managed.get' ? machine : actionId === 'action.operations.list' ? { items: [operation], nextCursor: null }
+                        : actionId === 'action.operations.get' ? { kind: 'found', operation } : { machines: [machine] } } });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const executeAction = createFrontDoorActionExecute(createDefaultActionExecutor());
+        const managed = { homeId, managedId: machine.id };
+        const receipt = await executeAction('action.operations.get', { serverId: target.id, machineId: controller.machineId,
+            managed, operationId: operation.operationId }, { expectedAccountId: 'requester' });
+        expect(receipt, JSON.stringify({ receipt, reads })).toMatchObject({ ok: true, result: { kind: 'found', operation: { error: operation.error } } });
+        actionOperationStore.reset();
+        expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
+        const navigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn() };
+        const screen = await renderScreen(<DestinationInstanceContext.Provider value={{ tabId: 'creator-rejection-test',
+            ref: { kind: 'managedMachine', params: { id: machine.id, serverId: target.id } }, pathname: `/machines/managed/${machine.id}`,
+            visible: true, focused: true, isFocused: () => true, navigation }}>
+            <ManagedMachineDetail managedId={machine.id} serverId={target.id} executeAction={executeAction} />
+        </DestinationInstanceContext.Provider>);
+        try {
+            await waitForHomeGovernance(async () => {
+                await flushHookEffects();
+                expect(reads).toContainEqual({ actionId: 'action.operations.list', input: expect.objectContaining({ managed }) });
+                expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toContainEqual(expect.objectContaining({
+                    snapshot: expect.objectContaining({ operationId: operation.operationId, error: operation.error }),
+                }));
+                expect(screen.findByTestId('managed-machine.installation-error'), screen.getTextContent()).not.toBeNull();
+            });
+            expect(screen.getTextContent()).toContain(t(creationState === 'canceled'
+                ? 'managedMachines.creation.canceledBeforeCreate' : 'managedMachines.inspect.notCreated'));
+            await screen.pressByTestIdAsync('managed-machine.installation-error.details');
+            expect(screen.getTextContent()).toContain('provider_unavailable');
+            expect(operationRpcBoundary.requests).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it.each(['retained', 'arriving'] as const)('discovers the exact creator installation question and answers without controller inventory or a Machine grant (%s)', async mode => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://creator-installation.test', scope: 'tab' });
         const homeId = 'srv_creator_installation';
@@ -3271,6 +3352,18 @@ describe('managed Machine detail', () => {
             expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
             if (state === 'cancelled') expect(screen.findByTestId('managed-machine.installation-error')).toBeNull();
         }
+        await screen.unmount();
+    });
+    it('shows Home recovery for a retained bootstrap failure without operation history', async () => {
+        const machine: ManagedMachineV1 = { id: 'home-unreachable-managed', homeId: 'home-unreachable', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Local guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'existing' } },
+            observation: { observedAt: 4, availability: 'unavailable', reason: 'bootstrap.home_not_guest_reachable' },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const screen = await renderScreen(<ManagedCreationProgress machine={machine} />);
+        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
+            && node.props.title === t('managedMachines.creation.homeNotGuestReachable')).length).toBeGreaterThan(0);
         await screen.unmount();
     });
     it('shows only the observed installer stage and offers retry only for an explicit failed installation task', async () => {

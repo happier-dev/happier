@@ -60,7 +60,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const state = managedCreationState(machine, { controller: props.controller, provider: props.provider,
         providerAvailable: props.providerAvailable, operation: props.operation, enrolledMachine: props.enrolledMachine });
     const lifecycle = describeManagedLifecycleState(state);
-    const nothingCreated = state.kind === 'notCreated';
+    const nothingCreated = state.kind === 'notCreated' || state.kind === 'creationCanceled';
     const checkNow = nothingCreated ? undefined : props.handlers?.checkNow;
     const showStateRow = isManagedCreationStateRowVisible(machine, state, { offersStart: Boolean(props.handlers?.start) });
     const operation = currentManagedCreationOperation(machine, props.operation, props);
@@ -227,7 +227,10 @@ function FailedInstallationCard(props: Readonly<{
     const subject = React.useMemo(() => ({ kind: 'managedMachineOperation' as const,
         operation: { serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId } }),
     [serverId, snapshot.scope.machineId, snapshot.operationId]);
-    const investigation = useInvestigateFailure(subject, { agentActions: 'withDefault' });
+    const investigationOptions = React.useMemo(() => ({ agentActions: 'withDefault' as const,
+        externalActionTarget: { kind: 'machine' as const, machineId: snapshot.scope.machineId },
+    }), [snapshot.scope.machineId]);
+    const investigation = useInvestigateFailure(subject, investigationOptions);
     return <>
         {/* Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it. */}
         <AttentionBanner tone="danger" title={props.title} testID="managed-machine.installation-error"
