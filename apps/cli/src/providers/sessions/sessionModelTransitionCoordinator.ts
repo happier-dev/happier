@@ -504,7 +504,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   const targetAuthorizationStillCurrent = async (
     target: AuthorizedSessionModelTransitionTarget,
   ): Promise<boolean> => {
-    if (target.selection.providerConnectionId === null) return true;
+    if (target.selection.providerConnectionId === null && target.providerBinding === null) return true;
     if (typeof target.revalidateBeforeEffect !== 'function') return false;
     return await target.revalidateBeforeEffect().catch(() => false);
   };
@@ -1159,7 +1159,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
 
-    if (target.selection.providerConnectionId !== null) {
+    if (target.selection.providerConnectionId !== null || target.providerBinding !== null) {
       const authorizationStillCurrent =
         await targetAuthorizationStillCurrent(target);
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
@@ -1340,7 +1340,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
 
     try {
-      if (target.selection.providerConnectionId !== null) {
+      if (target.selection.providerConnectionId !== null || target.providerBinding !== null) {
         const authorizationStillCurrent =
           await targetAuthorizationStillCurrent(target);
         if (!isCurrent()) {

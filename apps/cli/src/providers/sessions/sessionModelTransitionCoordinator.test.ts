@@ -404,6 +404,9 @@ describe('createSessionModelTransitionCoordinator', () => {
       expect(replacement).toMatchObject({ policy: 'restart_session', providerBinding: null });
       sourceCurrent = false;
       expect(await authorize.bindCurrentAuthorizationProof(initialTarget).revalidateBeforeEffect()).toBe(false);
+      await expect(harness.coordinator.readAppliedTarget()).resolves.toMatchObject({
+        status: 'unavailable', reason: 'runtime_model_unconfirmed',
+      });
     } finally { await harness.coordinator.dispose(); }
   });
 
