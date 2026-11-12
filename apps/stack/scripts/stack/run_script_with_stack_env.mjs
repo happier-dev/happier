@@ -1,3 +1,4 @@
+import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from './identity_daemon_reload.mjs';
 import { spawn } from 'node:child_process';
 import { open } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,8 +32,6 @@ import { resolveStackOwnedListenPid } from '../utils/server/listener_ownership.m
 import { parseArgs } from '../utils/cli/args.mjs';
 import { resolveDevServerConnection } from '../utils/dev/resolveDevServerConnection.mjs';
 import { getCliHomeDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
-import { resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
-import { readStackRuntimeDaemonDesiredState } from '../utils/stack/runtime_daemon_state.mjs';
 import { pruneStackRunnerLogs } from '../utils/stack/runner_log_retention.mjs';
 import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } from '../utils/stack/verified_endpoints.mjs';
 import { resolveExpoTailscaleEnabled } from '../utils/dev/expo_dev_tailscale.mjs';
@@ -66,78 +65,6 @@ import { ensureDevTargetSyncProject, flushDevTargetSync, runDevTargetControlProc
 
 const DEFAULT_BACKGROUND_READY_TIMEOUT_MS = 600_000;
 
-export async function readRunningStackIdentityDaemons({
-  runtimeState,
-  cliHomeDir,
-  stackName,
-  serverUrl,
-  env,
-} = {}, {
-  checkDaemonStateImpl = checkDaemonStatePingAware,
-} = {}) {
-  const identities = Object.keys(runtimeState?.daemon?.desiredStateByIdentity ?? {})
-    .filter((identity) => identity !== 'default')
-    .filter((identity) => readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity: identity }) === 'running');
-  const running = [];
-  for (const identity of identities) {
-    const observation = await checkDaemonStateImpl(resolveCliHomeDirForIdentity({ cliHomeDir, identity }), {
-      stackName,
-      serverUrl,
-      env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity },
-    });
-    if (observation?.status === 'running') running.push(identity);
-  }
-  return running;
-}
-
-export async function restartStackIdentityDaemons({
-  rootDir,
-  stackName,
-  identities = [],
-  env,
-} = {}, {
-  startIdentityDaemonImpl = async (identity) => {
-    const { runStackDaemonCommand } = await import('./stack_daemon_command.mjs');
-    return await runStackDaemonCommand({
-      rootDir,
-      stackName,
-      argv: [
-        'start',
-        ...(String(env?.HAPPIER_STACK_RUNTIME_MODE ?? '').trim() === 'source' ? ['--runtime=source'] : []),
-        `--identity=${identity}`,
-      ],
-      json: true,
-      emitResult: false,
-      env,
-    });
-  },
-} = {}) {
-  const started = [];
-  const failures = [];
-  const typedReason = (value) => {
-    const candidate = String(value ?? '').trim();
-    return /^[a-z][a-z0-9_:-]{1,80}$/.test(candidate) ? candidate : 'daemon_start_failed';
-  };
-  for (const identity of identities) {
-    try {
-      const result = await startIdentityDaemonImpl(identity);
-      if (result?.ok === false) {
-        failures.push({ identity, reason: typedReason(result.reason ?? result.error) });
-      } else {
-        started.push(identity);
-      }
-    } catch (error) {
-      failures.push({
-        identity,
-        reason: typedReason(error?.code ?? error?.reason),
-      });
-    }
-  }
-  for (const failure of failures) {
-    console.warn(`[stack] ${stackName}: identity daemon ${failure.identity} was not restarted (reason=${failure.reason})`);
-  }
-  return { started, failures };
-}
 
 async function readBackgroundRunnerFailure(error, { logPath, sourceSnapshot, env }) {
   // Keep the original outcome on its own line before attaching a runner tail.

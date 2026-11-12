@@ -1,14 +1,14 @@
 import { checkDaemonStatePingAware } from '../daemon.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from '../utils/auth/stable_scope_id.mjs';
-import { resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
+import { listStackCliIdentities, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 import { readStackRuntimeDaemonDesiredState } from '../utils/stack/runtime_daemon_state.mjs';
 import { readSourceRuntimeBundleRecord, readSourceRuntimeSourceTime } from '../runtime/shared/source_bundle_record.mjs';
 
-/** The lifecycle owner's existing identity map is also the participant list. */
+/** Status and reload consume the same identity-home inventory. */
 export async function readStackDaemonParticipants({ stackName, stackBaseDir, runtimeState, cliHomeDir,
   serverUrl, env, defaultObservation, selected }) {
-  const identities = new Set(['default', ...Object.keys(runtimeState?.daemon?.desiredStateByIdentity ?? {})]);
-  return await Promise.all([...identities].map(async identity => {
+  const identities = await listStackCliIdentities({ cliHomeDir, runtimeState });
+  const participants = await Promise.all(identities.map(async identity => {
     const desiredState = readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity: identity });
     const observation = identity === 'default' ? defaultObservation : await checkDaemonStatePingAware(
       resolveCliHomeDirForIdentity({ cliHomeDir, identity }), {
@@ -16,6 +16,10 @@ export async function readStackDaemonParticipants({ stackName, stackBaseDir, run
           env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity }, stackName, cliIdentity: identity,
         }),
       });
+    // Unregistered homes participate only while a process is observed there.
+    if (identity !== 'default'
+      && !Object.hasOwn(runtimeState?.daemon?.desiredStateByIdentity ?? {}, identity)
+      && !['running', 'starting', 'unreachable'].includes(observation?.status)) return null;
     if (desiredState === 'stopped' && observation?.status === 'stopped') {
       return { identity, status: 'stopped', selected, loaded: null, sourceTime: null, reason: null };
     }
@@ -31,4 +35,5 @@ export async function readStackDaemonParticipants({ stackName, stackBaseDir, run
       : loaded !== selected ? 'participant_source_stale' : null;
     return { identity, status: observation?.status ?? 'unknown', selected, loaded, sourceTime, reason };
   }));
+  return participants.filter(Boolean);
 }

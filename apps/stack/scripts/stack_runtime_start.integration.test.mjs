@@ -578,7 +578,7 @@ test('hstack stack start --runtime --restart restarts the daemon in service mode
   }
 });
 
-test('hstack stack start --runtime --restart restores a running named identity daemon', async (t) => {
+test('hstack stack start --runtime --restart restores a running named identity daemon with stale runtime intent', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createStartableRuntimeSnapshotFixture(t, { stackName: 'runtime-daemon-identity-reload' });
   const identity = 'account-a';
@@ -623,6 +623,11 @@ test('hstack stack start --runtime --restart restores a running named identity d
     const before = await checkDaemonStatePingAware(identityHome, { serverUrl: fixture.baseUrl, env: baseEnv });
     assert.match(String(before?.status ?? ''), /running/i);
 
+    const runtimePath = join(fixture.stackDir, 'stack.runtime.json');
+    const staleRuntime = JSON.parse(await readFile(runtimePath, 'utf8'));
+    delete staleRuntime.daemon;
+    await writeFile(runtimePath, JSON.stringify(staleRuntime));
+
     const restartRes = await runNode(restartArgs, { cwd: rootDir, env: baseEnv });
     assert.equal(restartRes.code, 0, `stdout:\n${restartRes.stdout}\nstderr:\n${restartRes.stderr}`);
     await waitForHealth(fixture.baseUrl, { timeoutMs: 30_000 });
@@ -632,7 +637,8 @@ test('hstack stack start --runtime --restart restores a running named identity d
     }, { timeoutMs: 30_000, label: 'named identity daemon after stack reload' });
 
     const identityLog = await readFile(join(identityHome, 'runtime-daemon.log'), 'utf8');
-    assert.ok(identityLog.split(/\r?\n/).filter(line => line === 'start').length >= 2, identityLog);
+    assert.equal(identityLog.split(/\r?\n/).filter(line => line.startsWith('start:')).length, 2,
+      'one initial launch and one replacement launch');
   } finally {
     await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
       cwd: rootDir,

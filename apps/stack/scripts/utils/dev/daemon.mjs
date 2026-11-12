@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
 
+import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from '../../stack/identity_daemon_reload.mjs';
+import { resolveCliHomeDirForIdentity } from '../stack/cli_identities.mjs';
 import { syncSharedDepsForSourceDev } from '../proc/pm.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
@@ -368,6 +370,20 @@ export function createHappyCliReloadExecutor({
       if (!startDaemon || isShuttingDown?.()) return { skipped: true, reason: 'daemon-disabled' };
       if (!successor) return { skipped: true, reason: 'no-prepared-source' };
 
+      const identities = runtimeStatePath && cliIdentity === 'default'
+        ? await readRunningStackIdentityDaemons({
+          runtimeState: await readStackRuntimeStateFileImpl(runtimeStatePath), cliHomeDir,
+          stackName, serverUrl: internalServerUrl, env,
+          excludeRuntimeEntrypoint: successor.launch.entrypoint,
+        }) : [];
+      const refreshIdentities = () => restartStackIdentityDaemons({ stackName, identities }, {
+        startIdentityDaemonImpl: identity => launchSuccessor({
+          cliHomeDir: resolveCliHomeDirForIdentity({ cliHomeDir, identity }),
+          cliIdentity: identity,
+          env: { ...env, HAPPIER_STACK_CLI_IDENTITY: identity },
+          forceRestart: true, preserveSessionsOnRestart: true,
+        }),
+      });
       const ping = await pingDaemonImpl({
         cliHomeDir,
         serverUrl: internalServerUrl,
@@ -378,6 +394,7 @@ export function createHappyCliReloadExecutor({
       if (ping?.ok === true) {
         if (await readLoadedIdentity() === successor.identity) {
           logger.log('[local] watch: the healthy daemon already runs the current source generation; skipping restart.');
+          await refreshIdentities();
           return { skipped: true, reason: 'daemon-source-already-active' };
         }
         try {
@@ -392,6 +409,7 @@ export function createHappyCliReloadExecutor({
           logger.warn('[local] watch: daemon control /restart is unavailable; keeping the current daemon running.');
           return { skipped: true, reason: 'daemon-control-restart-unavailable' };
         }
+        await refreshIdentities();
         return { restarted: true, mode: 'overlap' };
       }
 
@@ -406,6 +424,7 @@ export function createHappyCliReloadExecutor({
         return { skipped: true, reason: `daemon-control-unavailable:${ping?.reason ?? 'unknown'}` };
       }
       await launchSuccessor({ forceRestart: false, preserveExistingRunning: true });
+      await refreshIdentities();
       return { restarted: true, mode: 'cold-start' };
     },
   };

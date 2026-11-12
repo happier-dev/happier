@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   readRunningStackIdentityDaemons,
   restartStackIdentityDaemons,
-} from './run_script_with_stack_env.mjs';
+} from './identity_daemon_reload.mjs';
 
 test('reload captures and restarts exactly the running named identity daemons', async () => {
   const observed = new Map([
@@ -67,4 +70,22 @@ test('identity restart reports a typed failure without retrying', async () => {
     started: [],
     failures: [{ identity: 'account-a', reason: 'auth_required' }],
   });
+});
+
+// Fixture homes can predate the desired-state map or survive a stale runtime file.
+test('reload discovers running identity homes even with stale runtime intent', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'identity-reload-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const identity of ['fixture-a', 'fixture-b', 'stale', 'stopped']) {
+    await mkdir(join(root, 'cli-identities', identity), { recursive: true });
+  }
+  const identities = await readRunningStackIdentityDaemons({
+    runtimeState: { daemon: { desiredStateByIdentity: { 'fixture-a': 'running', stopped: 'stopped' } } },
+    cliHomeDir: join(root, 'cli'), stackName: 'identity-reload', env: {},
+  }, {
+    checkDaemonStateImpl: async (home) => ({
+      status: ['fixture-a', 'fixture-b'].some(id => home.endsWith(id)) ? 'running' : 'stopped',
+    }),
+  });
+  assert.deepEqual(identities.sort(), ['fixture-a', 'fixture-b']);
 });

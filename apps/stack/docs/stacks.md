@@ -157,11 +157,14 @@ dependency publications still require recovery through the dependency owner.
 replacing it through the daemon lifecycle owner. Ordinary startup and recovery
 continue to use the retained source generation.
 
-During a full reload, the lifecycle owner records the named identity daemons
-that are running before it stops the incumbent runtime. After the replacement
-is ready, it starts exactly those identities on the new runtime; identities
-that were stopped remain stopped. An identity start failure is reported with a
-typed reason and does not fail or retry the stack reload.
+In 0.3 development, full reloads and dev source-generation swaps refresh running
+named identity daemons after the default daemon. Discovery uses the daemon host's
+identity homes as well as recorded lifecycle intent, so a stale runtime file does
+not hide a running fixture identity. Full reloads capture participants before
+retirement; dev swaps reuse the prepared daemon launch and preserve Session runners.
+Stopped identities remain stopped, and an identity already on the prepared dev
+entrypoint is reused. An identity restart failure is reported with a typed reason
+and does not fail or retry the stack reload.
 
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification
@@ -347,7 +350,7 @@ node ./apps/stack/scripts/repo_local.mjs stack info exp1 --json
 
 This follows the observed daemon host, synchronizes its source mirror, selects the current daemon bundle, and uses authenticated `/restart` with an empty body to preserve Session runners. It does not restart the server or UI. Require the daemon's selected source identity to equal its loaded identity and actual readiness. The incumbent must already include the source-selection resolver; older loaded daemons need one owner-controlled initial load before this command can load newer source through `/restart`.
 
-Source reload verification also reports `participants`: the default daemon and named CLI identities recorded by the Stack daemon lifecycle commands. Each running participant reports its loaded bundle identity and source-capture time. A different selected bundle yields `participant_source_stale`; missing bundle evidence yields `participant_source_unknown`; unavailable control yields `participant_unavailable`. These make the verdict `NOT_READY`. An identity deliberately stopped by its owner is exempt only when observed stopped; a still-running participant reports `daemon_stop_incomplete` with its loaded identity and source time. A refused stop retains its typed reason in the reload verdict.
+Source reload verification also reports `participants`: the default daemon and named CLI identities recorded by the Stack daemon lifecycle commands or observed running in its identity homes. Inactive homes without recorded lifecycle intent are omitted. Each running participant reports its loaded bundle identity and source-capture time. A different selected bundle yields `participant_source_stale`; missing bundle evidence yields `participant_source_unknown`; unavailable control yields `participant_unavailable`. These make the verdict `NOT_READY`. An identity deliberately stopped by its owner is exempt only when observed stopped; a still-running participant reports `daemon_stop_incomplete` with its loaded identity and source time. A refused stop retains its typed reason in the reload verdict.
 
 Refresh a named participant with the same command and `--identity=<name>`, then verify the Stack again. A standalone daemon started with a separate home outside Stack commands is not registered with the Stack; its QA owner must refresh it separately. The Stack does not discover external homes or assume their lifecycle ownership.
 
