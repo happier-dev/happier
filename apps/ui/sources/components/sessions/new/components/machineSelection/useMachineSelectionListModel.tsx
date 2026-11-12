@@ -53,6 +53,7 @@ import type { MachinePoolListStatus } from '@/sync/store/domains/machinePools';
 import type { MachinePoolFeatureStatus } from '@/sync/engine/machines/useMachinePoolProjections';
 import {
     buildMachinePoolRowPresentations,
+    describeMachinePoolAvailability,
     resolveMachinePoolEnabledMemberLabels,
 } from '@/components/machines/pools/machinePoolRowPresentation';
 import type { RunnerArtifactTarget } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
@@ -263,12 +264,7 @@ function poolMemberSummary(
     const memberLabels = resolveMachinePoolEnabledMemberLabels(pool, machines);
     const members = memberLabels.join(', ');
     if (options?.includeAvailability === false) return members;
-    const availability = pool.availability.state === 'known'
-        ? t('machinePools.availabilityKnown', {
-            connected: pool.availability.connectedCount,
-            enabled: pool.availability.enabledCount,
-        })
-        : t('machinePools.availabilityUnknown');
+    const availability = describeMachinePoolAvailability(pool.availability);
     return members ? `${members} · ${availability}` : availability;
 }
 

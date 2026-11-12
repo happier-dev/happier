@@ -316,10 +316,13 @@ describe('MachinePoolEditorScreen', () => {
         expect(boundaries.create).not.toHaveBeenCalled();
     });
 
-    it('keeps a Team member pool read-only using the pool owner access result', async () => {
+    it.each([
+        { state: 'known', connectedCount: 1, enabledCount: 1 },
+        { state: 'unknown' },
+    ] as const)('keeps a Team member pool read-only with the owner availability $state', async availability => {
         const view = poolView(1);
         boundaries.pools = [{ ...view, pool: { ...view.pool, description: 'Linux hosts for container builds.', audience: { kind: 'team', teamId: 'team-build' }, members: [] },
-            availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } }];
+            availability, access: { canManage: false, canResolve: false, canViewMembers: false } }];
         await act(async () => publishBoundaryState());
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
         const { t } = await import('@/text');
@@ -327,6 +330,9 @@ describe('MachinePoolEditorScreen', () => {
         // A member reads the pool: what it is for and that its machines are private, with no form it cannot save.
         await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.membersPrivate')).not.toBeNull());
         expect(screen.getTextContent()).toContain('Linux hosts for container builds.');
+        expect(screen.getTextContent()).toContain(availability.state === 'known'
+            ? t('machinePools.availabilityKnown', { connected: 1, enabled: 1 })
+            : t('machinePools.availabilityUnknown'));
         expect(screen.getTextContent()).toContain(t('machinePools.membersPrivateHelp', { pool: 'Development' }));
         expect(screen.findByTestId('settings.machinePools.editor.name')).toBeNull();
         expect(screen.findByTestId('settings.machinePools.editor.save')).toBeNull();
@@ -342,6 +348,7 @@ describe('MachinePoolEditorScreen', () => {
         await act(async () => publishBoundaryState());
         const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
         const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={view.pool.id} />);
+        expect(screen.getTextContent()).toContain(t('machinePools.availabilityKnown', { connected: 1, enabled: 1 }));
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Team build farm'));
         await act(async () => screen.pressByTestId('settings.machinePools.editor.save'));
         await vi.waitFor(() => expect(boundaries.update).toHaveBeenCalledOnce());

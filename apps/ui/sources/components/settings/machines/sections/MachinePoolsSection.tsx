@@ -11,7 +11,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
 import { isMachinePoolHomeOffline, isMachinePoolRefreshFailed } from '../pools/machinePoolEditorModel';
-import { buildMachinePoolRowPresentations, resolveMachinePoolEnabledMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
+import { buildMachinePoolRowPresentations, describeMachinePoolAvailability, resolveMachinePoolEnabledMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { machinePoolCollectionHref } from '../collection/machineCollectionModel';
@@ -41,12 +41,6 @@ export function resolveMachinePoolDeleteFocusTargetTestId(
     return previous
         ? machinePoolSettingsRowTestId(serverId, previous.pool.id)
         : machinePoolSettingsAddTestId(serverId);
-}
-
-function availabilityText(view: MachinePoolViewV1): string {
-    return view.availability.state === 'known'
-        ? t('machinePools.availabilityKnown', { connected: view.availability.connectedCount, enabled: view.availability.enabledCount })
-        : t('machinePools.availabilityUnknown');
 }
 
 function memberPreview(view: MachinePoolViewV1, machines: ReadonlyArray<Machine>): string {
@@ -158,7 +152,7 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 /> : null}
             </>;
             const poolRows = rows.map(({ view, memberPreview: preview, identityDetail, accessibilityName }) => {
-                const availability = availabilityText(view);
+                const availability = describeMachinePoolAvailability(view.availability);
                 const rowTestId = machinePoolSettingsRowTestId(group.serverId, view.pool.id);
                 // A Home that is signed out or failed to refresh keeps its last known rows;
                 // the row says so instead of presenting a stale connection count as current.

@@ -1,5 +1,13 @@
 import type { MachinePoolMemberStateV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { getMachineDisplayName, resolveMachineDisplayNames, type MachineAbsence } from '@/utils/sessions/machineDisplayNames';
+import { t } from '@/text';
+
+/** Present the availability already decided by the Pool owner, without reading its private roster. */
+export function describeMachinePoolAvailability(availability: MachinePoolViewV1['availability']): string {
+    return availability.state === 'known'
+        ? t('machinePools.availabilityKnown', { connected: availability.connectedCount, enabled: availability.enabledCount })
+        : t('machinePools.availabilityUnknown');
+}
 
 /** The only Machine facts a Pool row needs: an identity plus whatever readable label exists. */
 export type MachinePoolRowMachine = Readonly<{

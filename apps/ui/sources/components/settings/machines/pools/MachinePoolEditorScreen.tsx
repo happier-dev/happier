@@ -35,7 +35,7 @@ import { MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { randomUUID } from '@/platform/randomUUID';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { invalidateMachinePoolProjection } from '@/sync/engine/machines/machinePoolProjection';
-import { resolveMachinePoolMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
+import { describeMachinePoolAvailability, resolveMachinePoolMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
 import { createMachinePoolEditorTierState, isMachinePoolHomeOffline, isMachinePoolRefreshFailed, moveMachinePoolEditorTier, normalizeMachinePoolEditorMembers, normalizeMachinePoolEditorTierState } from './machinePoolEditorModel';
 import { useApprovalArtifact } from '@/components/approvals/useApprovalArtifact';
 import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
@@ -540,6 +540,12 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     const pageMeta = [
         ...(homeName ? [{ key: 'home', text: homeName, icon: 'house' as const }] : []),
         ...(savedTeamName ? [{ key: 'team', text: savedTeamName, icon: 'users' as const }] : []),
+        ...(existing ? [{
+            key: 'availability',
+            text: homeOffline || refreshFailed
+                ? t('machinePools.unavailable')
+                : describeMachinePoolAvailability(existing.availability),
+        }] : []),
     ];
     const cancelAction: PageHeaderPrimaryAction | null = isNew
         ? { testID: 'settings.machinePools.editor.cancel', title: t('common.cancel'), onPress: leave }
