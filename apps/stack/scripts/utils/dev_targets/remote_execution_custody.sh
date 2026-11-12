@@ -281,18 +281,37 @@ terminate_command() {
     wait "$remote_child_pid" 2>/dev/null || true
     return 0
   fi
-  local members
+  # The scope, unlike a process group, retains admitted/detached workers.
+  # Name only the scope this wrapper could have created; inherited scopes
+  # belong to their containing executor and are never cancelled here.
+  local members owned_scope=
+  if [ "$reason" != completed ] && [ "$(uname -s)" = Linux ]; then
+    owned_scope=$(jobs_scope_unit "$$" "$wrapper_token")
+    if [ "$(systemctl --user show "$owned_scope" --property=LoadState --value 2>/dev/null)" != loaded ]; then
+      owned_scope=
+    else
+      printf '[preferred-execution] stopping owned job scope %s (reason=%s)\n' "$owned_scope" "$reason" >&2
+      signal_member "$reason" TERM scope "$owned_scope" '' || true
+    fi
+  fi
   members=$(group_identities "$remote_child_pid")
-  kill -0 -- "-$remote_child_pid" 2>/dev/null || return 0
+  kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope" ] || return 0
   # Job control establishes a group for the command and all its descendants.
   signal_member "$reason" TERM pgid "$remote_child_pid" "$members"
   for ((attempt=0; attempt<20; attempt++)); do
-    kill -0 -- "-$remote_child_pid" 2>/dev/null || return 0
+    kill -0 -- "-$remote_child_pid" 2>/dev/null || [ -n "$owned_scope" ] || return 0
     sleep 0.1
   done
   # The command leader may already have exited. An original member's positive
   # start identity plus its current PGID prevents signaling a recycled group.
   finish_group_cancellation "$remote_child_pid" "$members" "$reason"
+  if [ -n "$owned_scope" ]; then
+    # Reuse custody's existing TERM grace above, including when the group
+    # leader departed before its detached workers. Admission releases its
+    # existing slot through socket close; there is no separate release path.
+    signal_member "$reason" KILL scope "$owned_scope" '' || true
+    systemctl --user stop "$owned_scope" >/dev/null 2>&1 || true
+  fi
 }
 cancel() { trap '' HUP INT TERM; termination_reason=signal; terminate_command "$termination_reason"; exit 130; }
 trap cleanup EXIT

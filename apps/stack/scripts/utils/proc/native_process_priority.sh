@@ -1,5 +1,9 @@
 # Shared payload priority for native admission and local/remote execution.
 # Admission owns capacity; this owner only selects inherited scheduling priority.
+jobs_scope_unit() {
+  printf 'happier-jobs-%s-%s.scope' "$1" "$2"
+}
+
 exec_in_jobs_slice() {
   # The containing jobs owner already established scope and priority. Reentrant
   # payloads inherit both rather than repeating scheduling or admission work.
@@ -16,7 +20,7 @@ exec_in_jobs_slice() {
     && systemctl --user show-environment >/dev/null 2>&1 \
     && [ "$(systemctl --user show happier-jobs.slice --property=LoadState --value 2>/dev/null || true)" = loaded ]; then
     jobs_slice_token=$(heavyweight_process_token "$$")
-    exec systemd-run --expand-environment=no "--unit=happier-jobs-$$-$jobs_slice_token.scope" \
+    exec systemd-run --expand-environment=no "--unit=$(jobs_scope_unit "$$" "$jobs_slice_token")" \
       --user --scope --quiet --slice=happier-jobs.slice "--nice=$jobs_slice_nice" -- "$@"
   fi
 

@@ -26,7 +26,15 @@ function spawnObservedCustody(args, options) {
       esac
       return "$status"
     }
-    export -f kill
+    systemctl() {
+      local status
+      command systemctl "$@"; status=$?
+      if [ "$2" = kill ]; then
+        printf '[fixture-signal] -%s %s %s\\n' "\${3#--signal=}" "\${!#}" "$status" >&5
+      fi
+      return "$status"
+    }
+    export -f kill systemctl
     exec /bin/bash "$@"
   `, 'custody-observer', custody, ...args], { ...options, stdio: [...options.stdio, 'ignore', 'ignore', 'pipe'] });
   let trace = '';
@@ -46,7 +54,7 @@ function assertSignalEvents(stderr, executionId, trace, initiatingExecutionId = 
   const syscalls = trace.split(/\r?\n/u).filter(line => line.startsWith('[fixture-signal] '))
     .map(line => {
       const [, signal, target, result] = line.split(' ');
-      return { signal: signal.slice(1), target: Number(target), result: Number(result) };
+      return { signal: signal.slice(1), target: target.startsWith('happier-jobs-') ? target : Number(target), result: Number(result) };
     });
   const actual = events.map(event => {
     assert.deepEqual(Object.keys(event).sort(), ['at', 'execution_id', 'initiating_execution_id', 'members', 'reason', 'signal', 'syscall_result', 'target_id', 'target_kind']);
@@ -54,8 +62,9 @@ function assertSignalEvents(stderr, executionId, trace, initiatingExecutionId = 
     assert.equal(event.execution_id, executionId);
     assert.equal(event.initiating_execution_id, initiatingExecutionId);
     assert.ok(['completed', 'lifeline_eof', 'signal', 'custody_cancel', 'controller_orphan_cleanup', 'reaper_orphan', 'native_cleanup'].includes(event.reason));
-    assert.ok(['pid', 'pgid'].includes(event.target_kind));
-    assert.ok(Number.isSafeInteger(event.target_id) && event.target_id > 0);
+    assert.ok(['pid', 'pgid', 'scope'].includes(event.target_kind));
+    if (event.target_kind === 'scope') assert.match(event.target_id, /^happier-jobs-\d+-\d+\.scope$/u);
+    else assert.ok(Number.isSafeInteger(event.target_id) && event.target_id > 0);
     assert.ok(Array.isArray(event.members));
     for (const member of event.members) assert.match(member, /^\d+:\d+$/u);
     return { signal: event.signal, target: event.target_kind === 'pgid' ? -event.target_id : event.target_id, result: event.syscall_result };

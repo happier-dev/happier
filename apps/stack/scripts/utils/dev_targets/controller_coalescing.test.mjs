@@ -32,6 +32,7 @@ test('edited contract', async () => {
   assert.equal(${valid}, true);
 });
 `;
+
   const callers = [];
   t.after(() => { for (const caller of callers) if (caller.exitCode === null) caller.kill('SIGTERM'); });
   const start = () => {
@@ -74,7 +75,7 @@ test('edited contract', async () => {
   assert.equal(connections.length, 2, 'the later caller must execute the edited source');
 });
 
-test('same current-source entry-load requests share one execution with every caller', {
+for (const cancelFirst of [false, true]) test(`same current-source entry-load requests share one execution${cancelFirst ? ' after one caller leaves' : ' with every caller'}`, {
   timeout: 15000, skip: process.platform !== 'linux',
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'entry-coalesce-' });
@@ -124,9 +125,17 @@ socket.on('data', () => socket.end());
   assert.equal(status.attachedCallers, 4);
   assert.equal(status.duplicateCallers, 3);
   assert.equal(connections.length, 1);
+  if (cancelFirst) {
+    first.caller.kill('SIGTERM');
+    assert.equal((await first.result).code, 130);
+    const remaining = JSON.parse(spawnSync(process.execPath, [owner, '--status', fixture.root], { encoding: 'utf8' }).stdout);
+    assert.equal(remaining.attachedCallers, 3);
+    assert.equal(remaining.runningDispatches, 1);
+    assert.equal((await readFile(countPath, 'utf8')).length, 1);
+  }
   connections[0].write('finish');
   const results = await Promise.all([first.result, ...peers.map(peer => peer.result)]);
-  assert.deepEqual(results.map(result => result.code), [0, 0, 0, 0]);
+  assert.deepEqual(results.map(result => result.code), [cancelFirst ? 130 : 0, 0, 0, 0]);
   assert.equal((await readFile(countPath, 'utf8')).length, 1);
 });
 
