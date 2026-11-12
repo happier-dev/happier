@@ -55,14 +55,18 @@ export function resolveFleetSnapshotMachineRejection(params: Readonly<{
     const { snapshot, machine } = params;
     if (!snapshot) return 'unknown';
     if (!machine) return snapshot.settled === true ? 'missing' : 'unknown';
+    const presence = resolveMachinePickerPresence(machine, undefined, createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId));
+    // Retained inventory cannot hide a refusal already known by the transport owner.
+    if (presence.status !== 'online' && presence.status !== 'unknown') {
+        return presence.status === 'offline' ? presence.reason : presence.status;
+    }
     if (snapshot.observation === 'stale') return 'stale';
     if (machine.availability?.kind === 'locked') return 'unknown';
-    const presence = resolveMachinePickerPresence(machine, undefined, createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId));
     // Presence shells can look online before their scoped content is opened.
     // Consume the inventory owner's qualification rather than re-deriving it.
     if (presence.status === 'online' && snapshot.executionEligibleMachineIds
         && !(params.executionEligible ?? snapshot.executionEligibleMachineIds.includes(machine.id))) return 'unknown';
-    return presence.status === 'online' ? null : presence.status === 'offline' ? presence.reason : presence.status;
+    return presence.status === 'online' ? null : presence.status;
 }
 
 export type FleetReadState = 'current' | 'resolving' | 'transportFailure' | 'failed';

@@ -33,6 +33,21 @@ describe('Administration fleet policy', () => {
         expect(resolveFleetMachineRejection({ ...target, machineSnapshots: [{ ...snapshot, observation: 'stale', machines: [machine] }] })).toBe('stale');
     });
 
+    it('preserves a known transport refusal over stale inventory and restores stale classification after recovery', () => {
+        const machine = createMachineFixture({ id: 'retained-source', active: true, activeAt: Date.now() });
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        const read = (observation: 'stale' | 'live') => resolveFleetMachineRejection({
+            serverIdentityId: scope.serverId, machineId: machine.id,
+            machineSnapshots: [{ kind: 'resolved', accountId: scope.accountId, profileId: scope.serverId,
+                serverIdentityId: scope.serverId, serverName: 'Studio', observation, machines: [machine] }],
+        });
+        recordMachineRequestFailed({ ...scope, machineId: machine.id });
+        expect(read('stale')).toBe('home_unreachable');
+        recordMachineRequestSucceeded({ ...scope, machineId: machine.id });
+        expect(read('stale')).toBe('stale');
+        expect(read('live')).toBeNull();
+    });
+
     it('compares only selectable supplies without electing one of the disagreeing members', () => {
         const current = { id: 'service', content: 'current' };
         const retained = { id: 'service', content: 'old' };
