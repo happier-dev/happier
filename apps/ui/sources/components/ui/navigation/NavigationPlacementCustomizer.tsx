@@ -491,8 +491,8 @@ function useSheetBodyScrolls(): boolean {
     return useDeviceType() === 'phone';
 }
 
-/** The rows' list inside a scrolling body: its own height, and no second scroller. */
-const IN_BODY_LIST_PROPS = { scrollEnabled: false, style: { flex: 0 } } as const;
+/** The rows take their content height inside the sheet's scroller. Web's flex: 0 gives them a zero basis. */
+const IN_BODY_LIST_PROPS = { scrollEnabled: false, style: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' } } as const;
 
 const LEADING_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 8 } as const;
 const GLYPH_SLOT_STYLE = { width: ICON_SIZE.md, height: ICON_SIZE.md } as const;
