@@ -120,10 +120,10 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                     const refreshOutcome: ScmOperationOutcome = outcome.effect ? {
                         v: 1, kind: 'effect_applied_with_warning', effect: outcome.effect,
                         errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, nextActions: [{ kind: 'refresh' }],
-                    } : createScmOperationUnknownOutcome({ kind: 'repository_status', ...(input.cwd ? { cwd: input.cwd } : {}) });
+                    } : { ...outcome, message: error instanceof Error ? error.message : String(error ?? ''), nextActions: [{ kind: 'refresh' }] };
                     reportOperation({
-                        operation: input.operation, status: 'failed', outcome: refreshOutcome,
-                        errorCode: refreshOutcome.errorCode,
+                        operation: input.operation, status: refreshOutcome.kind === 'succeeded' ? 'success' : 'failed', outcome: refreshOutcome,
+                        errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED,
                         detail: error instanceof Error ? error.message : String(error ?? ''),
                         surface: 'update', tracking: null,
                     });

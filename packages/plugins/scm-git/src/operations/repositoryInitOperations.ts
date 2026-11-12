@@ -16,7 +16,7 @@ const GIT_REPOSITORY_INIT_CHECK_TIMEOUT_MS = 10_000;
 
 type SnapshotResult =
     | { ok: true; snapshot: ScmWorkingSnapshot }
-    | { ok: false; response: ScmRepositoryInitResponse };
+    | { ok: false; response: Extract<ScmRepositoryInitResponse, { success: false }> };
 
 function contextWithDetection(
     context: ScmBackendContext,
@@ -137,24 +137,25 @@ export async function gitRepositoryInit(input: {
         }
     }
 
-    const initializedDetection = await detectGitRepo({ cwd: input.context.cwd });
-    if (!initializedDetection.isRepo) {
+    const refreshWarning = (error: string): ScmRepositoryInitResponse => ({
+        success: true, alreadyInitialized: false,
+        stdout: init.stdout, stderr: init.stderr,
+        errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error,
+        outcome: { v: 1, kind: 'succeeded', message: error, nextActions: [{ kind: 'refresh' }] },
+    });
+    try {
+        const initializedDetection = await detectGitRepo({ cwd: input.context.cwd });
+        if (!initializedDetection.isRepo) return refreshWarning('Git repository initialized, but the repository could not be detected.');
+        const snapshot = await readInitializedGitSnapshot(contextWithDetection(input.context, initializedDetection));
+        if (!snapshot.ok) return refreshWarning(snapshot.response.error || 'Git repository initialized, but its snapshot could not be refreshed.');
         return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-            error: 'Git repository initialization completed but the repository could not be detected.',
+            success: true,
+            alreadyInitialized: false,
+            snapshot: snapshot.snapshot,
             stdout: init.stdout,
             stderr: init.stderr,
         };
+    } catch (error) {
+        return refreshWarning(error instanceof Error ? error.message : 'Git repository initialized, but its state could not be refreshed.');
     }
-
-    const snapshot = await readInitializedGitSnapshot(contextWithDetection(input.context, initializedDetection));
-    if (!snapshot.ok) return snapshot.response;
-    return {
-        success: true,
-        alreadyInitialized: false,
-        snapshot: snapshot.snapshot,
-        stdout: init.stdout,
-        stderr: init.stderr,
-    };
 }

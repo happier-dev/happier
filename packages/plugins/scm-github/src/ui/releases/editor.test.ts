@@ -43,7 +43,9 @@ describe('one controlled release editor', () => {
     const publishing = await editor.publishControl.prepare({ signal: new AbortController().signal });
     expect(calls).toEqual(['readRelease', 'listAssets']);
     expect(publishing?.input).toMatchObject({ releaseId: release.releaseId, reviewed: { ...edited, assets }, makeLatest: 'legacy' });
-    editor.publishControl.onSettled({ ok: true, result: { kind: 'confirmed', release: { ...edited, draft: false } } });
+    editor.publishControl.onSettled({ ok: true, result: { kind: 'confirmed', release: { ...edited, draft: false },
+      observationWarning: { class: 'transient', code: 'github_server_error' } } });
+    expect(editor.getSnapshot()?.outcome).toMatchObject({ kind: 'confirmed', observationWarning: { code: 'github_server_error' } });
     expect(editor.getSnapshot()?.saved?.draft).toBe(false);
     expect(editor.getSnapshot()?.busy).toBeNull();
     editor.dispose();

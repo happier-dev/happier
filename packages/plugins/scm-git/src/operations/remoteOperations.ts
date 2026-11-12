@@ -86,8 +86,8 @@ export async function finalizeGitRemoteMutation(input: { context: ScmBackendCont
     const common = { v: 1 as const, repositoryState, recoveryStash };
     const error = command.stderr || command.stdout || `${input.kind} failed`;
     const uncertainEffect = getScmCommandIndeterminateErrorCode(command) !== null || (!command.success && input.kind === 'push' && errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_NETWORK_FAILED);
-    if (uncertainEffect || (!command.success && !repositoryState)) {
-        const unknownCode = uncertainEffect ? errorCode : SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED;
+    if (uncertainEffect) {
+        const unknownCode = errorCode;
         return { success: false, stdout: command.stdout, stderr: command.stderr, errorCode: unknownCode, error, outcome: { ...common, kind: 'outcome_unknown', errorCode: unknownCode, message: error, reconciliation: input.kind === 'push' && target ? { kind: 'remote_ref', ...target } : { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] } };
     }
     if (repositoryState?.hasConflicts) {
@@ -107,7 +107,8 @@ export async function finalizeGitRemoteMutation(input: { context: ScmBackendCont
     }
     if (!repositoryState) {
         if (effect) return warning({ command, effect, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error: 'Mutation applied, but repository refresh failed', recoveryStash });
-        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, outcome: { ...common, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] } };
+        const message = 'Mutation applied, but repository refresh failed';
+        return { success: true, stdout: command.stdout, stderr: command.stderr, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error: message, outcome: { ...common, kind: 'succeeded', message, nextActions: [{ kind: 'refresh' }] } };
     }
     return { success: true, stdout: command.stdout, stderr: command.stderr, outcome: { ...common, kind: 'succeeded', effect: effect?.kind === 'branch' ? { ...effect, headOid: repositoryState.headOid } : effect, nextActions: [] } };
 }

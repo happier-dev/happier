@@ -421,14 +421,12 @@ export async function gitCommitBackout(input: {
     try {
         repositoryState = await readGitOperationRepositoryState(context);
     } catch {
-        return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-            error: 'Could not refresh repository state after backout',
-            stdout: backout.stdout,
-            stderr: backout.stderr,
-            outcome: { v: 1, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] },
-        };
+        if (backout.success) return { success: true, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error: 'Backout applied, but repository refresh failed', stdout: backout.stdout, stderr: backout.stderr, outcome: { v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, effect: { kind: 'branch', name: 'HEAD' }, nextActions: [{ kind: 'refresh' }] } };
+        const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(backout);
+        const errorCode = indeterminateErrorCode ?? mapGitErrorCode(backout.stderr);
+        return { success: false, errorCode, error: backout.stderr || 'Failed to backout commit', stdout: backout.stdout, stderr: backout.stderr, outcome: indeterminateErrorCode
+            ? { v: 1, kind: 'outcome_unknown', errorCode, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] }
+            : { v: 1, kind: 'failed', errorCode, nextActions: [{ kind: 'refresh' }] } };
     }
     const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(backout);
     if (indeterminateErrorCode && !repositoryState.hasConflicts) return { success: false, errorCode: indeterminateErrorCode, error: backout.stderr || 'Backout completion could not be determined', stdout: backout.stdout, stderr: backout.stderr, outcome: { v: 1, kind: 'outcome_unknown', errorCode: indeterminateErrorCode, repositoryState, reconciliation: { kind: 'repository_status', cwd: context.cwd }, nextActions: [{ kind: 'refresh' }] } };

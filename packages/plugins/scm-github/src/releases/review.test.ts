@@ -14,12 +14,13 @@ const nativeAsset = { id: 9, name: asset.name, label: null, content_type: asset.
 const nativeRelease = (overrides: Record<string, unknown> = {}) => ({ id: 7, tag_name: 'v7', target_commitish: 'main',
   name: 'Release 7', body: 'Notes', draft: true, prerelease: false, created_at: stamp, updated_at: stamp,
   published_at: null, html_url: reviewed.webUrl, assets: [nativeAsset], ...overrides });
-function transport(options: { release?: Record<string, unknown>; assets?: readonly Record<string, unknown>[]; loseWrite?: boolean } = {}) {
+function transport(options: { release?: Record<string, unknown>; assets?: readonly Record<string, unknown>[]; loseWrite?: boolean; refreshStatus?: number; patchStatus?: number } = {}) {
   let published = false;
   return createStubGithubTransport({ nativeMaterialization: { kind: 'httpHeaders', headers: { authorization: 'Bearer fixture' } },
     respond: request => {
       if (new URL(request.url).pathname === '/repos/acme/widgets') return { status: 200, body: { id: 42, full_name: 'acme/widgets', private: true } };
       if (request.method === 'PATCH') {
+        if (options.patchStatus) return { status: options.patchStatus };
         if (options.loseWrite) throw new Error('Response lost after the write');
         const body = readRecordedJsonBody(request);
         if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new Error('Expected a JSON mutation object');
@@ -29,6 +30,7 @@ function transport(options: { release?: Record<string, unknown>; assets?: readon
         const untagged = !published && !('tag_name' in body) ? { tag_name: 'untagged-da5eefdb1d43cfcbac6c' } : {};
         return { status: 200, body: nativeRelease({ ...options.release, ...body, ...untagged }) };
       }
+      if (published && options.refreshStatus) return { status: options.refreshStatus };
       if (request.url.includes('/assets?')) return { status: 200, body: options.assets ?? [nativeAsset] };
       return { status: 200, body: nativeRelease({ ...options.release, draft: !published }) };
     } });
@@ -69,6 +71,19 @@ describe('fresh reviewed draft authority at the provider operation boundary', ()
     expect(readRecordedJsonBody(writes[0]!)).toEqual({ draft: false, make_latest: 'false' });
     expect(Object.keys(writes[0]!.headers).some(name => name.toLowerCase() === 'if-match')).toBe(false);
     expect(h.requests.at(-1)?.url).toBe(writes[0]?.url);
+  });
+
+  it('keeps the confirmed publication receipt when its observation refresh fails', async () => {
+    const h = transport({ refreshStatus: 503 });
+    const result = await executeGithubReleaseOperationV1('publishReleaseDraft', { ...target, reviewed, makeLatest: 'false' }, h.context);
+    expect(result).toMatchObject({ kind: 'confirmed', release: { releaseId: '7', draft: false },
+      observationWarning: { class: 'transient', code: 'github_server_error' } });
+  });
+
+  it('retains a typed failure when PATCH is refused', async () => {
+    const h = transport({ patchStatus: 403 });
+    expect(await executeGithubReleaseOperationV1('publishReleaseDraft', { ...target, reviewed, makeLatest: 'false' }, h.context))
+      .toMatchObject({ kind: 'rejected', failure: { class: 'permission' } });
   });
 
   it('edits only declared draft fields, keeps the draft’s tag, and preserves unknown writes without replay', async () => {

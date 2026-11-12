@@ -72,6 +72,17 @@ describe('runSessionScmMutation', () => {
         expect(run).toHaveBeenCalledTimes(1);
         expect(state.inFlight).toBeNull();
     });
+    it('retains confirmed success without an effect identity when its repository refresh fails', async () => {
+        const state = createOperationState();
+        const run = vi.fn(async () => ({ success: true }));
+        const result = await runSessionScmMutation({ state, sessionId: 's1', operation: 'branch_switch', cwd: '/repo', fallbackError: 'failed', run,
+            refreshAfterMutation: async () => { throw new Error('Repository is unavailable'); } });
+        expect(result).toMatchObject({ started: true, response: { success: true, outcome: { kind: 'succeeded' } } });
+        expect(state.log[0]).toMatchObject({ status: 'success', outcome: { kind: 'succeeded', message: expect.any(String), nextActions: [{ kind: 'refresh' }] } });
+        expect(run).toHaveBeenCalledOnce();
+        expect(state.inFlight).toBeNull();
+    });
+
     it('records a successful branch switch in the one operation log the outcome line reads', async () => {
         const state = createOperationState();
         const result = await runSessionScmMutation({

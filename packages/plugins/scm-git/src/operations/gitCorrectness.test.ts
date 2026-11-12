@@ -10,7 +10,7 @@ import { readGitBranchOperationState } from './branchOperationState.js';
 import { gitBranchCheckout, gitBranchCreate } from './branchOperations.js';
 import { gitCommitBackout, gitCommitCreate } from './commitOperations.js';
 import * as commitOperations from './commitOperations.js';
-import { gitStashCreate, gitStashDrop, gitStashPop } from './stashOperations.js';
+import { gitStashApply, gitStashCreate, gitStashDrop, gitStashPop } from './stashOperations.js';
 import * as integration from './branchIntegrationOperations.js';
 import { getGitSnapshot } from '../repository.js';
 
@@ -396,7 +396,7 @@ describe('Git correctness and recovery', () => {
         } finally { cleanup(); }
     });
 
-    it('returns reconciliation when a backout effect cannot be refreshed', async () => {
+    it('preserves a confirmed backout when its repository refresh fails', async () => {
         const { cwd, context, cleanup } = workspace();
         try {
             writeFileSync(join(cwd, 'a.txt'), 'changed\n'); git(cwd, 'commit', '-qam', 'changed');
@@ -409,9 +409,78 @@ describe('Git correctness and recovery', () => {
                 if (input.args[0] === 'revert') didRevert = true;
                 return actual;
             }, () => gitCommitBackout({ context, request: { commit: originalHead } })));
-            expect(result.outcome).toMatchObject({ kind: 'outcome_unknown', reconciliation: { kind: 'repository_status', cwd } });
+            expect(result).toMatchObject({ success: true, errorCode: 'REPOSITORY_REFRESH_FAILED', outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'branch', name: 'HEAD' }, nextActions: [{ kind: 'refresh' }] } });
             expect(git(cwd, 'rev-parse', 'HEAD')).not.toBe(originalHead);
             expect(git(cwd, 'show', 'HEAD:a.txt')).toBe('base');
+        } finally { cleanup(); }
+    });
+
+    it.each(['merge', 'rebase'] as const)('preserves a confirmed %s when its repository refresh fails', async operation => {
+        const { cwd, context, cleanup } = workspace();
+        try {
+            git(cwd, 'checkout', '-qb', 'topic');
+            writeFileSync(join(cwd, 'a.txt'), 'topic\n'); git(cwd, 'commit', '-qam', 'topic');
+            const target = git(cwd, 'rev-parse', 'HEAD');
+            git(cwd, 'checkout', '-q', 'main');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let applied = false;
+            const result = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async input => {
+                if (applied && input.args[0] === 'ls-files' && input.args[1] === '--unmerged') return { success: false, stdout: '', stderr: 'state unavailable', exitCode: 1 };
+                const actual = await runtime.runCommand(input);
+                if (input.args[0] === operation) applied = actual.success;
+                return actual;
+            }, () => operation === 'merge'
+                ? integration.gitBranchMerge({ context, request: { sourceRef: 'topic' } })
+                : integration.gitBranchRebase({ context, request: { sourceRef: 'topic' } })));
+            expect(result).toMatchObject({ success: true, errorCode: 'REPOSITORY_REFRESH_FAILED', outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'branch', name: 'HEAD' }, nextActions: [{ kind: 'refresh' }] } });
+            expect(git(cwd, 'rev-parse', 'HEAD')).toBe(target);
+        } finally { cleanup(); }
+    });
+
+    it.each(['apply', 'pop'] as const)('preserves confirmed stash %s and recovery identity when its repository refresh fails', async operation => {
+        const { cwd, context, cleanup } = workspace();
+        try {
+            writeFileSync(join(cwd, 'a.txt'), 'stashed\n'); git(cwd, 'stash', 'push');
+            const stashOid = git(cwd, 'rev-parse', 'refs/stash');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let applied = false;
+            const result = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async input => {
+                if (applied && input.args[0] === 'ls-files' && input.args[1] === '--unmerged') return { success: false, stdout: '', stderr: 'state unavailable', exitCode: 1 };
+                const actual = await runtime.runCommand(input);
+                if (input.args[0] === 'stash' && input.args[1] === 'apply') applied = actual.success;
+                return actual;
+            }, () => operation === 'apply'
+                ? gitStashApply({ context, request: { stashRef: stashOid } })
+                : gitStashPop({ context, request: { stashRef: stashOid } })));
+            expect(result).toMatchObject({ success: operation === 'apply', errorCode: 'REPOSITORY_REFRESH_FAILED', outcome: { kind: 'effect_applied_with_warning', effect: { kind: 'stash', stashOid }, recoveryStash: { stashOid }, nextActions: [{ kind: 'refresh' }] } });
+            expect(readFileSync(join(cwd, 'a.txt'), 'utf8')).toBe('stashed\n');
+            expect(git(cwd, 'rev-parse', 'refs/stash')).toBe(stashOid);
+        } finally { cleanup(); }
+    });
+
+    it.each(['merge', 'backout', 'stash'] as const)('preserves the %s write failure when its later refresh also fails', async operation => {
+        const { cwd, context, cleanup } = workspace();
+        try {
+            git(cwd, 'branch', 'topic');
+            writeFileSync(join(cwd, 'a.txt'), 'changed\n'); git(cwd, 'commit', '-qam', 'changed');
+            const commit = git(cwd, 'rev-parse', 'HEAD');
+            writeFileSync(join(cwd, 'a.txt'), 'stashed\n'); git(cwd, 'stash', 'push');
+            const stashOid = git(cwd, 'rev-parse', 'refs/stash');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let attempted = false;
+            const result = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async input => {
+                if (attempted && input.args[0] === 'ls-files' && input.args[1] === '--unmerged') return { success: false, stdout: '', stderr: 'state unavailable', exitCode: 1 };
+                if (input.args[0] === (operation === 'backout' ? 'revert' : operation === 'stash' ? 'stash' : 'merge') && (operation !== 'stash' || input.args[1] === 'apply')) {
+                    attempted = true;
+                    return { success: false, stdout: '', stderr: 'injected write failure', exitCode: 1 };
+                }
+                return runtime.runCommand(input);
+            }, () => operation === 'merge' ? integration.gitBranchMerge({ context, request: { sourceRef: 'topic' } })
+                : operation === 'backout' ? gitCommitBackout({ context, request: { commit } })
+                : gitStashApply({ context, request: { stashRef: stashOid } })));
+            expect(result).toMatchObject({ success: false, errorCode: 'COMMAND_FAILED', error: 'injected write failure', outcome: { kind: 'failed', errorCode: 'COMMAND_FAILED' } });
+            expect(git(cwd, 'rev-parse', 'HEAD')).toBe(commit);
+            expect(readFileSync(join(cwd, 'a.txt'), 'utf8')).toBe('changed\n');
         } finally { cleanup(); }
     });
 

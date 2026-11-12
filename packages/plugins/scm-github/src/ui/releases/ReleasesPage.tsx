@@ -370,7 +370,22 @@ function ReleasesBody(
     onSaved: (release, effect) => {
       reads?.invalidateRelease(release.releaseId, effect);
       if (effect === 'created') void navigate(release.releaseId);
-      if (effect === 'published') void navigate('');
+      if (effect === 'published') {
+        const outcome = editor?.getSnapshot()?.outcome;
+        if (outcome?.kind === 'confirmed' && outcome.observationWarning) {
+          const warning = outcome.observationWarning;
+          // Feedback is independent of the confirmed publication and normal navigation.
+          void (async () => {
+            try {
+              await context.hostApi.notify(t('plugins.github.releases.published.refreshWarning',
+                'Published. The latest release details could not be refreshed. Open the release again to refresh. ({code})',
+                { code: warning.code }) + (warning.requestId ? `\nRequest ID: ${warning.requestId}` : ''),
+              { severity: 'warning', signal: context.signal });
+            } catch { /* Notification delivery cannot rewrite the publication receipt. */ }
+          })();
+        }
+        void navigate('');
+      }
     } });
   const helpWithCurrentFields = React.useCallback<ReleaseSessionHelpV1>(async (intent, _evidence, choice) => {
     const snapshot = intent.kind === 'notes' ? editor?.getSnapshot() : null;

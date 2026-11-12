@@ -40,7 +40,8 @@ export const ForgeReleaseNotesContextV1Schema = defineProtocolObject({
     selector: ForgeReleaseNotesSelectorV1Schema, contextText: text, proposedNotes: text.optional(),
 }, closed);
 export const ForgeReleaseMutationResultV1Schema = defineProtocolUnion([
-    defineProtocolObject({ kind: defineProtocolLiteral('confirmed'), release: ForgeReleaseV1Schema }, closed),
+    defineProtocolObject({ kind: defineProtocolLiteral('confirmed'), release: ForgeReleaseV1Schema,
+        observationWarning: TriageSourceFailureV1Schema.optional() }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('conflict'), release: ForgeReleaseV1Schema,
         reason: defineProtocolLiteral('changedSinceReview').optional() }, closed),
     defineProtocolObject({ kind: defineProtocolLiteral('rejected'), failure: TriageSourceFailureV1Schema }, closed),

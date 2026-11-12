@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { runWithRealGitScmRuntime, runWithGitScmCommandRunner, createRealGitScmBackendRuntimeServices, type GitScmCommandRunner } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackendContext } from '../types.js';
-import { gitRemotePull, gitRemotePush } from './remoteOperations.js';
+import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './remoteOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 
 const execFile = promisify(execFileCallback);
@@ -155,6 +155,8 @@ describe('Git remote policy at the real repository boundary', { timeout: 30_000 
 
     it('applies only an explicit expected-OID force lease and rejects a stale lease', async () => {
         await withRepository(async ({ cwd, writer, context }) => {
+            // The remote fixture permits rewriting; this test decides whether the exact lease authorizes it.
+            await git(await git(cwd, 'remote', 'get-url', 'origin'), 'config', 'receive.denyNonFastForwards', 'false');
             await git(cwd, 'config', 'remote.origin.push', '+refs/heads/main:refs/heads/main');
             await git(cwd, 'config', 'remote.origin.mirror', 'true');
             const expectedRemoteOid = await git(cwd, 'rev-parse', 'origin/main');
@@ -265,6 +267,42 @@ describe('Git remote policy at the real repository boundary', { timeout: 30_000 
             expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('incoming\n');
             expect(await readFile(join(cwd, 'b.txt'), 'utf8')).toBe('local\n');
             expect(await git(cwd, 'stash', 'list', '--format=%H')).toContain(warning.outcome?.recoveryStash?.stashOid);
+        });
+    });
+
+    it('preserves a confirmed fetch when its repository refresh fails', async () => {
+        await withRepository(async ({ cwd, writer, context }) => {
+            const head = await git(cwd, 'rev-parse', 'HEAD');
+            await incoming(writer);
+            const fetchedOid = await git(writer, 'rev-parse', 'HEAD');
+            const real = createRealGitScmBackendRuntimeServices();
+            let fetchApplied = false;
+            const response = await runWithPolicyCommandRunner(async input => {
+                if (fetchApplied && input.args[0] === 'status') return { success: false, exitCode: 1, stdout: '', stderr: 'injected refresh failure' };
+                const result = await real.runCommand(input);
+                if (input.args[0] === 'fetch') fetchApplied = result.success;
+                return result;
+            }, () => gitRemoteFetch({ context, request: {} }));
+            expect(response).toMatchObject({ success: true, errorCode: 'REPOSITORY_REFRESH_FAILED', outcome: { kind: 'succeeded', nextActions: [{ kind: 'refresh' }] } });
+            expect(await git(cwd, 'rev-parse', 'refs/remotes/origin/main')).toBe(fetchedOid);
+            expect(await git(cwd, 'rev-parse', 'HEAD')).toBe(head);
+        });
+    });
+
+    it.each(['failed', 'indeterminate'] as const)('preserves a fetch %s receipt when its later refresh fails', async receipt => {
+        await withRepository(async ({ cwd, context }) => {
+            const real = createRealGitScmBackendRuntimeServices();
+            let attempted = false;
+            const response = await runWithPolicyCommandRunner(async input => {
+                if (attempted && input.args[0] === 'status') return { success: false, exitCode: 1, stdout: '', stderr: 'injected refresh failure' };
+                if (input.args[0] === 'fetch') {
+                    attempted = true;
+                    return { success: false, exitCode: receipt === 'failed' ? 1 : -1, timedOut: receipt === 'indeterminate', stdout: '', stderr: 'injected fetch failure' };
+                }
+                return real.runCommand(input);
+            }, () => gitRemoteFetch({ context, request: {} }));
+            expect(response).toMatchObject({ success: false, error: 'injected fetch failure', errorCode: receipt === 'failed' ? 'COMMAND_FAILED' : 'COMMAND_TIMEOUT',
+                outcome: { kind: receipt === 'failed' ? 'failed' : 'outcome_unknown', errorCode: receipt === 'failed' ? 'COMMAND_FAILED' : 'COMMAND_TIMEOUT' } });
         });
     });
 

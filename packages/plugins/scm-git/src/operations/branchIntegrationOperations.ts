@@ -92,7 +92,12 @@ async function settleBranchIntegration(input: {
     let repositoryState;
     try { repositoryState = await readGitOperationRepositoryState(input.context); }
     catch {
-        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'Could not refresh repository state after the operation', stdout: input.result.stdout, stderr: input.result.stderr, outcome: { v: 1, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, reconciliation: { kind: 'repository_status', cwd: input.context.cwd }, nextActions: [{ kind: 'refresh' }] } };
+        if (input.result.success) return { success: true, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error: 'Operation applied, but repository refresh failed', stdout: input.result.stdout, stderr: input.result.stderr, outcome: { v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, effect: { kind: 'branch', name: 'HEAD' }, nextActions: [{ kind: 'refresh' }] } };
+        const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(input.result);
+        const errorCode = indeterminateErrorCode ?? mapGitErrorCode(input.result.stderr);
+        return { success: false, errorCode, error: input.result.stderr || input.fallback, stdout: input.result.stdout, stderr: input.result.stderr, outcome: indeterminateErrorCode
+            ? { v: 1, kind: 'outcome_unknown', errorCode, reconciliation: { kind: 'repository_status', cwd: input.context.cwd }, nextActions: [{ kind: 'refresh' }] }
+            : { v: 1, kind: 'failed', errorCode, nextActions: [{ kind: 'refresh' }] } };
     }
     const operationState = repositoryState.operation;
     const errorCode = repositoryState.hasConflicts ? SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE : mapGitErrorCode(input.result.stderr);

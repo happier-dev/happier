@@ -10,9 +10,10 @@ import {
   type ScmRepositoryInitResponse,
 } from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it, vi } from 'vitest';
+import { ScmRepositoryInitResponseSchema } from '@happier-dev/protocol';
 
 import { createGitBackend } from '../backend.js';
-import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices, runWithGitScmCommandRunner, runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackend, ScmBackendContext } from '../types.js';
 
 type RepositoryInitOperation = (input: {
@@ -92,6 +93,29 @@ describe('git repository init operation', () => {
             ambientCwd.mockRestore();
             rmSync(ambientWorkspace, { recursive: true, force: true });
         }
+    });
+
+    it.each(['detection', 'snapshot'] as const)('preserves confirmed initialization when its later %s read fails', async phase => {
+        const workspace = createWorkspace();
+        const repositoryInit = getRepositoryInitOperation();
+        const runtime = createRealGitScmBackendRuntimeServices();
+        let initialized = false;
+        try {
+            const response = await runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async input => {
+                if (initialized && (phase === 'snapshot' ? input.args[0] === 'status'
+                    : input.args[0] === 'rev-parse' && input.args[1] === '--is-inside-work-tree')) {
+                    return { success: false, stdout: '', stderr: 'injected read failure', exitCode: 1 };
+                }
+                const result = await runtime.runCommand(input);
+                if (input.args[0] === 'init') initialized = result.success;
+                return result;
+            }, () => repositoryInit({ context: makeContext(workspace, false), request: { cwd: workspace, initialBranch: 'main' } })));
+            expect(response).toMatchObject({ success: true, alreadyInitialized: false, outcome: { kind: 'succeeded', nextActions: [{ kind: 'refresh' }] } });
+            expect(ScmRepositoryInitResponseSchema.safeParse(response).success).toBe(true);
+            expect(response.snapshot).toBeUndefined();
+            expect(runGit(workspace, ['rev-parse', '--is-inside-work-tree'])).toBe('true');
+            expect(readFileSync(join(workspace, '.git', 'HEAD'), 'utf8')).toBe('ref: refs/heads/main\n');
+        } finally { rmSync(workspace, { recursive: true, force: true }); }
     });
 
     it('returns alreadyInitialized without changing HEAD when the directory is already a repo', async () => {

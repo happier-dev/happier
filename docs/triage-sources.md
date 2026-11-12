@@ -594,6 +594,19 @@ the shared configured Session handoff; no security-specific launcher exists.
 UI composition and loaded-provider validation are separate program integration
 checks; these source contracts do not establish release availability.
 
+### Release publication receipts (0.3 development source)
+
+GitHub publication settles from its validated exact PATCH response (`draft: false`).
+A follow-up GET is observation only: failure or an inconsistent draft observation
+adds optional `observationWarning` using the existing source-failure shape to the
+`confirmed` result, without replacing the PATCH release or changing settlement.
+The release page presents this warning through the host notification owner while
+retaining its normal published navigation. A refused PATCH stays rejected; a lost
+or unvalidated PATCH receipt stays unknown and is never automatically replayed.
+The closed Releases V1 schema, provider and UI readers reload together; older
+strict development readers reject the new optional warning. No persistence,
+wire epoch, gate or compatibility adapter is added.
+
 ### Shared source unit selection (0.3 development source)
 
 A source can declare its natural scope unit through `descriptor.scopeUnit` and

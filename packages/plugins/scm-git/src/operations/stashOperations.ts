@@ -383,7 +383,12 @@ async function applyStash(input: { context: ScmBackendContext; stashRef: string;
     let repositoryState;
     try { repositoryState = await readGitOperationRepositoryState(input.context); }
     catch {
-        return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: 'Could not determine repository state after stash application', stdout: applied.stdout, stderr: applied.stderr, outcome: { v: 1, kind: 'outcome_unknown', errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, reconciliation: { kind: 'stash', stashOid: identity.stashOid }, recoveryStash, nextActions: [{ kind: 'refresh' }] } };
+        if (applied.success) return { success: !input.dropAfterApply, errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, error: 'Stash applied, but repository refresh failed', stdout: applied.stdout, stderr: applied.stderr, outcome: { v: 1, kind: 'effect_applied_with_warning', errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED, effect: { kind: 'stash', ...recoveryStash }, recoveryStash, nextActions: [{ kind: 'refresh' }] } };
+        const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(applied);
+        const errorCode = indeterminateErrorCode ?? mapGitErrorCode(applied.stderr);
+        return { success: false, errorCode, error: applied.stderr || 'Stash application failed and repository state could not be refreshed', stdout: applied.stdout, stderr: applied.stderr, outcome: indeterminateErrorCode
+            ? { v: 1, kind: 'outcome_unknown', errorCode, reconciliation: { kind: 'stash', stashOid: identity.stashOid }, recoveryStash, nextActions: [{ kind: 'refresh' }] }
+            : { v: 1, kind: 'failed', errorCode, recoveryStash, nextActions: [{ kind: 'refresh' }] } };
     }
     if (repositoryState.hasConflicts) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE, error: applied.stderr || 'Stash application left conflicts', stdout: applied.stdout, stderr: applied.stderr, outcome: { v: 1, kind: 'conflicted', errorCode: SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE, repositoryState, recoveryStash, nextActions: [{ kind: 'resolve_conflicts' }] } };
     const indeterminateErrorCode = getScmCommandIndeterminateErrorCode(applied);

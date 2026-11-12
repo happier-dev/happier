@@ -122,6 +122,7 @@ async function mountReleases(
     active?: boolean;
     target?: RenderContext['surface']['target'];
     executeAction?: PluginUiTestkitHostHandlers['executeAction'];
+    notify?: PluginUiTestkitHostHandlers['notify'];
     sessionHelp?: ReleaseSessionHelpV1;
     withoutSessionHelp?: boolean;
     links?: string[];
@@ -217,6 +218,7 @@ async function mountReleases(
         ...(options.detailsPane ? { detailsPane: options.detailsPane } : {}) }),
       ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
       handlers: {
+        ...(options.notify ? { notify: options.notify } : {}),
         setPageNavigation: ({ navigation }) => { options.navigation?.push(navigation); },
         // Overview's CI reader first establishes the host-owned credential authority watch.
         // The test controls that system boundary; the read owner and query lifecycle remain real.
@@ -852,6 +854,23 @@ describe('the Releases Project page', () => {
         GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease,
       ]),
     );
+  });
+
+  it('shows an observation warning while keeping a confirmed release published', async () => {
+    const notifications: unknown[] = [];
+    const locations: unknown[] = [];
+    const page = await mountReleases({ rows: [DRAFT], exact: DRAFT, calls: [], subPath: DRAFT.releaseId, locations,
+      notify: async notification => { notifications.push(notification); },
+      executeAction: async request => {
+        const id = (request.action as { localId: string }).localId;
+        if (id === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft) return { kind: 'confirmed',
+          release: { ...DRAFT, draft: false }, observationWarning: { class: 'transient', code: 'github_server_error' } } as JsonValue;
+        if (id === GITHUB_RELEASE_ACTION_IDS_V1.listAssets) return { kind: 'value', value: { ...DRAFT.assets, incomplete: null } } as JsonValue;
+        return { kind: 'value', value: DRAFT } as JsonValue;
+      } });
+    await act(async () => { await page.controls.press('Publish…'); });
+    expect(notifications).toMatchObject([{ severity: 'warning', message: expect.stringContaining('github_server_error') }]);
+    expect(locations.at(-1)).toMatchObject({ subPath: '' });
   });
 
   it('offers Draft release when nothing is waiting, and keeps Publish unavailable until a draft is saved', async () => {

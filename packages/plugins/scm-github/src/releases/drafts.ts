@@ -102,9 +102,9 @@ export async function mutateReleaseDraft<K extends Mutation>(admitted: AdmittedR
         || receipt.draft !== (operation !== 'publishReleaseDraft')) return unknown(releaseFailure('github_release_receipt_invalid'));
     if (operation === 'publishReleaseDraft') {
         const exact = await readReleaseResource(admitted, 'readRelease', { ...admitted.target, releaseId: receipt.releaseId });
-        if (exact.kind !== 'value' || exact.value.draft) return { kind: 'outcome_unknown', releaseId: receipt.releaseId,
-            webUrl: receipt.webUrl, failure: exact.kind === 'unavailable' ? exact.failure : releaseFailure('github_release_readback_unconfirmed') };
-        receipt = exact.value;
+        // The validated PATCH receipt settles publication. A later observation cannot undo that effect.
+        if (exact.kind !== 'value' || exact.value.draft) return { kind: 'confirmed', release: receipt,
+            observationWarning: exact.kind === 'unavailable' ? exact.failure : releaseFailure('github_release_readback_unconfirmed') };
     }
     return { kind: 'confirmed', release: receipt };
 }
