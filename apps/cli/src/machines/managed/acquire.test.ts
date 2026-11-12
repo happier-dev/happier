@@ -1,3 +1,4 @@
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { execFile } from 'node:child_process';
@@ -412,6 +413,7 @@ describe('creation environment stage', () => {
         const keys = tweetnacl.sign.keyPair();
         let policyWritten = false;
         let isolationWritten = false;
+        let rolesWritten = false;
         const isolationInputs: unknown[] = [];
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
@@ -427,6 +429,16 @@ describe('creation environment stage', () => {
                         ? { kind: 'approval_request_created', artifactId: 'admin-approval', actionId: 'machines.setup.adminAccess.set' }
                         : outcome === 'outcomeUnknown' ? { status: 'outcomeUnknown' }
                         : { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2 } } } };
+            }
+            if (String(url).endsWith('/v1/actions/machines.roles.set')) {
+                // Machine roles (OWNER-RULINGS 2026-11-12): a deploy target seeds Deployments + Sessions over the missing field.
+                const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(carrier.managedContinuation).toEqual({ managedId: retained.id, creationRequestId: 'creation-policy', expectedIntentRevision: 0 });
+                expect(carrier.envelope).toMatchObject({ requestId: childRequestId, input: { serverId: 'srv_bootstrap_policy', machineId: 'guest',
+                    expectedMetadataVersion: 0, policy: { active: ['deployments', 'sessions'] } } });
+                rolesWritten = true;
+                return { status: 200, data: { v: 1, actionId: 'machines.roles.set', requestId: childRequestId, execution: { ok: true,
+                    result: { status: 'applied', policy: { active: ['deployments', 'sessions'] }, metadataVersion: 3 } } } };
             }
             if (String(url).endsWith('/v1/actions/machines.agentIsolation.preview')) {
                 expect(policyWritten).toBe(!isRetry || freshEnrollment);
@@ -501,6 +513,8 @@ describe('creation environment stage', () => {
         else await expect(execution).rejects.toMatchObject({ code: outcome === 'conflict' ? 'conflict'
             : outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
+        // Machine roles seed once, after administrator access, only where creation initializes policy.
+        expect(rolesWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval');
         // ISO-UPDATE-1111: retained Update/Inspect must not replay creation policy.
         if (!initializesPolicy) expect(isolationInputs).toEqual([]);
         expect(isolationWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
@@ -1243,6 +1257,8 @@ describe('managed acquisition durable custody', () => {
                     };
                     else if (url.pathname === '/lume/host/status') response = { version: '0.6.1' };
                     else if (url.pathname === '/lume/config/locations') response = [{ name: 'home', path: '/native/lume' }];
+                    else if (url.pathname === '/lume/vms') response = exists ? [{ name: vmName, locationName: launch.storage,
+                        status: running ? 'running' : 'stopped', os: 'macos', cpuCount: launch.cpu }] : [];
                     else if (url.pathname === '/lume/pull') {
                         expect(body).toEqual({ image: 'macos:26-slim', name: vmName, registry: 'ghcr.io', organization: 'trycua', storage: 'home' });
                         if (acquisition === 'delayed-success') {
@@ -1459,7 +1475,7 @@ describe('managed acquisition durable custody', () => {
         await expect(stat(deliveredPath)).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(stat(deliveredPath + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
     });
-    it.each(['available', 'retired', 'unavailable', 'targeted'] as const)('projects an admitted provisioner snapshot despite an occurrence retiring during inventory (%s)', async availability => {
+    it.each(['available', 'retired', 'unavailable', 'targeted'] as const)('projects admitted personal and Team provisioner choices despite an occurrence retiring during inventory (%s)', async availability => {
         const services = [{ pluginId: 'acme.accounts', localId: 'cloud' }, { pluginId: 'acme.accounts', localId: 'cua' }, { pluginId: 'acme.accounts', localId: 'maintenance' }];
         const purposes = services.map(service => ({ purpose: service.localId, service }));
         const authentication = nativeAccountAuthentication;
@@ -1482,7 +1498,17 @@ describe('managed acquisition durable custody', () => {
                 providerIdentity: { accountId: service.localId, email: null }, displayName: `${service.localId} account`, scopes: [],
             })) };
         };
+        const teamSelections = [
+            { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'direct' as const,
+                disclosedMember: { service: services[0]!, accountId: 'sharer-private-account' } },
+            { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const },
+        ];
+        const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared-cloud', teamId: 'team-a',
+            displayName: 'Shared cloud', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: true, directMaterialState: 'current', sessionUsePolicy: 'personal_allowed',
+            providerModels: [], connectedServiceSelections: teamSelections, sourcePresentation: { kind: 'connected_service', service: services[0]! } });
         const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
+            listTeamResources: async () => availability === 'available' ? [teamResource] : [],
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             establishedRuntimeOwner: { invokeWithReceipt: unavailableTransport, invokeDirectMaterial: unavailableTransport },
             store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
@@ -1577,7 +1603,9 @@ describe('managed acquisition durable custody', () => {
                 contribution, occurrenceId: expect.any(String), credentialPurposes: purposes.slice(0, 2).map(({ purpose, service }) => ({
                     purpose: { consumer: contribution, purpose }, options: [{
                         value: { service, accountId: `${service.localId}-connected` }, label: `${service.localId} account`,
-                    }],
+                    }, ...(availability === 'available' && service.localId === 'cloud' ? teamSelections.map(selection => ({
+                        value: { teamId: 'team-a', selection }, label: 'Shared cloud',
+                    })) : [])],
                 })),
             })) });
         }
@@ -1970,14 +1998,15 @@ describe('managed acquisition durable custody', () => {
                     return found.kind === 'found' ? found.operation.state === 'failed' ? found.operation.error : found.operation.progress : undefined;
                 }).toMatchObject(nativePending ? { kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' }
                     : { kind: 'phase', phase: 'ssh.readiness.wait', label: 'Waiting for SSH' });
-                await expect.poll(() => vi.getTimerCount()).toBe(1);
                 if (delivery === 'cancel' || nativeCancellation) {
                     await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
                     expect((await Promise.allSettled([work]))[0]?.status).toBe('rejected');
                     expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
                         .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
                     expect(keyScans).toBe(nativePending ? 0 : 1);
-                    expect(vi.getTimerCount()).toBe(0);
+                    const cancelledReads = { nativeBootstraps, nativeReads, keyScans, http: nativeHttp.length };
+                    await vi.advanceTimersByTimeAsync(180_000);
+                    expect({ nativeBootstraps, nativeReads, keyScans, http: nativeHttp.length }).toEqual(cancelledReads);
                 } else {
                     // Continue beyond the host enrollment recipe's ten-minute
                     // budget: SSH readiness precedes that recipe, with no deadline.
@@ -1989,11 +2018,9 @@ describe('managed acquisition durable custody', () => {
                         await vi.advanceTimersByTimeAsync(1);
                         if (delivery === 'opens') {
                             await expect.poll(() => keyScans).toBe(index + 2);
-                            if (index < cadence.length - 1) await expect.poll(() => vi.getTimerCount()).toBe(1);
                         }
                         if (nativePending) {
                             await expect.poll(() => nativeBootstraps).toBe(index + 2);
-                            if (index < cadence.length - 1) await expect.poll(() => vi.getTimerCount()).toBe(1);
                         }
                     }
                     if (delivery === 'opens') expect(scanTimes).toEqual([0, 5_000, 15_000, 35_000, 75_000,
@@ -3903,6 +3930,7 @@ describe('managed acquisition durable custody', () => {
             await pendingMaterialization;
         }
         const firstFailure: unknown = await firstExecution;
+        expect(materialReads).toBe(0);
         if (scenario !== 'restart') {
             try {
                 if (scenario.startsWith('unawaited')) {
@@ -3936,6 +3964,7 @@ describe('managed acquisition durable custody', () => {
             { requestId: 'restart', context })).rejects.toBeDefined();
         expect(received.map(entry => entry.role)).toEqual(['acquire', 'bootstrap', 'exec', 'bootstrap', 'exec']);
         expect(new Set(received.map(entry => entry.value)).size).toBe(1);
+        expect(materialReads, 'a later bootstrap retry acquires its retained key once').toBe(1);
         expect(retained.bootstrapCredentialRef).toEqual(reference);
         expect(created).toHaveLength(1);
         expect(events.filter(event => event === 'submit')).toHaveLength(1);
@@ -3969,6 +3998,7 @@ describe('managed acquisition durable custody', () => {
         const nativeCalls: string[] = [];
         let catalogReady = false;
         let materialRevision = 1;
+        let bootstrapMaterialReads = 0;
         let disclosedContent: ReturnType<typeof openSavedSecretResourceStoredContentV1>;
         let loginPrivateKey = '';
         const sshLeaseFiles: string[] = [];
@@ -4006,20 +4036,20 @@ describe('managed acquisition durable custody', () => {
                 await expect(stat(nativeKeyFiles[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
                 await expect(stat(nativeKeyFiles[0]! + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
                 expect(await readFile(claimPath, 'utf8')).toBe(mode);
-                const admittedMaterialReads = paths.filter(path => path.endsWith('/resources/materials')).length;
+                const admittedMaterialReads = bootstrapMaterialReads;
                 let anotherReaderEntered = false;
                 const anotherReader = async () => { anotherReaderEntered = true; };
                 materialRevision = 2;
                 await expect(context.services.machineProvisioners.withBootstrapCredentialFile(fixedKey, anotherReader))
                     .resolves.toBeUndefined();
                 materialRevision = 1;
-                // An admitted native Action retains its credential. Withdrawal
-                // is checked at the next role admission, after acquire settles.
+                // An admitted reconciliation retains its credential. Withdrawal
+                // is checked at the next operation admission, after reconciliation settles.
                 catalogReady = false;
                 await expect(context.services.machineProvisioners.withBootstrapCredentialFile(fixedKey, anotherReader))
                     .resolves.toBeUndefined();
                 expect(anotherReaderEntered).toBe(true);
-                expect(paths.filter(path => path.endsWith('/resources/materials'))).toHaveLength(admittedMaterialReads);
+                expect(bootstrapMaterialReads).toBe(admittedMaterialReads);
                 expect(await readFile(claimPath, 'utf8')).toBe(mode);
                 nativeCalls.push(role);
             } });
@@ -4070,6 +4100,7 @@ describe('managed acquisition durable custody', () => {
             if (path.endsWith('/v1/artifacts')) return { status: 200, data: [] };
             if (path.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
             if (path.endsWith('/resources/materials')) {
+                bootstrapMaterialReads++;
                 if (changeIdentityOnMaterialRead) {
                     encryptionIdentityTimestamp += 1;
                     changeIdentityOnMaterialRead = false;
@@ -4139,9 +4170,12 @@ describe('managed acquisition durable custody', () => {
             try { return { ok: true, result: await work }; }
             catch { return { ok: false, errorCode: 'credential_unavailable', error: 'Account catalog unavailable' }; }
         } });
-        // The authenticated Home does not disclose material for this newly
-        // retained reference. The real catalog owner refuses before spend.
-        await expect(work).rejects.toMatchObject({ reason: 'reference_forbidden' });
+        // Fresh creation uses its own generated material even while the catalog
+        // is unavailable. This fixture's native boundary stops before guest IO.
+        await expect(work).rejects.toMatchObject({ code: 'plugin_action_execution_failed' });
+        expect(bootstrapMaterialReads, 'fresh SSH creation retains its generated bundle').toBe(0);
+        retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'unsubmitted' });
+        paths.length = 0;
         expect(created.length).toBe(1);
         const credential = created[0]!;
         expect(credential.encryptionMode).toBe(mode);
@@ -4189,7 +4223,9 @@ describe('managed acquisition durable custody', () => {
             try { return { ok: true, result: await privateLeaseWork }; }
             catch { return { ok: false, errorCode: 'credential_unavailable', error: 'Retained SSH access was withdrawn after native acquire' }; }
         } });
-        await expect(privateLeaseWork).rejects.toMatchObject({ reason: 'reference_stale' });
+        // The admitted operation retains this key across roles; the fixture's
+        // bootstrap handler then stops before executing any guest command.
+        await expect(privateLeaseWork).rejects.toMatchObject({ code: 'plugin_action_execution_failed' });
         expect(imported).toHaveLength(1);
         expect(settingsVersion).toBe(2);
         expect(settingsRaw).toEqual({ preferredLanguage: 'fr' });
