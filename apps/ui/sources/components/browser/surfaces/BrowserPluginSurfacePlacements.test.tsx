@@ -214,7 +214,7 @@ async function withBrowserPanelHarness(
     }> = {},
 ): Promise<void> {
     const { BrowserPluginSurfacePlacements } = await import('./BrowserPluginSurfacePlacements');
-    const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+    const iframeSource = { postMessage: vi.fn(), document: new EventTarget() } as unknown as WindowProxy;
     const previousWindow = (globalThis as { window?: Window }).window;
     const executeAction = vi.fn(async () => runtimeResult());
     const executionSessionId = options.executionSessionId ?? 'session_1';
@@ -319,7 +319,8 @@ describe('BrowserPluginSurfacePlacements', () => {
         await withBrowserPanelHarness(() => ({ ok: true, result: {} }), async ({ screen, readPane, remount }) => {
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
             await act(async () => readPane().setRightTabState(browserPanelPlacement.id, { isOpen: true }));
-            expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
+            // Opening mounts the real host, which resolves its Account encryption mode before rendering the guest.
+            await vi.waitFor(() => expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy());
             expect(paneUiState.readAll()['browser-panels:browser-test']?.right.tabState)
                 .toMatchObject({ [browserPanelPlacement.id]: { isOpen: true } });
             await remount();

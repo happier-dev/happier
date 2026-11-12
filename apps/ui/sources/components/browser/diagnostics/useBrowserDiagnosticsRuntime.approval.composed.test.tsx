@@ -5,14 +5,14 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { BrowserDiagnosticsEvalResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
-import { renderHook, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
-installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module });
 // Substitute Metro's deferred loader only; the default executor, policy and approval owner stay real.
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
     const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
@@ -30,6 +30,7 @@ const { createBrowserControlState, dispatchBrowserControlCommand } = await impor
 const { registerBrowserRuntimeControlAdapter, clearBrowserRuntimeControlRegistryForTests } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
 
 afterEach(async () => {
+    (await import('@/modal')).Modal.hideAll();
     await standardCleanup();
     clearBrowserRuntimeControlRegistryForTests();
     const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -38,7 +39,7 @@ afterEach(async () => {
     await homes.reset();
 });
 
-it('resumes the exact mounted console after an Inbox approval through default UI composition', async () => {
+it('resumes the exact mounted console after native product review through default UI composition', async () => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     await loadSyncSingletonForTests();
     const serverId = await homes.addHome({ name: 'Diagnostics Home', serverUrl: 'https://diagnostics-home.test',
@@ -59,6 +60,8 @@ it('resumes the exact mounted console after an Inbox approval through default UI
     }).state;
     const view = state.viewsById.view_1;
     if (!view) throw new Error('Canonical Browser control owner did not create the fixture view');
+    const { ModalProvider } = await import('@/modal');
+    const screen = await renderScreen(<ModalProvider />);
     const hook = await renderHook(() => {
         const actions = useMountedActionExecution(scope, { retainInvocation: true });
         const diagnostics = useBrowserDiagnosticsRuntime({ view, enabled: true, actionExecute: actions.execute });
@@ -72,23 +75,23 @@ it('resumes the exact mounted console after an Inbox approval through default UI
     await act(async () => { hook.getCurrent().diagnostics?.requestEval({ expression: 'document.title' }); });
     await waitForHomeGovernance(async () => {
         await flushHookEffects();
-        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
+        expect(screen.findByTestId('actions.confirmation-review.decision-approve')).toBeTruthy();
     });
     expect(hook.getCurrent().diagnostics?.bridge?.evalRequest).toBeUndefined();
-    const artifactId = homes.artifacts(serverId).list()[0]!.id;
-    const deciding = decideApprovalAsInbox(serverId, artifactId, 'approve');
+    const deciding = screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     await waitForHomeGovernance(() => expect(hook.getCurrent().diagnostics?.bridge?.evalRequest).toMatchObject({ expression: 'document.title' }));
     const request = hook.getCurrent().diagnostics!.bridge!.evalRequest!;
     await act(async () => hook.getCurrent().diagnostics?.bridge?.onEvalResult?.(BrowserDiagnosticsEvalResultV1Schema.parse({
         v: 1, evalRequestId: request.evalRequestId, viewId: view.viewId, navigationGeneration: view.navigationGeneration,
         tier: 'injectedPage', audited: true, status: 'completed', result: { type: 'string', value: 'exact mounted page' },
     })));
-    expect(await deciding).toMatchObject({ ok: true });
+    await deciding;
     await waitForHomeGovernance(() => {
         expect(hook.getCurrent().diagnostics?.interaction?.evalConsole?.entries).toMatchObject([
             { status: 'completed', result: { value: 'exact mounted page' } },
         ]);
-        expect(homes.artifacts(serverId).readPlainBody(artifactId)).toContain('"status":"executed"');
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
     await hook.unmount();
 });

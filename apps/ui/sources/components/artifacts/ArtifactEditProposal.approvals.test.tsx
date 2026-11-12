@@ -22,6 +22,7 @@ import {
   createPlainArtifactHttpFixture,
 } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { ModalProvider } from '@/modal';
 
 // Only the network, the device credential store and the native shell are replaced: the Action front door,
 // the approval lifecycle, the Artifact store and the continuation observing it are the product's own.
@@ -57,7 +58,7 @@ vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
 );
 vi.mock('@/modal', async () =>
-  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module,
+  (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true, renderCustomModals: true }).module,
 );
 installHomeGovernanceBoundaries(harness);
 const { createArtifactActionsClient } = await import('./artifactActionsClient');
@@ -187,7 +188,7 @@ async function mountReceipt(serverId: string, admission: 'standalone' | 'preadmi
     : null;
   if (admitted && !admitted.ok) throw new Error(`Expected the accepted Doc read, received ${admitted.failure.code}`);
   const screen = await renderScreen(
-    <ArtifactEditProposal
+    <ModalProvider><ArtifactEditProposal
       testID="proposal"
       client={client}
       docRead={admitted ? { status: 'ready', value: admitted.value } : undefined}
@@ -203,7 +204,7 @@ async function mountReceipt(serverId: string, admission: 'standalone' | 'preadmi
         acceptedRevision: accepted,
         decidedBy: { accountId: ACCOUNT_ID, atMs: 5 },
       }}
-    />,
+    /></ModalProvider>,
   );
   if (admission === 'standalone') {
     // The canonical standalone Doc read admits the Artifact-store head before Undo appears.
@@ -260,6 +261,13 @@ describe('ArtifactEditProposal approval-gated operations', () => {
     announceAccepted(client, 'doc-1', base.bodyVersion, accepted, docEditOperationKey(scope, proposalRef.messageId),
       (approvalId) => navigation.push(`approval:${approvalId}`));
     await act(async () => { readPresentationNotice()!.undo!.run(); });
+    if (approvalRequired) {
+      await waitForHomeGovernance(() => expect(first.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+      expect(harness.requestsFor('/v1/artifacts/doc-1/revisions/14/restore')).toHaveLength(0);
+      expect(approvals(serverId)).toHaveLength(0);
+      expect(first.findByTestId('proposal.undone')).toBeNull();
+      await first.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    }
     await waitForHomeGovernance(() => expect(readPresentationNotice()!.undo).toBeUndefined());
     expect(readPresentationNotice()!.severity).toBe('info');
     expect(approvals(serverId)).toHaveLength(0);

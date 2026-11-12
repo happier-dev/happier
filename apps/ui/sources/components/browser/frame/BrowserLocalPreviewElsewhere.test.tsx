@@ -8,7 +8,6 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
@@ -205,35 +204,23 @@ describe('BrowserLocalPreviewPublicLinkControls', () => {
     await act(async () => {
       screen.pressByTestId('local-service-exposure-sheet:preview-1-commit');
     });
-    // Ask first: the create becomes an approval request, and nothing reaches the machine.
+    // Native product review keeps the create pending before any Machine effect.
     await vi.waitFor(
       () => {
         expect(creates).toHaveLength(0);
-        expect(home.artifacts(serverId).list()).toHaveLength(1);
+        expect(home.artifacts(serverId).list()).toHaveLength(0);
+        expect(screen.findByTestId('actions.confirmation-review.decision-reject')).toBeTruthy();
       },
       { timeout: 15_000 },
     );
-    const artifactId = home.artifacts(serverId).list()[0]!.id;
     const creating = () =>
       screen
         .findAllByTestId('browser-public-link-target:preview-1-create')
         .some((node) => node.props.loading === true);
-    // Ask first holds: nothing reaches the machine, and the link stays "creating" while it waits.
-    // The mounted approval continuation reads the request's Artifact until it is decided.
-    await vi.waitFor(
-      () =>
-        expect(
-          home.requests.some((request) =>
-            request.path.startsWith(`/v1/artifacts/${artifactId}`),
-          ),
-        ).toBe(true),
-      { timeout: 30_000 },
-    );
+    // The link stays creating until the person answers its mounted review.
     expect(creating()).toBe(true);
     expect(creates).toHaveLength(0);
-    await expect(
-      decideApprovalAsInbox(serverId, artifactId, 'reject'),
-    ).resolves.toMatchObject({ ok: true });
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
     await waitForHomeGovernance(() => expect(creating()).toBe(false));
     expect(creates).toHaveLength(0);
   });

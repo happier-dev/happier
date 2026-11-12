@@ -13,7 +13,7 @@ import type { ShareSheetActions, ShareSheetModel } from '@/components/sharing/sh
 const announce = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn(async () => true));
 // Native accessibility, navigation, HTTP and Socket are genuine host boundaries.
-installApprovalCommonModuleMocks({ modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm } }).module, reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
+installApprovalCommonModuleMocks({ modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true, spies: { confirm } }).module, reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
     .createReactNativeNativeMock({ platformOS: 'ios' }, { AccessibilityInfo: { announceForAccessibility: announce, isScreenReaderEnabled: async () => false, isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } }) });
 vi.mock('expo-crypto', async original => ({ ...await original<typeof import('expo-crypto')>(), randomUUID: (await import('node:crypto')).randomUUID }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -32,6 +32,7 @@ const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
 const { ShareSheet } = await import('@/components/sharing/ShareSheet');
+const { ModalProvider } = await import('@/modal');
 const { createDocumentShareAdapter } = await import('@/components/sharing/documents/documentShareAdapter');
 beforeAll(loadSyncSingletonForTests);
 let account: SecretSettingsTestHarness | null = null;
@@ -63,7 +64,7 @@ async function mount(options: { mode?: 'plain' | 'e2ee'; ask?: boolean; handleRe
         return open ? <SavedSecretAccessEditor target={{ kind: 'shared', entry: decoded }} scope={scope}
             onClose={() => { setOpen(false); closed(); }} onSaved={async () => {}} onMakeHomeManaged={converted} /> : null;
     }
-    const screen = await renderScreen(<Host />);
+    const screen = await renderScreen(<><ModalProvider /><Host /></>);
     return { screen, closed, converted, account };
 }
 
@@ -80,14 +81,26 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         } });
         await screen.pressByTestIdAsync('saved-secret-access-grant-account:account-ready');
         await screen.pressByTestIdAsync('saved-secret-access-remove:account:account-ready');
+        const save = async (accept = true) => {
+            const attemptsBefore = attempts;
+            screen.pressByTestId('saved-secret-access-save');
+            if (ask) {
+                await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+                expect(attempts).toBe(attemptsBefore);
+                expect(announce).not.toHaveBeenCalled();
+                expect(closed).not.toHaveBeenCalled();
+                await screen.pressByTestIdAsync(accept
+                    ? 'actions.confirmation-review.decision-approve'
+                    : 'actions.confirmation-review.decision-reject');
+            }
+        };
         if (ask) {
-            confirm.mockResolvedValueOnce(false);
-            await screen.pressByTestIdAsync('saved-secret-access-save');
+            await save(false);
             await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-failure')).toBeTruthy());
             expect(attempts).toBe(0);
             expect(announce).not.toHaveBeenCalled();
         }
-        await screen.pressByTestIdAsync('saved-secret-access-save');
+        await save();
         await vi.waitFor(() => expect(attempts).toBe(1));
         try {
             expect(screen.findAllByType(RoundButton).find(button => button.props.testID === 'saved-secret-access-save')?.props.loading).toBe(true);
@@ -101,7 +114,7 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         const retainedResource = account.resources[0];
         if (!retainedResource || !('resourceId' in retainedResource)) throw new Error('Expected healthy owner resource');
         expect(retainedResource.entry.audience?.accounts.map(row => row.accountId)).toEqual(['account-ready']);
-        await screen.pressByTestIdAsync('saved-secret-access-save');
+        await save();
         await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
         expect(screen.findByTestId('saved-secret-access-editor-body')).toBeNull();
         expect(announce).toHaveBeenCalledWith('shareSheet.removedAnnouncement');

@@ -16,7 +16,7 @@ installSettingsViewCommonModuleMocks({
     storage: 'real',
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: { confirm: confirmDisclosure } }).module;
+        return createModalModuleMock({ renderCustomModals: true, spies: { confirm: confirmDisclosure } }).module;
     },
 });
 
@@ -24,6 +24,7 @@ installSettingsViewCommonModuleMocks({
 vi.mock('expo-crypto', async importOriginal => ({ ...await importOriginal<typeof import('expo-crypto')>(),
     randomUUID: (await import('node:crypto')).randomUUID }));
 const { serveSavedSecretEditorHomes, savedSecretCreatePath } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
+const { ModalProvider } = await import('@/modal');
 // Collect the real executor before the per-test Home fixture's setup budget starts.
 await import('@/sync/ops/actions/defaultActionExecutor');
 const { teamSummaryFixture, teamGroupFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
@@ -131,11 +132,9 @@ describe('SavedSecretCreateEditor', () => {
         });
     });
 
-    it.each([true, false])('keeps the draft mounted through native Account Ask and writes only after acceptance (%s)', async accept => {
+    it.each([true, false])('keeps the draft mounted through Account Ask review and writes only after acceptance (%s)', async accept => {
         const requestApproval = vi.fn();
         const onCreated = vi.fn(async () => {});
-        const decision = createDeferred<boolean>();
-        confirmDisclosure.mockImplementationOnce(() => decision.promise);
         home!.replaceSettings('home-a', { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
             'secrets.shared.create': { approvalRequiredSurfaces: ['ui'] },
         } }) }, 2);
@@ -149,13 +148,13 @@ describe('SavedSecretCreateEditor', () => {
             .toEqual(home!.settings('home-a')!.actionsSettingsV1));
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
-            <SavedSecretCreateEditor
+            <><ModalProvider /><SavedSecretCreateEditor
                 scope={scopeA}
                 approvalPending={false}
                 requestApproval={requestApproval}
                 onCancel={vi.fn()}
                 onCreated={onCreated}
-            />,
+            /></>,
         );
         screen.changeTextByTestId('saved-secret-create-name', 'Kept name');
         screen.changeTextByTestId('saved-secret-create-value', 'kept-value');
@@ -163,30 +162,31 @@ describe('SavedSecretCreateEditor', () => {
         // handler is the one the last commit produced.
         await flushHookEffects();
         screen.pressByTestId('saved-secret-create-submit');
-        try {
-            await vi.waitFor(() => expect(confirmDisclosure).toHaveBeenCalledOnce());
-            expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
-            expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('kept-value');
-            expect(screen.findByTestId('saved-secret-create-submit')?.props.disabled).toBe(true);
-            expect(screen.findByTestId('saved-secret-create-approval')).toBeNull();
-            expect(createWrites()).toHaveLength(0);
-            expect(onCreated).not.toHaveBeenCalled();
-        } finally {
-            await act(async () => { decision.resolve(accept); });
-        }
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
+        expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('kept-value');
+        expect(screen.findByTestId('saved-secret-create-submit')?.props.accessibilityState)
+            .toMatchObject({ disabled: true, busy: true });
+        expect(screen.findByTestId('saved-secret-create-approval')).toBeNull();
+        expect(createWrites()).toHaveLength(0);
+        expect(onCreated).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync(accept
+            ? 'actions.confirmation-review.decision-approve'
+            : 'actions.confirmation-review.decision-reject');
         if (accept) {
             await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith(createdRef(), 'shared'));
             expect(createWrites()).toHaveLength(1);
             expect(createdInput()).toMatchObject({ displayName: 'Kept name',
                 storedContent: { t: 'plain', v: { value: 'kept-value' } } });
         } else {
-            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-submit')?.props.disabled).toBe(false));
+            await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-submit')?.props.accessibilityState)
+                .toMatchObject({ disabled: false, busy: false }));
             expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
             expect(screen.findByTestId('saved-secret-create-value')?.props.value).toBe('kept-value');
             expect(createWrites()).toHaveLength(0);
             expect(onCreated).not.toHaveBeenCalled();
         }
-        expect(confirmDisclosure).toHaveBeenCalledOnce();
+        expect(confirmDisclosure).not.toHaveBeenCalled();
         expect(requestApproval).not.toHaveBeenCalled();
         expect(home!.artifacts.get('home-a')!.list()).toHaveLength(0);
     });

@@ -12,6 +12,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
@@ -32,6 +33,7 @@ vi.mock('react-native', async () => {
 // Resolve the genuine cold graph only after its external network boundary is
 // installed. Collection cost is not a Computer owner readiness deadline.
 const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
 const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
 const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
 const { hrefForDestinationRef } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
