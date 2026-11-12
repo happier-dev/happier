@@ -24,6 +24,8 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
@@ -60,7 +62,7 @@ import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { StoreMachineScopeContext, type useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
+import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
@@ -102,17 +104,35 @@ export function StoreKindPage(
   props: Readonly<{ kind: StoreDirectoryKind; presented: boolean }>,
 ): React.ReactNode {
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
+  const machine = useStoreMachineScope();
+  const machineSelection = React.useContext(StoreMachineSelectionContext);
+  if (props.kind === 'browserExtension' && machineSelection && !machine) return <BrowserExtensionMachineRequired presented={props.presented} />;
   return <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
     <KindQuery {...props} demand={demand} curation={curation.curation} curationComplete={complete}
       curationRead={curation.layout} />
   }</StoreDiscover>;
 }
 
+function BrowserExtensionMachineRequired(props: Readonly<{ presented: boolean }>) {
+  const directory = useStoreDirectoryState();
+  const machineSelection = React.useContext(StoreMachineSelectionContext)!;
+  return <StoreKindFrame kind="browserExtension" presented={props.presented}
+    query={directory.state?.query ?? ''} onQueryChange={directory.setQuery}>
+    <SurfaceStateCard kind="unavailable" size="page" testID="store.kind.browserExtension.needsMachine"
+      diagnosticCode="needs_machine" title={t('capabilities.store.kinds.browserExtension.chooseMachine')}
+      action={{ label: t('settingsPlugins.targetSelection.chooseMachine'), onPress: () => machineSelection.setPickerOpen(true) }} />
+  </StoreKindFrame>;
+}
+
 /** Reads admitted editorial pages and their stable layout state; other catalog publications leave the page still. */
 const KindQuery = React.memo(function KindQuery(props: Readonly<{ kind: StoreDirectoryKind; presented: boolean;
   demand: Readonly<{ presented: boolean }>; curation: RegistryCuration['curation']; curationComplete: boolean; curationRead: RegistryCuration['layout'] }>) {
   const fields = useStoreFilterFields(props.curation, props.presented);
+  const directory = useStoreDirectoryState();
+  const source = directory.state?.filters.source;
+  const sourceIsStated = props.kind !== 'provider' && source?.include.length === 1 && source.exclude.length === 0;
   return <StoreQueryDirectory kind={props.kind} demand={props.demand} fields={fields}
+    statedFields={sourceIsStated ? ['source'] : undefined}
     curation={props.curation} curationComplete={props.curationComplete}
     unavailable={<StoreDirectoryUnavailable view="kind" kind={props.kind} />}>
     {state => <KindResults kind={props.kind} presented={props.presented} state={state} curation={props.curation}
@@ -225,6 +245,11 @@ export function StoreKindFrame(
     props.kind === 'provider' || props.kind === 'software' ? null : props.kind === 'bot' ? 'plugin' : props.kind;
   // A phone has no room for the condition beside the search: it stacks under it at full width.
   const stacked = useDeviceType() === 'phone';
+  const machineSelection = React.useContext(StoreMachineSelectionContext);
+  const scopeChip = props.kind === 'browserExtension' && machineSelection
+    ? <MachineAdministrationTargetSelector selection={machineSelection.selection} presentation="chip"
+      testIDPrefix="store.browserExtension.machine" chipOpen={machineSelection.pickerOpen} onChipOpenChange={machineSelection.setPickerOpen} />
+    : <StoreProjectScopeChip />;
   const registrySelect = registryKind && props.onSourceChange ? (
     <CatalogSelect
       kind={registryKind}
@@ -243,9 +268,9 @@ export function StoreKindFrame(
         {/* A phone's description keeps the line's width; the scope chip stands under it, as on Discover (TASTE-S4060 D8). */}
         {/* A phone's bar names the kind, with Back when the kind was opened from the Store (lab wp/kind); the body keeps the purpose line. */}
         <PageHeader title={copy.title} description={copy.description} {...(stacked || !scoped ? {} : { actions: props.kind === 'app'
-          ? <View style={styles.headerActions}><StoreAppDefinitionEntries /><StoreProjectScopeChip /></View> : <StoreProjectScopeChip />, actionsPlacement: 'page' as const })} />
+          ? <View style={styles.headerActions}><StoreAppDefinitionEntries />{scopeChip}</View> : scopeChip, actionsPlacement: 'page' as const })} />
         {/* Everything that says what the page shows stands on one line; the search keeps its own. */}
-        {stacked ? <View style={styles.phoneScope}>{scoped ? <StoreProjectScopeChip /> : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View> : null}
+        {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View> : null}
         <CompactSearchField
           placement="page"
           testID={`store.kind.${props.kind}.search`}
@@ -275,7 +300,7 @@ function CatalogSelect(
   const registry = useRegistrySources(props.kind, props.presented);
   const sources = registry.sources.filter((source) => source.enabled);
   // Held in place while the catalogs load, so the search beside it never changes width on arrival.
-  if (registry.hasValue && sources.length < 2) return null;
+  if (registry.hasValue && sources.length < 2 && props.sourceId === null) return null;
   return (
     <SelectionListFilterChip filter={{
       id: 'store-catalog',

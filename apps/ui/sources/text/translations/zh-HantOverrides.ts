@@ -9658,6 +9658,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 createProfile: '新增設定檔',
                 savedProfiles: '已儲存的設定檔',
                 unnamed: '未命名設定檔',
+                openBrowserToSwitch: '開啟瀏覽器以切換設定檔',
                 inUse: '使用中',
                 useProfile: ({ name }: { name: string }) => `使用 ${name}`,
                 moreFor: ({ name }: { name: string }) => `${name} 的更多操作`,

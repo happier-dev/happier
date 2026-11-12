@@ -11,6 +11,8 @@ import { PromptBundleArtifactHeaderV1Schema, PromptBundleBodyV1Schema } from '@h
 import { SkillLockV1Schema, encodeSkillRevisionV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { listRegistrySourcesV1, projectPluginRegistrySourceDeclarationV1, REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryFetchErrorV1, RegistryFetchRequestV1Schema, type RegistryFetchRequestV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import nacl from 'tweetnacl';
@@ -1021,31 +1023,46 @@ it('uses the Store Machine choice for search and detail instead of the first liv
         && call.payload.sourceId === 'builtin:chrome-web-store').map(call => call.machineId)).toEqual(['first-live']);
 });
 
-it('opens a native catalog category through the shared Store category page', async () => {
+it('opens a native catalog category with the only online Store Machine and one catalog indicator', async () => {
     const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-store-native-category.test', {
         key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
     }, 'updated', { handleExternalRequest: async () => new Response(null, { status: 503 }) });
-    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    const restorePopoverGlobals = withPopoverWebGlobals();
+    onTestFinished(async () => { await standardCleanup(); restorePopoverGlobals(); await fixture.dispose(); });
     await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_native_category');
     const account = await captureLazyActionAccountContext(fixture.home.id);
     onTestFinished(() => account.dispose());
     await storage.getState().activateSettingsScope(account.accountLifetime.scope);
     storage.getState().applySettingsForScope(account.accountLifetime.scope, { ...storage.getState().settings,
-        machineAdministrationTargetsLocalV1: { 'plugins.home': { serverIdentityId: 'srv_registry_native_category', machineId: 'category-machine' } } }, 1);
+        machineAdministrationTargetsLocalV1: {} }, 1);
     storage.getState().activateProfileScope(account.accountLifetime.scope);
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    const machine = createMachineFixture({ id: 'category-machine', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.serverId]: [machine] },
+    const machine = createMachineFixture({ id: 'category-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
+    transport.calls.length = 0;
+    const alternative = createMachineFixture({ id: 'another-category-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
+    for (const candidate of [machine, alternative]) publishMachineActivity(candidate, { active: true, activeAt: candidate.activeAt }, []);
+    storage.setState({ machines: { [machine.id]: machine, [alternative.id]: alternative },
+        machineListByServerId: { [account.serverId]: [machine, alternative] },
         machineListStatusByServerId: { [account.serverId]: 'idle' } });
-    const { StoreKindPage, Directory } = await import('@/components/store/StoreKindPage');
+    const { Directory } = await import('@/components/store/StoreKindPage');
+    const { StoreScreen } = await import('@/components/store/StoreScreen');
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
     const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
     const navigate = vi.fn();
     const navigation = { push: navigate, pushRetainingCurrent: navigate, replace: () => {}, back: () => {}, setParams: () => {} };
     const kindPage = await renderScreen(<DestinationInstanceHost tabId="native-category" ref={{ kind: 'plugins',
         params: { view: 'kind', kind: 'browserExtension', browserProfile: 'selected-profile' } }} pathname="/plugins" focused visible navigation={navigation}>
-        <AppPaneProvider><StoreKindPage kind="browserExtension" presented /></AppPaneProvider>
+        <AppPaneProvider><StoreScreen /></AppPaneProvider>
     </DestinationInstanceHost>);
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+    const unavailable = kindPage.findAllByType(SurfaceStateCard).find(node => node.props.diagnosticCode === 'needs_machine');
+    expect(unavailable).toBeTruthy();
+    expect(transport.calls.filter(call => 'sourceId' in call.payload && call.payload.sourceId === 'builtin:chrome-web-store')).toEqual([]);
+    await act(async () => { unavailable!.props.action.onPress(); });
+    expect(kindPage.findAllByType(MachineAdministrationTargetSelector)[0]!.props.chipOpen).toBe(true);
+    await act(async () => { storage.setState({ machines: { [machine.id]: machine },
+        machineListByServerId: { [account.serverId]: [machine] } }); });
     await waitForHomeGovernance(() => {
         const directory = kindPage.findAllByType(Directory).find(node => node.props.kind === 'browserExtension');
         const group = directory?.props.groups.find((group: DirectoryGroup) => group.category?.categoryId === 'featured');
@@ -1059,7 +1076,17 @@ it('opens a native catalog category through the shared Store category page', asy
     expect(destination.searchParams.get('category')).toBe('featured');
     expect(destination.searchParams.get('catalogSource')).toBe('builtin:chrome-web-store');
     expect(destination.searchParams.get('browserProfile')).toBe('selected-profile');
+    expect(JSON.parse(destination.searchParams.get('machine')!)).toEqual({ serverId: 'srv_registry_native_category', machineId: 'category-machine' });
     await kindPage.unmount();
+    const { CollectionConditionTokens } = await import('@/components/ui/lists/collection/CollectionConditionTokens');
+    const filteredPage = await renderScreen(<DestinationInstanceHost tabId="native-category-filter" ref={{ kind: 'plugins',
+        params: { view: 'kind', kind: 'browserExtension', filters: JSON.stringify({ source: { include: ['builtin:chrome-web-store'], exclude: [] } }) } }}
+        pathname="/plugins" focused visible navigation={navigation}>
+        <AppPaneProvider><StoreScreen /></AppPaneProvider>
+    </DestinationInstanceHost>);
+    await waitForHomeGovernance(() => expect(filteredPage.findAllByType(Directory).flatMap(node => node.props.rows).map(row => row.title)).toContain('Dark Reader'));
+    expect(filteredPage.findAllByType(CollectionConditionTokens).flatMap(node => node.props.tokens)).toEqual([]);
+    await filteredPage.unmount();
     const { StoreCategoryPage } = await import('@/components/store/discover/StoreDiscoverPages');
     const { StoreDirectory } = await import('@/components/store/discover/StoreDirectorySection');
     const screen = await renderScreen(<AppPaneProvider><StoreCategoryPage categoryId="featured" catalogSourceId="builtin:chrome-web-store" /></AppPaneProvider>);

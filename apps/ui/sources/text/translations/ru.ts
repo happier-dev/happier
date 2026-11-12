@@ -11727,6 +11727,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         createProfile: 'Новый профиль',
         savedProfiles: 'Сохранённые профили',
         unnamed: 'Профиль без имени',
+        openBrowserToSwitch: 'Откройте браузер, чтобы сменить профиль',
         inUse: 'Используется',
         useProfile: ({ name }: { name: string }) => `Использовать ${name}`,
         moreFor: ({ name }: { name: string }) => `Ещё для ${name}`,

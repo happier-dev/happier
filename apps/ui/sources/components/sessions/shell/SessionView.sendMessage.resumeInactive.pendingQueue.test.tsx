@@ -1262,17 +1262,19 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('leaves a launch-owned first message to say it is starting: no second status line, Resume or queued count', async () => {
+    it.each([
+        { state: 'starting' as const },
+        { state: 'failed' as const, message: 'The selected account is used up.', draftId: 'launch-draft' },
+    ])('leaves a launch-owned $state first message to state its outcome without Online or Resume', async pendingLaunch => {
         setMachineOnline(true);
-        updateSession({ active: false, presence: 0 });
+        updateSession({ active: false, presence: 0, ...(pendingLaunch.state === 'failed' ? { archivedAt: 1 } : {}) });
         storage.getState().upsertPendingMessage('s1', {
             id: 'launch-first-turn', localId: 'launch-first-turn', createdAt: 1, updatedAt: 1,
-            source: 'local_outbound', pendingLaunch: { state: 'starting' }, text: 'Start here', rawRecord: {},
-        } as never);
+            source: 'local_outbound', pendingLaunch, text: 'Start here', rawRecord: {},
+        });
         const screen = await renderSessionView({ routeServerId: runtime.serverId });
         try {
-            // QA-SESSION-1109 D18: the first message's row already says "Starting session…"; the line
-            // stays quiet. No Resume either: a second runner for the same creation.
+            // The first message states the launch outcome; ordinary Online/Resume would contradict it.
             await vi.waitFor(() => expect(findAgentInput(screen)).toBeTruthy());
             expect(queueLine(screen)).toBeUndefined();
             expect(resumeCalls()).toHaveLength(0);

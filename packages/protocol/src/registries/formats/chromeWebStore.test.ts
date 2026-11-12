@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { chromeWebStoreRegistryAdapterV1, parseChromeWebStoreResultV1, parseChromeWebStoreSsrListingsV1 } from './chromeWebStore.js';
 import { createRegistryHostV1 } from '../registryHostV1.js';
+import { RegistryItemV1Schema } from '../registryItemsV1.js';
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '../registrySourcesV1.js';
 import type { RegistryHttpV1 } from './registryFormatAdapterV1.js';
 
@@ -9,7 +10,7 @@ const source = { id: 'builtin:chrome-web-store', title: 'Chrome Web Store', form
   kinds: ['browserExtension' as const], url: 'https://chromewebstore.google.com', enabled: true, addedAt: 0 };
 const id = 'a'.repeat(32);
 const tuple = [id, 'https://icon.test/icon.png', 'Fixture extension', 4.5, 12, null, 'A useful extension', 'https://example.test', true, null, null,
-  [['productivity', null]], null, null, JSON.stringify({ manifest_version: 3, version: '1.2.3', permissions: ['storage'], host_permissions: ['https://example.test/*'] })];
+  [['productivity', null]], null, null, JSON.stringify({ manifest_version: 3, version: '1.2.3', author: 'Fixture publisher', permissions: ['storage'], host_permissions: ['https://example.test/*'] })];
 
 describe('Chrome Web Store registry adapter', () => {
   const recordedSearch = readFileSync(new URL('./fixtures/chromeWebStoreSearch.txt', import.meta.url), 'utf8');
@@ -88,6 +89,19 @@ describe('Chrome Web Store registry adapter', () => {
     expect(listings.length).toBeGreaterThan(0);
     expect(listings.every(item => /^[a-p]{32}$/u.test(item.extensionId))).toBe(true);
   });
+  it.each([
+    ['organization', 'Dark Reader Ltd', null],
+    ['individual', 'Raymond Hill (gorhill)', ['Raymond Hill (gorhill)', null, null]],
+  ] as const)('projects the Store %s publisher rather than the manifest author', async (_kind, expected, individual) => {
+    // Current xY2Ddd detail and rendered Store publisher/Offered-by labels, captured 2026-11-12.
+    const detail = JSON.parse(readFileSync(new URL('./fixtures/chromeWebStoreDarkReaderDetail.json', import.meta.url), 'utf8')).response;
+    if (individual) detail[10] = [...Array(5).fill(null), ...individual];
+    const http: RegistryHttpV1 = { ...listingHttp({}),
+      async postForm() { return { ok: true, fetchedAt: 1, value: `)]}'\n${JSON.stringify(['wrb.fr', 'xY2Ddd', JSON.stringify(detail)])}` }; },
+    };
+    const item = await chromeWebStoreRegistryAdapterV1.read({ http }, { source, kind: 'browserExtension', itemId: 'eimadpbcbfnmbkopoojfekhnkhdbieeh' });
+    expect(RegistryItemV1Schema.parse(item).summary.publisher?.name).toBe(expected);
+  });
   it('searches through the private batchexecute owner and reads detail', async () => {
     const requests: string[] = [];
     const bodies: string[] = [];
@@ -100,7 +114,9 @@ describe('Chrome Web Store registry adapter', () => {
     const page = await chromeWebStoreRegistryAdapterV1.list({ http }, { source, kind: 'browserExtension', query: 'fixture', cursor: null });
     expect(page.items[0]).toMatchObject({ itemId: id, title: 'Fixture extension', version: '1.2.3' });
     const item = await chromeWebStoreRegistryAdapterV1.read({ http }, { source, kind: 'browserExtension', itemId: id });
-    expect(item.payload).toMatchObject({ kind: 'browserExtension', extension: { extensionId: id } });
+    expect(RegistryItemV1Schema.parse(item).payload).toMatchObject({ kind: 'browserExtension', extension: { extensionId: id },
+      listing: { version: '1.2.3', permissions: ['storage'], hostPermissions: ['https://example.test/*'] } });
+    expect(item.summary.publisher).toEqual({ name: 'Fixture publisher' });
     const latest = await chromeWebStoreRegistryAdapterV1.latest({ http }, [{ sourceId: source.id, sourceUrl: source.url, format: source.format, itemId: id, ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` }, importedAt: 0 }], { source });
     expect(latest.get(id)).toEqual({ kind: 'content', digest: `sha256:${'b'.repeat(64)}` });
     expect(requests.some(value => value.includes('batchexecute'))).toBe(true);

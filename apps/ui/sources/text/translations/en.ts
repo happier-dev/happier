@@ -13699,6 +13699,7 @@ const enBrowserShell = {
       createProfile: 'New profile',
       savedProfiles: 'Saved profiles',
       unnamed: 'Unnamed profile',
+      openBrowserToSwitch: 'Open the browser to switch profiles',
       inUse: 'In use',
       useProfile: ({ name }: { name: string }) => `Use ${name}`,
       moreFor: ({ name }: { name: string }) => `More for ${name}`,

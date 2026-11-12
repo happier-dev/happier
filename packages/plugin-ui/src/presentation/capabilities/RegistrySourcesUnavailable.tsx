@@ -90,7 +90,7 @@ export function HappierRegistrySourcesUnavailable(props: RegistrySourcesUnavaila
       />
       {revealable && open ? (
         <View style={{ gap: theme.spacing.xsmall, paddingLeft: HAPPIER_STATE_LINE_METRICS.paddingHorizontalPx + HAPPIER_STATE_LINE_METRICS.glyphPx + HAPPIER_STATE_LINE_METRICS.gapPx, paddingRight: HAPPIER_STATE_LINE_METRICS.paddingHorizontalPx, paddingBottom: theme.spacing.small }} testID={`${props.testID}.sources`}>
-          {(single ? [] : failures.map((failure) => failure.message)).concat(details).map((line, index) => (
+          {failures.flatMap((failure) => [...(single ? [] : [failure.message]), ...(failure.details ?? [])]).map((line, index) => (
             <props.host.DetailText key={index} >
               {line}
             </props.host.DetailText>

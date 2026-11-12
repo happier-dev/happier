@@ -2261,7 +2261,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
         expect(storage.getState().markSessionOptimisticThinking).not.toHaveBeenCalled();
         // The row carries the typed reason; a non-retryable refusal offers no Retry anywhere.
         expect(context.modalAlertSpy).not.toHaveBeenCalled();
-        expect(getSessionDraftSnapshot(context.scope, { kind: 'newSession', draftId })).toBeTruthy();
+        expect(readDraftComposerText(getSessionDraftSnapshot(context.scope, { kind: 'newSession', draftId }))).toBe(prompt);
       }
     } finally {
       terminal.resolve({ kind: 'not_found' });

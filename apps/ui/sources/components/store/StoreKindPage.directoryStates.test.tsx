@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -74,6 +74,21 @@ describe('Store directory states', () => {
         const order = screen.tree.findAll(node => node.type === RegistrySourcesUnavailable || node.type === Collection)
             .map(node => node.type === Collection ? 'results' : 'outage');
         expect(order).toEqual(['outage', 'results']);
+    });
+
+    it('keeps each source reason beside its own technical code when details open', async () => {
+        const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
+        const { Text } = await import('@/components/ui/text/Text');
+        const screen = await renderScreen(<RegistrySourcesUnavailable testID="catalog.failures" failures={[
+            { key: 'first', message: 'Curated catalog unavailable', details: ['Technical code: unreachable'], onRetry: () => {} },
+            { key: 'second', message: 'Chrome Web Store needs a Machine', details: ['Technical code: needs_machine'], onRetry: () => {} },
+        ]} />);
+        await act(async () => { screen.findAllByType(SurfaceStateCard)[0]!.props.secondaryAction.onPress(); });
+        const details = screen.findByTestId('catalog.failures.sources')!;
+        expect(details.findAllByType(Text).map(node => node.props.children)).toEqual([
+            'Curated catalog unavailable', 'Technical code: unreachable',
+            'Chrome Web Store needs a Machine', 'Technical code: needs_machine',
+        ]);
     });
 
     it('keeps the inline no-match state for a real search', async () => {

@@ -115,9 +115,19 @@ export function BrowserProfileManagement(props: Readonly<{
     });
     const rowData = React.useMemo(() => ({ busy, ready, canSelect: Boolean(source.selection), currentProfileId: props.currentProfileId }),
         [busy, ready, source.selection, props.currentProfileId]);
+    const unnamed = t('browserShell.profile.management.unnamed');
+    const nameCounts = React.useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const profile of profiles) {
+            const name = (profile.displayName ?? unnamed).toLocaleLowerCase();
+            counts.set(name, (counts.get(name) ?? 0) + 1);
+        }
+        return counts;
+    }, [profiles, unnamed]);
     const renderProfile = React.useCallback(({ item: profile }: Readonly<{ item: BrowserProfileV1 }>) => (
-        <ProfileRow profile={profile} testID={props.testID} state={rowData} onSelect={select} onRemove={remove} />
-    ), [props.testID, remove, rowData, select]);
+        <ProfileRow profile={profile} testID={props.testID} state={rowData} onSelect={select} onRemove={remove}
+            identityHint={(nameCounts.get((profile.displayName ?? unnamed).toLocaleLowerCase()) ?? 0) > 1 ? profile.profileId : undefined} />
+    ), [nameCounts, props.testID, remove, rowData, select, unnamed]);
     // The list asks for the room its rows need and shrinks to what the panel has left: no empty tail, and it
     // scrolls once the panel is full.
     const [contentHeight, setContentHeight] = React.useState<number | null>(null);
@@ -145,13 +155,15 @@ type ProfileRowState = Readonly<{ busy: boolean; ready: boolean; canSelect: bool
 /** One saved profile: its name and whether this browser uses it; pressing it switches, Delete waits behind ⋯. */
 const ProfileRow = React.memo(function ProfileRow(props: Readonly<{
     profile: BrowserProfileV1;
+    identityHint?: string;
     testID: string;
     state: ProfileRowState;
     onSelect(profile: BrowserProfileV1): Promise<void>;
     onRemove(profile: BrowserProfileV1): Promise<void>;
 }>) {
     const { profile, state, onSelect, onRemove } = props;
-    const name = profile.displayName ?? t('browserShell.profile.management.unnamed');
+    const title = profile.displayName ?? t('browserShell.profile.management.unnamed');
+    const name = props.identityHint ? `${title} · ${props.identityHint}` : title;
     const current = state.currentProfileId === profile.profileId;
     const unusable = profile.lifecycleState === 'unusable';
     const actions = React.useMemo((): ItemAction[] => [{
@@ -166,9 +178,12 @@ const ProfileRow = React.memo(function ProfileRow(props: Readonly<{
     return (
         <Item
             testID={`${props.testID}-profile-select-${profile.profileId}`}
-            title={name}
+            title={title}
+            titleQualifier={props.identityHint}
             subtitle={current ? t('browserShell.profile.management.inUse')
-                : unusable ? t('browserShell.profile.management.profileUnavailable') : undefined}
+                : unusable ? t('browserShell.profile.management.profileUnavailable')
+                    : !state.canSelect ? t('browserShell.profile.management.openBrowserToSwitch') : undefined}
+            subtitleLines={2}
             accessibilityLabel={t('browserShell.profile.management.useProfile', { name })}
             selected={current}
             showChevron={false}

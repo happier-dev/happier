@@ -23,6 +23,7 @@ const dialogs = vi.hoisted(() => ({
   confirm: vi.fn<IModal['confirm']>(async () => true),
   prompt: vi.fn<IModal['prompt']>(async () => null),
   alert: vi.fn<IModal['alert']>(async () => {}),
+  show: vi.fn<IModal['show']>(() => 'extension-review'),
 }));
 vi.mock(
   '@/modal',
@@ -46,6 +47,7 @@ beforeEach(async () => {
   dialogs.confirm.mockClear();
   dialogs.prompt.mockClear();
   dialogs.alert.mockClear();
+  dialogs.show.mockClear();
 });
 afterEach(async () => {
   standardCleanup();
@@ -277,6 +279,9 @@ it('installs from a pasted Chrome Web Store link through the permission review, 
       ` https://chromewebstore.google.com/detail/passwords/${extensionId}?hl=en `,
     );
     await screen.pressByTestIdAsync('profile.extensions.addLink');
+    await waitForHomeGovernance(() => expect(dialogs.show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { review } }));
+    const permissionReview = dialogs.show.mock.calls.at(-1)![0] as unknown as { props: { onDecision: (accepted: boolean) => void } };
+    await act(async () => permissionReview.props.onDecision(true));
     await waitForHomeGovernance(() =>
       expect(
         screen.findHostByTestId('profile.extensions.row.' + extensionId),

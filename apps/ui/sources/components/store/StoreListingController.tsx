@@ -5,6 +5,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { CapabilityAddDetailAction, type CapabilityListingConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { useRegistryItem } from '@/registries/useRegistryItem';
+import { useRegistrySources } from '@/registries/useRegistrySources';
+import { PluginListingFacts } from '@/components/settings/plugins/listing/PluginListingFacts';
 import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
@@ -33,6 +35,8 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
     const selected = reference.type === 'registryItem' && reference.kind === 'browserExtension' ? reference : null;
     const read = useRegistryItem({ kind: 'browserExtension', sourceId: selected?.sourceId ?? '',
         itemId: selected?.itemId ?? '', ...(selected?.version ? { version: selected.version } : {}) }, selected !== null);
+    const sources = useRegistrySources('browserExtension', selected !== null);
+    const sourceTitle = sources.sources.find(source => source.id === selected?.sourceId)?.title;
     const scope = useAccountSettingsScope();
     const execution = useMountedActionExecution(scope);
     const { binding, execute, getSignal } = execution;
@@ -44,7 +48,9 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
         renderDetail: item => <><CapabilityDetailHeader title={item.summary.title} purpose={item.summary.description}
             mark={<StoreItemMark facts={{ kind: 'browserExtension', title: item.summary.title,
                 brand: admitRegistrySummaryMark(item.summary).brandMark }} size={40} />}
-            facts={{}} testID="store.browserExtension.header" /><CapabilityAddDetailAction /></>,
+            facts={{ extra: [t('capabilities.store.kindWord.browserExtension')] }} testID="store.browserExtension.header" /><CapabilityAddDetailAction />
+            {item.payload.kind === 'browserExtension' ? <PluginListingFacts browserExtension={item.payload.listing ?? {}}
+                publisher={item.summary.publisher?.name} sourceTitle={sourceTitle} testID="store.browserExtension.facts" /> : null}</>,
         detailFooter: item => ({ primary: { label: t('capabilities.store.add'),
             ...(!execution.ready ? { disabledReason: t('common.loading') } : {}),
             onPress: async () => {
@@ -54,7 +60,7 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
                 return null;
             } } }),
         testID: 'store.browserExtension',
-    }), [read.item, read.loading, execution.ready, binding, execute, getSignal, seedMachineId, seedProfileId]);
+    }), [read.item, read.loading, execution.ready, binding, execute, getSignal, seedMachineId, seedProfileId, sourceTitle]);
     return { config, item: read.item, resolving: read.loading };
 }
 

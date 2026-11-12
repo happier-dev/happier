@@ -12173,6 +12173,7 @@ localTailscale: {
         createProfile: '新規プロファイル',
         savedProfiles: '保存済みプロファイル',
         unnamed: '名前のないプロファイル',
+        openBrowserToSwitch: 'プロフィールを切り替えるにはブラウザーを開いてください',
         inUse: '使用中',
         useProfile: ({ name }: { name: string }) => `${name} を使用`,
         moreFor: ({ name }: { name: string }) => `${name} のその他の操作`,

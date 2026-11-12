@@ -15,7 +15,7 @@ const TYPEAHEAD_RPC = 'QcU9bc';
 const DETAIL_RPC = 'xY2Ddd';
 const STORE_ID = /^[a-p]{32}$/u;
 
-type StoreResult = Readonly<{ extensionId: string; title: string; description?: string; iconUrl?: string; website?: string; category?: string; version?: string; installs?: number; updatedAt?: number; permissions?: readonly string[]; manifest?: Readonly<Record<string, unknown>> }>;
+type StoreResult = Readonly<{ extensionId: string; title: string; description?: string; iconUrl?: string; website?: string; category?: string; publisher?: string; version?: string; installs?: number; updatedAt?: number; permissions?: readonly string[]; manifest?: Readonly<Record<string, unknown>> }>;
 
 function walk(value: unknown, visit: (value: unknown) => void): void {
   visit(value);
@@ -39,8 +39,16 @@ export function parseChromeWebStoreResultV1(value: unknown): StoreResult {
     }
     return parsed;
   })();
+  let publisher: string | undefined;
+  walk(value, candidate => {
+    if (!Array.isArray(candidate) || candidate[0] !== tuple || !Array.isArray(candidate[10])) return;
+    // xY2Ddd detail contact: organization (7), otherwise Offered-by display name (5).
+    const contact = candidate[10];
+    const name = [contact[7], contact[5]].find(entry => typeof entry === 'string' && entry.trim());
+    if (typeof name === 'string') publisher = name.trim();
+  });
   const categories = tuple[11];
-  return { extensionId: id, title: text(2) ?? id,
+  return { extensionId: id, title: text(2) ?? id, ...(publisher ? { publisher } : {}),
     ...(text(6) ? { description: text(6) } : {}), ...(text(1) ? { iconUrl: text(1) } : {}),
     ...(text(7) ? { website: text(7) } : {}), ...(Array.isArray(categories) && typeof categories[0] === 'string' ? { category: categories[0] } : {}),
     ...(typeof tuple[14] === 'number' ? { installs: tuple[14] } : {}), ...(manifest?.version ? { version: manifest.version as string } : {}),
@@ -148,10 +156,12 @@ async function readDiscoveryListings(ctx: RegistryFetchContextV1, source: Regist
 }
 
 function summary(source: RegistrySourceV1, item: StoreResult): RegistryItemSummaryV1 {
+  const publisher = item.publisher ?? (typeof item.manifest?.author === 'string' ? item.manifest.author.trim() : undefined);
   return { sourceId: source.id, kind: 'browserExtension', itemId: item.extensionId, title: item.title,
     ...(item.description ? { description: item.description } : {}), ...(item.version ? { version: item.version } : {}),
     ...(item.iconUrl ? { iconUrl: item.iconUrl } : {}), ...(item.installs === undefined ? {} : { installs: item.installs }),
-    ...(item.website ? { links: { website: item.website } } : {}) };
+    ...(item.website ? { links: { website: item.website } } : {}),
+    ...(publisher ? { publisher: { name: publisher } } : {}) };
 }
 
 function digest(item: StoreResult): string { return `sha256:${bytesToHex(sha256(new TextEncoder().encode(createCanonicalJsonSigningInput(normalizeStrictJsonValue(item)))))}`; }
@@ -179,7 +189,12 @@ export const chromeWebStoreRegistryAdapterV1: RegistryFormatAdapterV1 = {
     if (item.extensionId !== req.itemId) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     const extension: RegistryBrowserExtensionV1 = { kind: 'webStore', extensionId: item.extensionId };
     const ref = { kind: 'content' as const, digest: digest(item) };
-    const value = { summary: { ...summary(req.source, item), version: ref.digest }, payload: { kind: 'browserExtension' as const, extension, ref }, fetchedAt: Date.now() };
+    const strings = (value: unknown) => Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
+    const listing = item.version ? { version: item.version, permissions: strings(item.manifest?.permissions),
+      hostPermissions: strings(item.manifest?.host_permissions) } : undefined;
+    const value = { summary: { ...summary(req.source, item), version: ref.digest },
+      payload: { kind: 'browserExtension' as const, extension, ref, ...(listing ? { listing } : {}) }, fetchedAt: Date.now() };
     return value;
   },
   async latest(ctx, items: readonly RegistryRemoteProvenanceV1[], options): Promise<ReadonlyMap<string, RegistryContentRefV1 | 'removed'>> {

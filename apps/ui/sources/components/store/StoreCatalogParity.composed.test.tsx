@@ -157,12 +157,16 @@ it.each([true, false])('R6 Add reaches the existing install Action and preserves
     expect(form.getFields().map(field => field.path)).toEqual(['machineId', 'profileId']);
     form.replaceInput({ ...form.getInput(), machineId, profileId: 'work' });
     let outcome: Awaited<ReturnType<typeof form.submit>> | undefined;
-    await act(async () => { outcome = await form.submit(); });
+    let submission: ReturnType<typeof form.submit>;
+    await act(async () => { submission = form.submit(); });
+    await waitForHomeGovernance(() => expect(dialogs.show.mock.calls.at(-1)?.[0]).toMatchObject({ props: { review } }));
+    const permissionReview = dialogs.show.mock.calls.at(-1)![0] as unknown as { props: { onDecision: (accepted: boolean) => void } };
+    await act(async () => { permissionReview.props.onDecision(accepted); outcome = await submission!; });
     expect(outcome).toMatchObject({ kind: 'settled', outcome: { ok: accepted } });
     expect(requests[0], JSON.stringify(outcome)).toMatchObject({ machineId, profileId: 'work', source: { kind: 'webStore', extensionId } });
     expect(requests).toHaveLength(accepted ? 2 : 1);
     if (accepted) expect(requests[1]).toMatchObject({ reviewedPermissions: review });
-    expect(dialogs.confirm).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('storage'), expect.anything());
+    expect(dialogs.confirm).not.toHaveBeenCalled();
 });
 
 it('R8/H5 uses the same catalog identity fallback in Store, Settings and Discover', async () => {

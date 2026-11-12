@@ -462,7 +462,7 @@ describe('resolveSessionViewConnectionStatus', () => {
     it('leaves a starting launch to its first message: no second "Starting session…" line, Resume or Ask Happier', () => {
         // QA-SESSION-1109 D18: the first bubble and the line both said "Starting session…".
         const starting = { ...baseInput, sessionStatusState: 'disconnected', inactiveStatusText: 'Inactive (resumable)',
-            inactiveResumeAvailable: true, launchStartingShown: true } as const;
+            inactiveResumeAvailable: true, launchOutcomeShown: true } as const;
         expect(resolveSessionViewConnectionStatus(starting)).toBeNull();
         expect(resolveSessionViewConnectionStatus({ ...starting, pendingQueue: { line: null, countText: '1 queued' } }))
             .toEqual({ text: '1 queued', color: 'status-color', dotColor: 'dot-color', isPulsing: false });

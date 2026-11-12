@@ -1,0 +1,57 @@
+{
+  "capturedAt": "2026-11-12",
+  "request": "xY2Ddd([\"eimadpbcbfnmbkopoojfekhnkhdbieeh\"])",
+  "response": [
+    [
+      "eimadpbcbfnmbkopoojfekhnkhdbieeh",
+      "https://lh3.googleusercontent.com/T66wTLk-gpBBGsMm0SDJJ3VaI8YM0Utr8NaGCSANmXOfb84K-9GmyXORLKoslfxtasKtQ4spDCdq_zlp_t3QQ6SI0A",
+      "Dark Reader",
+      4.293453724604966,
+      13287,
+      "https://lh3.googleusercontent.com/Nt3ah-tkOpRT9SxIRHMsphBMocA3IuPGEm2B1qZTER_yoDXfUj0XtV_iVkZ6uhdmvOqxrsjqHEDKSfyUlqPwqWt426E",
+      "Dark mode for every website. Take care of your eyes, use dark theme for night and daily browsing.",
+      "https://darkreader.org/",
+      true,
+      true,
+      null,
+      [
+        "make_chrome_yours/accessibility",
+        null,
+        20
+      ],
+      1,
+      true,
+      7000000,
+      true,
+      "https://lh3.googleusercontent.com/PpMzJC8jaih2UdKprA65n_Mmy6NEdMtOrmdxSSiOXVQEWOwaYWOelWt1qWWo2mntEGc04KSuCqQNpAiAaNMYHRCl",
+      [
+        1404715859,
+        441000000
+      ],
+      "{\n\"update_url\": \"https://clients2.google.com/service/update2/crx\",\n\n    \"manifest_version\": 3,\n    \"name\": \"Dark Reader\",\n    \"version\": \"4.9.135\",\n    \"author\": \"Alexander Shutau\",\n    \"description\": \"__MSG_extension_description__\",\n    \"default_locale\": \"en\",\n    \"icons\": {\n        \"16\": \"icons/dr_16.png\",\n        \"48\": \"icons/dr_48.png\",\n        \"128\": \"icons/dr_128.png\"\n    },\n    \"background\": {\n        \"service_worker\": \"background/index.js\"\n    },\n    \"content_scripts\": [\n        {\n            \"matches\": [\n                \"<all_urls>\"\n            ],\n            \"js\": [\n                \"inject/proxy.js\"\n            ],\n            \"run_at\": \"document_start\",\n            \"all_frames\": true,\n            \"match_about_blank\": true,\n            \"world\": \"MAIN\"\n        },\n        {\n            \"matches\": [\n                \"<all_urls>\"\n            ],\n            \"js\": [\n                \"inject/fallback.js\",\n                \"inject/index.js\"\n            ],\n            \"run_at\": \"document_start\",\n            \"all_frames\": true,\n            \"match_about_blank\": true,\n            \"world\": \"ISOLATED\"\n        },\n        {\n            \"matches\": [\n                \"<all_urls>\"\n            ],\n            \"js\": [\n                \"inject/color-scheme-watcher.js\"\n            ],\n            \"run_at\": \"document_idle\",\n            \"all_frames\": false,\n            \"match_about_blank\": false,\n            \"world\": \"ISOLATED\"\n        }\n    ],\n    \"permissions\": [\n        \"alarms\",\n        \"fontSettings\",\n        \"scripting\",\n        \"storage\"\n    ],\n    \"optional_permissions\": [\n        \"contextMenus\"\n    ],\n    \"commands\": {\n        \"toggle\": {\n            \"suggested_key\": {\n                \"default\": \"Alt+Shift+D\"\n            },\n            \"description\": \"__MSG_toggle_extension__\"\n        },\n        \"addSite\": {\n            \"suggested_key\": {\n                \"default\": \"Alt+Shift+A\"\n            },\n            \"description\": \"__MSG_toggle_current_site__\"\n        },\n        \"switchEngine\": {\n            \"description\": \"__MSG_theme_generation_mode__\"\n        }\n    },\n    \"minimum_chrome_version\": \"106.0.0.0\",\n    \"action\": {\n        \"default_title\": \"Dark Reader\",\n        \"default_icon\": {\n            \"19\": \"icons/dr_active_19.png\",\n            \"38\": \"icons/dr_active_38.png\"\n        },\n        \"default_popup\": \"ui/popup/index.html\"\n    },\n    \"options_ui\": {\n        \"page\": \"ui/popup/index.html\"\n    },\n    \"content_security_policy\": {\n        \"extension_pages\": \"default-src 'none'; script-src 'self'; style-src 'self'; img-src * data:; connect-src *; navigate-to 'self' https://darkreader.org/* https://github.com/darkreader/darkreader/blob/main/CONTRIBUTING.md https://github.com/darkreader/darkreader https://twitter.com/darkreaderapp; media-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'\"\n    },\n    \"host_permissions\": [\n        \"*://*/*\"\n    ]\n}",
+      "Dark Reader"
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "Alexander Shutau",
+      "Alexander Shutau",
+      "Dark Reader Ltd",
+      null,
+      null,
+      "u98cf52c4498e6ec420afdeb6bfdb56db"
+    ]
+  ]
+}

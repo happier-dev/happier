@@ -28,7 +28,7 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
     const session = useSession(sessionId, serverId);
     const title = session ? readSessionDisplayTitleField(session).value : null;
     // The launch settles its first message failed with the typed reason: then the Session did not start,
-    // and the row says why instead of a success it never had (R75). Open still leads to its kept message.
+    // and the row says why instead of a success it never had (R75), with the way back to its kept draft.
     const launchFailure = getStorage()((state) => (state.sessionPending[sessionId]?.messages ?? EMPTY_PENDING)
         .find((message) => message.pendingLaunch?.state === 'failed')?.pendingLaunch) ?? null;
     // The Session's start-failure banner is the one voice for why it did not start; the receipt repeats its words.
@@ -37,13 +37,16 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
     const failureText = startFailure?.message ?? (launchFailure?.state === 'failed' ? launchFailure.message : null);
     const { openSession, openDraft } = actions;
     return React.useMemo(() => {
-        if (latest?.kind === 'failed') {
-            const { draftId } = latest;
+        const failure = latest?.kind === 'failed' ? latest
+            : latest?.kind === 'started' && launchFailure?.state === 'failed' && launchFailure.draftId
+                ? { message: failureText ?? launchFailure.message, draftId: launchFailure.draftId } : null;
+        if (failure) {
+            const { draftId } = failure;
             return {
-                text: latest.message,
+                text: failure.message,
                 color: theme.colors.text.primary,
                 dotColor: theme.colors.state.danger.foreground,
-                transitionKey: `failed:${latest.message}`,
+                transitionKey: `failed:${failure.message}`,
                 ...(draftId ? { action: {
                     label: t('sessionDrafts.continueEditing'),
                     onPress: () => { newSessionBackgroundLaunches.dismiss(); openDraft(draftId); },
@@ -71,5 +74,5 @@ export function useNewSessionBackgroundLaunchStatus(actions: Readonly<{
             };
         }
         return undefined;
-    }, [failureText, latest, openDraft, openSession, starting, theme, title]);
+    }, [failureText, latest, launchFailure, openDraft, openSession, starting, theme, title]);
 }

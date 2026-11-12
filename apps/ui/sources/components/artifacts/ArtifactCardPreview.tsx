@@ -10,7 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { describeBoardSources } from '@/components/boards/model/boardSourcePresentation';
-import { ARTIFACT_KIND_ICONS } from './artifactKindPresentation';
+import { ARTIFACT_KIND_ICONS, artifactKindLabel } from './artifactKindPresentation';
 import type { ArtifactBrowserKind, ArtifactPreview } from './artifactBrowserModel';
 
 /** The band crops long content; its last lines fade into the band instead of ending mid-glyph (lab A1). */
@@ -48,7 +48,7 @@ export const ArtifactCardPreview = React.memo(function ArtifactCardPreview(props
         <HappierArtifactPreviewCard preview={props.preview} testID={props.testID}
             colors={colors}
             htmlLabel={t('artifacts.browser.kindOne.document')}
-            fileDetail={props.preview.kind === 'file' ? `${props.preview.mime} · ${formatHappierDataBytes(props.preview.sizeBytes, { kind: 'storage' })}` : undefined}
+            fileDetail={props.preview.kind === 'file' ? `${artifactKindLabel(props.kind)} · ${formatHappierDataBytes(props.preview.sizeBytes, { kind: 'storage' })}` : undefined}
             boardLabels={boardLabels} host={host} />
     </View>;
 });

@@ -278,6 +278,19 @@ describe('Artifacts browser folders view', () => {
 });
 
 describe('Artifacts browser row operations', () => {
+    it.each([
+        { mime: 'application/pdf', label: 'files.kind.pdf' },
+        { mime: 'image/png', label: 'files.kind.image' },
+    ])('shares the presented binary kind for $mime without loading its body', async ({ mime, label }) => {
+        const artifact = artifactFixture('binary-share', { header: { title: 'Published file', mime }, body: undefined });
+        const hook = await renderHook(() => useArtifactOperations(artifact, () => {}));
+        try {
+            await act(async () => { hook.getCurrent().share(); });
+            expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+                chrome: expect.objectContaining({ subtitle: label }),
+            }));
+        } finally { await hook.unmount(); }
+    });
     it.each(['work-board.v1', 'prompt_doc.v2'])('opens Share from a cold owner %s row without opening its body', async kind => {
         const served = await serveActionHomes({
             homes: [{ key: 'owner', serverUrl: 'https://artifact-cold-share.test', accountId: 'owner' }],

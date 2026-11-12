@@ -138,7 +138,10 @@ export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUn
   z.strictObject({ kind: z.literal('mcpServer'), server: McpRegistryServerV1Schema }),
   z.strictObject({ kind: z.literal('agent'), agent: AcpRegistryAgentV1Schema }),
   z.strictObject({ kind: z.literal('browserExtension'), extension: RegistryBrowserExtensionV1Schema,
-    ref: RegistryContentDigestRefV1Schema }),
+    ref: RegistryContentDigestRefV1Schema,
+    /** Informational upstream manifest facts; acquired package consent remains the browser owner's review. */
+    listing: z.optional(z.strictObject({ version: z.string().check(z.minLength(1)),
+      permissions: z.array(z.string().check(z.minLength(1))), hostPermissions: z.array(z.string().check(z.minLength(1))) })) }),
   z.strictObject({ kind: z.literal('starter'), starter: RegistryStarterV1Schema, ref: RegistryContentRefV1Schema }),
   z.strictObject({ kind: z.literal('plugin'), listing: MarketplaceIndexEntryV1Schema,
     source: MarketplaceIndexSourceSnapshotV1Schema.shape.source }),

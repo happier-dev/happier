@@ -32,6 +32,15 @@ async function measurePreview(screen: Awaited<ReturnType<typeof renderScreen>>, 
 }
 
 describe('ArtifactCardPreview', () => {
+    it('names a binary file by its presented kind rather than its MIME identifier', async () => {
+        const screen = await renderScreen(<ArtifactCardPreview kind="pdf" preview={{ kind: 'file',
+            name: 'Report.pdf', mime: 'application/pdf', sizeBytes: 605 }} />);
+        try {
+            expect(screen.getTextContent()).toContain('PDF document');
+            expect(screen.getTextContent()).toContain('605 B');
+            expect(screen.getTextContent()).not.toContain('application/pdf');
+        } finally { await screen.unmount(); }
+    });
     it('reuses unchanged palette, translated labels and host bindings when a saved preview is reprojected', async () => {
         const preview: Extract<ArtifactPreview, { kind: 'board' }> = { kind: 'board', layout: { mode: 'canvas',
             source: { sections: ['needs_you'], hasFilter: false, pickedCount: 0 },

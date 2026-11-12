@@ -31,7 +31,7 @@ const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-
 afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
+it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     const serverUrl = 'https://saved-profile-controls.test';
     const serverIdentityId = 'srv_saved_profile_controls';
@@ -40,7 +40,11 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delive
     network.resetRequests();
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
-    let profiles: BrowserProfileV1[] = [];
+    let profiles: BrowserProfileV1[] = retireDuring === 'closed'
+        ? ['work-a', 'work-b', 'unnamed-a', 'unnamed-b'].map(profileId => ({ profileId,
+            ...(profileId.startsWith('work') ? { displayName: 'Work' } : {}),
+            storageMode: 'user', owner: { kind: 'user', id: 'owner' }, lifecycleState: 'active', cleanupOnSessionClose: false }))
+        : [];
     let deleteSignal: AbortSignal | null | undefined;
     let releaseSelection!: () => void;
     const selectionReceipt = new Promise<void>(resolve => { releaseSelection = resolve; });
@@ -83,12 +87,29 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused'] as const)('delive
     const alert = vi.spyOn(Modal, 'alert');
     const onSelected = vi.fn();
     await act(async () => harness.root.render(<div id="virtualized-list-host"><BrowserProfileStatus testID="profiles" model={{ profile: null,
-        management: { source: { scope, machineId: 'machine', selection: {
+        management: { source: { scope, machineId: 'machine', selection: retireDuring === 'closed' ? undefined : {
             command: { kind: 'openView', browserSessionId: 'session', viewId: 'view', platform: 'web',
                 target: { kind: 'externalUrl', targetId: 'page', url: 'https://example.test' } }, onSelected,
     } } } }} /></div>));
     try {
         await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/browser.profile.list')).toHaveLength(1));
+        if (retireDuring === 'closed') {
+            const { t } = await import('@/text');
+            await waitForHomeGovernance(async () => {
+                await harness.flush();
+                const rows = profiles.map(profile => harness.container.querySelector<HTMLElement>(
+                    `[data-testid="profiles-profile-select-${profile.profileId}"]`));
+                expect(rows.every(Boolean)).toBe(true);
+                expect(new Set(rows.map(row => row!.getAttribute('aria-label'))).size).toBe(profiles.length);
+                rows.forEach((row, index) => {
+                    expect(row!.getAttribute('aria-disabled')).toBe('true');
+                    expect(row!.textContent).toContain(profiles[index]!.profileId);
+                    expect(row!.getAttribute('aria-label')).toContain(profiles[index]!.profileId);
+                    expect(row!.textContent).toContain(t('browserShell.profile.management.openBrowserToSwitch'));
+                });
+            });
+            return;
+        }
         await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-create"]')!.click());
         if (retireDuring === 'unavailable' || retireDuring === 'refused') {
             const { t } = await import('@/text');

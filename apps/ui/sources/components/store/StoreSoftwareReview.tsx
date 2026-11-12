@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StoreBrowserExtensionReview, type StoreBrowserExtensionReviewProps } from './StoreBrowserExtensionReview';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -296,4 +297,28 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
       ) : null}
     </ItemList>
   );
+}
+
+/** Closing, leaving the Account or removing the modal host settles the same declined consent. */
+export function showStoreBrowserExtensionReview(props: Omit<StoreBrowserExtensionReviewProps, 'onDecision'> & Readonly<{
+    signal: AbortSignal;
+}>): Promise<boolean> {
+    if (props.signal.aborted) return Promise.resolve(false);
+    return new Promise(resolve => {
+        let modalId: string | undefined;
+        const settle = (accepted: boolean) => {
+            props.signal.removeEventListener('abort', abort);
+            resolve(accepted);
+        };
+        const abort = () => {
+            settle(false);
+            if (modalId) Modal.hide(modalId);
+        };
+        props.signal.addEventListener('abort', abort, { once: true });
+        modalId = Modal.show({ component: StoreBrowserExtensionReview,
+            props: { review: props.review, restartRequired: props.restartRequired, confirmText: props.confirmText, onDecision: settle },
+            onRequestClose: () => settle(false), onHostUnmount: () => settle(false),
+        });
+        if (props.signal.aborted) abort();
+    });
 }

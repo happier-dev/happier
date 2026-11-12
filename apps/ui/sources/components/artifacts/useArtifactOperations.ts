@@ -17,6 +17,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { createArtifactActionsClient, createMountedArtifactActionExecute } from './artifactActionsClient';
 import { artifactViewRoute, classifyArtifactViewKind } from './artifactBrowserModel';
+import { artifactKindLabel } from './artifactKindPresentation';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 
 /** The same access, sharing, history and confirmed delete operations for a row, pane and page. */
@@ -41,6 +42,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
     const share = (anchor?: ShareSheetAnchor) => {
         if (!artifact || !canShare) return;
         showDocumentShareSheet({ artifactId: artifact.id, kind: typeof header.kind === 'string' ? header.kind : null,
+            kindLabel: artifactKindLabel(classifyArtifactViewKind(artifact)),
             name, linkPath: artifactViewRoute(artifact.id), ...(anchor ? { anchor } : {}) });
     };
     /** `acceptedVersions`: the versions accepted suggestions made, when the caller reads the Doc's threads. */

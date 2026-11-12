@@ -5233,9 +5233,9 @@ export function useSessionComposerController({
             () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message) && message.pendingLaunch?.state === 'starting'),
             [pendingMessages],
         );
-        // Its first message's row already says "Starting session…" (a Bot's quiet first-run seed does not).
-        const launchStartingShown = React.useMemo(
-            () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message) && message.pendingLaunch?.state === 'starting'
+        // Its first message states the launch outcome (a Bot's quiet first-run seed does not).
+        const launchOutcomeShown = React.useMemo(
+            () => pendingMessages.some((message) => isLaunchOwnedPendingMessage(message)
                 && !resolvePendingMessageContentPresentation(message).hostOnboarding),
             [pendingMessages],
         );
@@ -5318,7 +5318,7 @@ export function useSessionComposerController({
             usageLimitRecoveryCardShown: visibleUsageLimitRecoveryPresentation !== null,
             // The same owner SessionView renders its "Couldn't start" notice from.
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
-            launchStartingShown,
+            launchOutcomeShown,
         }), [
             authSurfaceState,
             session.active,
@@ -5334,7 +5334,7 @@ export function useSessionComposerController({
             connectedServicesRestartState,
             inactiveStatusText,
             launchStarting,
-            launchStartingShown,
+            launchOutcomeShown,
             isSessionActive,
             isResumable,
             isMachineReachable,

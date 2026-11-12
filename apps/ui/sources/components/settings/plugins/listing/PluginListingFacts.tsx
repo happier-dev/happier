@@ -11,6 +11,7 @@ import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOp
 
 import { pluginListingAdds } from '../model/pluginContributionKindLabel';
 import type { PluginMarketplaceCatalogEntry } from '../readPluginMarketplaceCatalog';
+import { BrowserExtensionListingFacts, type BrowserExtensionListingFactsProps } from './BrowserExtensionListingFacts';
 
 function realmLabels(entry: PluginMarketplaceCatalogEntry): readonly string[] {
   return entry.executableRealms.map((realm) => {
@@ -81,14 +82,18 @@ export function PluginListingAddsSection(
  * A listing's published facts before install (where it runs, platforms, source, categories) and its links. A host
  * that frames these facts as the trust decision (the Add details) passes its own section title and description.
  */
-export function PluginListingFacts(
-  props: Readonly<{
+type PluginCatalogListingFactsProps = Readonly<{
     entry: PluginMarketplaceCatalogEntry;
     title?: string;
     description?: string;
     testID?: string;
-  }>,
-) {
+}>;
+
+export function PluginListingFacts(props: PluginCatalogListingFactsProps | BrowserExtensionListingFactsProps) {
+    return 'browserExtension' in props ? <BrowserExtensionListingFacts {...props} /> : <PluginCatalogListingFacts {...props} />;
+}
+
+function PluginCatalogListingFacts(props: PluginCatalogListingFactsProps) {
   const { theme } = useUnistyles();
   const { entry } = props;
   const links = [

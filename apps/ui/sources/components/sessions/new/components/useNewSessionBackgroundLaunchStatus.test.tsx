@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -26,7 +27,7 @@ describe('useNewSessionBackgroundLaunchStatus', () => {
     storage.setState(initialState, true);
   });
 
-  it('keeps a presented Session as the receipt when its launch later fails, worded by the Session start-failure banner', async () => {
+  it('recovers the retained draft when a presented Session later fails to start', async () => {
     storage.setState({
       sessions: {
         ...storage.getState().sessions,
@@ -39,21 +40,44 @@ describe('useNewSessionBackgroundLaunchStatus', () => {
     });
     newSessionBackgroundLaunches.begin();
     newSessionBackgroundLaunches.presented('/session/s1');
+    const failureMessage = resolveSessionStartFailureNotice({ issue, sessionActive: false })!.message;
     newSessionBackgroundLaunches.failed(
-      'Couldn’t start the session. (Error spawn_failed)',
+      failureMessage,
       'draft-1',
       '/session/s1',
     );
 
+    const openDraft = vi.fn();
+    const openSession = vi.fn();
     const hook = await renderHook(() =>
-      useNewSessionBackgroundLaunchStatus(actions),
+      useNewSessionBackgroundLaunchStatus({ openDraft, openSession }),
     );
     const status = hook.getCurrent();
     expect(status?.text).toBe(
       resolveSessionStartFailureNotice({ issue, sessionActive: false })
         ?.message,
     );
-    expect(status?.action?.testID).toBe('new-session-docked-open');
+    expect(status?.action?.testID).toBe('new-session-started-open-draft');
+    act(() => { status?.action?.onPress(); });
+    expect(openDraft).toHaveBeenCalledWith('draft-1');
+    expect(openSession).not.toHaveBeenCalled();
+  });
+
+  it('recovers the launch-owned draft when its first-message projection settles failed', async () => {
+    const openDraft = vi.fn();
+    const openSession = vi.fn();
+    storage.getState().upsertPendingMessage('s1', {
+      id: 'first-turn', localId: 'first-turn', createdAt: 1, updatedAt: 1,
+      source: 'local_outbound', text: 'Keep this prompt', rawRecord: {},
+      pendingLaunch: { state: 'failed', message: 'All accounts are used up.', draftId: 'original-draft' },
+    });
+    newSessionBackgroundLaunches.presented('/session/s1');
+    const hook = await renderHook(() => useNewSessionBackgroundLaunchStatus({ openDraft, openSession }));
+    expect(hook.getCurrent()?.text).toBe('All accounts are used up.');
+    expect(hook.getCurrent()?.action?.testID).toBe('new-session-started-open-draft');
+    act(() => { hook.getCurrent()?.action?.onPress(); });
+    expect(openDraft).toHaveBeenCalledWith('original-draft');
+    expect(openSession).not.toHaveBeenCalled();
   });
 
   it('still reports a launch that failed before any Session existed, with the way back to its draft', async () => {
@@ -70,5 +94,14 @@ describe('useNewSessionBackgroundLaunchStatus', () => {
       text: 'No machine selected.',
       action: { testID: 'new-session-started-open-draft' },
     });
+  });
+
+  it('keeps the presented Session reachable when a failed launch has no retained draft', async () => {
+    const openSession = vi.fn();
+    newSessionBackgroundLaunches.failed('Could not start.', null, '/session/s1');
+    const hook = await renderHook(() => useNewSessionBackgroundLaunchStatus({ ...actions, openSession }));
+    expect(hook.getCurrent()?.action?.testID).toBe('new-session-docked-open');
+    hook.getCurrent()?.action?.onPress();
+    expect(openSession).toHaveBeenCalledWith('/session/s1');
   });
 });

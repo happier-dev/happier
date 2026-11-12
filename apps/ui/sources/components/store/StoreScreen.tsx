@@ -6,6 +6,7 @@ import {
 } from '@/components/appShell/workspace/destinationRoute';
 import PluginSettingsHomeScreen from '@/components/settings/plugins/PluginSettingsHomeScreen';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
+import { StoreMachineSelectionProvider } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
@@ -40,7 +41,9 @@ export const StoreScreen = React.memo(function StoreScreen() {
   const accountScope = useAccountSettingsScope();
   return <>
     <PluginSurfaceProjectionDemand accountScope={accountScope} enabled={focused} />
-    <StoreScreenContent focused={focused} />
+    <StoreMachineSelectionProvider presented={focused} accountScope={accountScope}>
+      <StoreScreenContent focused={focused} />
+    </StoreMachineSelectionProvider>
   </>;
 });
 

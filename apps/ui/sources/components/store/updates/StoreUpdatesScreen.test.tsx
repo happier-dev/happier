@@ -96,9 +96,11 @@ it.each([true, false])('dispatches the selected version through real Action admi
     }
     expect(requests).toEqual([]);
     await screen.pressByTestIdAsync(accepted ? rowId : `${rowId}.review`);
-    await vi.waitFor(() => expect(screen.findHostByTestId('web-modal-confirm')).not.toBeNull());
+    await vi.waitFor(() => expect(screen.findHostByTestId('store.browserExtension.review.confirm')).not.toBeNull());
+    expect(screen.findAll(node => node.props.testID === 'store.browserExtension.review.facts.version' && node.props.detail === review.version).length).toBeGreaterThan(0);
+    expect(screen.findAll(node => node.props.testID === 'store.browserExtension.review.facts.permission.storage' && node.props.title !== 'storage').length).toBeGreaterThan(0);
     expect(requests).toEqual([{ machineId, profileId: 'work', extensionId, expectedVersion: '2.0' }]);
-    await act(async () => screen.pressByTestId(accepted ? 'web-modal-confirm' : 'web-modal-cancel'));
+    await act(async () => screen.pressByTestId(accepted ? 'store.browserExtension.review.confirm' : 'store.browserExtension.review.cancel'));
     if (accepted) {
         await vi.waitFor(() => expect(requests).toHaveLength(2));
         expect(requests[1]).toMatchObject({ expectedVersion: '2.0', reviewedPermissions: review });

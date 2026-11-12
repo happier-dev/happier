@@ -29,10 +29,9 @@ export async function submitBrowserExtensionMutation(params: Readonly<{
         if (result.status === 'updated' || result.status === 'removed') return { ok: true };
         if (result.status === 'unavailable') return { ok: false, code: result.code };
         if (result.status === 'needs_review') {
-            const body = [result.review.version, ...result.review.permissions, ...result.review.hostPermissions,
-                ...(result.restartRequired ? [t('capabilities.store.browserExtensionInstall.restartBody')] : [])].join('\n');
-            if (!await Modal.confirm(t('capabilities.store.browserExtensionInstall.reviewTitle'), body,
-                { confirmText: params.confirmText, signal: params.signal })) return { ok: false };
+            const { showStoreBrowserExtensionReview } = await import('./StoreSoftwareReview');
+            if (!await showStoreBrowserExtensionReview({ review: result.review, restartRequired: result.restartRequired === true,
+                confirmText: params.confirmText, signal: params.signal })) return { ok: false };
             input = { ...input, reviewedPermissions: result.review };
         } else {
             if (!await Modal.confirm(t('capabilities.store.browserExtensionInstall.restartTitle'),
@@ -60,10 +59,11 @@ export function presentBrowserExtensionInstallForm(params: Readonly<{
     const spec = getActionSpec('browser.extensions.install');
     // The spec's own hint title and description are the Action's; the person reads what they are adding instead
     // (the Store item's name, or the link it came from), so the caller's title is the sheet's title.
+    // The sheet's title is a name, so its primary button carries the verb.
     const { description: _agentFacingDescription, title: _actionTitle, ...inputHints } = spec.inputHints!;
     const form = createActionInputForm({
         presentation: { title: params.title, description: params.description,
-            inputHints: { ...inputHints, fields: inputHints.fields.filter(field =>
+            inputHints: { ...inputHints, submitLabel: t('capabilities.store.add'), fields: inputHints.fields.filter(field =>
                 field.path === 'machineId' || field.path === 'profileId') } },
         accountLifetime: execution.binding, signal: execution.getSignal(),
         initialInput: { ...(params.seedMachineId ? { machineId: params.seedMachineId } : {}),

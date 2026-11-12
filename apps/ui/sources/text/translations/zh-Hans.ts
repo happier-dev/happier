@@ -11510,6 +11510,7 @@ export const zhHans: TranslationStructure = {
         createProfile: '新建配置文件',
         savedProfiles: '已保存的配置文件',
         unnamed: '未命名配置文件',
+        openBrowserToSwitch: '打开浏览器以切换配置文件',
         inUse: '使用中',
         useProfile: ({ name }: { name: string }) => `使用 ${name}`,
         moreFor: ({ name }: { name: string }) => `${name} 的更多操作`,
