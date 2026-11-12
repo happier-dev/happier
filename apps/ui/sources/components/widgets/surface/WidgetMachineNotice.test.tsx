@@ -19,7 +19,7 @@ import { WidgetMachineNoticeBoundary } from './WidgetMachineNotice';
 
 const routerMock = vi.hoisted(() => ({ pushed: [] as unknown[] }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-    pathname: '/', router: { push: (href: unknown) => routerMock.pushed.push(href) },
+    pathname: '/', router: { push: (href: unknown) => { routerMock.pushed.push(href); } },
 }).module);
 
 vi.mock('react-native', async () => {

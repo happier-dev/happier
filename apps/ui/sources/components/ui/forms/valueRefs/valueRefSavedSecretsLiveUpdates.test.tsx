@@ -53,7 +53,44 @@ afterEach(async () => {
 });
 
 describe('value ref saved secrets live updates', () => {
-    it('keeps unrelated saved keys reachable from a bare key request while opening New', async () => {
+    it('keeps named rows while material resolves, shows loading, and settles without outage copy', async () => {
+        const { entry } = await home!.addOwnerResource();
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        const request = home!.request.getMockImplementation()!;
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        home!.request.mockImplementation(async (input, init) => {
+            if (new URL(String(input)).pathname.endsWith('/materials')) await gate;
+            return request(input, init);
+        });
+        let pending!: Promise<void>;
+        await act(async () => { pending = refreshSavedSecretCatalog(home!.scope, { includeMaterial: true }); });
+        const screen = await renderScreen(<SavedSecretPickerModal scope={home!.scope} onClose={vi.fn()}
+            referenceSelection={{ selected: null, onSelect: vi.fn() }} />);
+        const row = () => namedRow(screen, `saved-secret-picker:saved:${entry.ref}`);
+        try {
+            expect(row()?.props.title).toBe(entry.name);
+            expect(row()?.props.subtitle).toContain('common.loading');
+            expect(row()?.props.subtitle).not.toContain('secrets.catalog.status.temporarily_unavailable');
+        } finally {
+            await act(async () => { release(); await pending; });
+        }
+        await vi.waitFor(() => expect(row()?.props.disabled).toBe(false));
+    });
+    it('keeps a disconnected Home unavailable after its material read fails', async () => {
+        const { entry } = await home!.addOwnerResource();
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        const screen = await renderScreen(<SavedSecretPickerModal scope={home!.scope} onClose={vi.fn()}
+            referenceSelection={{ selected: null, onSelect: vi.fn() }} />);
+        home!.request.mockRejectedValue(new TypeError('Network unavailable'));
+        await act(async () => { await refreshSavedSecretCatalog(home!.scope, { includeMaterial: true }).catch(() => {}); });
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-picker:stale')).not.toBeNull());
+        const row = namedRow(screen, `saved-secret-picker:saved:${entry.ref}`);
+        expect(row?.props.disabled).toBe(true);
+        expect(row?.props.subtitle).not.toContain('common.loading');
+        expect(row?.props.onPress).toBeUndefined();
+    });
+    it('opens a bare key request on Saved and keeps its keys reachable after visiting New', async () => {
         const { entry } = await home!.addOwnerResource();
         await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
         const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
@@ -64,8 +101,11 @@ describe('value ref saved secrets live updates', () => {
         expect(presentation.props.request).toEqual({ service: { kind: 'key' }, intent: 'link', scope: home!.scope });
         const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials: home!.credentials,
             children: React.createElement(presentation.component, { ...presentation.props, onClose: presentation.onRequestClose }) }));
-        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId(`connect-key-sheet:saved:${entry.ref}`)).not.toBeNull());
+        expect(screen.findByTestId('saved-secret-create-value')).toBeNull();
         expect(screen.findByTestId('connect-key-sheet:mode:saved')).not.toBeNull();
+        await screen.pressByTestIdAsync('connect-key-sheet:mode:new');
+        expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull();
         expect(screen.findByTestId(`connect-key-sheet:saved:${entry.ref}`)).toBeNull();
         await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
         await screen.pressByTestIdAsync(`connect-key-sheet:saved:${entry.ref}`);
@@ -76,7 +116,7 @@ describe('value ref saved secrets live updates', () => {
         await screen.unmount();
     });
 
-    it('opens New when the current key is inaccessible and only an unrelated usable key remains', async () => {
+    it('opens Saved without preselecting an unrelated key when the current key is inaccessible', async () => {
         const unavailable = await home!.addOwnerResource();
         const usableRef = 'happier:shared-secret:v1:resource-b';
         const index = home!.resources.findIndex(row => 'resourceId' in row && row.entry.ref === unavailable.entry.ref);
@@ -90,7 +130,7 @@ describe('value ref saved secrets live updates', () => {
         const hook = await renderHook(() => useConnectKeySheetModel({ scope: home!.scope,
             service: { kind: 'key' }, intent: 'link', current: unavailable.entry.ref }));
         await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
-        expect(hook.getCurrent().initialMode).toBe('new');
+        expect(hook.getCurrent().initialMode).toBe('saved');
         expect(hook.getCurrent().preselected).toBeNull();
         expect(hook.getCurrent().linkableEntries.map(entry => entry.ref)).toEqual([usableRef]);
         expect(home!.request.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith('/materials'))).toBe(false);
