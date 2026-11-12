@@ -8,7 +8,7 @@ import { build } from 'esbuild';
 import { PassThrough, Readable } from 'node:stream';
 import { userInfo } from 'node:os';
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
-import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents/resolution';
+import { resolveAgentCliManagedCommandPathForRuntime, resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import { FIRST_PARTY_INSTALL_HOME_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 import * as processBoundary from '@happier-dev/cli-common/process';
 import { managedJavaScriptRuntimeBinPath } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
@@ -154,24 +154,38 @@ it.skipIf(process.platform !== 'linux').each(['owner', 'managed', 'missing', 'ja
         });
     });
 
-it.skipIf(process.platform !== 'linux')('allows an installed vendor-recipe Agent for a member while ignoring owner overrides', async () => {
+it.skipIf(process.platform !== 'linux').each(['muse', 'claude'] as const)('launches member-installed %s from the same home while ignoring owner overrides', async agentId => {
     await withTempDir('member-vendor-agent-', async home => {
-        const runtimeSpec = getAgentCliRuntimeSpec('muse')!;
+        const runtimeSpec = getAgentCliRuntimeSpec(agentId)!;
         const vendorBin = join(home, '.local', 'bin', runtimeSpec.binaryName);
         const ownerOverride = join(home, 'owner-private', runtimeSpec.binaryName);
         await mkdir(dirname(vendorBin), { recursive: true });
         await mkdir(dirname(ownerOverride), { recursive: true });
-        await writeFile(vendorBin, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+        // Execute the real member-scope installer before native launch resolution.
+        const { runMemberAgentInstallEffect } = await import('@/capabilities/installJobs/memberInstallEffect');
+        const { buildMemberAgentInstallEnvironment } = await import('@/capabilities/installJobs/memberInstallEnvironment');
+        const input = new PassThrough(); const output = new PassThrough();
+        let records = '';
+        output.on('data', chunk => { records += String(chunk); if (records.includes('"t":"outcome"')) input.end(); });
+        const installSpec = { ...runtimeSpec, manualInstallRecipes: { linux: [{ cmd: '/bin/sh', args: ['-c',
+            'mkdir -p "$HOME/.local/bin"; printf "#!/bin/sh\\necho 2.1.322\\n" > "$HOME/.local/bin/' + runtimeSpec.binaryName + '"; chmod 755 "$HOME/.local/bin/' + runtimeSpec.binaryName + '"'] }] } };
+        input.write(JSON.stringify({ kind: 'install', request: { agentId, intent: 'install', consent: { vendorRecipe: true } },
+            accountId: 'member', registry: { agents: [{ id: agentId, runtimeSpec: installSpec }] }, targetInUse: false,
+            runtimeManagedDependencyId: null }) + '\n');
+        try {
+            await runMemberAgentInstallEffect(input, output, new AbortController().signal, buildMemberAgentInstallEnvironment(home));
+            expect(records).toContain('"kind":"succeeded"');
+        } finally { input.destroy(); output.destroy(); }
         await writeFile(ownerOverride, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
         const nativeBoundary = mapNativeUserBoundary();
         const service = createAgentCliSystemToolService({
-            agentId: 'muse', runtimeSpec,
-            binding: { toolId: 'muse-cli' },
-            definition: { toolId: 'muse-cli', displayName: 'Muse', lookupNames: ['muse'] },
+            agentId, runtimeSpec,
+            binding: { toolId: `${agentId}-cli` },
+            definition: { toolId: `${agentId}-cli`, displayName: runtimeSpec.title, lookupNames: [runtimeSpec.binaryName] },
             processEnv: {
                 PATH: '', HOME: home,
-                HAPPIER_MUSE_PATH: ownerOverride,
+                [resolveAgentCliOverrideEnvKey(agentId)]: ownerOverride,
                 [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: join(home, 'public-install'),
             },
             memberLaunch: memberLaunch(home),
@@ -179,7 +193,7 @@ it.skipIf(process.platform !== 'linux')('allows an installed vendor-recipe Agent
         });
 
         try {
-            await expect(service.resolve({ toolId: 'muse-cli', purpose: 'Start Muse' }))
+            await expect(service.resolve({ toolId: `${agentId}-cli`, purpose: `Start ${runtimeSpec.title}` }))
                 .resolves.toMatchObject({ executablePath: vendorBin });
         } finally { nativeBoundary.mockRestore(); }
     });
