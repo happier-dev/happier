@@ -15,6 +15,7 @@ type ClaudeAuthStateSharingDescriptor = {
         entries: ReadonlyArray<{
             path: string;
             mode: 'linked';
+            createIfMissing: 'directory';
         }>;
         sharedStatePrivacyRiskAcknowledgementRequired: true;
         symlinkUnavailableDegradePolicy: 'block_continuity';
@@ -47,7 +48,7 @@ export const claudeAuthStateSharingDescriptor: ClaudeAuthStateSharingDescriptor 
         supported: true,
         modes: ['isolated', 'shared'],
         entries: [
-            { path: 'projects', mode: 'linked' },
+            { path: 'projects', mode: 'linked', createIfMissing: 'directory' },
         ],
         sharedStatePrivacyRiskAcknowledgementRequired: true,
         symlinkUnavailableDegradePolicy: 'block_continuity',

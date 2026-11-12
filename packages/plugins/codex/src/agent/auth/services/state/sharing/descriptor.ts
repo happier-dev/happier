@@ -23,8 +23,8 @@ export const codexStateSharingDescriptor = {
     modes: ['isolated', 'shared'],
     rootEnvironmentKey: 'CODEX_SQLITE_HOME',
     entries: [
-      { path: 'sessions', mode: 'linked' },
-      { path: 'archived_sessions', mode: 'linked' },
+      { path: 'sessions', mode: 'linked', createIfMissing: 'directory' },
+      { path: 'archived_sessions', mode: 'linked', createIfMissing: 'directory' },
       { path: 'session_index.jsonl', mode: 'linked' },
       { path: 'history.jsonl', mode: 'linked' },
       { path: 'memories', mode: 'linked' },

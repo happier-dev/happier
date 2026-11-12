@@ -13,7 +13,7 @@ export const geminiConnectedServiceStateSharingDescriptor = Object.freeze({
     supported: true,
     modes: ['isolated', 'shared'],
     entries: [
-      { path: '.gemini/tmp', mode: 'linked' },
+      { path: '.gemini/tmp', mode: 'linked', createIfMissing: 'directory' },
       { path: '.gemini/projects.json', mode: 'linked' },
     ],
     sharedStatePrivacyRiskAcknowledgementRequired: true,

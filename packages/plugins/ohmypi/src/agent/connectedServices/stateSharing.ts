@@ -22,7 +22,7 @@ export const ohMyPiConnectedServiceStateSharingDescriptor = Object.freeze({
   state: {
     supported: true,
     modes: ['isolated', 'shared'],
-    entries: [{ path: 'sessions', mode: 'linked' }],
+    entries: [{ path: 'sessions', mode: 'linked', createIfMissing: 'directory' }],
     sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',
   },

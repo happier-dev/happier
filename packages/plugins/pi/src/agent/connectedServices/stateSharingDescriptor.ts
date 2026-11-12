@@ -13,7 +13,7 @@ export const piConnectedServiceStateSharingDescriptor = {
     supported: true,
     modes: ['isolated', 'shared'],
     entries: [
-      { path: 'sessions', mode: 'linked' },
+      { path: 'sessions', mode: 'linked', createIfMissing: 'directory' },
     ],
     sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',

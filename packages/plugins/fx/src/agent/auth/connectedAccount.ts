@@ -77,7 +77,7 @@ export const FX_STATE_SHARING = {
   nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.', purposes: [FX_CODEX_PURPOSE, ...FX_NATIVE_KEY_PURPOSES.map(row => row.purpose)] },
   providerSupportStatus: 'supported',
   config: { supported: true, modes: ['copied', 'isolated'], entries: [{ path: '.fx/settings.json', mode: 'copied' }, { path: '.fx/mcp.json', mode: 'copied' }] },
-  state: { supported: true, modes: ['isolated', 'shared'], entries: [{ path: '.fx/sessions', mode: 'linked', createIfMissing: 'directory', requiresRealDirectory: true }, { path: '.fx/session-files', mode: 'linked' }], sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
+  state: { supported: true, modes: ['isolated', 'shared'], entries: [{ path: '.fx/sessions', mode: 'linked', createIfMissing: 'directory', requiresRealDirectory: true }, { path: '.fx/session-files', mode: 'linked', createIfMissing: 'directory' }], sharedStatePrivacyRiskAcknowledgementRequired: true, symlinkUnavailableDegradePolicy: 'block_continuity' },
   authIsolation: { mode: 'materialized_home', secretEntries: [authFile] },
 } as const satisfies AgentConnectedAccountStateSharingDescriptorV1;
 

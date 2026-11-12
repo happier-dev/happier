@@ -1,9 +1,14 @@
-import { mkdir, mkdtemp, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { FX_STATE_SHARING } from '../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
+import { AGENT_STATE_SHARING_DESCRIPTOR as PI_STATE_SHARING } from '../../../../../packages/plugins/pi/src/agent/definition';
+import { AGENT_STATE_SHARING_DESCRIPTOR as OH_MY_PI_STATE_SHARING } from '../../../../../packages/plugins/ohmypi/src/agent/definition';
+import { AGENT_STATE_SHARING_DESCRIPTOR as CODEX_STATE_SHARING } from '../../../../../packages/plugins/codex/src/agent/definition';
+import { AGENT_STATE_SHARING_DESCRIPTOR as CLAUDE_STATE_SHARING } from '../../../../../packages/plugins/claude/src/agent/definition';
+import { geminiConnectedServiceStateSharingDescriptor as GEMINI_STATE_SHARING } from '../../../../../packages/plugins/gemini/src/agent/connectedServices/descriptor';
 
 import {
   composeProviderBindingMaterialization,
@@ -12,6 +17,42 @@ import {
 } from './compose';
 
 describe('provider binding host materialization', () => {
+  it.each([
+    { agentId: 'pi', descriptor: PI_STATE_SHARING, entryPath: 'sessions' },
+    { agentId: 'ohMyPi', descriptor: OH_MY_PI_STATE_SHARING, entryPath: 'sessions' },
+    { agentId: 'codex', descriptor: CODEX_STATE_SHARING, entryPath: 'sessions' },
+    { agentId: 'codex', descriptor: CODEX_STATE_SHARING, entryPath: 'archived_sessions' },
+    { agentId: 'claude', descriptor: CLAUDE_STATE_SHARING, entryPath: 'projects' },
+    { agentId: 'gemini', descriptor: GEMINI_STATE_SHARING, entryPath: '.gemini/tmp' },
+    { agentId: 'fx', descriptor: FX_STATE_SHARING, entryPath: '.fx/session-files' },
+  ])('retains the first $agentId $entryPath session files after disposing its launch home', async ({ agentId, descriptor, entryPath }) => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-agent-cold-home-'));
+    const source = join(base, 'native');
+    const compose = () => composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: 'models.json', utf8: '{}' }] },
+      nativeHome: { descriptor: { providerId: agentId, ...descriptor },
+        sourceEnvironment: { [descriptor.nativeHome.environmentKey]: source }, homeDir: base },
+      materializationBaseDir: join(base, 'materialized'),
+    });
+    try {
+      const initial = await compose();
+      if (initial.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
+      const sessions = join(initial.launchMaterialization.rootPath, entryPath);
+      // The real child creates its workspace session directory on its first turn.
+      await mkdir(join(sessions, 'workspace'), { recursive: true });
+      await writeFile(join(sessions, 'workspace', 'native-id.jsonl'), 'native-session');
+      initial.cleanup?.();
+      const resumed = await compose();
+      try {
+        if (resumed.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
+        expect(await readFile(join(resumed.launchMaterialization.rootPath,
+          entryPath, 'workspace/native-id.jsonl'), 'utf8')).toBe('native-session');
+        expect(await realpath(join(resumed.launchMaterialization.rootPath, entryPath)))
+          .toBe(await realpath(join(source, entryPath)));
+      } finally { resumed.cleanup?.(); }
+    } finally { await rm(base, { recursive: true, force: true }); }
+  });
   it('projects the declared native home, preserves native preferences and shared Sessions, and retains cleanup ownership', async () => {
     const base = await mkdtemp(join(tmpdir(), 'happier-provider-native-home-'));
     const source = join(base, 'native');
@@ -32,7 +73,8 @@ describe('provider binding host materialization', () => {
     expect(result.providerEnvironmentOverlay).toContainEqual({ name: 'HOME', value: root, source: 'provider' });
     expect(JSON.parse(await readFile(join(root, '.fx/settings.json'), 'utf8'))).toEqual({ theme: 'dark', models: { happier: 'selected' } });
     expect(await readFile(join(root, '.fx/mcp.json'), 'utf8')).toBe('{"servers":{}}');
-    expect(await realpath(join(root, '.fx/sessions'))).toBe(await realpath(join(source, '.fx/sessions')));
+    // FX requires a real Sessions directory; canonical materialization copies its retained history.
+    expect(await realpath(join(root, '.fx/sessions'))).not.toBe(await realpath(join(source, '.fx/sessions')));
     const retainedCleanup = result.takeCleanupOwnership();
     result.cleanup?.();
     expect(await readFile(join(root, '.fx/sessions/existing/events.jsonl'), 'utf8')).toBe('native-event');
