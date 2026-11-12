@@ -6,10 +6,11 @@ import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurati
 // product families retain their own surface policy and are outside this lane.
 const programAction = /^(follow\.|discussion\.|workflow\.|doc\.|artifact\.|memory\.|boards\.|inbox\.|approval\.request\.|session\.(message\.|messages\.recent\.get$|transcript\.get$|target\.|targets\.|status\.|work\.|update\.|delivery\.|exchange\.|coordinator\.|manager\.|attention\.|read_state\.|trigger\.|board\.|needs_you\.|open$|handoff$|spawn_new$|turn\.cancel$|stop$|wait\.idle$|bot\.set$|memory\.set$|context\.update$|permission\.respond$|user_action\.answer$))/;
 const personOnly = new Set([
-  'doc.edit.accept', 'doc.edit.decline', 'workflow.run.invocations.complete_review', 'approval.request.decide',
+  'doc.edit.accept', 'doc.edit.decline',
 ]);
-// Inbox brief approvals require a tap in the canonical UI (docs/actions.md).
-const tapOnly = new Set(['session.permission.respond']);
+// These entry contracts retain no Voice executor. Voice permission/approval
+// decisions instead use the trusted host delegation governed by voice.canApproveRequests.
+const nonVoice = new Set(['workflow.run.invocations.complete_review', 'artifact.export', 'inbox.notice.dismiss']);
 
 describe('Coordination Voice parity', () => {
   it('demonstrates an inline ask and a typed pass through the actual Voice Action schemas', () => {
@@ -39,9 +40,9 @@ describe('Coordination Voice parity', () => {
     expect(getActionSpec('connectedServices.authentication.submitManual').approvalInputCustody).toBe('live_only');
   });
 
-  it('makes every program Action discoverable and bound except explicit person-only decisions', () => {
+  it('keeps the Coordination Voice cohort discoverable and preserves declared exclusions', () => {
     const tools = new Set(listVoiceToolActionSpecs().map(spec => spec.id));
-    const gaps = listActionSpecs().filter(spec => programAction.test(spec.id) && spec.surfaces.ui && !personOnly.has(spec.id) && !tapOnly.has(spec.id))
+    const gaps = listActionSpecs().filter(spec => programAction.test(spec.id) && spec.surfaces.ui && !personOnly.has(spec.id) && !nonVoice.has(spec.id))
       .filter(spec => !spec.surfaces.voice || !spec.bindings?.voiceClientToolName || !tools.has(spec.id))
       .map(spec => spec.id);
     expect(gaps).toEqual([]);
@@ -51,7 +52,7 @@ describe('Coordination Voice parity', () => {
       expect(spec.surfaces.voice, id).toBe(false);
       expect(tools.has(spec.id), id).toBe(false);
     }
-    for (const id of tapOnly) {
+    for (const id of nonVoice) {
       const spec = listActionSpecs().find(candidate => candidate.id === id)!;
       expect(spec.surfaces.voice, id).toBe(false);
       expect(tools.has(spec.id), id).toBe(false);
@@ -66,6 +67,6 @@ describe('Coordination Voice parity', () => {
     expect(getActionSpec('approval.request.create').approval).toEqual({ result: 'none' });
     expect(getActionSpec('workflow.run.pause').requiredAuthority).toBe('account_automation');
     expect(getActionSpec('session.permission.respond').requiredAuthority).toBe('account_automation');
-    expect(getActionSpec('session.permission.respond').approvalPolicy).toMatchObject({ agentDefault: 'authority', requiredSurfaces: ['mcp'] });
+    expect(getActionSpec('session.permission.respond').approvalPolicy).toMatchObject({ agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'] });
   });
 });

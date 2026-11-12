@@ -9,7 +9,7 @@ describe('pre-mount Browser workspace Action contract', () => {
   it('advertises native DevTools with configurable approval and exact mounted-view routing', () => {
     const spec = getActionSpec('browser.view.openDevtools');
     expect(spec).toMatchObject({ executionPlacement: 'machine',
-      surfaces: { ui: true, agent: true, plugin: true, api: true, mcp: false, voice: false, cli: false } });
+      surfaces: { ui: true, agent: true, plugin: true, api: true, mcp: true, voice: false, cli: false } });
     expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1 }),
       { surface: 'agent', authority: 'account_automation' })).toBe(true);
     expect(isApprovalRequiredByActionsSettings(spec.id, normalizeActionsSettingsV1({ v: 1,
@@ -31,7 +31,7 @@ describe('pre-mount Browser workspace Action contract', () => {
   it('admits a typed target on the client and preserves configurable Agent Ask-first policy', () => {
     const spec = getActionSpec('browser.workspace.open');
     expect(spec).toMatchObject({ safety: 'danger', executionPlacement: 'client',
-      surfaces: { ui: true, agent: true, mcp: false, voice: false, cli: false } });
+      surfaces: { ui: true, agent: true, mcp: true, voice: false, cli: false } });
     expect(resolveActionSurfaceAvailability({ actionId: spec.id, surface: 'agent' }))
       .toMatchObject({ available: true });
     const context = { surface: 'agent', authority: 'account_automation' } as const;
