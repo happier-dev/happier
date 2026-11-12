@@ -9,7 +9,7 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 describe('FX plugin manifest', () => {
   it('ingests the plugin runtime that composes the shared ACP owner', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin/daemon.js');
+    expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin-build/daemon.js');
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'fx',

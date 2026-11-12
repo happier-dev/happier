@@ -21,7 +21,7 @@ export const KILO_KEY_ACCOUNTS = [
     base: 'https://api.x.ai/v1', baseEnv: null, npm: '@ai-sdk/openai-compatible' },
 ] as const;
 export const KILO_KEY_DECLARATIONS = KILO_KEY_ACCOUNTS.map(({ purpose, service }) => ({ purpose, service,
-  materializationKinds: ['environment'] as const, credentialKinds: ['token'] as const }));
+  materializationKinds: ['environment' as const], credentialKinds: ['token' as const] }));
 export const KILO_KEY_ENVIRONMENT_USES = KILO_KEY_ACCOUNTS.flatMap(row => [row.key, ...(row.baseEnv ? [row.baseEnv] : [])]
   .map(environmentKey => ({ purpose: row.purpose, environmentKey })));
 

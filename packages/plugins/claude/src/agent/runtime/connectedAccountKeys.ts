@@ -5,7 +5,7 @@ import { buildClaudeNativeUpstreamEnvironment, isClaudeProviderOwnedEnvName } fr
 
 export const CLAUDE_KIMI_PURPOSE = 'kimi-code-api-key';
 export const CLAUDE_KIMI_DECLARATION = { purpose: CLAUDE_KIMI_PURPOSE, service: KIMI_CONNECTED_ACCOUNT_SERVICE,
-  materializationKinds: ['environment'], credentialKinds: ['token'] } as const;
+  materializationKinds: ['environment' as const], credentialKinds: ['token' as const] };
 export const CLAUDE_KIMI_ENVIRONMENT_USES = [KIMI_CODE_API_KEY_ENV, KIMI_CODE_ANTHROPIC_BASE_ENV]
   .map(environmentKey => ({ purpose: CLAUDE_KIMI_PURPOSE, environmentKey }));
 

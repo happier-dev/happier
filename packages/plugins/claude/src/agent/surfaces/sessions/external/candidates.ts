@@ -87,18 +87,11 @@ function decodeRecentPosition(value: unknown): ClaudeJsonlSessionScanPosition | 
   return { projectId: value[1], sessionEntryOffset: 0, recent: { updatedAtMs: value[0], remoteSessionId: value[2] } };
 }
 
-export type ClaudeCandidatePreparation = Readonly<{
-  kind: 'building_candidate_index';
-  scanned: number;
-  total?: number;
-}>;
-
 export type ClaudeCandidateResultBudget = Readonly<{
   fits(
     candidates: readonly ClaudeExternalSessionCandidate[],
     nextCursor: string | null,
     searchIncomplete: boolean | undefined,
-    preparation: ClaudeCandidatePreparation | undefined,
   ): boolean;
 }>;
 
@@ -119,6 +112,10 @@ function encodeCandidateCursor(cursor: ClaudeCandidateCursorV5 | ClaudeCandidate
       cursor.changedBeforeMs ?? null, encodeRecentPosition(cursor.scanPosition),
       ...(cursor.unfinished && cursor.contentProgress ? [encodeRecentPosition(cursor.unfinished), cursor.contentProgress] : []),
     ]), 'utf8').toString('base64url');
+  }
+  if (cursor.kind === 'claudeCandidateIndexScan' && cursor.scanPosition.recent && !cursor.search.searchTerm) {
+    // Unsearched Browse in activity order resumes strictly after this position.
+    return Buffer.from(JSON.stringify([8, encodeRecentPosition(cursor.scanPosition)]), 'utf8').toString('base64url');
   }
   const value =
     cursor.kind === 'claudeCandidateIndexScan'
@@ -166,6 +163,13 @@ function decodeCandidateCursor(
         search: { searchTerm: parsed[1], searchMode, searchTarget: 'content' },
         ...(unfinished && contentProgress ? { unfinished, contentProgress } : {}),
       };
+    }
+    if (Array.isArray(parsed) && parsed[0] === 8 && parsed.length === 2) {
+      const scanPosition = decodeRecentPosition(parsed[1]);
+      return scanPosition ? {
+        v: 5, kind: 'claudeCandidateIndexScan', sourceGeneration: '', scanPosition, scanned: 0,
+        search: { searchTerm: '', searchMode: 'full', searchTarget: 'metadata' },
+      } : null;
     }
     // Intermediate development content cursors have no compatibility obligation.
     if (!Array.isArray(parsed) || parsed.length !== 8 || parsed[0] !== 5 || parsed[7] !== 'metadata') return null;
@@ -333,7 +337,6 @@ async function buildCandidateForSelectedRow(
     page: readonly ClaudeExternalSessionCandidate[];
     nextCursor: string | null;
     searchIncomplete?: boolean;
-    preparation?: ClaudeCandidatePreparation;
     resultBudget?: ClaudeCandidateResultBudget;
     readCandidateIndexState?: (
       candidate: Readonly<{
@@ -359,7 +362,6 @@ async function buildCandidateForSelectedRow(
       [...params.page, identifierOnly],
       params.nextCursor,
       params.searchIncomplete,
-      params.preparation,
     )
   ) {
     return { candidate: identifierOnly, fits: false };
@@ -379,7 +381,6 @@ async function buildCandidateForSelectedRow(
       [...params.page, enriched],
       params.nextCursor,
       params.searchIncomplete,
-      params.preparation,
     )
   ) {
     return { candidate: enriched, fits: true };
@@ -415,7 +416,6 @@ export async function listClaudeExternalSessionCandidates(
     candidates: ClaudeExternalSessionCandidate[];
     nextCursor: string | null;
     searchIncomplete?: boolean;
-    preparation?: ClaudeCandidatePreparation;
     contentCoverage?: 'complete' | 'partial' | 'unsupported';
   }>
 > {
@@ -534,7 +534,7 @@ export async function listClaudeExternalSessionCandidates(
         });
         if (
           page.length === 0 &&
-          !params.resultBudget?.fits([], continuation, undefined, undefined)
+          !params.resultBudget?.fits([], continuation, undefined)
         ) {
           throw new ClaudeCandidateResultBudgetTooSmallError(
             'Claude candidate result byte budget cannot fit the continuation envelope.',
@@ -583,6 +583,10 @@ export async function listClaudeExternalSessionCandidates(
     ...(search.searchTarget === 'content' ? { order: 'recent' as const,
       recentWindow: { startedAtMs, changedBeforeMs: contentCursor?.changedBeforeMs },
       unfinished: contentCursor?.unfinished,
+    } : !searchTerm ? {
+      // Unsearched Browse: one stat pass orders every transcript by mtime and
+      // the page reads titles only for the rows it shows.
+      order: 'recent' as const,
     } : {}),
     signal: params.signal,
   });
@@ -620,12 +624,6 @@ export async function listClaudeExternalSessionCandidates(
       ? decodedCursor.scanned
       : 0;
   const scanned = scannedBefore + traversed.scanned;
-  const preparation: ClaudeCandidatePreparation | undefined = searchTerm
-    ? undefined
-    : {
-        kind: 'building_candidate_index',
-        scanned,
-      };
   const searchIncomplete = searchTerm
     ? (search.searchTarget === 'metadata' && search.searchMode === 'fast') ||
       traversed.hasMore
@@ -715,7 +713,6 @@ export async function listClaudeExternalSessionCandidates(
             page,
             cursorBefore,
             searchIncomplete,
-            preparation,
           )
         ) {
           throw new ClaudeCandidateResultBudgetTooSmallError(
@@ -817,7 +814,7 @@ export async function listClaudeExternalSessionCandidates(
           ? encodeCandidateCursor({ ...before, unfinished: session.scanPosition, contentProgress: error.progress }) : cursorBefore;
         if (
           params.resultBudget &&
-          !params.resultBudget.fits(page, continuation, true, undefined)
+          !params.resultBudget.fits(page, continuation, true)
         ) {
           throw new ClaudeCandidateResultBudgetTooSmallError(
             'Claude candidate result byte budget cannot fit the continuation envelope.',
@@ -889,13 +886,11 @@ export async function listClaudeExternalSessionCandidates(
             [...page, withSnippet],
             cursorAfter,
             searchIncomplete,
-            preparation,
           ) ||
           params.resultBudget!.fits(
             [...page, withoutTitle],
             cursorAfter,
             searchIncomplete,
-            preparation,
           )
         );
       };
@@ -933,7 +928,6 @@ export async function listClaudeExternalSessionCandidates(
         page,
         nextCursor: cursorAfter,
         ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-        ...(preparation !== undefined ? { preparation } : {}),
         ...(params.resultBudget ? { resultBudget: params.resultBudget } : {}),
         ...(params.readCandidateIndexState
           ? { readCandidateIndexState: params.readCandidateIndexState }
@@ -961,7 +955,6 @@ export async function listClaudeExternalSessionCandidates(
             ? { contentCoverage: 'partial' as const }
             : {}),
           ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-          ...(preparation !== undefined ? { preparation } : {}),
         };
       }
     } else {
@@ -972,7 +965,6 @@ export async function listClaudeExternalSessionCandidates(
           withTitle,
           cursorAfter,
           searchIncomplete,
-          preparation,
         )
       ) {
         page.push(candidate);
@@ -984,7 +976,6 @@ export async function listClaudeExternalSessionCandidates(
             withoutTitle,
             cursorAfter,
             searchIncomplete,
-            preparation,
           )
         ) {
           page.push(candidateWithoutTitle);
@@ -1007,7 +998,6 @@ export async function listClaudeExternalSessionCandidates(
               ? { contentCoverage: 'partial' as const }
               : {}),
             ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-            ...(preparation !== undefined ? { preparation } : {}),
           };
         }
       }
@@ -1026,7 +1016,6 @@ export async function listClaudeExternalSessionCandidates(
             }
           : {}),
         ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-        ...(preparation !== undefined ? { preparation } : {}),
       };
     }
   }
@@ -1044,7 +1033,7 @@ export async function listClaudeExternalSessionCandidates(
       : await finishContentPass();
   if (
     params.resultBudget &&
-    !params.resultBudget.fits(page, nextCursor, searchIncomplete, preparation)
+    !params.resultBudget.fits(page, nextCursor, searchIncomplete)
   ) {
     throw new ClaudeCandidateResultBudgetTooSmallError(
       'Claude candidate result byte budget cannot fit the requested page envelope.',
@@ -1062,6 +1051,5 @@ export async function listClaudeExternalSessionCandidates(
         }
       : {}),
     ...(searchIncomplete !== undefined ? { searchIncomplete } : {}),
-    ...(preparation !== undefined ? { preparation } : {}),
   };
 }

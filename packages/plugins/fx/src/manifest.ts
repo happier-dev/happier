@@ -40,7 +40,7 @@ export const FX_PLUGIN = definePlugin({
       sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',
       connectedAccounts: [{ purpose: FX_CODEX_PURPOSE, service: FX_CODEX_SERVICE, required: false, materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] },
-        ...FX_NATIVE_KEY_PURPOSES.map(({ purpose, service }) => ({ purpose, service, credentialKinds: ['token'] as const, materializationKinds: ['environment'] as const }))],
+        ...FX_NATIVE_KEY_PURPOSES.map(({ purpose, service }) => ({ purpose, service, credentialKinds: ['token' as const], materializationKinds: ['environment' as const] }))],
       catalog: { agentCliSystemTool: { toolId: FX_ACP_COMMAND.toolId }, vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
       surfaces: {
         externalSession: {

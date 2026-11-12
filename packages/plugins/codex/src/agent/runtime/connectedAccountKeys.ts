@@ -11,7 +11,7 @@ export const CODEX_KEY_ACCOUNTS = [
   { purpose: 'openai-api-key', service: OPENAI_CONNECTED_ACCOUNT_SERVICE, key: OPENAI_SELECTED_API_KEY_ENV, base: null },
 ] as const;
 export const CODEX_KEY_DECLARATIONS = CODEX_KEY_ACCOUNTS.map(({ purpose, service }) => ({ purpose, service,
-  materializationKinds: ['environment'] as const, credentialKinds: ['token'] as const }));
+  materializationKinds: ['environment' as const], credentialKinds: ['token' as const] }));
 export const CODEX_KEY_ENVIRONMENT_USES = CODEX_KEY_ACCOUNTS.flatMap(row => [row.key, ...(row.base ? [row.base] : [])]
   .map(environmentKey => ({ purpose: row.purpose, environmentKey })));
 

@@ -1,4 +1,3 @@
-import { utimesSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -12,6 +11,7 @@ const fsMockState = vi.hoisted((): {
     maxActiveDirectoryHandles: number;
     nextDirectoryHandleId: number;
     onDirectoryEntryPulled: ((directoryPath: string, entryName: string) => void) | null;
+    onStat: ((path: string) => void) | null;
     openCalls: string[];
     readdirCalls: string[];
     statCalls: string[];
@@ -22,6 +22,7 @@ const fsMockState = vi.hoisted((): {
     maxActiveDirectoryHandles: 0,
     nextDirectoryHandleId: 1,
     onDirectoryEntryPulled: null,
+    onStat: null,
     openCalls: [],
     readdirCalls: [],
     statCalls: [],
@@ -95,6 +96,7 @@ vi.mock('node:fs/promises', async () => {
         },
         stat: async (path: Parameters<typeof actualFs.stat>[0], options?: Parameters<typeof actualFs.stat>[1]) => {
             fsMockState.statCalls.push(String(path));
+            fsMockState.onStat?.(String(path));
             return await actualFs.stat(path, options);
         },
     };
@@ -202,6 +204,7 @@ describe('Claude external-session candidate listing', () => {
     beforeEach(() => {
         fsMockState.blockedReaddirPath = null;
         fsMockState.onDirectoryEntryPulled = null;
+        fsMockState.onStat = null;
         resetFsObservations();
     });
 
@@ -464,7 +467,7 @@ describe('Claude external-session candidate listing', () => {
         expect(fsMockState.readdirCalls).not.toContain(join(configDir, 'projects'));
     });
 
-    it('bounds selected transcript work and does not consume the full corpus before page one', async () => {
+    it('opens only the shown rows for page one of a larger corpus', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-bounded-list-'));
         roots.push(root);
         const configDir = join(root, '.claude');
@@ -490,17 +493,11 @@ describe('Claude external-session candidate listing', () => {
 
         expect(result.candidates).toHaveLength(2);
         expect(result.nextCursor).toEqual(expect.any(String));
-        expect(transcriptPaths(fsMockState.statCalls)).toHaveLength(2);
+        // Ordering costs one stat per transcript; only the two shown rows are opened.
         expect(result.candidates.every((candidate) => candidate.title?.startsWith('candidate '))).toBe(true);
         expect(transcriptPaths(fsMockState.openCalls).map((path) => basename(path)).sort()).toEqual(
             result.candidates.map((candidate) => `${candidate.remoteSessionId}.jsonl`).sort(),
         );
-        expect(result.candidates.length + (result.nextCursor ? 1 : 0)).toBeLessThanOrEqual(3);
-        expect(
-            fsMockState.directoryEntryPulls.filter(
-                (path) => path.startsWith(projectDir) && path.endsWith('.jsonl'),
-            ).length,
-        ).toBeLessThan(40);
     });
 
     it('keeps a budget-constrained exact row identifier-only when its title cannot fit', async () => {
@@ -586,15 +583,16 @@ describe('Claude external-session candidate listing', () => {
         expect(transcriptPaths(fsMockState.openCalls)).toEqual([]);
     });
 
-    it('returns bounded exact scan chunks for host-owned newest-first indexing', async () => {
+    it('serves unsearched Browse newest-activity-first and reads titles only for shown rows', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-newest-first-'));
         roots.push(root);
         const configDir = join(root, '.claude');
+        // Directory traversal order (by name) runs opposite to last activity.
         await createCandidate({
             configDir,
             projectId: 'project-order',
-            remoteSessionId: 'aaa-oldest',
-            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+            remoteSessionId: 'aaa-newest',
+            updatedAt: new Date('2026-01-03T00:00:00.000Z'),
         });
         await createCandidate({
             configDir,
@@ -605,22 +603,44 @@ describe('Claude external-session candidate listing', () => {
         await createCandidate({
             configDir,
             projectId: 'project-order',
-            remoteSessionId: 'zzz-newest',
-            updatedAt: new Date('2026-01-03T00:00:00.000Z'),
+            remoteSessionId: 'zzz-oldest',
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        });
+        await createCandidate({
+            configDir,
+            projectId: 'project-other',
+            remoteSessionId: 'bbb-second',
+            updatedAt: new Date('2026-01-02T12:00:00.000Z'),
         });
 
+        resetFsObservations();
         const result = await listClaudeExternalSessionCandidates({
             source: { kind: 'claudeConfig', configDir, projectId: null },
             env: {},
             limit: 2,
         });
 
-        expect(result.candidates).toHaveLength(2);
+        expect(result).not.toHaveProperty('preparation');
+        expect(result.candidates.map(candidateIdentity)).toEqual([
+            'project-order/aaa-newest',
+            'project-other/bbb-second',
+        ]);
+        expect(transcriptPaths(fsMockState.openCalls).map((path) => basename(path)).sort())
+            .toEqual(['aaa-newest.jsonl', 'bbb-second.jsonl']);
         expect(result.nextCursor).toEqual(expect.any(String));
-        expect(result.preparation).toEqual({
-            kind: 'building_candidate_index',
-            scanned: 2,
+
+        const next = await listClaudeExternalSessionCandidates({
+            source: { kind: 'claudeConfig', configDir, projectId: null },
+            env: {},
+            cursor: result.nextCursor ?? undefined,
+            limit: 2,
         });
+        expect(next).not.toHaveProperty('preparation');
+        expect(next.candidates.map(candidateIdentity)).toEqual([
+            'project-order/mmm-middle',
+            'project-order/zzz-oldest',
+        ]);
+        expect(next.nextCursor).toBeNull();
     });
 
     it('does not duplicate or skip candidates while paging a static corpus', async () => {
@@ -642,7 +662,7 @@ describe('Claude external-session candidate listing', () => {
         expect(identities).toHaveLength(expected.size);
     });
 
-    it('does not silently mix candidate generations after insertion', async () => {
+    it('continues past an insertion without mixing it into the running page sequence', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-mutation-pagination-'));
         roots.push(root);
         const configDir = join(root, '.claude');
@@ -661,12 +681,17 @@ describe('Claude external-session candidate listing', () => {
         await createCandidate({ configDir, projectId, remoteSessionId: 'aa-inserted-before-cursor' });
         await createCandidate({ configDir, projectId, remoteSessionId: 'z-inserted-after-cursor' });
 
-        await expect(listClaudeExternalSessionCandidates({
+        // New transcripts are newer than the last shown row: the continuation
+        // resumes strictly after it and the next fresh first page shows them.
+        const second = await listClaudeExternalSessionCandidates({
             source: { kind: 'claudeConfig', configDir, projectId: null },
             env: {},
             cursor: first.nextCursor ?? undefined,
             limit: 2,
-        })).rejects.toBeInstanceOf(ClaudeCandidateSourceChangedError);
+        });
+        const shown = [...first.candidates, ...second.candidates].map(candidateIdentity);
+        expect(new Set(shown).size).toBe(shown.length);
+        expect(shown.every((identity) => !identity.includes('inserted'))).toBe(true);
 
         const refreshed = await collectCandidateIdentities({ configDir, limit: 2 });
         const refreshedIdentities = [
@@ -675,33 +700,6 @@ describe('Claude external-session candidate listing', () => {
             'z-inserted-after-cursor',
         ].map((remoteSessionId) => `${projectId}/${remoteSessionId}`);
         expect(new Set(refreshed)).toEqual(new Set(refreshedIdentities));
-    });
-
-    it('keeps the first-chunk cursor stable when an unrelated project changes', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-unrelated-project-'));
-        roots.push(root);
-        const configDir = join(root, '.claude');
-        for (const remoteSessionId of ['a-first', 'b-second', 'c-third']) {
-            await createCandidate({ configDir, projectId: 'project-a', remoteSessionId });
-        }
-        await createCandidate({ configDir, projectId: 'project-z', remoteSessionId: 'z-existing' });
-
-        const listFirstChunk = () => listClaudeExternalSessionCandidates({
-            source: { kind: 'claudeConfig', configDir, projectId: null },
-            env: {},
-            limit: 2,
-        });
-        const first = await listFirstChunk();
-        expect(first.candidates).toHaveLength(2);
-        expect(first.nextCursor).toEqual(expect.any(String));
-
-        await createCandidate({ configDir, projectId: 'project-z', remoteSessionId: 'late' });
-        const second = await listFirstChunk();
-
-        expect(second.candidates.map(candidateIdentity)).toEqual(
-            first.candidates.map(candidateIdentity),
-        );
-        expect(second.nextCursor).toBe(first.nextCursor);
     });
 
     it('keeps a resume cursor valid when an unrelated project directory is created', async () => {
@@ -746,59 +744,7 @@ describe('Claude external-session candidate listing', () => {
         ));
     });
 
-    it('does not fail a bounded chunk when an unrelated project changes mid-scan', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-unrelated-mid-scan-'));
-        roots.push(root);
-        const configDir = join(root, '.claude');
-        for (const remoteSessionId of ['a-first', 'b-second', 'c-third', 'd-fourth']) {
-            await createCandidate({ configDir, projectId: 'project-a', remoteSessionId });
-        }
-        await createCandidate({ configDir, projectId: 'project-z', remoteSessionId: 'z-existing' });
-        const unrelatedProjectDir = join(configDir, 'projects', 'project-z');
-        let mutatedUnrelatedProject = false;
-        fsMockState.onDirectoryEntryPulled = (directoryPath) => {
-            if (mutatedUnrelatedProject || !directoryPath.endsWith('project-a')) return;
-            mutatedUnrelatedProject = true;
-            const changedAt = new Date('2026-02-02T00:00:00.000Z');
-            utimesSync(unrelatedProjectDir, changedAt, changedAt);
-        };
-
-        const page = await listClaudeExternalSessionCandidates({
-            source: { kind: 'claudeConfig', configDir, projectId: null },
-            env: {},
-            limit: 2,
-        });
-
-        expect(mutatedUnrelatedProject).toBe(true);
-        expect(page.candidates).toHaveLength(2);
-        expect(page.nextCursor).toEqual(expect.any(String));
-    });
-
-    it('reports a typed source change when the scanned project changes mid-scan', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-scanned-mid-scan-'));
-        roots.push(root);
-        const configDir = join(root, '.claude');
-        for (const remoteSessionId of ['a-first', 'b-second', 'c-third', 'd-fourth']) {
-            await createCandidate({ configDir, projectId: 'project-a', remoteSessionId });
-        }
-        const scannedProjectDir = join(configDir, 'projects', 'project-a');
-        let mutatedScannedProject = false;
-        fsMockState.onDirectoryEntryPulled = (directoryPath) => {
-            if (mutatedScannedProject || !directoryPath.endsWith('project-a')) return;
-            mutatedScannedProject = true;
-            const changedAt = new Date('2026-02-02T00:00:00.000Z');
-            utimesSync(scannedProjectDir, changedAt, changedAt);
-        };
-
-        await expect(listClaudeExternalSessionCandidates({
-            source: { kind: 'claudeConfig', configDir, projectId: null },
-            env: {},
-            limit: 2,
-        })).rejects.toBeInstanceOf(ClaudeCandidateSourceChangedError);
-        expect(mutatedScannedProject).toBe(true);
-    });
-
-    it('closes directory traversal and performs no title reads after cancellation', async () => {
+    it('stops at cancellation during the activity stat pass and performs no title reads', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-candidate-cancel-'));
         roots.push(root);
         const configDir = join(root, '.claude');
@@ -810,10 +756,9 @@ describe('Claude external-session candidate listing', () => {
             });
         }
         const controller = new AbortController();
-        fsMockState.onDirectoryEntryPulled = (directoryPath) => {
-            if (directoryPath.endsWith('project-cancel')) {
-                controller.abort(new Error('test cancellation'));
-            }
+        // Cancel during the activity stat pass, before any page row is read.
+        fsMockState.onStat = (path) => {
+            if (path.endsWith('.jsonl')) controller.abort(new Error('test cancellation'));
         };
 
         await expect(listClaudeExternalSessionCandidates({
