@@ -138,7 +138,7 @@ export function PublicProfileUsageBody({ presentation, models, records, host, wi
       break;
     case 'usage_flow':
       if (models.river && labels.river) return <UsageAgentRiver {...base} model={models.river} labels={labels.river}
-        agents={agents(models.river.weeks.flatMap(week => week.shares.map(row => row.agentId)))} />;
+        agents={agents(models.river.weeks.flatMap(week => (week.shares ?? []).map(row => row.agentId)))} />;
       break;
     case 'usage_outcomes':
       if (presentation.inputs.style === 'shipped' && models.shipped && labels.shipped)

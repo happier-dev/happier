@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PublicProfileUsageBody } from '../../account/PublicProfileUsage.js';
 import type { PublicProfileSnapshotV1 } from '@happier-dev/plugin-sdk';
 import * as components from '../../../components/index.public.js';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
@@ -21,6 +22,30 @@ const base: PublicProfileSnapshotV1 = {
 };
 
 describe('public Usage chart producer', () => {
+  it('renders public River weeks with unreported and empty shares alongside reported agents', async () => {
+    const fixture = await createPluginUiTestkit({ identity: { instanceId: 'river', mountNonce: 'river' },
+      surface: defineUiSurface(() => <PublicProfileUsageBody
+        presentation={{ kind: 'usage', widgetId: 'usage_flow', inputs: {} }}
+        models={{ ...components.projectPublicUsageChartModels(base), river: { width: 'share', weeks: [
+          { start: 'First', end: 'Last', partial: false, total: null, shares: null },
+          { start: 'Empty', end: 'End', partial: false, total: 0, shares: [] },
+          { start: 'Reported', end: 'End', partial: false, total: 1, shares: [{ agentId: 'codex', share: 1 }] },
+        ] } }} records={null} width={720} testID="public-river"
+        host={{ paint: { accent: '#007aff', paper: '#fff', dark: false },
+          agent: id => ({ id, name: 'Codex', color: '#2a78d6' }),
+          labels: { chartLabel: () => 'Flow', unavailable: 'Unavailable', river: {
+            week: String, partialWeek: String, inline: (name, share) => name + ' ' + share, caption: 'River', unknownAgent: 'Unknown',
+            values: { show: 'Values', hide: 'Hide', weekColumn: 'Week', totalColumn: 'Total', formatTotal: String, percent: String },
+          } } }} />),
+      surfaceContext: createSurfaceContextFixture({ locale: 'en-GB' }), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async () => null } });
+    try {
+      expect(document.querySelector('[data-testid="public-river"]')).not.toBeNull();
+      expect(document.body.textContent).toContain('Codex');
+      expect(document.body.textContent).not.toContain('Unavailable');
+    } finally { await fixture.dispose(); }
+  });
+
   it('keeps shared unavailable summary figures distinct from witnessed zero and hidden figures', () => {
     const projected = projectPublicProfileSnapshot({ ...base, facts: { tokens: 0, activeDays: 3, peakParallel: 99 },
       fieldCoverage: { tokens: base.coverage, activeDays: base.coverage, agentTime: base.coverage,

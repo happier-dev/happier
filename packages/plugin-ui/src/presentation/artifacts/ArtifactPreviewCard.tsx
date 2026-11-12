@@ -42,7 +42,7 @@ function useVisibleStructure(rows: readonly unknown[] | undefined, hasSummary: b
     setGeometry(measured);
   }
   let count = 0;
-  let top = STRUCTURE_TOP;
+  let top: number = STRUCTURE_TOP;
   if (hasSummary) top = measured.summaryHeight === undefined ? bandHeight : top + measured.summaryHeight + STRUCTURE_GAP;
   // Until the band is measured its first row shows: an unmeasured card is never a white box (a virtualized
   // grid mounts cards late, and the first paint used to land before the band's layout).
