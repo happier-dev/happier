@@ -112,13 +112,13 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
   async function buildObservation(resource: CoderResource, buildId: string) {
     const value = await request('/workspacebuilds/' + encodeURIComponent(buildId));
     const parsed = buildSchema.safeParse(value);
-    if (!parsed.success || parsed.data.id !== buildId || parsed.data.workspace_id !== resource.workspaceId) fail('coder_resource_mismatch');
+    if (!parsed.success || parsed.data.id !== buildId || parsed.data.workspace_id !== resource.workspaceId) return fail('coder_resource_mismatch');
     return parsed.data;
   }
   async function submitBuild(resource: CoderResource, transition: 'start' | 'stop' | 'delete') {
     const value = await request('/workspaces/' + encodeURIComponent(resource.workspaceId) + '/builds', 'POST', { transition });
     const parsed = buildSchema.safeParse(value);
-    if (!parsed.success || parsed.data.workspace_id !== resource.workspaceId || parsed.data.transition !== transition) fail('coder_invalid_response');
+    if (!parsed.success || parsed.data.workspace_id !== resource.workspaceId || parsed.data.transition !== transition) return fail('coder_invalid_response');
     return parsed.data;
   }
   async function inspect(resource: CoderResource): Promise<MachineProvisionerObservationV1> {
@@ -145,7 +145,8 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     if ('nativeOperation' in value) {
       if (value.nativeOperation.kind === 'delete') {
         const observed = await cleanup(value.nativeOperation);
-        if (observed.kind === 'confirmed' || observed.kind === 'unknown' && observed.code !== 'coder_delete_pending') return observed;
+        if (observed.kind === 'confirmed') return { kind: 'confirmed' };
+        if (observed.kind === 'unknown' && observed.code !== 'coder_delete_pending') return observed;
         return { kind: 'accepted', nativeOperationRef: reference(value.nativeOperation) };
       }
       const recovered = await recover(value.nativeOperation);
