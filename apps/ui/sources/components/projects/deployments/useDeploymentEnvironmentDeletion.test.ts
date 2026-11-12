@@ -399,7 +399,7 @@ describe('Environment deletion client over the Action owner', () => {
         const pending = hook.getCurrent().stopAndRemove(null, { signal: caller.signal }).then(result => { completed = true; return result; });
         let settled: ActionOperationSnapshotV1 | undefined;
         try {
-            await waitForHomeGovernance(() => expect(readSignal).toBeDefined());
+            await act(async () => { await waitForHomeGovernance(() => expect(readSignal).toBeDefined()); });
             expect(hook.getCurrent().busy).toBe(true);
             vi.useFakeTimers();
             await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000); });
