@@ -237,7 +237,7 @@ export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySe
     });
 }
 type OwnedContainer = Readonly<{ status: 'observed'; containerId: string; containerName: string; config: Record<string, unknown>; host: Record<string, unknown>;
-    running: boolean; created: boolean; missingNetwork: boolean; networks: Record<string, unknown>; ports: unknown }>;
+    running: boolean; created: boolean; networks: Record<string, unknown>; ports: unknown }>;
 async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<typeof nativeDocker>): Promise<OwnedContainer
     | Readonly<{ status: 'needs_setup' }> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' }>> {
     const unavailable = caddyFactUnavailable('caddyContainer');
@@ -265,10 +265,6 @@ async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<type
         || !Array.isArray(host.Mounts)) return { status: 'unavailable', reason: 'foreign_effect_conflict' };
     return { status: 'observed', containerId: state.Id, containerName: state.Name.slice(1), config, host,
         running: status.Running, created: status.Status === 'created',
-        // Docker's structured State.Error has no missing-network reason code.
-        // Its network-not-found suffix is shared by both engine wordings.
-        missingNetwork: !status.Running && typeof status.Error === 'string'
-            && /\bnetwork \S+ not found\b/.test(status.Error),
         networks, ports: nativeNetwork?.Ports };
 }
 
@@ -661,13 +657,23 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
         running = container.running;
         networks = container.networks;
         await options.settleBindings?.();
-        if (!bindingsMatch || container.missingNetwork) {
-            // Docker can retain deleted attachments in container inspection.
-            // Only restore surviving networks; never reconnect retired ones.
-            const listed = await run(['network', 'ls', '--format', '{{.Name}}']);
+        let missingNetwork = false;
+        if (!running || !bindingsMatch) {
+            // State.Error describes the previous start, which may predate a
+            // network deletion. Compare configured names/IDs with live Docker
+            // inventory before starting or replacing the owned container.
+            const listed = await run(['network', 'ls', '--no-trunc', '--format', '{{.ID}} {{.Name}}']);
             if (listed.code !== 0) return caddyFactUnavailable('caddyRoutedNetworks');
-            const existing = new Set(listed.stdout.trim().split('\n'));
-            networks = Object.fromEntries(Object.entries(networks).filter(([name]) => existing.has(name)));
+            const existing = new Set(listed.stdout.trim().split(/\s+/));
+            const surviving = Object.fromEntries(Object.entries(networks).filter(([name, attachment]) => {
+                const networkId = object(attachment)?.NetworkID;
+                return existing.has(typeof networkId === 'string' && networkId ? networkId : name);
+            }));
+            missingNetwork = Object.keys(surviving).length !== Object.keys(networks).length
+                || typeof host.NetworkMode === 'string' && !existing.has(host.NetworkMode);
+            networks = surviving;
+        }
+        if (!bindingsMatch || missingNetwork) {
             // Docker publications and the primary network mode are immutable.
             // A deleted primary network prevents even an attached replacement
             // network from starting this container. Retain its durable mounts

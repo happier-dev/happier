@@ -213,7 +213,8 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
             if (loseCreateResponse) throw new Error('lost Docker response');
             return ok(container.Id);
         }
-        if (args[0] === 'network' && args[1] === 'ls') return ok([...new Set(['routed-a', 'routed-b', ...Object.keys(container?.NetworkSettings.Networks ?? {})])].join('\n'));
+        if (args[0] === 'network' && args[1] === 'ls') return ok([...new Set(['routed-a', 'routed-b', ...Object.keys(container?.NetworkSettings.Networks ?? {})])]
+            .map(name => `network-id-${name} ${name}`).join('\n'));
         if (args[0] === 'network' && args[1] === 'connect') { container!.NetworkSettings.Networks[args[2]!] = { IPAddress: '172.19.0.2' }; return ok(); }
         if (args[0] === 'network' && args[1] === 'disconnect') {
             const attachment = Object.entries(container?.NetworkSettings.Networks ?? {})
@@ -729,10 +730,10 @@ it('consumes the setup owner result and preserves the owned running container an
 });
 
 it.each([false, true].flatMap(publicIngress => [
-    // Docker variants from REPLAY-130; opaque network names replaced, not verbatim live strings.
-    'failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found',
-    'failed to set up container networking: network happier-c174-derived_default not found',
-].map(error => ({ publicIngress, error }))))('reconciles an owned Caddy whose primary network was deleted, preserving durable state and attachments (public=$publicIngress, error=$error)', async ({ publicIngress, error }) => {
+    undefined,
+    // REPLAY-132-CLI/caddy-before.txt: the previous start predates network deletion.
+    'failed to set up container networking: driver failed programming external connectivity on endpoint happier-caddy (aad8cd7824811c59d428b47464c215ea8940f892a37cbf734187e52614b60e4b): failed to bind host port 0.0.0.0:443/tcp: address already in use',
+].map(error => ({ publicIngress, error }))))('reconciles an owned Caddy whose primary network was deleted despite absent or stale startup errors, preserving durable state and attachments (public=$publicIngress, error=$error)', async ({ publicIngress, error }) => {
     const f = await fixture(false); await f.setup();
     const input = { ...f.input, ...(publicIngress ? { publicBindings: [{ requirementId: 'https', exposure: 'public' as const,
         hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443, protocol: 'tcp' as const }] } : {}) };
@@ -749,7 +750,10 @@ it.each([false, true].flatMap(publicIngress => [
     await writeFile(autosave, saved);
     const options = { ...f.options(), run: async (command: MachineSetupNativeCommand) => {
         const args = command.args.slice(2);
-        if (args[0] === 'network' && args[1] === 'ls') return ok('routed-a\nrouted-b\nincumbent-draining\n');
+        if (args[0] === 'network' && args[1] === 'ls') return ok('network-a routed-a\nnetwork-b routed-b\nnetwork-draining incumbent-draining\n');
+        if (args[0] === 'container' && args[1] === 'start' && f.readContainer() === retained) {
+            return { code: 1, stdout: '', stderr: 'Error response from daemon: failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found' };
+        }
         if (args[0] === 'network' && args[1] === 'connect' && args[2] === 'deleted-app_default') {
             return { code: 1, stdout: '', stderr: 'Error response from daemon: network deleted-app_default not found' };
         }
@@ -770,6 +774,25 @@ it.each([false, true].flatMap(publicIngress => [
     const before = f.commands.length;
     expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
     expect(f.commands.slice(before).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
+});
+
+it.each(['retained-primary-id', 'deleted-primary-id', 'replaced-attachment-id'] as const)(
+    'reconciles stopped Caddy against live network IDs: %s', async scenario => {
+    const f = await fixture(false); await f.setup();
+    expect(await ensureNativeCaddyContainer(f.input, f.options())).toMatchObject({ status: 'ready' });
+    await f.closeAdmin();
+    const retained = f.readContainer();
+    const liveId = 'a'.repeat(64), deletedId = 'd'.repeat(64);
+    retained.HostConfig.NetworkMode = scenario === 'deleted-primary-id' ? deletedId : liveId;
+    retained.NetworkSettings.Networks['routed-a'] = { NetworkID: scenario === 'replaced-attachment-id' ? deletedId : liveId };
+    retained.State = { Running: false, Status: 'created' };
+    expect(await ensureNativeCaddyContainer(f.input, { ...f.options(), run: async command => {
+        if (command.args[2] === 'network' && command.args[3] === 'ls') return ok(`${liveId} routed-a\n${'b'.repeat(64)} routed-b\n`);
+        return f.run(command);
+    } })).toMatchObject({ status: 'ready' });
+    if (scenario === 'retained-primary-id') expect(f.readContainer()).toBe(retained);
+    else expect(f.readContainer()).not.toBe(retained);
+    expect(Object.keys(f.readContainer().NetworkSettings.Networks).sort()).toEqual(['routed-a', 'routed-b']);
 });
 
 it('preserves an owned stopped Caddy on an unrelated exit-128 not-found error and returns a typed failure', async () => {
