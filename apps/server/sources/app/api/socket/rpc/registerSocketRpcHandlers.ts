@@ -2058,7 +2058,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         return { status: 'current', value: await operation() };
                     },
                 };
-            } else if (deploymentArchiveChild && verifiedArchiveSender && verifiedExternalAction?.deploymentChildCodecAdmission && machinePrefix) {
+            } else if ((deploymentChild || deploymentArchiveChild && verifiedArchiveSender)
+                && verifiedExternalAction?.deploymentChildCodecAdmission && machinePrefix) {
                 const codecAdmission = verifiedExternalAction.deploymentChildCodecAdmission;
                 if (codecAdmission.machineId !== machinePrefix) { callback?.(buildForbiddenRpcResponse()); return; }
                 machineAdmission = { ...codecAdmission, actorAccountId, role: 'use' };

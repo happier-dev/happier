@@ -48,9 +48,9 @@ export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
     return { environmentIds, artifactContents };
 }
 
-/** A finite Query spends its signed scope; these reads select content custody, not fresh permission. */
-export async function readAdmittedDeploymentDataQueryScopeInTx(tx: Tx,
-    admission: Extract<DeploymentReadAdmissionV1, { actionId: typeof deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 }>
+/** A finite read spends its signed scope; these reads select content custody, not fresh permission. */
+export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
+    admission: Extract<DeploymentReadAdmissionV1, { deploymentId: string }>
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[]; managedControllerMachineId?: string }> | null> {
     const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
@@ -87,7 +87,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         const controller = await tx.machine.findFirst({ where: { id: binding.machineId,
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
-        const scope = await readAdmittedDeploymentDataQueryScopeInTx(tx, admission);
+        const scope = await readAdmittedDeploymentReadScopeInTx(tx, admission);
         return scope ? { artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId) } : null;
     }
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'

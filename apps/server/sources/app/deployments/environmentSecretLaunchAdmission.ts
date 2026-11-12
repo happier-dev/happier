@@ -21,7 +21,7 @@ import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readAcceptedDeploymentDomainSecretDestinationInTx, readDeploymentDomainOperationalDestinationsInTx } from './deploymentDomainService';
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
 import { readCurrentManagedDataTargetLinksInTx, readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
-import { readAdmittedDeploymentDataQueryScopeInTx } from './deploymentReadAuthorization';
+import { readAdmittedDeploymentReadScopeInTx } from './deploymentReadAuthorization';
 
 /** Machine setup storage admission; the configure invocation owns provider/operation currentness and plaintext custody. */
 export async function accessMachineConnectorSecretGrantInTx(tx: Tx, actorAccountId: string,
@@ -118,7 +118,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         // current Environment/link custody. Service and binding selection stay
         // private to the host; another seal never selects a role.
         if (!admittedDataQuery) return deploymentFailure('deployment_access_denied');
-        const scope = await readAdmittedDeploymentDataQueryScopeInTx(tx, admittedDataQuery);
+        const scope = await readAdmittedDeploymentReadScopeInTx(tx, admittedDataQuery);
         if (!scope) return deploymentFailure('deployment_access_denied');
         if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
             const materialization = input.materialization;

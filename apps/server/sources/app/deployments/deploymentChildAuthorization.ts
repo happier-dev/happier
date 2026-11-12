@@ -26,7 +26,7 @@ import { readAcceptedDeploymentDomainInTx, hasCurrentDeploymentDomainCaptureInTx
 import { readTemplateDeploymentEnvironmentIdInTx, readAdmittedCreateDeploymentEnvironmentCustodyInTx,
     readDeploymentPreparationEnvironmentIdInTx } from './deploymentPreparationAuthorization';
 import { readDeploymentMembershipAdmissionInTx } from './deploymentMembershipService';
-import { readDeploymentTargetAuthorizationInTx, readAdmittedDeploymentDataQueryScopeInTx } from './deploymentReadAuthorization';
+import { readDeploymentTargetAuthorizationInTx, readAdmittedDeploymentReadScopeInTx } from './deploymentReadAuthorization';
 import type { DeploymentContentReference } from './deploymentStoredContent';
 import { projectManagedMachine } from '@/app/machines/managed/managedMachineProjection';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -81,7 +81,7 @@ export async function readDeploymentChildAdmissionInTx(tx: Tx, binding: External
         // The receiver signs the already admitted finite effect. Only content
         // membership is read here; requester permission is not admitted again.
         if (admittedReadContinuation) {
-            const scope = await readAdmittedDeploymentDataQueryScopeInTx(tx, {
+            const scope = await readAdmittedDeploymentReadScopeInTx(tx, {
                 actionId: deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1, ...routing.input, targetLinkId: routing.targetLinkId,
                 deploymentId: routing.deploymentId, machineId: routing.machineId, installationId: routing.installationId,
             });
@@ -162,17 +162,21 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         return { machineId, installationId: admitted.destinationCodecAdmission.installationId,
             actorAccountId: binding.accountId, routing, codecAdmission: admitted.destinationCodecAdmission };
     }
-    if (routing.kind === 'dataRole') return null;
-    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns' || routing.kind === 'snapshot') {
-        if (archiveOrigin || machineId !== routing.machineId) return null;
+    const accepted = admitted.acceptedReceipt ? readDeploymentAcceptedExecution(admitted.acceptedReceipt) : null;
+    const capturedMachines = [{ machineId: routing.machineId, installationId: routing.installationId },
+        accepted?.controller, accepted?.builder];
+    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns'
+        || routing.kind === 'snapshot' || routing.kind === 'dataRole' || admitted.acceptedReceipt && !archiveOrigin) {
+        const selected = capturedMachines.find(machine => machine?.machineId === machineId);
+        if (archiveOrigin || !selected) return null;
         const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true,
             metadata: true, daemonState: true, dataEncryptionKey: true,
             revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } } });
-        if (!machine || machine.installationId !== routing.installationId || machine.revokedAt || machine.replacedByMachineId) return null;
+        if (!machine || machine.installationId !== selected.installationId || machine.revokedAt || machine.replacedByMachineId) return null;
         const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
         if (mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)) return null;
-        return { machineId, installationId: routing.installationId, actorAccountId: binding.accountId, routing,
-            codecAdmission: { actorAccountId: binding.accountId, machineId, installationId: routing.installationId,
+        return { machineId, installationId: selected.installationId, actorAccountId: binding.accountId, routing,
+            codecAdmission: { actorAccountId: binding.accountId, machineId, installationId: selected.installationId,
                 custodianAccountId: machine.accountId, role: 'use', encryptionMode: mode.mode } };
     }
     const preparation = routing.kind === 'prepare' || routing.kind === 'review';
@@ -187,9 +191,6 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         // Withdrawal applies to new admission, not reads within this finite job.
         : await loadDeploymentEnvironmentCustodyInTx(tx, routing.input);
     if (!environment.ok) return null;
-    const accepted = admitted.acceptedReceipt ? readDeploymentAcceptedExecution(admitted.acceptedReceipt) : null;
-    const capturedMachines = [{ machineId: routing.machineId, installationId: routing.installationId },
-        accepted?.controller, accepted?.builder];
     let owner = 'admission' in environment ? environment.admission.owner : environment.owner;
     if (archiveOrigin) {
         if (routing.kind !== 'member' && routing.kind !== 'build' || routing.kind === 'member' && routing.phase === 'cleanup') return null;

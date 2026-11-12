@@ -1454,7 +1454,8 @@ describe('deployment children retain their controller Action authority', () => {
         { workflowOrigin: true, templateRoot: false, membershipWithdrawal: false },
         { workflowOrigin: false, templateRoot: true, membershipWithdrawal: false },
         { workflowOrigin: false, templateRoot: false, membershipWithdrawal: true }])('uses only accepted-job and installation reads for controller calls after credential withdrawal (%j)', async options => {
-        const f = await fixture(options.membershipWithdrawal ? 'team' : 'account', 'account', options);
+        const f = await fixture(options.membershipWithdrawal ? 'team' : 'account', 'account', { ...options,
+            separateMemberCustodian: options.membershipWithdrawal });
         const receiptSpec = getActionSpec('deployments.receipts.get');
         if (!receiptSpec.serverTransport) throw new Error('Receipt reads need their canonical transport');
         const receiptInput = { serverId, deploymentId: f.receipt.id };
@@ -1485,6 +1486,31 @@ describe('deployment children retain their controller Action authority', () => {
             expect.soft(queries.filter(model => ['Account', 'ApiToken', 'TeamMembership', 'ProjectSource', 'SimpleCache'].includes(model))).toEqual([]);
             expect.soft(queries.length, `${read.path}: ${queries.join(', ')}`).toBeLessThanOrEqual(2);
         }
+        const forwardAdmittedMember = async () => {
+            const request = f.rpc();
+            const receiver = { id: 'withdrawal-deployment-receiver', data: { clientType: 'machine-scoped',
+                machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId },
+                timeout: () => ({ emitWithAck: async () => ({ accepted: true }) }) };
+            qualifyCurrentAccountStoredContentSocket(receiver);
+            const io = createSocketRoomDiscoveryHarness(async room =>
+                room === `rpc:${f.member.accountId}:${request.method}` || room === receiver.id ? [receiver] : []);
+            const token = await auth.createToken(f.controller.accountId, undefined, { kind: 'account', authority: 'present_user' });
+            const socket = Object.assign(createAuthenticatedFakeSocket({ id: 'withdrawal-deployment-controller', data: {
+                userId: f.controller.accountId, clientType: 'machine-scoped', machineId: f.controller.id,
+                verifiedMachineInstallationId: f.controller.installationId, authTokenKind: 'account' } }),
+                { handshake: { auth: { token } } });
+            qualifyCurrentAccountStoredContentSocket(socket);
+            registerSocketRpcHandlers({ userId: f.controller.accountId, socket: socket as unknown as Socket, io });
+            let response: unknown;
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, (value: unknown) => { response = value; });
+            expect(response, 'admitted member activation reaches the receiver after withdrawal')
+                .toMatchObject({ ok: true, result: { accepted: true } });
+        };
+        if (options.membershipWithdrawal) {
+            await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id },
+                data: { accessLevel: 'admin' } });
+            await forwardAdmittedMember();
+        }
         await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
         if (options.membershipWithdrawal) {
             await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
@@ -1496,6 +1522,7 @@ describe('deployment children retain their controller Action authority', () => {
             { input: envelope.input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
         }
         for (const read of reads) expect.soft(await verify(read), read.path).not.toBeNull();
+        if (options.membershipWithdrawal) await forwardAdmittedMember();
         expect(await verify(reads[0], f.outsider.keys.secretKey)).toBeNull();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             let revision = f.receipt.revision;
@@ -1538,6 +1565,76 @@ describe('deployment children retain their controller Action authority', () => {
             await db.automationRun.update({ where: { id: f.workflowActionOrigin.runId }, data: { state: 'cancelled' } });
         }
         expect(await verify(reads[0])).toBeNull();
+    });
+
+    it('K2 finishes admitted deployment hops and finite health reads after withdrawal, refusing new work', async () => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true });
+        const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, machineId: f.controller.id };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const mint = () => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                actionId: 'deployments.health.current', machineId: f.controller.id, target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1('deployments.health.current', input) });
+        };
+        const health = await mint();
+        const read = (authorization: typeof health) => {
+            const path = `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`;
+            return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
+                effectActionId: 'deployments.environments.get', encodedTarget: encodeExternalActionResolvedTargetV1(target),
+                method: 'GET', path, body: undefined, routeInput: { serverId, environmentId: f.environment.id },
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'deployments.environments.get', target, installationId: f.controller.installationId,
+                    requestId: authorization.binding.requestId, method: 'GET', path, privateKey: f.controller.keys.secretKey }) });
+        };
+        expect(await read(health), 'finite read must first reach real admission').not.toBeNull();
+        expect(await read(f.authorization), 'accepted deploy metadata hop').not.toBeNull();
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.member.accountId } },
+            data: { role: 'owner' } });
+        expect(await inTx(tx => removeTeamMemberForActorInTx(tx, { teamId: f.team!.id, actorAccountId: f.account.id })))
+            .toMatchObject({ ok: true });
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const queries: string[] = [];
+        const stop = observeSqliteRequests({ before: query => { queries.push(query.model ?? query.action); } });
+        try {
+            expect.soft(await read(f.authorization), 'accepted deployment keeps its admitted scope').not.toBeNull();
+            expect.soft(await read(health), 'finite health continuation keeps its admitted scope').not.toBeNull();
+        } finally { stop(); }
+        expect(queries.filter(model => ['Account', 'ApiToken', 'TeamMembership', 'ProjectSource'].includes(model)),
+            'no authority re-evaluation on either admitted hop').toEqual([]);
+    });
+
+    it('retains finite health read custody through the resource route after Team withdrawal', async () => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true });
+        const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, machineId: f.controller.id };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.health.current', machineId: f.controller.id, target,
+            requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1('deployments.health.current', input) });
+        const path = `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = () => app.inject({ method: 'GET', url: path, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.environments.get',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: 'deployments.environments.get', target,
+                    installationId: f.controller.installationId, requestId: envelope.requestId, method: 'GET', path,
+                    privateKey: f.controller.keys.secretKey }),
+            } });
+            const before = await read();
+            expect(before.statusCode, before.body).toBe(200);
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+            const after = await read();
+            expect(after.statusCode, after.body).toBe(200);
+            expect(after.json()).toMatchObject({ ok: true });
+        }, { authentication: 'real' });
     });
 
     it.each([false, true])('scopes own-server teardown history and candidate publication to its signed controller root (Workflow: %s)', async workflowOrigin => {
