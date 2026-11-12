@@ -1022,8 +1022,8 @@ async function hasCurrentExecutionMachineAdmission(
     // This signed leaf already owns admission. The principal check reads its
     // active Run; the installation check above authenticates this later call.
     if (binding.workflowActionOrigin) return true;
-    // Only the authenticated handoff tuple proves requester attribution for
-    // these otherwise custodian-only methods. Unsigned method admission stays closed.
+    // Handoff-bound calls retain requester attribution through the authenticated
+    // handoff tuple; other signed calls use their existing admission.
     if (binding.handoffAdmission) {
         return await readAdmittedExternalActionHandoffMachineInTx(db, binding) !== null;
     }
