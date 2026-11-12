@@ -9,6 +9,7 @@ import { createDaemonExternalActionContributedInvoker } from '../../../../cli/sr
 import { createUnavailableActionTransportDeps } from '../../../../cli/src/testkit/actionTransportDeps';
 import { createActionSettingsProvider } from '../../../../cli/src/settings/actionsSettingsProvider';
 import { withConfiguredDaemonTestHome } from '../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '../../../../cli/src/server/serverProfiles';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createFilesystemEffectAdmission } from '../../../../cli/src/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { tmpdir } from 'node:os';
@@ -2778,6 +2779,10 @@ describe('deployment children retain their controller Action authority', () => {
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
             await withConfiguredDaemonTestHome({ prefix: 'health-sdk-signed-home-',
                 env: { HAPPIER_SERVER_URL: origin, HAPPIER_ACTIVE_SERVER_ID: serverId } }, async () => {
+                const profile = await addServerProfile({ name: 'health-sdk', serverUrl: origin, webappUrl: origin });
+                await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+                    descriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: origin,
+                        revision: 1, endpoints: [{ kind: 'https', url: origin }] } });
                 const channel = await createRequesterCurrentnessSocketHarness();
                 let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
                 try {
