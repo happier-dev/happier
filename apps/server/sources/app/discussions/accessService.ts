@@ -1,3 +1,4 @@
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { isDeepStrictEqual } from "node:util";
 import { createCanonicalJsonSigningInput } from "@happier-dev/protocol/crypto/canonicalJson";
 import { normalizeSessionCreationSelectionIdentityV1 } from "@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1";
@@ -607,10 +608,21 @@ export async function commitDiscussionRecipientKeyEnvelopesInTx(tx: Tx, input: D
 
 async function readDiscussionGrantAudienceRowsForTeamsInTx(tx: Tx, teamIds: readonly string[]) {
     if (teamIds.length === 0) return [];
-    return await tx.discussion.findMany({ where: { OR: [
-        { teamGrants: { some: { teamId: { in: [...teamIds] } } } },
-        { groupGrants: { some: { teamGroup: { teamId: { in: [...teamIds] } } } } },
-    ] }, select: { id: true, readStates: { select: { accountId: true } } } });
+    const [teamGrants, groups] = await Promise.all([
+        tx.discussionTeamGrant.findMany({ where: { teamId: { in: [...teamIds] } }, select: { discussionId: true } }),
+        tx.teamGroup.findMany({ where: { teamId: { in: [...teamIds] } }, select: { id: true } }),
+    ]);
+    const discussionIds = new Set(teamGrants.map(grant => grant.discussionId));
+    for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
+        const grants = await tx.discussionGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { discussionId: true } });
+        for (const grant of grants) discussionIds.add(grant.discussionId);
+    }
+    const rows: Array<{ id: string; readStates: Array<{ accountId: string }> }> = [];
+    for (const ids of portableQueryChunks({ values: [...discussionIds], bindingsPerValue: 1 })) {
+        rows.push(...await tx.discussion.findMany({ where: { id: { in: [...ids] } },
+            select: { id: true, readStates: { select: { accountId: true } } } }));
+    }
+    return rows;
 }
 
 /** Read current entitlement plus retained private-reader state; inert key tuples never create publication demand. */

@@ -1,3 +1,4 @@
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { afterTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
@@ -12,6 +13,7 @@ import {
     type MachineAccessImpact,
 } from "@/app/machines/machineAccessEffects";
 import {
+    readSessionAccessMembershipChangeSessionIdsInTx,
     captureSessionAccessMembershipImpactsInTx,
     readSessionAccessMembershipChangeAudienceInTx,
     applySessionAccessMembershipImpactsInTx,
@@ -34,12 +36,19 @@ export type TeamMutationAdmissionScope = Readonly<{
 }>;
 
 async function readTeamMembershipEffectMachinesInTx(tx: Tx, change: SessionAccessMembershipChange, accountIds: readonly string[]) {
-    return accountIds.length === 0 ? [] : await tx.machine.findMany({
-        where: change.kind === "teamGroupMembership"
-            ? { groupGrants: { some: { teamGroupId: { in: [...change.teamGroupIds] }, teamGroup: { teamId: change.teamId } } } }
-            : { OR: [{ teamGrants: { some: { teamId: change.teamId } } }, { groupGrants: { some: { teamGroup: { teamId: change.teamId } } } }] },
-        select: { id: true },
-    });
+    if (accountIds.length === 0) return [];
+    const machineIds = new Set<string>();
+    if (change.kind !== "teamGroupMembership") {
+        const grants = await tx.machineTeamGrant.findMany({ where: { teamId: change.teamId }, select: { machineId: true } });
+        for (const grant of grants) machineIds.add(grant.machineId);
+    }
+    const groups = await tx.teamGroup.findMany({ where: { teamId: change.teamId,
+        ...(change.kind === "teamGroupMembership" ? { id: { in: [...change.teamGroupIds] } } : {}) }, select: { id: true } });
+    for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
+        const grants = await tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { machineId: true } });
+        for (const grant of grants) machineIds.add(grant.machineId);
+    }
+    return [...machineIds].map(id => ({ id }));
 }
 
 export async function readTeamMutationAdmissionAccountIdsInTx(tx: Tx, input: TeamMutationAdmissionScope): Promise<readonly string[]> {
@@ -90,18 +99,8 @@ export async function acquireTeamMutationAccountAdmissionInTx(
  * presence owner to re-evaluate each exact socket credential after commit.
  */
 async function readTeamAuthenticationContextSessionIdsInTx(tx: Tx, teamIds: readonly string[]): Promise<readonly string[]> {
-    if (teamIds.length === 0) return [];
-    const sessions = await tx.session.findMany({
-        where: {
-            OR: [
-                { teamGrants: { some: { teamId: { in: [...teamIds] } } } },
-                { groupGrants: { some: { teamGroup: { teamId: { in: [...teamIds] } } } } },
-            ],
-        },
-        select: { id: true },
-        orderBy: { id: "asc" },
-    });
-    return sessions.map(session => session.id);
+    return readSessionAccessMembershipChangeSessionIdsInTx(tx,
+        teamIds.map(teamId => ({ kind: "teamMembership", teamId })));
 }
 
 /** Pure recipient census for provider/policy changes before their first admission lock. */

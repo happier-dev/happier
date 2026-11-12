@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import type { Tx } from "@/storage/inTx";
 import { resolveStructuralSessionAccessForSessionsInTx, type EffectiveSessionAccess } from "./sessionAccess";
 import { acquireSessionAccessTransitionCursorLocksInTx, applySessionAccessTransitionEffectsInTx, resolveAccessTransitionProjectionSessionIdsInTx } from "./sessionAccessTransitionEffects";
@@ -20,31 +20,33 @@ export interface SessionAccessMembershipImpact {
 }
 
 
-function buildAffectedSessionPredicates(
-    changes: readonly SessionAccessMembershipChange[],
-): Prisma.SessionWhereInput[] {
-    return changes.map(change => {
-        if (change.kind === "teamGroupMembership") return {
-            groupGrants: { some: { teamGroupId: { in: [...change.teamGroupIds] }, teamGroup: { teamId: change.teamId } } },
-        };
-        const teamGrant = { teamGrants: { some: { teamId: change.teamId } } };
-        // Team currentness also qualifies every containing Group membership;
-        // a role change alone cannot change an exact Group grant's eligibility.
-        return change.kind === "teamRole" ? teamGrant : { OR: [
-            teamGrant,
-            { groupGrants: { some: { teamGroup: { teamId: change.teamId } } } },
-        ] };
-    });
+/** Seek the grant indexes first; correlated OR predicates on Session scan the Home. */
+export async function readSessionAccessMembershipChangeSessionIdsInTx(
+    tx: Tx, changes: readonly SessionAccessMembershipChange[],
+): Promise<string[]> {
+    const sessionIds = new Set<string>();
+    for (const change of changes) {
+        if (change.kind !== "teamGroupMembership") {
+            const grants = await tx.sessionTeamGrant.findMany({ where: { teamId: change.teamId }, select: { sessionId: true } });
+            for (const grant of grants) sessionIds.add(grant.sessionId);
+        }
+        if (change.kind === "teamRole") continue;
+        const groups = await tx.teamGroup.findMany({ where: { teamId: change.teamId,
+            ...(change.kind === "teamGroupMembership" ? { id: { in: [...change.teamGroupIds] } } : {}) }, select: { id: true } });
+        if (groups.length === 0) continue;
+        for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
+            const grants = await tx.sessionGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { sessionId: true } });
+            for (const grant of grants) sessionIds.add(grant.sessionId);
+        }
+    }
+    return [...sessionIds];
 }
 
 async function readAffectedSessionIdsInTx(tx: Tx, input: Readonly<{
     accountIds: readonly string[];
     changes: readonly SessionAccessMembershipChange[];
 }>): Promise<string[]> {
-    const predicates = buildAffectedSessionPredicates(input.changes);
-    return predicates.length === 0 || input.accountIds.length === 0
-        ? []
-        : (await tx.session.findMany({ where: { OR: predicates }, select: { id: true } })).map(row => row.id);
+    return input.accountIds.length === 0 ? [] : readSessionAccessMembershipChangeSessionIdsInTx(tx, input.changes);
 }
 
 /** Pure admission census before a Team writer takes actor or Team resource locks. */
