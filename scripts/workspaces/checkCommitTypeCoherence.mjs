@@ -208,27 +208,25 @@ function repository(repo) {
       ),
     ];
     if (targets.length === 0) return [];
-    const stems = [...new Set(targets.map((target) => posix.basename(target)))]
-      .map(escapeRegex)
-      .join('|');
-    const pattern = `(from|import|require|mock)[[:space:](]*['"][^'"[:space:]]*/(${stems})(/index)?(\\.[cm]?[jt]sx?)?['"]`;
+    const patterns = [...new Set(targets.map((target) => posix.basename(target)))]
+      .map(stem => `(from|import|require|mock)[[:space:](]*['"][^'"[:space:]]*/(${escapeRegex(stem)})(/index)?(\\.[cm]?[jt]sx?)?['"]`);
     let output = '';
     try {
-      output = gitText([
+      output = git([
         'grep',
         '-o',
         '-I',
         '--null',
         '-E',
-        '-e',
-        pattern,
+        '-f',
+        '-',
         tree,
         '--',
         '*.ts',
         '*.tsx',
         '*.mts',
         '*.cts',
-      ]);
+      ], { encoding: 'utf8', input: `${patterns.join('\n')}\n` });
     } catch (error) {
       if (error.status !== 1) throw error; // 1: no match
     }

@@ -55,6 +55,31 @@ async function checkout(t) {
   return { repo, write, commitOnly, git };
 }
 
+test('importer discovery handles changed target stems beyond the OS argument limit', async t => {
+  const { repo, write, git } = await checkout(t);
+  // Exceed Linux's 128 KiB single-argument limit without passing the fixture through argv.
+  const targets = Array.from({ length: 1500 }, (_, i) => `module${i}_${'x'.repeat(100)}.ts`);
+  const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], {
+    cwd: repo, encoding: 'utf8', input: 'export const original = 1;\n',
+  }).trim();
+  execFileSync('git', ['update-index', '--index-info'], {
+    cwd: repo, input: targets.map(path => `100644 ${blob}\t${path}\n`).join(''),
+  });
+  await write('consumer.ts', `import { original } from './${targets.at(-1).slice(0, -3)}';\nexport const value: number = original;\n`);
+  git('add', '--', 'consumer.ts');
+  git('commit', '--quiet', '-m', 'many modules');
+  const base = git('rev-parse', 'HEAD').trim();
+  execFileSync('git', ['update-index', '--index-info'], {
+    cwd: repo, input: targets.map(path => `0 ${'0'.repeat(40)}\t${path}\n`).join(''),
+  });
+  git('commit', '--quiet', '-m', 'remove modules');
+  const tree = git('rev-parse', 'HEAD').trim();
+  const result = checkCommitTypeCoherence({ repo, base, tree });
+  assert.deepEqual(result.unowned, []);
+  assert.ok(result.fresh.some(row => row.file === 'consumer.ts' && row.code === 2307),
+    'the importer of the last removed target must report its missing module');
+});
+
 test('verdict dependencies omit unrelated modules while retaining configured global and module augmentations', async t => {
   const { repo, write, commitOnly } = await checkout(t);
   await write('ambient.d.ts', 'interface Error { ambientValue: number }\n');
