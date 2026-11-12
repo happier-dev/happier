@@ -18,6 +18,7 @@ export type PluginRuntimeActivationRegistryLease = RefCountedLease<
 >;
 
 type ActivationRegistryLeaseOwner = Readonly<{
+    pluginIds: ReadonlySet<string>;
     retain(): PluginRuntimeActivationRegistryLease;
 }>;
 
@@ -28,11 +29,12 @@ function createActivationRegistryLeaseOwner(
         await registry.dispose(options);
     },
 ): ActivationRegistryLeaseOwner {
-    return createRefCountedLeaseOwner({
+    const owner = createRefCountedLeaseOwner({
         payload: Object.freeze({ registry, pluginIds }),
         disposedError: 'Plugin runtime activation registry lease is already disposed',
         dispose,
     });
+    return Object.freeze({ pluginIds, retain: () => owner.retain() });
 }
 
 export async function settlePluginRuntimeCompositionCleanup(
@@ -73,6 +75,7 @@ export async function assemblePluginRuntimeActivation(input: Readonly<{
     const retainedActivationRegistryLeases = [...(input.retainedLeases ?? [])];
     const preparedActivationRegistryLeaseOwners: ActivationRegistryLeaseOwner[] =
         (input.preparedLeases ?? []).map((lease) => Object.freeze({
+            pluginIds: lease.pluginIds,
             retain: () => lease.retain(),
         }));
     const invocationServicesOwner = createRefCountedLeaseOwner({

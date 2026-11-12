@@ -218,6 +218,7 @@ describe('executable plugin readiness fencing', () => {
                 happyHomeDir: fixture.happyHomeDir,
                 contributes: inputs.contributes,
                 generationAuthority: inputs.generationAuthority,
+                pluginIds: [PLUGIN_ID],
             });
             runtime.addRuntimeDisposable?.(PLUGIN_ID, Object.freeze({
                 dispose: async () => { runtimeDisposableCalls.push('disposed'); },
@@ -225,6 +226,10 @@ describe('executable plugin readiness fencing', () => {
             const handler = (runtime.hookHandlersByHookId.get('agent.resolvePrerequisites') ?? [])
                 .find((entry) => entry.pluginId === PLUGIN_ID);
             if (!handler) throw new Error('Expected the activated fixture hook handler');
+
+            const prepared = runtime.retainPreparedActivationRegistryComponents?.() ?? [];
+            expect(prepared.map((lease) => [...lease.pluginIds])).toEqual([[PLUGIN_ID]]);
+            await Promise.all(prepared.map((lease) => lease.release()));
 
             await runtime.recordPluginActivationFailure?.(
                 PLUGIN_ID,
@@ -236,6 +241,9 @@ describe('executable plugin readiness fencing', () => {
             expect(await readFile(fixture.cleanupMarkerPath, 'utf8')).toBe('cleaned\n');
             expect(runtimeDisposableCalls).toEqual(['disposed']);
             expect(runtime.retainPluginActivationComponent?.(PLUGIN_ID) ?? null).toBeNull();
+            // A prepared-candidate rebase must omit the same retired component.
+            // Retaining its disposed lease would break catalog recovery as well.
+            expect(runtime.retainPreparedActivationRegistryComponents?.()).toEqual([]);
 
             await runtime.dispose();
             expect(await readFile(fixture.cleanupMarkerPath, 'utf8')).toBe('cleaned\n');

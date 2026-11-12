@@ -61,6 +61,7 @@ import { createMcpSignInConnectedAccountRegistration } from '@/mcp/oauth/mcpSign
 import { assembleAutomationRuntime } from './composition/automationAssembly';
 import { createCliHealthCheckSourceSnapshotReader } from '@/session/actions/workflowTriggers';
 import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { publishSavedServiceHealthResult } from '@/deployments/healthChecks/publishServiceHealth';
 import { createPluginWebhookHeartbeatClient } from './webhooks/heartbeatClient';
@@ -3221,11 +3222,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const accountTarget = typeof definition?.execution === 'object' && definition.execution !== null
             && 'target' in definition.execution && definition.execution.target === 'account';
         const requester = request.requesterAccount;
-        // Local daemon/plugin ingress uses this runtime's Account. A received
-        // external invocation must retain its admitted requester instead.
-        const localAccountCredentials = !request.approvalContext?.externalActionExecutionAuthorization
-            && !request.approvalContext?.externalActionCredential
-            && !request.approvalContext?.rpcSessionAuthorization ? sessionCredentials : null;
+        // Only this runtime's own Account may borrow its credentials: local
+        // ingress, or a current custodian Machine admission. A guest admission
+        // or received requester/Session authority must carry its own requester.
+        const custody = !requester && accountTarget && !params?.accountExecution
+            ? await import('@/daemon/lifecycle/requesterWorkAttribution') : null;
+        const localAccountCredentials = custody && !custody.carriesNonLocalRequesterAuthority(request.approvalContext)
+            && await custody.canUseCustodianAccountForMachineRequest({ ...request.approvalContext, signal: request.signal })
+            ? sessionCredentials : null;
         const accountCredentials = requester?.credentials ?? localAccountCredentials;
         const accountOperation = requester ?? (localAccountCredentials ? savedSecretOperationContext : undefined);
         const accountServerId = request.approvalContext?.serverId ?? sessionCredentialsServerId;
@@ -3532,6 +3536,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveRetirementSignal: pluginId => resolveRuntimeConsumerLifecycle(pluginId).retirementSignal,
         ...(!params?.accountExecution ? { healthChecks: createSavedHealthChecksHost({
             serverId: sessionCredentialsServerId,
+            homeServerIdentityId: await resolveServerProfileHomeIdentityId(sessionCredentialsServerId),
             resolveAdoptedDefinitionSet: resolveAutomationEventAdoptedDefinitionSet,
             readKinds: () => (authoritativeContributes.healthCheckKinds ?? []).map(entry => ({
                 pluginId: entry.pluginId, ...entry.definition,
@@ -8054,7 +8059,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         ...(preparedActivationRegistryLeaseOwners.length > 0 ? {
             retainPreparedActivationRegistryComponents: () => Object.freeze(
-                preparedActivationRegistryLeaseOwners.map((owner) => owner.retain()),
+                preparedActivationRegistryLeaseOwners
+                    .filter((owner) => ![...owner.pluginIds].some((pluginId) => (
+                        consumerAssembly.isPluginRetired(pluginId)
+                    )))
+                    .map((owner) => owner.retain()),
             ),
         } : {}),
     };
