@@ -63,11 +63,11 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       const native = identity(await http(DAYTONA_API + '/sandbox', 'POST', { ...launch, name: operation.name,
         labels: { 'happier-managed-id': managedId }, autoStopInterval: 0, autoPauseInterval: 0, autoDeleteInterval: -1 }), operation);
       return { kind: 'bound', resource: reference(resource(native, managedId)) };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
       return pending(operation);
-    }
+    }); }
   }
   async function recover(input: DaytonaOperation): Promise<Acquisition> {
     const operation = DaytonaOperationSchema.parse(input);
@@ -129,7 +129,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try { await put(parsed.resource, parsed.guestPath, decodeBase64(parsed.bytesBase64), parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return { kind: 'unknown', code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function power(value: DaytonaResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (!['start', 'resume', 'stop'].includes(intent)) return { kind: 'refused', code: 'daytona_intent_unsupported' };
@@ -137,7 +137,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       const native = identity(await http(path(value.sandboxId) + (intent === 'stop' ? '/stop' : '/start'), 'POST'), value);
       if (native.state !== (intent === 'stop' ? 'stopped' : 'started')) return { kind: 'unknown', code: 'daytona_power_unconfirmed' };
       return { kind: 'confirmed' };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function cleanup(operation: DaytonaOperation): Promise<{ kind: 'confirmed' } | { kind: 'unknown'; code: string }> {
     if (operation.kind !== 'delete') return { kind: 'unknown', code: 'invalid_request' };
@@ -159,7 +159,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource: value } as const) };
     } catch (error) {
       if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
-      return { kind: 'unknown', code: code(error) };
+      return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }
   return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy, cleanup };

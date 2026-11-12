@@ -1,8 +1,8 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { E2bNativeError } from './nativeFailure.js';
 import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 
 export type EnvdSession = Readonly<{ origin: string; token: string }>;
-const invalid = () => new PluginError({ code: 'e2b_invalid_response' });
+const invalid = () => new E2bNativeError({ code: 'e2b_invalid_response' });
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 function concatenate(parts: readonly Uint8Array[]) {
   const result = new Uint8Array(parts.reduce((size, part) => size + part.byteLength, 0));
@@ -24,7 +24,7 @@ export async function executeEnvd(request: typeof fetch, signal: AbortSignal, se
       'x-access-token': session.token, authorization: 'Basic cm9vdDo=',
       ...(timeoutMs && timeoutMs > 0 ? { 'connect-timeout-ms': String(timeoutMs) } : {}) } });
   signal.throwIfAborted();
-  if (!response.ok) throw new PluginError({ code: 'e2b_guest_http_' + response.status });
+  if (!response.ok) throw new E2bNativeError({ code: 'e2b_guest_http_' + response.status });
   const bytes = new Uint8Array(await response.arrayBuffer());
   signal.throwIfAborted();
   const stdout: Uint8Array[] = [], stderr: Uint8Array[] = [];
@@ -41,7 +41,7 @@ export async function executeEnvd(request: typeof fetch, signal: AbortSignal, se
     offset += length;
     if (!object(value)) throw invalid();
     if (flags === 2) {
-      if (value.error !== undefined) throw new PluginError({ code: 'e2b_guest_process_failed' });
+      if (value.error !== undefined) throw new E2bNativeError({ code: 'e2b_guest_process_failed' });
       terminal = true; continue;
     }
     if (!object(value.event) || exitCode !== undefined) throw invalid();

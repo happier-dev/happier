@@ -46,11 +46,11 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       const native = identity((await http(API_ORIGIN + '/sandboxes', 'POST', { name: operation.name, from_template: launch.template,
         metadata: { 'happier-managed-id': managedId }, preview_access: 'private' })).value, operation);
       return { kind: 'bound', resource: reference({ sandboxId: native.id, name: native.name, managedId }) };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted POST may already have allocated paid resources. Recover by metadata, never repurchase.
       return pending(operation);
-    }
+    }); }
   }
   async function recover(input: SuperserveOperation): Promise<Acquisition> {
     const operation = SuperserveOperationSchema.parse(input);
@@ -117,7 +117,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       const changed = await execute(headers, ['chmod', (parsed.mode ?? 0o600).toString(8), parsed.guestPath]);
       if (changed.exitCode !== 0) throw new NativeError('superserve_file_unconfirmed');
       return { kind: 'confirmed' };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function power(resource: SuperserveResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (!['suspend', 'resume'].includes(intent)) return { kind: 'refused', code: 'superserve_intent_unsupported' };
@@ -126,14 +126,14 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       if (intent === 'suspend' && response.status === 204) return { kind: 'confirmed' };
       if (intent === 'resume' && response.status === 200) { const resumed = resumeSchema.safeParse(response.value); if (resumed.success && resumed.data.id === resource.sandboxId && resumed.data.status === 'active') return { kind: 'confirmed' }; }
       return { kind: 'unknown', code: 'superserve_power_unconfirmed' };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function destroy(input: { resource?: SuperserveResource; nativeOperation?: SuperserveOperation }): Promise<Destruction> {
     let resource = input.resource;
     if (!resource && input.nativeOperation) { const recovered = await recover(input.nativeOperation); if (recovered.kind !== 'bound') return { kind: 'unknown', code: 'superserve_acquire_unconfirmed' }; resource = recovered.resource.value; }
     if (!resource) return { kind: 'unknown', code: 'invalid_request' };
     try { const response = await http(path(resource.sandboxId), 'DELETE'); return response.status === 204 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'superserve_delete_unconfirmed' }; }
-    catch (error) { return error instanceof NativeError && error.status === 404 ? { kind: 'confirmed' } : { kind: 'unknown', code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => error instanceof NativeError && error.status === 404 ? { kind: 'confirmed' } : { kind: 'unknown', code: code(error) }); }
   }
   return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy };
 }

@@ -1,6 +1,6 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { MaritimeNativeError, projectMaritimeNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
+import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
   type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type MaritimeLaunch, type MaritimeResource, type MaritimeOperation } from './schemas.js';
 
@@ -22,7 +22,7 @@ const resizeSchema = defineProtocolObject({ ok: boolean, alwaysOn: boolean }, op
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-const invalid = () => new PluginError({ code: 'maritime_invalid_response' });
+const invalid = () => new MaritimeNativeError({ code: 'maritime_invalid_response' });
 const pathOf = (resource: MaritimeResource) => (resource.kind === 'agent-box' ? '/api/agents/' : '/api/v1/computers/') + encodeURIComponent(resource.machineId);
 const safeCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
 const pending = (operation: MaritimeOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
@@ -45,7 +45,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     return response;
   }
   function requireSuccess(response: Response) {
-    if (!response.ok) throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'maritime_http_' + response.status });
+    if (!response.ok) throw new MaritimeNativeError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'maritime_http_' + response.status });
   }
   async function json(response: Response): Promise<unknown> {
     requireSuccess(response);
@@ -81,7 +81,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     try {
       const entries = await matches(operation);
       return entries.length === 1 ? acquired(entries[0], operation) : unknown(operation);
-    } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => unknown(operation)); }
+    } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => unknown(operation)); }
   }
   async function read(resource: MaritimeResource) {
     const response = await http(pathOf(resource));
@@ -96,7 +96,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
       const billing = BILLING_BY_KIND[resource.kind];
       return native ? { observedAt, availability: 'present', power: nativePower(native.status), storage: 'retained', billing }
         : { observedAt, availability: 'absent', storage: 'lost', billing };
-    } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
+    } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }
   async function power(resource: MaritimeResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     const box = resource.kind === 'agent-box';
@@ -112,7 +112,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     return settled && nativePower(settled.status) === target ? { kind: 'confirmed' } : { kind: 'unknown', code: 'maritime_power_unconfirmed' };
   }
   async function awake(resource: MaritimeResource) {
-    if ((await power(resource, 'resume')).kind !== 'confirmed') throw new PluginError({ code: 'maritime_guest_unavailable' });
+    if ((await power(resource, 'resume')).kind !== 'confirmed') throw new MaritimeNativeError({ code: 'maritime_guest_unavailable' });
   }
   async function waitForExecution(response: Response) {
     // Detached executions have a GET status endpoint, no event stream. Poll only
@@ -144,7 +144,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         if (result.status === 'running') await waitForExecution(response);
       } while (result.status === 'running');
     }
-    if (box && result.status !== 'completed') throw new PluginError({ code: 'maritime_execution_unconfirmed' });
+    if (box && result.status !== 'completed') throw new MaritimeNativeError({ code: 'maritime_execution_unconfirmed' });
     if (typeof result.exitCode !== 'number' || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw invalid();
     return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
   }
@@ -166,11 +166,11 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     if (input.allowWake === false) {
       const native = await read(input.resource);
-      if (!native || nativePower(native.status) !== 'running') throw new PluginError({ code: 'maritime_guest_unavailable' });
+      if (!native || nativePower(native.status) !== 'running') throw new MaritimeNativeError({ code: 'maritime_guest_unavailable' });
     } else await awake(input.resource);
     if (input.processConfig) {
       const result = await run(input.resource, ['env', ...Object.entries(input.processConfig.environment).map(([key, value]) => key + '=' + value), ...input.processConfig.detachedDaemonStartArgv], input.timeoutMs);
-      if (result.exitCode !== 0) throw new PluginError({ code: 'maritime_process_configuration_failed' });
+      if (result.exitCode !== 0) throw new MaritimeNativeError({ code: 'maritime_process_configuration_failed' });
       return { kind: 'process-configured' };
     }
     let argv = input.argv;
@@ -205,7 +205,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         const value = await json(await http('/api/v1/account/limits'));
         if (!isMaritimeAccountLimits(value)) throw invalid();
         return { available: true };
-      } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: safeCode(error), status: 'Maritime unavailable' })); }
+      } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => ({ available: false, code: safeCode(error), status: 'Maritime unavailable' })); }
     },
     async acquire(launch: MaritimeLaunch, managedId: string): Promise<Acquisition> {
       const operation: MaritimeOperation = { kind: 'acquire', managedId, launch };
@@ -222,14 +222,14 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
         if (response.status >= 400 && response.status < 500 && response.status !== 409) return { kind: 'rejected', code: 'provider_unavailable' };
         return acquired(await json(response), operation);
-      } catch (error) { signal.throwIfAborted(); return safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation); }
+      } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation)); }
     },
     recover, inspect, power, destroy, exec,
     async bootstrap(resource: MaritimeResource): Promise<MachineProvisionerBootstrapCarrierV1> {
       await awake(resource);
       if (resource.kind === 'agent-box') {
         const resized = resizeSchema.parse(await json(await http(pathOf(resource) + '/resize', 'POST', { always_on: resource.alwaysOn ?? true })));
-        if (!resized.ok || resized.alwaysOn !== (resource.alwaysOn ?? true)) throw new PluginError({ code: 'maritime_keep_awake_unconfirmed' });
+        if (!resized.ok || resized.alwaysOn !== (resource.alwaysOn ?? true)) throw new MaritimeNativeError({ code: 'maritime_keep_awake_unconfirmed' });
       }
       const result = await run(resource, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
       const [platform, architecture, home] = result.stdout.trimEnd().split('\n');
@@ -244,7 +244,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         await upload(input.resource, input.guestPath, decodeBase64(input.bytesBase64));
         return (await run(input.resource, ['chmod', (input.mode ?? 0o600).toString(8), '--', input.guestPath])).exitCode === 0
           ? { kind: 'confirmed' } : { kind: 'unknown', code: 'maritime_file_unconfirmed' };
-      } catch (error) { signal.throwIfAborted(); return { kind: 'unknown', code: safeCode(error) }; }
+      } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => ({ kind: 'unknown', code: safeCode(error) })); }
     },
   };
 }

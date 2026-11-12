@@ -13,7 +13,7 @@ function boundary() {
 }
 
 describe('machine provisioner host HTTP bridge', () => {
-  it('preserves typed pre-effect and read failures while keeping mutation transport uncertain', async () => {
+  it('preserves authored failures for reads and mutations while keeping untyped transport uncertain', async () => {
     const b = boundary();
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed' });
     const materialize = vi.fn(async () => { throw refusal; });
@@ -24,7 +24,9 @@ describe('machine provisioner host HTTP bridge', () => {
     expect(b.request).not.toHaveBeenCalled();
     b.request.mockRejectedValueOnce(refusal);
     await expect(request('https://guest.example.test')).rejects.toBe(refusal);
-    b.request.mockRejectedValueOnce(new PluginError({ code: 'plugin_fetch_redirect_limit_exceeded' }));
+    b.request.mockRejectedValueOnce(refusal);
+    await expect(request('https://guest.example.test', { method: 'POST' })).rejects.toBe(refusal);
+    b.request.mockRejectedValueOnce(new Error('private-transport-detail'));
     await expect(request('https://guest.example.test', { method: 'POST' })).rejects.toMatchObject({ code: 'provider_unavailable' });
   });
   it('preserves Request bytes and binds the purpose without forwarding the native client sentinel', async () => {

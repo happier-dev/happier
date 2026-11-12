@@ -112,7 +112,7 @@ export function createMachineProvisionerMaterializedFetch(context: Materializati
     catch (error) {
       signal.throwIfAborted();
       const transportFailure = (): never => { throw failure('provider_unavailable'); };
-      return method === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
   };
 }

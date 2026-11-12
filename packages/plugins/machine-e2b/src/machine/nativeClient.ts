@@ -1,6 +1,6 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type E2bLaunch, type E2bResource, type E2bOperation } from './schemas.js';
 import { executeEnvd, type EnvdSession } from './envd.js';
 
@@ -21,7 +21,7 @@ const detailSchema = defineProtocolObject({ sandboxID: text,
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-const invalid = () => new PluginError({ code: 'e2b_invalid_response' });
+const invalid = () => new E2bNativeError({ code: 'e2b_invalid_response' });
 const pathOf = (resource: E2bResource) => '/sandboxes/' + encodeURIComponent(resource.sandboxId);
 const safeCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
 const pending = (operation: E2bOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
@@ -39,7 +39,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     return response;
   }
   function requireSuccess(response: Response) {
-    if (!response.ok) throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'e2b_http_' + response.status });
+    if (!response.ok) throw new E2bNativeError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'e2b_http_' + response.status });
   }
   async function json(response: Response): Promise<unknown> {
     requireSuccess(response);
@@ -55,7 +55,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
   }
   async function guest(resource: E2bResource): Promise<EnvdSession> {
     const native = await read(resource);
-    if (!native || native.state !== 'running' || !native.envdAccessToken) throw new PluginError({ code: 'e2b_guest_unavailable' });
+    if (!native || native.state !== 'running' || !native.envdAccessToken) throw new E2bNativeError({ code: 'e2b_guest_unavailable' });
     // The API key stays at the API origin; this ephemeral token never enters a result.
     if (!/^[a-zA-Z0-9-]+$/u.test(native.sandboxID)) throw invalid();
     return { origin: `https://49983-${native.sandboxID}.e2b.app`, token: native.envdAccessToken };
@@ -87,7 +87,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       } while (next);
       if (matches.size !== 1) return unknown(operation);
       return { kind: 'bound', resource: reference({ sandboxId: [...matches][0]!, managedId: operation.managedId, timeoutSeconds: operation.launch.timeoutSeconds }) };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation)); }
+    } catch (error) { return projectE2bNativeFailure(error, () => unknown(operation)); }
   }
   async function inspect(resource: E2bResource): Promise<MachineProvisionerObservationV1> {
     try {
@@ -95,14 +95,14 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       return native ? { observedAt, availability: 'present', power: native.state === 'paused' ? 'suspended' : 'running',
         storage: 'retained', billing: BILLING, nativeExpiry: Date.parse(native.endAt) }
         : { observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
+    } catch (error) { return projectE2bNativeFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const session = await guest(input.resource);
     const run = (argv: readonly string[], environment?: Readonly<Record<string, string>>) => executeEnvd(request, signal, session, argv, environment, input.timeoutMs);
     if (input.processConfig) {
       const result = await run(input.processConfig.detachedDaemonStartArgv, input.processConfig.environment);
-      if (result.exitCode !== 0) throw new PluginError({ code: 'e2b_process_configuration_failed' });
+      if (result.exitCode !== 0) throw new E2bNativeError({ code: 'e2b_process_configuration_failed' });
       return { kind: 'process-configured' };
     }
     let argv = input.argv;
@@ -156,7 +156,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         const value = await json(await http('/v2/sandboxes'));
         if (!Array.isArray(value)) throw invalid();
         return { available: true };
-      } catch (error) { signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: safeCode(error), status: 'E2B unavailable' })); }
+      } catch (error) { signal.throwIfAborted(); return projectE2bNativeFailure(error, () => ({ available: false, code: safeCode(error), status: 'E2B unavailable' })); }
     },
     async acquire(launch: E2bLaunch, managedId: string): Promise<Acquisition> {
       // Vendor Idempotency-Key: lowercase letters/digits/hyphens, 1–255.
@@ -169,7 +169,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         if (response.status >= 400 && response.status < 500 && response.status !== 409 && response.status !== 422) return { kind: 'rejected', code: 'provider_unavailable' };
         const decoded = identitySchema.safeParse(await json(response));
         return decoded.success ? { kind: 'bound', resource: reference({ sandboxId: decoded.data.sandboxID, managedId, timeoutSeconds: launch.timeoutSeconds }) } : pending(operation);
-      } catch (error) { return safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation); }
+      } catch (error) { return projectE2bNativeFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation)); }
     },
     recover, inspect, exec, power, destroy,
     async bootstrap(resource: E2bResource): Promise<MachineProvisionerBootstrapCarrierV1> {
@@ -185,7 +185,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
         await upload(session, input.guestPath, decodeBase64(input.bytesBase64));
         const result = await executeEnvd(request, signal, session, ['chmod', (input.mode ?? 0o600).toString(8), '--', input.guestPath]);
         return result.exitCode === 0 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'e2b_file_unconfirmed' };
-      } catch (error) { signal.throwIfAborted(); return { kind: 'unknown', code: safeCode(error) }; }
+      } catch (error) { signal.throwIfAborted(); return projectE2bNativeFailure(error, () => ({ kind: 'unknown', code: safeCode(error) })); }
     },
   };
 }

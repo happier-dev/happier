@@ -64,7 +64,7 @@ describe('Maritime managed-machine REST leaf', () => {
   it('recognizes the account limits response before reporting provider access', async () => {
     let limits: unknown = {};
     const client = createMaritimeNativeClient(async () => Response.json(limits), new AbortController().signal, 1000);
-    await expect(client.check()).rejects.toMatchObject({ code: 'maritime_invalid_response' });
+    expect(await client.check()).toMatchObject({ available: false, code: 'provider_unavailable' });
     limits = { plan: 'growth', machines: 0, awakeMachines: 0 };
     expect(await client.check()).toMatchObject({ available: true });
   });

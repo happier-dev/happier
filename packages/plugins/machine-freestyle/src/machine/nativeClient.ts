@@ -65,11 +65,11 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
         metadata: { 'happier-managed-id': managedId }, autoDeleteSeconds: -1, idleTimeoutSeconds: -1,
         firewall: { rules: [{ action: 'allow', source: {}, destination: { public: true } }] } }), operation);
       return { kind: 'bound', resource: reference(resource(native, managedId)) };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
       return pending(operation);
-    }
+    }); }
   }
   async function recover(input: FreestyleOperation): Promise<Acquisition> {
     const operation = FreestyleOperationSchema.parse(input);
@@ -134,7 +134,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try { await put(parsed.resource, parsed.guestPath, decodeBase64(parsed.bytesBase64), parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return { kind: 'unknown', code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function power(value: FreestyleResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (!['start', 'resume', 'suspend'].includes(intent)) return { kind: 'refused', code: 'freestyle_intent_unsupported' };
@@ -142,7 +142,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       const native = identity(await http(path(value.vmId) + (intent === 'suspend' ? '/pause' : '/start'), 'POST'), value);
       if (native.state !== (intent === 'suspend' ? 'paused' : 'running')) return { kind: 'unknown', code: 'freestyle_power_unconfirmed' };
       return { kind: 'confirmed' };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function destroy(input: { resource?: FreestyleResource; nativeOperation?: FreestyleOperation }): Promise<Destruction> {
     let value = input.resource;
@@ -158,7 +158,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       return { kind: 'unknown', code: 'freestyle_delete_unconfirmed' };
     } catch (error) {
       if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
-      return { kind: 'unknown', code: code(error) };
+      return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }
   return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy };

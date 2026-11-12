@@ -55,11 +55,11 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       const native = identity(await http(UPSTASH_BOX_API, 'POST', { ...launch, name: operation.name,
         labels: [label(managedId)], keep_alive: false }), operation);
       return { kind: 'bound', resource: reference(resource(native, managedId)) };
-    } catch (error) {
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Create can allocate before the response is lost. Reconcile only the captured label, never POST again.
       return pending(operation);
-    }
+    }); }
   }
   async function recover(input: UpstashBoxOperation): Promise<Acquisition> {
     const operation = UpstashBoxOperationSchema.parse(input);
@@ -127,7 +127,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
     try { await put(parsed.resource, parsed.guestPath, parsed.bytesBase64, parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return { kind: 'unknown', code: code(error) }; }
+    catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function power(value: UpstashBoxResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (!['start', 'resume', 'stop'].includes(intent)) return { kind: 'refused', code: 'upstash_box_intent_unsupported' };
@@ -136,7 +136,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       const native = await read(value);
       return native.status === (intent === 'stop' ? 'paused' : 'idle') || intent !== 'stop' && native.status === 'running'
         ? { kind: 'confirmed' } : { kind: 'unknown', code: 'upstash_box_power_unconfirmed' };
-    } catch (error) { return { kind: 'unknown', code: code(error) }; }
+    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) })); }
   }
   async function cleanup(operation: UpstashBoxOperation): Promise<{ kind: 'confirmed' } | { kind: 'unknown'; code: string }> {
     if (operation.kind !== 'delete') return { kind: 'unknown', code: 'invalid_request' };
@@ -156,7 +156,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource: value } as const) };
     } catch (error) {
       if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
-      return { kind: 'unknown', code: code(error) };
+      return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }
   return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy, cleanup };
