@@ -29,7 +29,7 @@ import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import { DurableWorkflowCoordinatorStore } from './production';
 import { createWorkflowCoordinator } from './coordinator';
 import { buildWorkflowActionContext } from './workflowActionContext';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, ApprovalRequestV2Schema } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -154,8 +154,10 @@ describe('Workflow preview data creation capture composition', () => {
             id: 'repository-source', revision: 1, name: 'App', owner: { kind: 'account', accountId }, audience: [], createdByAccountId: accountId } }));
         app.get('/v1/projects/repository-source/deployment-defaults', async () => ({ ok: true,
             projectSourceId: 'repository-source', sourceRevision: 1, revision: 0, content: null }));
-        app.get('/v1/deployments/environments', async () => ({ ok: true,
-            items: [...environments.values()].filter(row => row.environment.purpose === 'preview').map(row => row.environment),
+        app.get<{ Querystring: { previewCompanionOfEnvironmentId?: string } }>('/v1/deployments/environments', async request => ({ ok: true,
+            items: [...environments.values()].filter(row => request.query.previewCompanionOfEnvironmentId
+                ? row.environment.previewCompanionOfEnvironmentId === request.query.previewCompanionOfEnvironmentId
+                : row.environment.purpose === 'preview').map(row => row.environment),
             nextCursor: null, coverage: 'complete' }));
         app.get<{ Params: { environmentId: string } }>('/v1/deployments/environments/:environmentId', async request => {
             const found = environments.get(request.params.environmentId);
@@ -240,11 +242,17 @@ describe('Workflow preview data creation capture composition', () => {
             const list: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['listContributedActionDefinitions']> =
                 selection => listRuntimeContributedActionDefinitions(mounted.registry, selection);
             let approvalAction: string | undefined;
+            let approvalRequest: ReturnType<typeof ApprovalRequestV2Schema.parse> | null = null;
             // Raw deploy intent uses the normal policy hold. Native deploy preflight/execution is a separate composed gate.
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), deploymentAction: native.deploymentAction,
                 prepareDeploymentEnvironmentCreate: native.prepareDeploymentEnvironmentCreate,
                 resolveEnvironmentApprovalScope: native.resolveEnvironmentApprovalScope,
-                approvalsCreate: async ({ request }) => { approvalAction = request.actionId; return { artifactId: 'preview-deploy-approval' }; },
+                approvalsCreate: async ({ request }) => {
+                    approvalAction = request.actionId;
+                    approvalRequest = ApprovalRequestV2Schema.parse(request);
+                    return { artifactId: 'preview-deploy-approval' };
+                },
+                approvalsGet: async () => approvalRequest,
                 listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
                 invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => {
                     const lease = mounted.controller.tryAcquireRuntimeRegistry(); if (!lease) throw new Error('Fixture registry unavailable'); return lease;

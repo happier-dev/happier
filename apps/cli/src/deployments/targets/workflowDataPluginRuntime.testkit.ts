@@ -14,7 +14,7 @@ export function createWorkflowDataPluginRuntimeFixture(
         ...(runtimeOptions ? { runtimeOptions } : {}),
         plugins: [neon, supabase].map(plugin => ({
             manifest: plugin.manifest,
-            files: { '.happier-plugin/daemon.js': 'export function activate() {}' },
+            files: { [plugin.manifest.entrypoints.daemon]: 'export function activate() {}' },
             instantiateCommittedModule: () => ({ activate: plugin.activate }),
         })),
         resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({

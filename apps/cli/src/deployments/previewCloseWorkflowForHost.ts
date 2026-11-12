@@ -19,7 +19,7 @@ export type PreviewCloseWorkflowHost = Readonly<{
 
 /** PR close consumes the existing authenticated Workflow captures and teardown Actions. */
 export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflowHost): Promise<WorkflowDefinitionV1 | null> {
-    const blocks: WorkflowDefinitionV1['blocks'] = [];
+    const blocks: WorkflowDefinitionV1['blocks'][number][] = [];
     const literal = (value: unknown) => ({ kind: 'literal' as const, value: normalizeStrictJsonValue(value) });
     const key = (...parts: string[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
     const candidates: DeploymentEnvironmentHeaderV1[] = [];
@@ -47,6 +47,8 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
                         const input = DeploymentDeployActionInputV1Schema.parse(execution.input);
                         if (input.serverId !== header.serverId || input.environmentId !== header.id
                             || input.targetLinkId !== header.runtimeTargetLinkId) continue;
+                        // An approval hold records the request before any deployment effect or receipt exists.
+                        if (invocation.index.lifecycle === 'waiting_for_approval') continue;
                         const result = DeploymentReceiptResultV1Schema.parse(output);
                         if (result.ok && 'state' in result && result.state === 'succeeded'
                             && result.environmentId === header.id && result.previewCleanup) nativeCleanup = result.previewCleanup;

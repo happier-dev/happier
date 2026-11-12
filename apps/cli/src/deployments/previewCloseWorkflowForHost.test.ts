@@ -44,7 +44,7 @@ it.each([false, true])('closes the named catalog companion and its captured volu
     expect(actions).toHaveLength(alreadyRemoved ? 1 : 2);
 });
 
-it.each(['reviewed', 'omitted', 'foreign', 'other-child', 'other-target'] as const)('closes native previews through existing exact-volume teardown: %s', async selection => {
+it.each(['reviewed', 'omitted', 'approval-pending', 'foreign', 'other-child', 'other-target'] as const)('closes native previews through existing exact-volume teardown: %s', async selection => {
     const child = createDeploymentEnvironmentDetailV1();
     child.environment.purpose = 'preview';
     child.environment.controllerMachineId = 'controller-machine';
@@ -55,7 +55,7 @@ it.each(['reviewed', 'omitted', 'foreign', 'other-child', 'other-target'] as con
     child.content.previewCreationRunId = 'native-creation-run';
     const cleanup = { machines: ['machine-a'], volumes: [{ name: selectedName, disposition: 'delete', confirmation: selectedName }] };
     const index = { id: 'native-provision', runId: 'native-creation-run', sequence: '0', parentRecordId: null,
-        memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: 'completed',
+        memberOrdinal: '0', attempt: '0', contentRevision: '0', lifecycle: selection === 'approval-pending' ? 'waiting_for_approval' : 'completed',
         createdAt: '2026-11-10T00:00:00.000Z', updatedAt: '2026-11-10T00:00:01.000Z' };
     const page = WorkflowInvocationListResultV1Schema.parse({ invocations: [index], parentRevision: 1,
         invocationDetails: [{ index, parentRevision: 1, progress: { kind: 'happier.workflow-progress.v1', blockKind: 'action',
@@ -65,7 +65,9 @@ it.each(['reviewed', 'omitted', 'foreign', 'other-child', 'other-target'] as con
             execution: { kind: 'action', actionId: 'deployments.deploy', actionRequestId: 'request', localInputId: 'local',
                 input: { serverId: child.environment.serverId, environmentId: selection === 'other-child' ? 'another-child' : child.environment.id,
                     targetLinkId: selection === 'other-target' ? 'another-runtime' : link.id, services: ['postgres'] },
-                ...(selection === 'omitted' ? {} : { output: { ok: true, environmentId: child.environment.id,
+                ...(selection === 'omitted' ? {} : selection === 'approval-pending'
+                    ? { output: { kind: 'approval_required', artifactId: 'deploy-approval', actionId: 'deployments.deploy' } }
+                    : { output: { ok: true, environmentId: child.environment.id,
                     revision: child.environment.revision, deploymentId: 'native-receipt', deploymentRevision: 1,
                     state: 'succeeded', previewCleanup: cleanup } }) } } }] });
     const definition = await readPreviewCloseWorkflowForHost({ readEnvironments: async () => [child.environment],
@@ -76,7 +78,7 @@ it.each(['reviewed', 'omitted', 'foreign', 'other-child', 'other-target'] as con
         .map(async ([name, binding]) => [name, await resolveWorkflowActionFieldBinding(binding,
             { inputs: {}, resolveResult: async () => { throw new Error('Unexpected result reference'); },
                 resolveWorkspace: async () => { throw new Error('Unexpected workspace reference'); } })]))));
-    const retained = selection === 'omitted' || selection === 'other-child' || selection === 'other-target';
+    const retained = selection === 'omitted' || selection === 'approval-pending' || selection === 'other-child' || selection === 'other-target';
     expect(request.volumes).toEqual(retained ? undefined
         : [{ name: selectedName, disposition: 'delete', confirmation: selectedName }]);
     expect(request.machines).toEqual(retained ? undefined : ['machine-a']);
