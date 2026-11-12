@@ -79,6 +79,9 @@ describe('shared local-service launcher store', () => {
             if (previousWatch === 'retired') {
                 watches[0]!({ invalid: true });
                 await flushMicrotasks();
+                // A lost daemon watch observes no current process facts. Cached
+                // Running rows remain available only as last-known state.
+                expect(getLocalServiceLauncherState(key).refreshStatus).toBe('error');
             }
             restarted = true;
             clearMachineRequestReachabilityForMachine({ serverId: key.serverId, accountId: 'another-account' }, key.machineId);

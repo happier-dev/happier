@@ -170,6 +170,7 @@ const store = createSharedSubscriptionStore<
     ),
     applySnapshot: applyLocalServiceLauncherSnapshot,
     defaultWatchClient,
+    failWatch: (state, input) => failRefresh(state, normalizeInput(input), 'request_failed'),
     watchAfterRefresh: true,
     shouldWatch: state => state.updatedAt !== null,
     // Browser demand now holds this scoped watch rather than broad inventory.

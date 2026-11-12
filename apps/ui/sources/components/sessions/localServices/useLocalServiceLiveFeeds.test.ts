@@ -299,7 +299,7 @@ describe('Project Services source feed plus actual native binding', () => {
           ? new RpcError('Transport unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) : { invalid: true }); });
         await flushHookEffects();
         expect.soft(getLocalServiceLauncherState({ ...(await readCatalogBinding(serverId)), machineId: source.machineId,
-          scope: 'workspace', workspaceRoot: source.rootPath, projection: 'managed_bindings' }).refreshStatus).toBe('idle');
+          scope: 'workspace', workspaceRoot: source.rootPath, projection: 'managed_bindings' }).refreshStatus).toBe('error');
         expect.soft(readRows()[0]).toMatchObject({ id: declaration.id, status: 'stopped', primaryAction: { kind: 'start' } });
         expect(watches).toHaveLength(1);
         await act(async () => { publishHomeAccountChange('another-home', undefined, { source: 'connected' }); });
@@ -317,11 +317,12 @@ describe('Project Services source feed plus actual native binding', () => {
         });
         if (holdReopen) {
           await flushHookEffects();
-          // A failed listener watch does not invalidate the launcher facts. The one
-          // reconnect observation can renew the census while native reads are pending.
-          expect.soft(censusReads - censusesBeforeRecovery).toBe(1);
+          // Failed native observation keeps last-known rows, with failed freshness.
+          // Reconnect waits for a successful native read before renewing its census.
+          expect.soft(censusReads - censusesBeforeRecovery).toBe(0);
           await act(async () => { holdReopen = false; reopenedLauncher.resolve(); });
           await vi.waitFor(() => expect(readRows()[0]?.status).toBe('stopped'));
+          await vi.waitFor(() => expect(censusReads - censusesBeforeRecovery).toBe(1));
         }
         // The reconnect read re-establishes the baseline before its watch parks.
         await vi.waitFor(() => expect(watches).toHaveLength(2));
