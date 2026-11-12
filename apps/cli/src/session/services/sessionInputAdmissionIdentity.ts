@@ -10,13 +10,14 @@ import type { ActionPluginCaller, ActionCaller, ActionSurfaces, ExternalActionEx
 
 export { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
-/** Protected input keeps live Session custody; an inactive Session resumes through its Machine. */
+/** Private host invocation uses the Machine seal; other live input keeps Session custody. */
 export function resolveProtectedSessionInputActionTarget(input: Readonly<{
   sessionId: string;
   machineId: string;
   active: boolean;
+  privateInvocation?: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1;
 }>): import('@happier-dev/protocol').ExternalActionTargetV1 {
-  return input.active
+  return input.active && !input.privateInvocation
     ? { kind: 'session', sessionId: input.sessionId }
     : { kind: 'machine', machineId: input.machineId };
 }

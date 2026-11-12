@@ -20,6 +20,7 @@ import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { hasStoredSessionCredentialProvenance } from '@/persistence';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { admitPluginSessionInputAttachmentsV1, buildPluginSessionInputAttachmentDraftsV1 } from '@/session/composer/admitPluginSessionInputAttachmentsV1';
 import type { notifyComposerAttachmentsAfterMessageAccepted } from '@/session/composer/notifyComposerAttachmentsAfterMessageAccepted';
 import type { sendSessionMessage, waitForSessionInputResult, SendSessionMessageResult } from '@/session/services/sendSessionMessage';
@@ -720,6 +721,16 @@ export function createCliMessageActionDeps(
           ? selectedTarget.machineId !== machineId : selectedTarget.sessionId !== transport.sessionId)) {
           return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
         }
+        const { projectExternalActionRequesterInvocationV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
+        const accountId = readAccountIdFromToken(params.credentials.token);
+        const homeId = context?.serverId ?? params.serverId ?? configuration.activeServerId;
+        const invocation = accountId ? projectExternalActionRequesterInvocationV1({
+          actionId: 'session.message.send',
+          context: { ...context, surface: callerSurface ?? context?.surface ?? 'cli', actionCaller: actionCaller ?? { kind: 'host' } },
+          account: { accountId, serverId: homeId, serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId },
+          target: { kind: 'machine', machineId },
+        }) : null;
+        if (!invocation) return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
         const execution = await dispatchOriginalAccountAction({ actionId: 'session.message.send',
           input: { sessionId: transport.sessionId, message: admittedMessageText, requestedAction,
             ...(recipient ? { recipient } : {}), ...(executionRunLocalId ? { localId: executionRunLocalId } : localId ? { localId } : {}),
@@ -729,7 +740,9 @@ export function createCliMessageActionDeps(
             ...(reply === undefined ? { wait: normalizedWait, timeoutSeconds: normalizedTimeoutSeconds }
               : { reply, ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }) }) },
           requestId: context?.actionRequestId ?? randomUUID(),
-          target: resolveProtectedSessionInputActionTarget({ sessionId: transport.sessionId, machineId, active: transport.rawSession.active !== false }),
+          target: resolveProtectedSessionInputActionTarget({ sessionId: transport.sessionId, machineId,
+            active: transport.rawSession.active !== false, privateInvocation: invocation }),
+          invocation,
           credentials: params.credentials, authority: context?.authority,
           serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
           serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,

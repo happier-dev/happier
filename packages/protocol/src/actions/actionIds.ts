@@ -46,9 +46,10 @@ export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'lo
   return actionId === 'localServices.actions.stopManaged';
 }
 
-/** Preserve the private deciding or new-Session invocation on same-Account delivery. */
+/** Preserve private host invocation facts on same-Account delivery. */
 export function requiresOriginalAccountInvocationMachineProofV1(actionId: string): boolean {
-  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1;
+  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1
+    || actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
 }
 
 /** Exact controller lifecycle effects that retain their original requester through Ask. */
