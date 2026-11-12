@@ -6,6 +6,7 @@ vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')).createSessionOpsSocketIoClientBoundary(importOriginal));
 
 import { createMachineFixture, createSessionFixture, renderHook, waitForTestEvent } from '@/dev/testkit';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { ManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
@@ -31,6 +32,7 @@ const { useNewSessionMachinePathState } = await import('./useNewSessionMachinePa
 
 type MachineFixtureInput = {
     id: string;
+    installationId?: string;
     isShared?: boolean;
     metadata?: Partial<NonNullable<Machine['metadata']>> | null;
     active?: boolean;
@@ -42,7 +44,7 @@ type HookState = ReturnType<typeof useNewSessionMachinePathState>;
 type HookParams = Omit<Parameters<typeof useNewSessionMachinePathState>[0], 'serverId'> & { serverId?: string | null };
 
 function makeMachine({ id, metadata, ...overrides }: MachineFixtureInput): Machine {
-    const base = createMachineFixture({ id, ...overrides });
+    const base = createMachineFixture({ id, presenceProtocolVersion: 1, ...overrides });
     // These tests intentionally model partially hydrated machine metadata.
     const mergedMetadata = metadata === undefined
         ? base.metadata
@@ -61,7 +63,9 @@ function makeMachine({ id, metadata, ...overrides }: MachineFixtureInput): Machi
 }
 
 function toMachines(...machines: MachineFixtureInput[]): Machine[] {
-    return machines.map(makeMachine);
+    const rows = machines.map(makeMachine);
+    publishMachineActivityForTest(rows);
+    return rows;
 }
 
 function createSession(input: Readonly<{
@@ -103,10 +107,23 @@ function getSelection(state: HookState): Readonly<{
     };
 }
 
-function renderMachinePathState(initialProps: HookParams) {
-    return renderHook((props: HookParams) => useNewSessionMachinePathState({ serverId: 'server-a', ...props }), {
+async function renderMachinePathState(initialProps: HookParams) {
+    if (typeof initialProps.machines !== 'function') publishMachineActivityForTest(initialProps.machines);
+    const hook = await renderHook((props: HookParams) => useNewSessionMachinePathState({ serverId: 'server-a', ...props }), {
         initialProps,
     });
+    return { ...hook, rerender: async (props: HookParams) => {
+        if (typeof props.machines !== 'function') publishMachineActivityForTest(props.machines);
+        await hook.rerender(props);
+    } };
+}
+
+// A retained projection does not itself carry an answered live Activity ingress.
+function publishMachinePathSnapshot(snapshot: Partial<ReturnType<typeof storage.getState>>) {
+    for (const machines of Object.values(snapshot.machineListByServerId ?? {})) {
+        publishMachineActivityForTest(machines ?? []);
+    }
+    storage.setState(snapshot);
 }
 
 describe('useNewSessionMachinePathState', () => {
@@ -132,7 +149,7 @@ describe('useNewSessionMachinePathState', () => {
         const home = await network.addHome('https://server-a', 'account-a', { serverIdentityId: `wake-folder-${wakeState}` });
         const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
         const serverId = resolveServerProfileScopeId(home);
-        const machine = createMachineFixture({ id: `wake-folder-${wakeState}`, active: false, activeAt: 0,
+        const machine = createMachineFixture({ id: `wake-folder-${wakeState}`, active: false, activeAt: 0, presenceProtocolVersion: 1,
             isShared: true, access: { custodian: { accountId: 'owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
             metadata: { platform: 'linux', homeDir: '/owner', agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } },
             managedInputRuntime: { nativeReady: false, wakeState, newSessionWake: { kind: 'available' } } });
@@ -486,7 +503,7 @@ describe('useNewSessionMachinePathState', () => {
         const previous = storage.getState();
         const selected = makeMachine({ id: 'live-selected', metadata: null });
         const other = makeMachine({ id: 'live-other' });
-        storage.setState({ machines: { [selected.id]: selected, [other.id]: other },
+        publishMachinePathSnapshot({ machines: { [selected.id]: selected, [other.id]: other },
             machineListByServerId: { [serverId]: [selected, other] }, machineListStatusByServerId: { [serverId]: 'idle' } });
         let renders = 0;
         const hook = await renderHook(() => {
@@ -499,32 +516,32 @@ describe('useNewSessionMachinePathState', () => {
             const mounted = renders;
             for (let index = 0; index < 5; index += 1) {
                 const changed = { ...other, metadata: { ...other.metadata!, displayName: `Other ${index}` } };
-                await act(async () => storage.setState({ machines: { [selected.id]: selected, [other.id]: changed },
+                await act(async () => publishMachinePathSnapshot({ machines: { [selected.id]: selected, [other.id]: changed },
                     machineListByServerId: { [serverId]: [selected, changed], foreign: [makeMachine({ id: `foreign-${index}` })] } }));
             }
             expect(renders - mounted).toBe(0);
             expect(hook.getCurrent().selectedPath).toBe('');
             const hydrated = makeMachine({ id: selected.id, metadata: { homeDir: '/hydrated' } });
-            await act(async () => storage.setState({ machines: { [selected.id]: hydrated }, machineListByServerId: { [serverId]: [hydrated] } }));
+            await act(async () => publishMachinePathSnapshot({ machines: { [selected.id]: hydrated }, machineListByServerId: { [serverId]: [hydrated] } }));
             expect(hook.getCurrent().selectedPath).toBe('~');
             expect(hook.getCurrent().selectedMachine).toBe(hydrated);
             const plainName = hook.getCurrent().selectedMachineSentenceName;
             const duplicate = { ...hydrated, id: 'duplicate' };
-            await act(async () => storage.setState({ machines: { [selected.id]: hydrated, duplicate },
+            await act(async () => publishMachinePathSnapshot({ machines: { [selected.id]: hydrated, duplicate },
                 machineListByServerId: { [serverId]: [hydrated, duplicate] } }));
             const disambiguated = getMachineSentenceName(hydrated, getMachineDisplayName(hydrated, [hydrated, duplicate]));
             expect(disambiguated).not.toBe(plainName);
             expect(hook.getCurrent().selectedMachineSentenceName).toBe(disambiguated);
             await act(async () => hook.getCurrent().setSelectedPath('/authored'));
-            await act(async () => storage.setState({ machines: {}, machineListByServerId: { [serverId]: [] } }));
+            await act(async () => publishMachinePathSnapshot({ machines: {}, machineListByServerId: { [serverId]: [] } }));
             expect(hook.getCurrent().selectedMachineId).toBe(selected.id);
             expect(hook.getCurrent().selectedPath).toBe('/authored');
         } finally {
             await hook.unmount();
-            storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+            publishMachinePathSnapshot({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
                 machineListStatusByServerId: previous.machineListStatusByServerId });
         }
-        storage.setState({ machines: {}, machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        publishMachinePathSnapshot({ machines: {}, machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
         const automatic = await renderHook(() => {
             const machines = useNewSessionPlacementMachines({ serverId, activeServerId: serverId });
             return useNewSessionMachinePathState({ serverId, machines, recentMachinePaths: [], machineIdParam: null, pathParam: null });
@@ -532,12 +549,12 @@ describe('useNewSessionMachinePathState', () => {
         try {
             expect(automatic.getCurrent().selectedMachineId).toBeNull();
             const arrived = makeMachine({ id: 'arrived', active: true, activeAt: Date.now(), metadata: { homeDir: '/arrived' } });
-            await act(async () => storage.setState({ machines: { arrived }, machineListByServerId: { [serverId]: [arrived] } }));
+            await act(async () => publishMachinePathSnapshot({ machines: { arrived }, machineListByServerId: { [serverId]: [arrived] } }));
             expect(automatic.getCurrent().selectedMachineId).toBe('arrived');
             expect(automatic.getCurrent().selectedPath).toBe('~');
         } finally {
             await automatic.unmount();
-            storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+            publishMachinePathSnapshot({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
                 machineListStatusByServerId: previous.machineListStatusByServerId });
         }
     });
@@ -545,7 +562,7 @@ describe('useNewSessionMachinePathState', () => {
     it('resolves the first history arrival and reads later paths at intent without changing an authored folder', async () => {
         const previous = storage.getState();
         const machines = toMachines({ id: 'history-machine', metadata: null });
-        storage.setState({ sessions: {}, machines: { 'history-machine': machines[0]! }, isDataReady: true });
+        publishMachinePathSnapshot({ sessions: {}, machines: { 'history-machine': machines[0]! }, isDataReady: true });
         let renders = 0;
         const hook = await renderHook(() => {
             renders += 1;
@@ -558,11 +575,11 @@ describe('useNewSessionMachinePathState', () => {
             const first = createSessionFixture({ id: 'history-session', metadata: {
                 machineId: 'history-machine', host: 'history', path: '/arrived', homeDir: '/home/history',
             } });
-            await act(async () => storage.setState({ sessions: { 'history-session': first } }));
+            await act(async () => publishMachinePathSnapshot({ sessions: { 'history-session': first } }));
             expect(hook.getCurrent().selectedPath).toBe('/arrived');
             await act(async () => hook.getCurrent().setSelectedPath('/authored'));
             const authoredRenders = renders;
-            await act(async () => storage.setState({ sessions: {
+            await act(async () => publishMachinePathSnapshot({ sessions: {
                 'history-session': { ...first, metadata: { ...first.metadata!, path: '/moved' } },
             } }));
             expect(renders).toBe(authoredRenders);
@@ -570,7 +587,7 @@ describe('useNewSessionMachinePathState', () => {
             expect(hook.getCurrent().getBestPathForMachine('history-machine')).toBe('/moved');
         } finally {
             await hook.unmount();
-            storage.setState({ sessions: previous.sessions, machines: previous.machines, isDataReady: previous.isDataReady });
+            publishMachinePathSnapshot({ sessions: previous.sessions, machines: previous.machines, isDataReady: previous.isDataReady });
         }
     });
 
@@ -709,7 +726,7 @@ describe('useNewSessionMachinePathState', () => {
         await explicit.unmount();
     });
 
-    it('defaults a foreign controller to Keep and exposes the owner-only reason while refusing Stop/Delete selection', async () => {
+    it('retains reviewed archive choices for an admitted shared controller and an offline owned controller', async () => {
         const draft = createManagedMachineSelectionDraft({
             selection: { kind: 'preset', homeId: 'srv-home-a', id: 'preset-a', revision: 3 },
             receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
@@ -718,22 +735,22 @@ describe('useNewSessionMachinePathState', () => {
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
             archiveEffect: 'stop',
         });
-        const shared = createMachineFixture({ id: 'host', isShared: true, access: {
+        const shared = createMachineFixture({ id: 'host', installationId: 'installation', isShared: true, access: {
             custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
         } });
         const hook = await renderMachinePathState({ machines: [shared], recentMachinePaths: [], machineIdParam: null,
             pathParam: null, requestedManagedMachineSelection: draft });
-        expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe('keep');
+        expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe('stop');
         expect(hook.getCurrent()).toMatchObject({ managedMachineArchiveChoiceAvailability: {
-            supportedEffects: ['keep'], reason: 'shared_unsupported', controllerMachineId: 'host',
-            custodian: { accountId: 'alice', displayName: 'Alice' },
+            supportedEffects: ['keep', 'stop', 'delete'], controllerMachineId: 'host',
         } });
+        expect(hook.getCurrent().managedMachineArchiveChoiceAvailability?.reason).toBeUndefined();
         for (const effect of ['stop', 'delete'] as const) {
             await act(async () => hook.getCurrent().setManagedMachineArchiveEffect(effect));
-            expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe('keep');
+            expect(hook.getCurrent().managedMachineSelection?.archiveEffect).toBe(effect);
         }
         await hook.unmount();
-        const owned = await renderMachinePathState({ machines: [createMachineFixture({ id: 'host', active: false, activeAt: 0 })],
+        const owned = await renderMachinePathState({ machines: [createMachineFixture({ id: 'host', installationId: 'installation', active: false, activeAt: 0 })],
             recentMachinePaths: [], machineIdParam: null, pathParam: null, requestedManagedMachineSelection: draft });
         expect(owned.getCurrent().managedMachineSelection?.archiveEffect).toBe('stop');
         expect(owned.getCurrent()).toMatchObject({ managedMachineArchiveChoiceAvailability: {
@@ -784,7 +801,7 @@ describe('useNewSessionMachinePathState', () => {
             },
         });
         const hook = await renderMachinePathState({ serverId: resolveServerProfileScopeId(home),
-            machines: toMachines({ id: 'host', activeAt: Date.now() }),
+            machines: toMachines({ id: 'host', installationId: 'installation', activeAt: Date.now() }),
             recentMachinePaths: [], machineIdParam: null, pathParam: null });
         await act(async () => {
             hook.getCurrent().setSelectedPath('/authored');
@@ -1616,6 +1633,9 @@ describe('useNewSessionMachinePathState', () => {
     });
 
     it('reselects a valid machine when the currently selected machine disappears', async () => {
+        const home = await network.addHome('https://server-a', 'account-a');
+        const { resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const serverId = resolveServerProfileScopeId(home);
         const initialMachines: MachineFixtureInput[] = [
             { id: 'machine-old', metadata: { homeDir: '/Users/leeroy' } },
         ];
@@ -1624,6 +1644,7 @@ describe('useNewSessionMachinePathState', () => {
         ];
 
         const hook = await renderMachinePathState({
+            serverId,
             machines: toMachines(...initialMachines),
             recentMachinePaths: [{ machineId: 'machine-old', path: '/repo/old' }],
             machineIdParam: null,
@@ -1636,6 +1657,7 @@ describe('useNewSessionMachinePathState', () => {
         });
 
         await hook.rerender({
+            serverId,
             machines: toMachines(...replacementMachines),
             recentMachinePaths: [{ machineId: 'machine-new', path: '/repo/new' }],
             machineIdParam: null,
