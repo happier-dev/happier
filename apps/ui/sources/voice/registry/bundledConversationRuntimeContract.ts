@@ -342,6 +342,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   createToolBarrier(input: Readonly<{
     playHostText?: import('@happier-dev/plugin-sdk/voice/client').VoiceHostTextPlayback;
     controlSessionId: string;
+    onSetupRequired?: (error: import('@/voice/runtime/machine/voiceMachineError').VoiceMachineError) => void;
     adapterId: string;
     exposure?: 'voice_assistant' | 'current_ui_only';
     resolveSessionId(explicitSessionId?: string | null): string | null;

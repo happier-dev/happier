@@ -1584,7 +1584,8 @@ describe('voice tool handlers', () => {
       await creationBoundary.handle(new URL(String(url)), init) ?? beforeCreationHttp(url, init));
 
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ currentServerId: homeA,
+    const onSetupRequired = vi.fn();
+    const tools = createVoiceToolHandlers({ currentServerId: homeA, onSetupRequired,
       currentSessionAddress: sourceSessionId ? { serverId: homeA, sessionId: sourceSessionId } : null,
       resolveSessionId: () => sourceSessionId || null });
 
@@ -1759,7 +1760,11 @@ describe('voice tool handlers', () => {
       await refreshSignInFacts(false);
       daemonRpc.mockClear();
       const unavailable = JSON.parse(await invokeCreate('voice-none-ready', { ...spawnInput, creationKey: 'manual:voice-none-ready' }));
-      expect(unavailable).toMatchObject({ ok: false, errorCode: 'unknown_agent' });
+      expect(unavailable).toMatchObject({ ok: false, errorCode: 'provider_setup_required',
+        details: { reason: 'voice_agent_selection_unavailable', recoveryAction: 'open_settings' } });
+      expect(onSetupRequired).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        kind: 'provider_setup_required', reason: 'voice_agent_selection_unavailable', recoveryAction: 'open_settings',
+      }));
       expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
       expect(unavailable).not.toHaveProperty('alternativeAgent');
       // A failure after selecting the ready default may offer another ready Agent.

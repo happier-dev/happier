@@ -25,6 +25,7 @@ import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoice
 import { isCurrentUiContextVoiceAction } from './resolveDisabledVoiceActionIds';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
 import type { SpokenActionTurnOrigin } from './executeSpokenAction';
+import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import {
   createRealtimeToolBarrier,
   RealtimeToolExecutionError,
@@ -45,6 +46,7 @@ type VoiceHandlerBarrierDeps = Readonly<{
 }>;
 
 type DefaultRealtimeToolBarrierDeps = Readonly<{
+  onSetupRequired?: (error: VoiceMachineError) => void;
   voiceSessionBinding?: VoiceSessionBinding | null;
   playHostText?: VoiceHostTextPlayback;
   resolveSessionId: (explicitSessionId?: string | null) => string | null;
@@ -117,6 +119,7 @@ export function createDefaultRealtimeToolBarrier(deps: DefaultRealtimeToolBarrie
       currentSessionAddress: deps.currentSessionAddress,
       currentServerId: deps.currentServerId,
       currentExecutionTarget: deps.currentExecutionTarget,
+      onSetupRequired: deps.onSetupRequired,
       // Realtime lacks Local's host tool-result speaker. Missing capability
       // therefore means ordinary Ask, never an unfinishable read-back binding.
       playHostText: deps.playHostText ?? (async () => ({ status: 'unavailable', code: 'host_text_playback_unavailable' })),

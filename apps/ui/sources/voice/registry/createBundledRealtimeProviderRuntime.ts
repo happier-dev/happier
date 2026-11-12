@@ -1486,6 +1486,8 @@ export function createBundledRealtimeProviderRuntime(
     createToolBarrier: ({ controlSessionId }) => host.createToolBarrier({
       ...(config.playHostText ? { playHostText: config.playHostText } : {}),
       controlSessionId,
+      // The controller owns teardown as well as the typed setup presentation.
+      onSetupRequired: error => fireAndForget(runtime!.fail(error.reason), { tag: 'VoiceConversation.agentSetupRequired' }),
       adapterId: providerId,
       exposure: config.execution.kind === 'direct_media' ? 'voice_assistant' : 'current_ui_only',
       resolveSessionId: (explicitSessionId) => explicitSessionId

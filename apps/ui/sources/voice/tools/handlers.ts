@@ -48,6 +48,8 @@ import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpoke
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
 import { resolveVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
+import { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
+import { classifyVoiceMachineError, type VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 export { serializeVoiceActionExecuteResult } from './voiceActionResult';
 
@@ -204,6 +206,8 @@ export function createVoiceToolHandlers(
     currentUiContext?: VoiceCurrentUiToolPort;
     /** Undefined uses Local's host-owned tool-result playback. */
     playHostText?: VoiceHostTextPlayback;
+    /** Present a setup refusal through the connected attempt's existing recovery owner. */
+    onSetupRequired?: (error: VoiceMachineError) => void;
   }>,
 ): Readonly<Record<string, VoiceToolHandler>> {
   const conversationAddress = deps.voiceSessionBinding?.conversationSessionAddress;
@@ -413,7 +417,15 @@ export function createVoiceToolHandlers(
     let spawnSelection: Extract<Awaited<ReturnType<typeof bindVoiceSessionSpawnInput>>, { ok: true }> | undefined;
     if (actionId === 'session.spawn_new') {
       const bound = await bindVoiceSessionSpawnInput(actionInput, actionExecute, ctx?.signal);
-      if (!bound.ok) return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
+      if (!bound.ok) {
+        if (bound.errorCode === VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE) {
+          const error = classifyVoiceMachineError(Object.assign(new Error(bound.errorCode), { code: bound.errorCode }));
+          if (!ctx?.signal?.aborted) deps.onSetupRequired?.(error);
+          return serializeVoiceActionExecuteResult(actionId, { ...bound, errorCode: error.kind,
+            details: { reason: error.reason, recoveryAction: error.recoveryAction } }, { canonicalResult });
+        }
+        return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
+      }
       actionInput = bound.input;
       spawnAgentTarget = bound.input.agentTarget;
       spawnSelection = bound;
