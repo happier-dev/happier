@@ -1,3 +1,5 @@
+import { SOURCE_UI_ASSET_OUTPUT_PATHS } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
+
 export const DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS = Object.freeze([
   'node_modules',
   'dist',
@@ -50,6 +52,8 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // The atmosphere worklet core is compiled by esbuild from installed
   // dependencies; UI source-test preparation is its one producer on a replica.
   'apps/ui/sources/components/atmosphere/backdropWorkletCore.generated.js',
+  // References and their .expo bundles must be produced on the same host.
+  ...Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).map(path => `apps/ui/${path}`),
   // Prisma clients and the docs static export are generated on each target.
   // Keep these package-owned outputs local without excluding authored generated sources.
   'apps/server/generated',

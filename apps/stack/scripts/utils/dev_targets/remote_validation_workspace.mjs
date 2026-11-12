@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
@@ -45,18 +46,22 @@ async function prepareTypecheckBatch({ repoDir, componentRelativeDirs, batchRead
   return { ok: true, batch: true };
 }
 
-// The atmosphere worklet core is replica-owned (excluded from the source
-// mirror): UI source tests import it, and its only producer is the checkout's
-// own esbuild generator, which needs the replica's installed dependencies and
-// rewrites the file only when its bytes change. Older checkouts lack it.
-async function prepareUiAtmosphereCore(repoDir, env, signal) {
-  const generator = resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
-  if (!existsSync(generator)) return;
-  // Measured 2026-11-11: one esbuild bundle, ~0.1 s at ~53 MB peak RSS, so it
-  // uses the 1 GiB 'source-asset' class rather than the server source-bundle floor.
+// Source tests need the same published locale/Shiki assets as Expo, plus the
+// atmosphere core. Run the checkout's producers in one existing admission.
+async function prepareUiSourceAssets(repoDir, env, signal) {
+  const atmosphere = resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const assets = resolve(repoDir, 'apps/ui/scripts/prepareSourceUiAssets.mjs');
+  const steps = [];
+  if (existsSync(atmosphere)) steps.push(
+    `const { buildAtmosphereRenderers } = await import(${JSON.stringify(pathToFileURL(atmosphere).href)}); await buildAtmosphereRenderers({ web: false });`);
+  if (existsSync(assets)) {
+    const uiPackageDir = resolve(repoDir, 'apps/ui');
+    const outputDir = resolve(uiPackageDir, '.expo/hstack/source-assets');
+    steps.push(`const { prepareSourceUiAssets } = await import(${JSON.stringify(pathToFileURL(assets).href)}); await prepareSourceUiAssets({ uiPackageDir: ${JSON.stringify(uiPackageDir)}, outputDir: ${JSON.stringify(outputDir)}, recordPath: ${JSON.stringify(join(outputDir, SOURCE_UI_ASSET_RECORD_FILENAME))} });`);
+  }
+  if (!steps.length) return;
   const result = await runWorkspaceBuildAdmission({ command: process.execPath,
-    args: ['--input-type=module', '--eval',
-      `import { buildAtmosphereRenderers } from ${JSON.stringify(pathToFileURL(generator).href)}; await buildAtmosphereRenderers({ web: false });`],
+    args: ['--input-type=module', '--eval', steps.join('\n')],
     cwd: repoDir, env, signal, admissionClass: 'source-asset', stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0 || result.signal) {
@@ -106,7 +111,7 @@ export async function prepareRemoteValidationWorkspace({
     if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
       await prepareCliSourceNativeCustody(repoDir, env);
     }
-    if (normalizedComponentPath === 'apps/ui') await prepareUiAtmosphereCore(repoDir, env, signal);
+    if (normalizedComponentPath === 'apps/ui') await prepareUiSourceAssets(repoDir, env, signal);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
   if (validationKind === 'typecheck') {
