@@ -287,7 +287,7 @@ describe('machine setup native typed effects', () => {
             requiredFacts: [{ kind: 'command', executable: 'separate-prerequisite' }] };
         const calls: MachineSetupNativeCommand[] = [];
         const backend = createMachineSetupNativeBackend({ run: async command => { calls.push(command); return ok(); } });
-        expect(await backend.observe(step)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+        expect(await backend.observe(step)).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
         await expect(backend.apply(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
         expect(calls).toEqual([]);
         const file: Extract<MachineRecipeStepV1, { kind: 'file' }> = { id: 'policy', kind: 'file',
@@ -300,7 +300,7 @@ describe('machine setup native typed effects', () => {
             { ...file, content: { kind: 'template', value: '{{value}}', variables: { value: 'fixture' } } },
         ];
         for (const declaration of fileDeclarations) {
-            expect(await backend.observe(declaration)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+            expect(await backend.observe(declaration)).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
             await expect(backend.apply(declaration)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
         }
         expect(calls).toEqual([]);
@@ -315,7 +315,7 @@ describe('machine setup native typed effects', () => {
         const calls: MachineSetupNativeCommand[] = [];
         const backend = createMachineSetupNativeBackend({ run: async input => { calls.push(input); return ok(); } });
         for (const step of steps) {
-            expect(await backend.observe(step)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+            expect(await backend.observe(step)).toMatchObject({ status: 'unavailable', reason: 'required_fact_unavailable' });
             await expect(backend.apply(step)).rejects.toMatchObject({ reasonCode: 'required_fact_unavailable' });
         }
         expect(calls).toEqual([]);

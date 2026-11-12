@@ -23,7 +23,12 @@ function filesystem(mode: 'working' | 'missing' | 'denied' | 'dynamic' | 'static
     const readFile = actualFs.readFile;
     vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
         const path = String(args[0]);
-        if (path === '/proc/1/comm') return Buffer.from(mode === 'noSystemd' ? 'init\n' : 'systemd\n');
+        if (path === '/proc/1/comm') {
+            const bytes = Buffer.from(mode === 'noSystemd' ? 'init\n' : 'systemd\n');
+            const options = args[1];
+            const encoding = typeof options === 'string' ? options : options?.encoding;
+            return encoding ? bytes.toString(encoding) : bytes;
+        }
         if (path === '/proc/sys/fs/binfmt_misc/status') {
             if (mode === 'denied') throw Object.assign(new Error('denied'), { code: 'EACCES' });
             if (mode === 'missing') throw missing();
