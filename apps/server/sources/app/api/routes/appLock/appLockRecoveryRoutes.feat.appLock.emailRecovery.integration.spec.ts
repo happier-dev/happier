@@ -10,8 +10,16 @@ import { hashAppLockCode } from "@/app/appLock/appLockRecoveryCode";
 type SentMail = { settings: { host: string; port: number; security: string; username: string; password: string | null; fromAddress: string }; to: string; subject: string; text: string };
 const sentMail = vi.hoisted(() => [] as SentMail[]);
 const mailFailure = vi.hoisted(() => ({ fail: false }));
+// Lets a test hold one send open (a slow SMTP server) and decide afterwards whether it fails.
+const mailHold = vi.hoisted(() => ({ next: null as null | { entered: () => void; release: Promise<"fail" | "send"> } }));
 vi.mock("@/modules/mail/sendMail", () => ({
     sendMail: async (settings: SentMail["settings"], message: { to: string; subject: string; text: string }) => {
+        const hold = mailHold.next;
+        if (hold) {
+            mailHold.next = null;
+            hold.entered();
+            if ((await hold.release) === "fail") throw new Error("smtp timed out");
+        }
         if (mailFailure.fail) throw new Error("smtp down");
         sentMail.push({ settings, ...message });
     },
@@ -59,6 +67,7 @@ describe("app lock recovery routes (integration)", () => {
     afterEach(async () => {
         sentMail.length = 0;
         mailFailure.fail = false;
+        mailHold.next = null;
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.appLockRecovery.deleteMany(),
@@ -229,10 +238,12 @@ describe("app lock recovery routes (integration)", () => {
             await requestResetCode(app);
             const oldCode = lastCode();
             const replacementCode = otherCode(oldCode);
-            const updateMany = db.appLockRecovery.updateMany.bind(db.appLockRecovery);
+            const delegate = db.appLockRecovery;
+            const originalUpdateMany = delegate.updateMany;
+            const updateMany = originalUpdateMany.bind(delegate);
             let replaced = false;
             // Observe the real DB boundary: another request issues its replacement after this write.
-            const interleaving = vi.spyOn(db.appLockRecovery, "updateMany").mockImplementation((args) => {
+            const interleaving = vi.spyOn(delegate, "updateMany").mockImplementation((args) => {
                 const observed = (async () => {
                     const result = await updateMany(args);
                     if (!replaced) {
@@ -253,6 +264,9 @@ describe("app lock recovery routes (integration)", () => {
                 expect((await redeem(app, replacementCode)).statusCode).toBe(200);
             } finally {
                 interleaving.mockRestore();
+                // Prisma serves model methods through a proxy; the spy's restore leaves `updateMany`
+                // unusable for later tests, so put back the exact function read before spying.
+                Object.defineProperty(delegate, "updateMany", { value: originalUpdateMany, configurable: true, writable: true });
             }
         });
     });
@@ -281,6 +295,43 @@ describe("app lock recovery routes (integration)", () => {
         await withAuthenticatedTestApp(appLockRecoveryRoutes, async (app) => {
             expect((await saveMailSettings(app, userId)).statusCode).toBe(404);
             expect((await register(app, userId)).statusCode).toBe(404);
+        });
+    });
+
+    it("issues one reset code when two requests overlap", async () => {
+        const userId = await createAccount("pk-app-lock-overlap");
+        await withAuthenticatedTestApp(appLockRecoveryRoutes, async (app) => {
+            await saveMailSettings(app, userId);
+            await register(app, userId);
+
+            const responses = await Promise.all([requestResetCode(app), requestResetCode(app)]);
+            expect(responses.map((response: any) => response.statusCode).sort()).toEqual([200, 429]);
+            expect(sentMail).toHaveLength(1);
+            expect((await redeem(app, lastCode())).statusCode).toBe(200);
+        });
+    });
+
+    it("keeps a newer reset code when an older send fails afterwards", async () => {
+        const userId = await createAccount("pk-app-lock-stale-failure");
+        await withAuthenticatedTestApp(appLockRecoveryRoutes, async (app) => {
+            await saveMailSettings(app, userId);
+            await register(app, userId);
+
+            let releaseFirst!: (outcome: "fail" | "send") => void;
+            let firstEntered!: () => void;
+            const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+            mailHold.next = { entered: () => firstEntered(), release: new Promise((resolve) => { releaseFirst = resolve; }) };
+            const first = requestResetCode(app);
+            await entered;
+
+            // The cooldown passes while the first SMTP attempt hangs, and a second code is sent.
+            await db.appLockRecovery.update({ where: { id: LOCK_ID }, data: { codeSentAt: new Date(Date.now() - 120_000) } });
+            expect((await requestResetCode(app)).statusCode).toBe(200);
+            const secondCode = lastCode();
+
+            releaseFirst("fail");
+            expect((await first).statusCode).toBe(502);
+            expect((await redeem(app, secondCode)).statusCode).toBe(200);
         });
     });
 });
