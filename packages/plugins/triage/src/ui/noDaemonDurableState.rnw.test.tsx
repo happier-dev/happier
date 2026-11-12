@@ -32,7 +32,7 @@ import {
     createTestkitAccountKv,
     type TestkitAccountKv,
 } from '../settings/testkit/accountKv.test-support.js';
-import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, mutateTriageAction } from '../settings/actions.js';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TRIAGE_DEFAULT_ACTIONS_V1, mutateTriageAction } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { readTriageEntryDetail, createTriageReadEntryDetailActionHandler } from '../actions/readEntryDetail.js';
 import { TriageReadEntryDetailInputV1Schema } from '../actions/entryDetailProtocol.js';
@@ -76,6 +76,7 @@ import { useTriageSavedViews } from './views/useTriageSavedViews.js';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PLUGIN_ID = 'happier.triage';
+const CUSTOM_AND_DEFAULT_ACTION_LABELS = `actions:loaded:[${['Discuss', ...TRIAGE_DEFAULT_ACTIONS_V1.map(action => action.label)].join(',')}]`;
 const SESSION_ID = 'session-no-daemon-1';
 const DETAIL_SOURCE = Object.freeze({
     selection: Object.freeze({
@@ -458,8 +459,8 @@ describe('durable Account state with no daemon reachable', () => {
             .resolves.toEqual({ content: 'pins:[Replace the duplicated normalizer]' });
         await expect(fixture.getByText('views:parsed:[Needs me]'))
             .resolves.toEqual({ content: 'views:parsed:[Needs me]' });
-        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]'))
-            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]' });
+        await expect(fixture.getByText(CUSTOM_AND_DEFAULT_ACTION_LABELS))
+            .resolves.toEqual({ content: CUSTOM_AND_DEFAULT_ACTION_LABELS });
         // The whole point: not one of those reads went near a daemon.
         expect(harness.actionCalls).toEqual([]);
     });
@@ -507,8 +508,8 @@ describe('durable Account state with no daemon reachable', () => {
 
         expect(harness.accountKv.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1)).toEqual(catalog);
         await expect(fixture.getByText('actions-read:parsed')).resolves.toEqual({ content: 'actions-read:parsed' });
-        await expect(fixture.getByText('actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]'))
-            .resolves.toEqual({ content: 'actions:loaded:[Discuss,Ask,Fix,Review,Explain this PR in chat,Investigate]' });
+        await expect(fixture.getByText(CUSTOM_AND_DEFAULT_ACTION_LABELS))
+            .resolves.toEqual({ content: CUSTOM_AND_DEFAULT_ACTION_LABELS });
         expect(harness.actionCalls).toEqual([]);
     });
 

@@ -109,7 +109,7 @@ describe('the shared detail story for an error group', () => {
     expect(rows).toHaveLength(3);
     for (const [index, count] of [3, 9, 44].entries()) {
       expect(rows[index]!.getAttribute('aria-label')).toMatch(
-        new RegExp(`, Events per hour: ${count}$`),
+        new RegExp(`Events per hour: ${count}$`),
       );
     }
   });
