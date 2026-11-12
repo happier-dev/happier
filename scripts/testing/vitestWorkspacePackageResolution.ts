@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import type { Alias } from 'vite';
 import { fileURLToPath } from 'node:url';
+import packageExportMatch from '../../packages/cli-common/packageExportMatch.cjs';
 
 import {
     pluginPackageNameToPackageId,
@@ -193,8 +194,10 @@ function resolveExportTargetSource(
     packageSourceRoot: string,
     target: unknown,
     options: WorkspacePackageSourceResolutionOptions,
+    replacement?: string,
 ): string | null {
-    const targetPath = readConditionalExportTarget(target, options.exportConditions ?? []);
+    const conditionalTarget = readConditionalExportTarget(target, options.exportConditions ?? []);
+    const targetPath = replacement === undefined ? conditionalTarget : conditionalTarget?.replaceAll('*', replacement) ?? null;
     if (!targetPath?.startsWith('./')) {
         return null;
     }
@@ -232,11 +235,9 @@ function resolveWorkspacePackageExportSource(
         return null;
     }
 
-    // A root conditional object is the package's "." export, not a subpath map.
-    const target = subpathSpecifier === '.' && !Object.keys(exportsRecord).some((key) => key.startsWith('.'))
-        ? exportsRecord
-        : exportsRecord[subpathSpecifier];
-    return resolveExportTargetSource(packageSourceRoot, target, options);
+    // The repository's one Node-precedence matcher (root conditional object, exact key, `*` patterns).
+    const match = packageExportMatch.matchPackageExport(exportsRecord, subpathSpecifier);
+    return match ? resolveExportTargetSource(packageSourceRoot, match.declaration, options, match.replacement) : null;
 }
 
 export function resolveWorkspacePackageSource(

@@ -293,6 +293,7 @@ test('ordinary UI collection loads current Settings metadata from source with po
     symlinkSync(resolve(repoRoot, 'scripts'), resolve(fixtureRoot, 'scripts'), 'junction');
     symlinkSync(packageRoot, resolve(fixtureRoot, 'node_modules/@happier-dev/protocol'), 'junction');
     copyFileSync(resolve(repoRoot, 'apps/ui/vitest.config.ts'), resolve(uiRoot, 'vitest.config.ts'));
+    copyFileSync(resolve(repoRoot, 'apps/ui/eas.json'), resolve(uiRoot, 'eas.json'));
     const uiManifest = JSON.parse(readFileSync(resolve(repoRoot, 'apps/ui/package.json'), 'utf8'));
     uiManifest.dependencies['@happier-dev/new-ui-fixture'] = 'workspace:*';
     writeFileSync(resolve(uiRoot, 'package.json'), JSON.stringify(uiManifest));
@@ -318,6 +319,12 @@ test('ordinary UI collection loads current Settings metadata from source with po
         'export const BUILT_IN_SETTINGS_METADATA_V1 = [];',
         'throw new Error("Poisoned first-party dist evaluated");',
     ].join('\n'), 'utf8');
+    for (const [parent, retained] of [['', 'actions'], ['actions', 'settings'], ['actions/settings', 'builtInSettingsMetadata.ts']] as const) {
+        for (const entry of readdirSync(resolve(repoRoot, 'packages/protocol/src', parent), { withFileTypes: true })) {
+            if (entry.name === retained) continue;
+            symlinkSync(resolve(repoRoot, 'packages/protocol/src', parent, entry.name), resolve(packageRoot, 'src', parent, entry.name), entry.isDirectory() ? 'junction' : 'file');
+        }
+    }
     const collectorPath = resolve(uiRoot, 'sources/settingsMetadataCollection.ts');
     writeFileSync(collectorPath, [
         `import { BUILT_IN_SETTINGS_METADATA_V1 } from ${JSON.stringify(importId)};`,
@@ -358,12 +365,6 @@ test('ordinary UI collection loads current Settings metadata from source with po
     // the replica, retaining the copied metadata leaf and poisoned publication.
     for (const entry of readdirSync(resolve(repoRoot, 'apps/ui/sources'), { withFileTypes: true })) {
         symlinkSync(resolve(repoRoot, 'apps/ui/sources', entry.name), resolve(uiRoot, 'sources', entry.name), entry.isDirectory() ? 'junction' : 'file');
-    }
-    for (const [parent, retained] of [['', 'actions'], ['actions', 'settings'], ['actions/settings', 'builtInSettingsMetadata.ts']] as const) {
-        for (const entry of readdirSync(resolve(repoRoot, 'packages/protocol/src', parent), { withFileTypes: true })) {
-            if (entry.name === retained) continue;
-            symlinkSync(resolve(repoRoot, 'packages/protocol/src', parent, entry.name), resolve(packageRoot, 'src', parent, entry.name), entry.isDirectory() ? 'junction' : 'file');
-        }
     }
     rmSync(sourceEvaluationPath);
     const childTestPath = resolve(uiRoot, 'sources/settingsMetadataCollection.test.ts');
@@ -414,6 +415,7 @@ test('ordinary workspace-source Vitest configs use the canonical resolver instea
         qaFixturesConfig,
         voiceModelpacksDirectSourceConfig,
         serverUnitConfig,
+        rootConfig,
     ] = await Promise.all([
         'apps/ui/vitest.artifact-cache.config.ts',
         'packages/plugin-sdk/vitest.facade-current.config.ts',
@@ -423,6 +425,7 @@ test('ordinary workspace-source Vitest configs use the canonical resolver instea
         'packages/tests/vitest.qa-fixtures.config.ts',
         'packages/voice-modelpacks/vitest.direct-source.config.ts',
         'apps/server/vitest.config.ts',
+        'vitest.config.ts',
     ].map(async (configPath) => {
         // Authored Vitest configs are evaluated by Vite, including their source
         // policy dependencies; native Node imports are not that loading contract.
@@ -433,6 +436,15 @@ test('ordinary workspace-source Vitest configs use the canonical resolver instea
         return loaded.config;
     }));
     for (const { config, pluginName, importId, expectedSourcePath, additionalImports = [] } of [
+        {
+            config: rootConfig,
+            pluginName: 'happier-root-workspace-package-sources',
+            importId: '@happier-dev/cli-common/connectedAccounts',
+            expectedSourcePath: '/packages/cli-common/src/connectedAccounts/index.ts',
+            additionalImports: [
+                ['@happier-dev/protocol/connect/connectedServiceCredentialKind', '/packages/protocol/src/connect/connectedServiceCredentialKind.ts'],
+            ],
+        },
         {
             config: serverUnitConfig,
             pluginName: 'happier-server-workspace-package-sources',
