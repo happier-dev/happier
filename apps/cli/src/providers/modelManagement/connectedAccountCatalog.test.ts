@@ -93,6 +93,25 @@ it('replaces static membership with one exact current account observation across
   expect(empty.groups).toHaveLength(3);
   expect(empty.groups.every(group => group.rows.length === 0 && group.catalogObserved === true)).toBe(true);
   expect(nativeReads).toBe(5);
+  models = [{ id: 'source-model', name: 'Managed model' }];
+  const managedInput = { ...input,
+    request: { ...request, sourceCatalog: undefined },
+    managedPurpose: { provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+      purpose: 'openai-upstream', modelIdPrefix: 'managed/' },
+  };
+  const managed = await projectConnectedAccountCatalog(managedInput);
+  // One Agent binding consumes the first accepted endpoint, as launch does.
+  expect(managed.groups).toHaveLength(1);
+  expect(managed.groups.flatMap(group => group.rows).map(row => row.ref)).toEqual([
+    { agentTargetKey: request.agentTargetKey, providerConnectionId: null, modelId: 'managed/source-model' },
+  ]);
+  expect(nativeReads).toBe(6);
+  models = [];
+  const managedEmpty = await projectConnectedAccountCatalog(managedInput);
+  expect(managedEmpty.groups).toHaveLength(1);
+  expect(managedEmpty.groups[0]?.rows).toEqual([]);
+  expect(await managedEmpty.isCurrent()).toBe(true);
+  expect(nativeReads).toBe(7);
   } finally { await fixture.cleanup(); }
 });
 

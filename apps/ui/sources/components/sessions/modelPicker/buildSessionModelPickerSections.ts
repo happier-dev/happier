@@ -40,13 +40,17 @@ export function resolveSessionModelSourceDescriptor(input: Readonly<{
     const selected = input.selected;
     if (!selected) return null;
     const key = sessionModelSelectionKey(selected);
-    return isTeamCredentialProviderModelPickerValue(selected)
-        ? input.teamCredentialResources?.find(resource => resource.teamId === selected.teamId
+    if (isTeamCredentialProviderModelPickerValue(selected)) {
+        return input.teamCredentialResources?.find(resource => resource.teamId === selected.teamId
             && resource.id === selected.resourceId
             && resource.resourceRevision === selected.expectedResourceRevision)
-            ?.providerModels.find(row => sessionModelSelectionKey(row.selection) === key)?.descriptor ?? null
-        : input.providerGroups.find(group => group.connectionId === selected.providerConnectionId)
-            ?.rows.find(row => sessionModelSelectionKey(row.ref) === key)?.descriptor ?? null;
+            ?.providerModels.find(row => sessionModelSelectionKey(row.selection) === key)?.descriptor ?? null;
+    }
+    for (const group of input.providerGroups) {
+        const row = group.rows.find(row => sessionModelSelectionKey(row.ref) === key);
+        if (row) return row.descriptor;
+    }
+    return null;
 }
 
 /** One configured vendor slot a Gateway model is served through; display facts, never credential authority. */
@@ -417,9 +421,9 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
             sessionModelSelectionKey(nativeModelRef(input.agentTargetKey, model.value)) === selectedKey
         ))
         : [];
-    const providerGroups = providerSelection?.providerConnectionId
+    const providerGroups = providerSelection
         ? input.providerGroups.flatMap((group): SessionModelProjectionGroup[] => {
-            if (group.connectionId !== providerSelection.providerConnectionId) return [];
+            if (providerSelection.providerConnectionId && group.connectionId !== providerSelection.providerConnectionId) return [];
             const rows = group.rows.filter((row) => sessionModelSelectionKey(row.ref) === selectedKey);
             return rows.length > 0 ? [{ ...group, rows }] : [];
         }) : [];

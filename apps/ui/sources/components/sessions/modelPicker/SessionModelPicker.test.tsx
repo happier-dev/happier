@@ -208,7 +208,7 @@ describe('SessionModelPicker', () => {
             rows: providerGroups[0]!.rows.map(row => ({ ...row,
                 confirmationSource: { connectionId: selected.providerConnectionId, catalogSourceKey: 's'.repeat(43) },
                 compatibility: { ...row.compatibility, result: { ...row.compatibility.result,
-                    confirmationScope: scope === 'connection' ? { kind: 'connection' } : { kind: 'model', modelId: selected.modelId },
+                    confirmationScope: scope === 'connection' ? { kind: 'connection' } : { kind: 'model', modelId: 'catalog-source-model' },
                 } },
             })),
         });
@@ -216,7 +216,7 @@ describe('SessionModelPicker', () => {
             groups: [group], ref: selected,
         })).toMatchObject({ kind: 'confirm-experimental', connectedAccountTarget,
             connectionId: selected.providerConnectionId, expectedConnectionRevision: 0,
-            catalogSourceKey: 's'.repeat(43), modelId: scope === 'model' ? selected.modelId : null });
+            catalogSourceKey: 's'.repeat(43), modelId: scope === 'model' ? 'catalog-source-model' : null });
     });
     it.each([false, true])('finds authoritative native models by exact id and label despite an unavailable Provider projection (favorite %s)', async (favorite) => {
         const agentTargetKey = 'agent:acme.agent/reviewer';

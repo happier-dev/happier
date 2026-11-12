@@ -95,6 +95,33 @@ beforeEach(async () => {
 });
 
 describe('SessionModelPicker source browsing', () => {
+  it.each(['pi', 'opencode', 'codex', 'claude'])('lists the selected managed Muse catalog for %s through the shared picker', async agentId => {
+    const agentTargetKey = `agent:happier.agent.${agentId}/${agentId}`;
+    const selected = { agentTargetKey, providerConnectionId: null, modelId: 'meta/muse-spark-1.3-contributor' };
+    describeProviderModels.mockImplementation((payload: { connectedServices?: unknown }) => createProviderModelProjectionFixture({
+      agentTargetKey, groups: payload.connectedServices ? [createProviderModelProjectionGroupFixture({
+        connectionId: 'connected-source:muse', providerName: 'CLIProxyAPI', connectionName: 'My Muse account',
+        rows: [{ ...gatewayRow('muse-spark-1.3-contributor', 'Muse Spark'), ref: selected }],
+      })] : [],
+    }));
+    const choose = vi.fn();
+    const screen = await renderScreen(<SessionModelPicker agentTargetKey={agentTargetKey}
+      declarationContext={{ kind: 'account' }} nativeModels={[]} providerGroups={[]}
+      providerProjectionAuthoritative selected={null} onSelect={choose}
+      sourceBrowse={{ machineId: CUSTOM_PROVIDER_MACHINE, serverId }}
+      connectedServices={{ v: 2, bindingsByServiceId: {
+        'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'my-muse' },
+      } }} />);
+    await flushHookEffects();
+    if (agentId === 'claude') {
+      expect(projectionRequests).toHaveLength(0);
+      expect(screen.findByTestId(`model-picker-overlay-option:${sessionModelSelectionKey(selected)}`)).toBeNull();
+    } else {
+      await screen.pressByTestIdAsync(`model-picker-overlay-option:${sessionModelSelectionKey(selected)}`);
+      expect(choose).toHaveBeenCalledWith(selected);
+      expect(projectionRequests).toHaveLength(1);
+    }
+  });
   it.each(['authorization', 'action'] as const)('shows the typed %s refusal instead of declaring the scoped Provider empty', async (source) => {
     const connectionId = 'pc_ca67d5e0-7dda-481e-a394-a5351ae770b9';
     const machineId = CUSTOM_PROVIDER_MACHINE;

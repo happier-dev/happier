@@ -1,3 +1,4 @@
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import * as React from 'react';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
@@ -38,6 +39,7 @@ export function useProviderModelProjection(input: Readonly<{
     currentSelection?: ProviderBoundModelRef;
     /** Browsing a source is local picker state; it never changes the selected model. */
     sourceConnectionId?: string;
+    connectedServices?: ConnectedServiceBindingsV2;
     favoriteSelections?: readonly ProviderBoundModelRef[];
     /** One gathered Home catalog; only the exact execution Machine resolves delivery. */
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
@@ -133,6 +135,7 @@ export function useProviderModelProjection(input: Readonly<{
                 ...(input.mode ? { mode: input.mode } : {}),
                 ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
                 ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
+                ...(input.connectedServices ? { connectedServices: input.connectedServices } : {}),
                 ...(input.favoriteSelections ? { favoriteSelections: [...input.favoriteSelections] } : {}),
                 ...(input.teamCredentialResources ? { teamCredentialResources: [...input.teamCredentialResources] } : {}),
             }, { signal: controller.signal });

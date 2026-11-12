@@ -1,3 +1,5 @@
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 
 /** Query identity shared by projection publication and its mounted consumer. */
@@ -8,6 +10,7 @@ export function modelProjectionScopeKey(input: Readonly<{
     mode?: 'picker' | 'management';
     selectionKey: string;
     sourceConnectionId?: string;
+    connectedServices?: ConnectedServiceBindingsV2;
     favoriteKeys: readonly string[];
     teamCredentialResources?: readonly object[];
     /** Gathered arrays follow the admitted source bodies, independent of progress/presentation recomposition. */
@@ -16,7 +19,7 @@ export function modelProjectionScopeKey(input: Readonly<{
     credentialKey: string | null;
 }>): string {
     return JSON.stringify([input.enabled, input.machineId, input.agentTargetKey, input.mode ?? 'picker', input.selectionKey,
-        input.sourceConnectionId ?? null, input.favoriteKeys,
+        input.sourceConnectionId ?? null, input.connectedServices ? stableJsonStringify(input.connectedServices) : null, input.favoriteKeys,
         snapshotReferenceSelectionKey(input.teamCredentialCatalogSources ?? [input.teamCredentialResources]),
         input.accountScopeKey, input.credentialKey]);
 }

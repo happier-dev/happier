@@ -1225,17 +1225,25 @@ Native inventories and generated single-model overlays do not establish account
 entitlement. Frozen native model overlays use the same shared next-prompt
 replacement path; their plugins do not own a separate restart controller.
 
-Pi and OpenCode's qualified-purpose rows own Connected Account delivery in
+Pi, OpenCode and Codex's qualified-purpose rows own Connected Account delivery in
 0.3 development source. A purpose may declare `managedProviderEndpoint` with an
 exact Provider implementation identity and upstream purpose. Its optional
 `modelIdPrefix` maps an Agent native namespace to the exact Provider catalog id;
 it does not grant models absent from that catalog. Shared Provider
 launch admission carries the selected Account or resolved Pool member into the
 existing managed endpoint acquisition and Agent Provider adapter for Sessions
-and finite Runs. It does not create a saved Provider connection. Pi and OpenCode's
+and finite Runs. It does not create a saved Provider connection. Their shared
 Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplies
 the Muse client identity. The adopted source is omitted from native credential
 materialization and follows the existing managed endpoint custody lifecycle.
+
+The shared Session model picker sends selected managed-purpose Account or Pool
+bindings through `providers.models.projection` using `connectedServices`. The
+Provider catalog owner resolves the exact declared upstream and publishes model
+refs in the Agent declaration's namespace, while descriptors and compatibility
+confirmation scopes retain the source model id. No native preflight listing or
+saved gateway connection is required. An Agent without a selected managed
+purpose retains its existing model discovery path.
 
 In 0.3 development, managed Provider and plugin Fetch transports project headers
 for the decoded response body. Standard compressed responses omit their wire

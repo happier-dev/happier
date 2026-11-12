@@ -5,7 +5,8 @@ import type { ProviderModelPickerSourceKind } from '@happier-dev/protocol/provid
 import type { ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKeyV1 } from '@happier-dev/protocol/providers/contribution-identity';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { getBundledAgentDeclaration } from '@/agents/registry/registryCore';
 import {
@@ -137,16 +138,34 @@ export function readAccountAgentProviderRequirements(agentTargetKey: string, con
     return readExactAccountAgentDeclaration(agentTargetKey, context)?.declaration.providerRequirements ?? null;
 }
 
+function readAccountAgentQualifiedConnectedAccounts(agentTargetKey: string, context: ProviderDeclarationContext) {
+    const resolved = readExactAccountAgentDeclaration(agentTargetKey, context);
+    if (!resolved) return null;
+    return resolved.kind === 'bundled'
+        ? resolved.declaration.connectedAccounts.map(purpose => ({
+            ...purpose,
+            service: qualifyPluginContributionReferenceV1(purpose.service, resolved.declaration.identity.pluginId),
+        })) : resolved.declaration.connectedAccounts ?? [];
+}
+
+/** Only selected sources whose Agent declaration delegates its endpoint to a Provider. */
+export function readAccountAgentManagedConnectedServices(agentTargetKey: string, context: ProviderDeclarationContext,
+    bindings: ConnectedServiceBindingsV2): ConnectedServiceBindingsV2 | null {
+    const bindingsByServiceId: ConnectedServiceBindingsV2['bindingsByServiceId'] = {};
+    for (const purpose of readAccountAgentQualifiedConnectedAccounts(agentTargetKey, context) ?? []) {
+        if (!purpose.managedProviderEndpoint) continue;
+        const serviceKey = buildQualifiedPluginContributionKey(purpose.service);
+        const binding = bindings.bindingsByServiceId[serviceKey];
+        if (binding?.source === 'connected') bindingsByServiceId[serviceKey] = binding;
+    }
+    return Object.keys(bindingsByServiceId).length ? { v: 2, bindingsByServiceId } : null;
+}
+
 /** Null retains diagnosis when the exact Agent's connected-account declaration is unresolved. */
 export function readAccountAgentConnectedAccountServiceKeys(
     agentTargetKey: string,
     context: ProviderDeclarationContext,
 ): ReturnType<typeof resolveProjectedConnectedAccountServiceKeys> | null {
-    const resolved = readExactAccountAgentDeclaration(agentTargetKey, context);
-    if (!resolved) return null;
-    const connectedAccounts = resolved.kind === 'bundled'
-        ? resolved.declaration.connectedAccounts.map(purpose => ({
-            service: qualifyPluginContributionReferenceV1(purpose.service, resolved.declaration.identity.pluginId),
-        })) : resolved.declaration.connectedAccounts;
-    return resolveProjectedConnectedAccountServiceKeys(connectedAccounts ?? []);
+    const connectedAccounts = readAccountAgentQualifiedConnectedAccounts(agentTargetKey, context);
+    return connectedAccounts ? resolveProjectedConnectedAccountServiceKeys(connectedAccounts) : null;
 }

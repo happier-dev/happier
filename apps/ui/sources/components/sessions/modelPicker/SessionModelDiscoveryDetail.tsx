@@ -1,3 +1,4 @@
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import * as React from 'react';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
@@ -9,6 +10,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 
 export type SessionModelDiscoveryContext = Parameters<typeof useNewSessionPreflightModelsState>[0];
 export type SessionModelDetailState = Readonly<{
+    connectedServices: ConnectedServiceBindingsV2 | null;
     modelOptions: readonly ModelOption[];
     modelOptionsContext: SessionModelOptionsContext;
     canEnterCustomModel: boolean;
@@ -40,6 +42,7 @@ export function SessionModelDiscoveryDetail(props: Readonly<{
     const modelOptions = React.useMemo(() => getModelOptionsForSession(props.agentId, props.composerOptionsInput, modelOptionsContext),
         [props.agentId, props.composerOptionsInput, modelOptionsContext]);
     return props.renderDetail({
+        connectedServices: discovery.probeContext?.capabilityParams?.connectedServices ?? null,
         modelOptions, modelOptionsContext, probe,
         canEnterCustomModel: supportsFreeformModelSelectionForSession(props.agentId, props.composerOptionsInput, modelOptionsContext),
     });

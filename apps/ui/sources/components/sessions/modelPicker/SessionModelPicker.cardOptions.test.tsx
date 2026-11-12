@@ -30,11 +30,11 @@ const thinking = {
   ],
 };
 
-function row(modelId: string, name: string) {
+function row(modelId: string, name: string, managed = false) {
   const ref = {
     agentTargetKey: AGENT,
-    providerConnectionId: connectionId,
-    modelId,
+    providerConnectionId: managed ? null : connectionId,
+    modelId: managed ? `managed/${modelId}` : modelId,
   };
   return {
     ref,
@@ -78,9 +78,9 @@ function groups(rows: ReturnType<typeof row>[]) {
 }
 
 describe('SessionModelPicker model cards', () => {
-  it('draws options only on the selected card, even when other cards declare their own', async () => {
+  it.each([false, true])('draws options only on the selected card, even when other cards declare their own (managed %s)', async managed => {
     const lightning = row('nvidia/nemotron-3.5-lightning', 'Nemotron 3.5 Lightning 30B');
-    const free = row('nvidia/nemotron-3.5-lightning-free', 'Nemotron 3.5 Lightning Free');
+    const free = row('nvidia/nemotron-3.5-lightning-free', 'Nemotron 3.5 Lightning Free', managed);
     const screen = await renderScreen(
       <SessionModelPicker
         multiColumn

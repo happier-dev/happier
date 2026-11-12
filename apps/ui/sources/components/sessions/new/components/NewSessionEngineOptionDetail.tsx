@@ -452,6 +452,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             fillAvailableSpace
             multiColumn
             agentTargetKey={agentTargetKey}
+            connectedServices={capabilityProbeContext?.capabilityParams?.connectedServices}
             nativeModels={modelOptions}
             nativeSourceLabel={props.nativeSourceLabel}
             providerGroups={providerGroups}

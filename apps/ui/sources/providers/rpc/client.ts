@@ -191,6 +191,7 @@ export async function describeProviderModels(input: Readonly<{
     forceRefresh?: true;
     currentSelection?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['currentSelection'];
     sourceConnectionId?: string;
+    connectedServices?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['connectedServices'];
     favoriteSelections?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['favoriteSelections'];
 }>): Promise<DaemonProviderModelProjectionResponseV1> {
     const payload = DaemonProviderModelProjectionRequestV1Schema.parse({
@@ -200,6 +201,7 @@ export async function describeProviderModels(input: Readonly<{
         ...(input.forceRefresh ? { forceRefresh: true as const } : {}),
         ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
         ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
+        ...(input.connectedServices ? { connectedServices: input.connectedServices } : {}),
         ...(input.favoriteSelections ? { favoriteSelections: input.favoriteSelections } : {}),
     });
     return await requestProviderRpcResponse(DaemonProviderModelProjectionResponseV1Schema, 'read', {

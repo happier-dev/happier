@@ -6,8 +6,7 @@ import type { ConnectedServiceBindingsV2, PluginExecutionScopeV1, SessionEnvOver
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
-import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
-import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
+import { resolveAgentManagedPurposeSelections } from '@/providers/managed/agentPurposeSelections';
 import { readLeasedAgentProviderBindingAdapter, prepareLeasedAgentProviderBinding, materializeLeasedAgentProviderBinding, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { getProviderContribution } from '@/providers/registry/lookup';
@@ -64,18 +63,8 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   resolveSelectionTarget(): Readonly<{ agentTargetKey: string; selection: SessionModelSelectionV1 }> | null;
   connectedServices: ConnectedServiceBindingsV2 | null;
 }>): Promise<PreparedManagedPurposeLaunch | Readonly<{ ok: false; error: ProviderErrorV1 }> | null> {
-  const declarations = resolveAgentSpawnPurposeDeclarations({ agentId: input.agentId, contributions: input.lease.registry.contributes });
-  if (!declarations || !input.connectedServices) return null;
-  const selected = projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot({ consumer: declarations.consumer,
-    declarations: declarations.declarations, bindings: input.connectedServices });
-  const candidates = declarations.declarations.flatMap(declaration => {
-    if (!declaration.managedProviderEndpoint) return [];
-    const binding = selected?.bindings.find(binding => binding.purpose.purpose === declaration.purpose);
-    if (!binding || binding.target.kind !== 'account' && binding.target.kind !== 'group') return [];
-    const prefix = declaration.managedProviderEndpoint.modelIdPrefix;
-    if (input.selection && prefix && !input.selection.ref.modelId.startsWith(prefix)) return [];
-    return [{ declaration, binding }];
-  });
+  const candidates = resolveAgentManagedPurposeSelections({ contributions: input.lease.registry.contributes,
+    agentId: input.agentId, connectedServices: input.connectedServices, selection: input.selection });
   if (candidates.length === 0) return null;
   const refuse = (code: Parameters<typeof createProviderErrorV1>[0]) => ({ ok: false as const,
     error: createProviderErrorV1(code, input.machineId ? { machineId: input.machineId } : {}) });
@@ -127,7 +116,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
   // A single Agent binding consumes one endpoint. Provider endpoint declaration
   // order resolves equivalent accepted protocols, as it does for catalog routing.
   const { candidate, provider, group, row, selection, catalog, transport, compatibility } = chosen;
-  const connectedServices = input.connectedServices;
+  const connectedServices = input.connectedServices!;
   const selectedModelRef = canonicalSelection.ref;
   return { ok: true, kind: 'managedPurpose', agentTargetKey, selection: selectedModelRef,
     model: row.descriptor, connectedServices,

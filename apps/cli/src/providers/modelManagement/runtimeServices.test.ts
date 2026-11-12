@@ -27,7 +27,7 @@ import {
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialProviderModelCatalogEntryV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
-import { admitTeamCredentialSourceModelRowsV1, DaemonProviderModelsResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { admitTeamCredentialSourceModelRowsV1, DaemonProviderModelsResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -630,6 +630,33 @@ it('projects only the foreign Team model without custodian Account readiness and
 });
 
 describe('runtime provider model-management composition', () => {
+  it('publishes declaration-prefixed managed models without a saved Provider connection or credential acquisition', async () => {
+    const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
+    const fixture = await createManagedRunLaunchFixture({ physicalGateway: true,
+      connectedAccountModels: [{ id: 'example', name: 'Example' }],
+      connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
+        managedProviderEndpoint: { provider: { pluginId: 'acme.shared-registry', localId: 'gateway' },
+          purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+    try {
+      const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId,
+        featureGate: { isEnabled: () => true }, acquireRuntimeLease: async () => fixture.lease,
+        getAccountSettingsSnapshot: () => fixture.snapshot,
+        resolveManagedPurposeBindingIntentSelection: fixture.gateway!.purposeBindingOwner.resolveBindingIntentSelection,
+        modelSettingsMutation: async () => { throw new Error('No mutation during picker discovery'); },
+      });
+      const request = { machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey,
+        connectedServices: { v: 2 as const, bindingsByServiceId: {
+          'acme.shared-registry/accounts': { source: 'connected' as const, selection: 'profile' as const, profileId: 'my-account' },
+        } } };
+      const result = await services.projectModels(DaemonProviderModelProjectionRequestV1Schema.parse(request));
+      expect(result).toMatchObject({ status: 'success', groups: [{ rows: [{
+        ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' },
+        descriptor: { id: 'example' },
+      }] }] });
+      const native = await services.projectModels({ ...request, connectedServices: { v: 2, bindingsByServiceId: {} } });
+      expect(native).toMatchObject({ status: 'success', groups: [] });
+    } finally { await fixture.cleanup(); }
+  });
   const unexpectedModelSettingsMutation = async (
     _intent: ProviderModelSettingsMutationIntent,
   ): Promise<never> => {

@@ -2,7 +2,7 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { resolveProviderBindingCompatibilityFromSourceFactsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import type { AgentProviderRequirementsV1, ProviderSettingsV1 } from '@happier-dev/protocol';
+import type { AgentProviderRequirementsV1, ProviderSettingsV1, ConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
 import type { DaemonProviderModelProjectionGroupV1, DaemonProviderModelProjectionRequestV1 } from '@happier-dev/protocol/rpc/providers';
 
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -12,7 +12,7 @@ import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerS
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import { providerBrokerLocalCredentialRequirement } from '@/providers/broker/providerBrokerPrivateProtocol';
-import { hasProviderExperimentalConfirmation } from '@/providers/catalog/compatibility';
+import { hasProviderExperimentalConfirmation, resolveProviderCompatibilityConfirmation } from '@/providers/catalog/compatibility';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { ProviderModelBindingSourceV1Schema, projectProviderModelSourceStateV1 } from '@happier-dev/protocol/providers/binding-compatibility';
@@ -85,6 +85,7 @@ type ConnectedAccountCatalogInput = Readonly<{
   observeModels?: ObserveConnectedAccountModels;
   provider?: ResolvedProviderContribution;
   purpose?: string;
+  managedPurpose?: NonNullable<ConnectedAccountPurposeDeclarationV1['managedProviderEndpoint']>;
   signal?: AbortSignal;
 }>;
 
@@ -194,7 +195,7 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
   isCurrent(): Promise<boolean>;
 }>> {
   const source = await readConnectedAccountModelCatalog(input);
-  return { ...source, groups: source.groups.flatMap(group => {
+  const groups: DaemonProviderModelProjectionGroupV1[] = source.groups.flatMap(group => {
     if (input.support && !input.support.acceptsProtocols.includes(group.application.protocol)) return [];
     const brokerCredential = input.support ? providerBrokerLocalCredentialRequirement(group.application.protocol, input.support) : undefined;
     if (input.support && !brokerCredential) return [];
@@ -207,8 +208,13 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
         : row.compatibility;
       return [{ ...row, descriptor: input.support ? projectProviderModelReasoningForAgent(row.descriptor, input.support) : row.descriptor,
         application: { ...row.application, agentTargetKey: input.request.agentTargetKey },
-        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: group.connectionId, modelId: row.descriptor.id },
-        compatibility: { ...compatibility, confirmed: !input.request.sourceCatalog && compatibility.result.status === 'experimental'
+        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: input.managedPurpose ? null : group.connectionId,
+          modelId: input.managedPurpose ? (input.managedPurpose.modelIdPrefix ?? '') + row.descriptor.id : row.descriptor.id },
+        compatibility: input.managedPurpose ? resolveProviderCompatibilityConfirmation({ compatibility,
+          declaredManagedModel: group.source.family.staticModels?.some(model => model.id === row.descriptor.id) === true,
+          providerSettings: input.providerSettings, confirmationSource: row.confirmationSource!,
+          agentTargetKey: input.request.agentTargetKey, modelId: row.descriptor.id,
+        }) : { ...compatibility, confirmed: !input.request.sourceCatalog && compatibility.result.status === 'experimental'
           ? hasProviderExperimentalConfirmation({ providerSettings: input.providerSettings, connectionId: group.connectionId,
             connectedAccountTarget: input.request.connectedAccountTarget, agentTargetKey: input.request.agentTargetKey, modelId: row.descriptor.id,
             compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmationScope: compatibility.result.confirmationScope })
@@ -217,5 +223,22 @@ export async function projectConnectedAccountCatalog(input: ConnectedAccountCata
     });
     const { application: _sourceApplication, source: _source, ...presentation } = group;
     return [{ ...presentation, rows, suppressedConnectedServiceIds: input.support?.authIsolation.suppressConnectedServiceIds ?? [] }];
+  });
+  if (!input.managedPurpose) return { ...source, groups };
+  // A managed Agent selection consumes one endpoint. Keep declaration order
+  // among equally admitted rows, as launch does, without duplicating model refs.
+  const selected = new Map<string, DaemonProviderModelProjectionGroupV1['rows'][number]>();
+  for (const group of groups) {
+    for (const row of group.rows) {
+      const previous = selected.get(row.ref.modelId);
+      if (!previous || !previous.compatibility.confirmed && row.compatibility.confirmed
+        || previous.compatibility.result.status === 'incompatible' && row.compatibility.result.status !== 'incompatible') {
+        selected.set(row.ref.modelId, row);
+      }
+    }
+  }
+  return { ...source, groups: selected.size === 0 ? groups.slice(0, 1) : groups.flatMap(group => {
+    const rows = group.rows.filter(row => selected.get(row.ref.modelId) === row);
+    return rows.length ? [{ ...group, rows }] : [];
   }) };
 }

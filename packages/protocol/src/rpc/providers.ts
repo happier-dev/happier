@@ -59,7 +59,7 @@ import { LegacyProfileMigrationConflictResolutionV1Schema } from '../providers/m
 import { ProfileRecordV1Schema } from '../profiles/profileRecordSchemaV1.js';
 import { LegacyProfileRecordPreparationDiagnosticV1Schema } from '../profiles/read.js';
 import { ProviderMigrationSourceProfileIdSchema } from '../providers/settings/v1.js';
-import { ConnectedAccountServiceKeyIngressSchema } from '../connect/connectedServiceBindings.js';
+import { ConnectedAccountServiceKeyIngressSchema, ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
 import {
   ConnectedAccountPurposeIdSchema,
   PluginConnectedAccountMaterializationKindsSchema,
@@ -740,6 +740,8 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
     expectedConnectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema,
   })),
   connectedAccountTarget: z.optional(QualifiedConnectedAccountPurposeBindingTargetV1Schema),
+  /** Selected Agent-declared managed purposes, resolved by the Provider catalog owner. */
+  connectedServices: z.optional(ConnectedServiceBindingsV2Schema),
   /** Team source facts do not require the recipient Agent on this Machine. */
   sourceCatalog: z.optional(z.literal(true)),
   /** Private source-custodian metadata only; never an install operand or grant. */
@@ -760,6 +762,10 @@ export const DaemonProviderModelProjectionRequestV1Schema = lazyZodSchema(() => 
   forceRefresh: z.optional(z.literal(true)),
   currentSelection: z.optional(ProviderBoundModelRefSchema),
 }).check(z.superRefine((value, ctx) => {
+  if (value.connectedServices && (value.providerConnection || value.connectedAccountTarget || value.sourceCatalog
+    || value.nativeSource || value.teamCredentialResources || value.sourceConnectionId || value.application || value.includeDirectMaterialization)) {
+    ctx.addIssue({ code: 'custom', path: ['connectedServices'], message: 'Managed Agent purposes cannot select another catalog source' });
+  }
   if (value.nativeSource && (!value.sourceCatalog || !value.providerConnection || value.connectedAccountTarget
     || value.includeDirectMaterialization)) {
     ctx.addIssue({ code: 'custom', path: ['nativeSource'], message: 'Native metadata requires one private Provider source catalog' });

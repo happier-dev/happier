@@ -2246,6 +2246,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         return {
             agentTargetKey: selectedBackendTargetKey,
             declarationContext: providerDeclarationContext(selectedMachineId, selectedMachineId === agentCatalogMachineId ? currentProjectionInputs?.pluginProjectionV2 : null),
+            connectedServices: connectedServicesBindingsPayload,
+            sourceBrowse: !hostCatalog && providersFeatureEnabled ? { machineId: selectedMachineId, serverId: capabilityServerId } : undefined,
             nativeModels: hostCatalog?.nativeModels ?? modelOptions,
             providerGroups: projection?.groups ?? [],
             hiddenNativeModelKeys,
@@ -2261,7 +2263,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             canEnterCustomNativeValue: supportsFreeformModelSelectionForSession(selectedUiAgentType, null),
             onSelect: selectCreationModel,
         };
-    }, [agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationProfile, confirmExperimentalProviderModel, hiddenNativeModelKeys, hostBoundMachineId, modelOptions,
+    }, [connectedServicesBindingsPayload, providersFeatureEnabled, capabilityServerId, agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationProfile, confirmExperimentalProviderModel, hiddenNativeModelKeys, hostBoundMachineId, modelOptions,
         modelOptionsProbeState, modelSelection, providerModelProjection.data, providerModelProjection.error,
         providerModelProjection.pendingApproval, providerModelProjection.refresh, providerModelProjection.refreshFailures, providerModelProjection.status,
         selectCreationModel, selectedBackendTargetKey, selectedUiAgentType]);

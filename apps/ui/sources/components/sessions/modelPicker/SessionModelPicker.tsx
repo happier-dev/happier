@@ -1,9 +1,11 @@
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
-import { providerDeclarationContext, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { providerDeclarationContext, readAccountAgentManagedConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
@@ -148,7 +150,7 @@ export function resolveSessionModelPickerSelection(input: Readonly<{
                 ...(row.confirmationSource ? { catalogSourceKey: row.confirmationSource.catalogSourceKey } : {}),
                 expectedConnectionRevision: group.connectionRevision,
                 agentTargetKey: row.ref.agentTargetKey,
-                modelId: row.compatibility.result.confirmationScope.kind === 'model' ? row.ref.modelId : null,
+                modelId: row.compatibility.result.confirmationScope.kind === 'model' ? row.compatibility.result.confirmationScope.modelId : null,
                 compatibilityFingerprint: row.compatibility.compatibilityFingerprint,
                 providerName: group.providerName,
                 modelName: row.descriptor.name || row.ref.modelId,
@@ -167,6 +169,7 @@ export type SessionModelPickerProps = Readonly<{
     purpose?: ProviderModelSelectionPurpose;
     agentTargetKey: string;
     declarationContext?: ProviderDeclarationContext;
+    connectedServices?: ConnectedServiceBindingsV2 | null;
     nativeModels: readonly SessionNativeModelOption[];
     providerGroups: readonly SessionModelProjectionGroup[];
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
@@ -237,6 +240,39 @@ export type SessionModelPickerProps = Readonly<{
  * that is hidden from the main list. The scope is forgotten when the pane closes.
  */
 export function SessionModelPicker(props: SessionModelPickerProps) {
+    return props.connectedServices && props.sourceBrowse
+        ? <SessionManagedPurposeModelPicker picker={props} connectedServices={props.connectedServices} sourceBrowse={props.sourceBrowse} />
+        : <SessionModelPickerContent {...props} />;
+}
+
+/** Managed Account catalogs use the same Provider projection and picker presentation. */
+function SessionManagedPurposeModelPicker({ picker, connectedServices, sourceBrowse }: Readonly<{
+    picker: SessionModelPickerProps;
+    connectedServices: ConnectedServiceBindingsV2;
+    sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
+}>) {
+    const declarations = useDaemonMergedProjectionInputs({ machineId: sourceBrowse.machineId,
+        sections: ['agentsById', 'familiesById.providers'], serverId: sourceBrowse.serverId,
+        enabled: picker.declarationContext === undefined && Boolean(sourceBrowse.machineId) });
+    const context = picker.declarationContext ?? providerDeclarationContext(sourceBrowse.machineId,
+        declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 : null);
+    const managed = readAccountAgentManagedConnectedServices(picker.agentTargetKey, context, connectedServices);
+    const projection = useProviderModelProjection({ enabled: managed !== null, ...sourceBrowse,
+        agentTargetKey: picker.agentTargetKey, ...(managed ? { connectedServices: managed } : {}),
+        ...(picker.selected ? { currentSelection: picker.selected } : {}) });
+    if (!managed) return <SessionModelPickerContent {...picker} declarationContext={context} />;
+    return <SessionModelPickerContent {...picker} declarationContext={context}
+        providerGroups={[...picker.providerGroups, ...(projection.data?.groups ?? EMPTY_PROJECTION_GROUPS)]}
+        providerProjectionAuthoritative={picker.providerProjectionAuthoritative && projection.status === 'success'}
+        projectionError={projection.error ?? picker.projectionError}
+        projectionFailures={[...(picker.projectionFailures ?? []), ...projection.refreshFailures]}
+        retryProjection={projection.error ? projection.refresh : picker.retryProjection}
+        projectionApproval={projection.pendingApproval ?? picker.projectionApproval}
+        probe={mergeOptionPickerProbes([picker.probe, { phase: projection.loading ? 'loading' : 'idle',
+            onRefresh: () => { void projection.refresh(); } }])} />;
+}
+
+function SessionModelPickerContent(props: SessionModelPickerProps) {
     // "Runs through" can ask the pane to open on one source; the request names the Agent it was made for.
     const handoff = React.useContext(SessionModelSourceBrowseHandoffContext);
     const requested = handoff?.request?.agentTargetKey === props.agentTargetKey
@@ -373,17 +409,17 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const selectedOptionControls = React.useMemo(() => {
         const selected = props.selectedTeamCredentialModel ?? props.selected;
         if (!selected) return undefined;
+        const descriptor = resolveSessionModelSourceDescriptor({
+            selected, providerGroups: props.providerGroups, teamCredentialResources: props.teamCredentialResources,
+        });
         // Native controls may include runtime-applied/pending state. Source-backed
         // choices instead use their exact catalog descriptor, never a same-id native row.
-        if (!isTeamCredentialProviderModelPickerValue(selected) && !selected.providerConnectionId) {
+        if (!isTeamCredentialProviderModelPickerValue(selected) && !selected.providerConnectionId && !descriptor) {
             return props.selectedOptionControls;
         }
         // A surface must supply editable intent before these declaration-only
         // controls can reflect changes. Runtime native controls retain their own state above.
         if (!props.onSelectOptionControlValue || props.modelOptionOverrides === undefined) return undefined;
-        const descriptor = resolveSessionModelSourceDescriptor({
-            selected, providerGroups: props.providerGroups, teamCredentialResources: props.teamCredentialResources,
-        });
         return computeAcpConfigOptionControlsForProvider({
             providerId: props.agentTargetKey,
             configOptions: descriptor?.modelOptions,

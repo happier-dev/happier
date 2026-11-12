@@ -96,6 +96,9 @@ import {
   resolveTeamCredentialBrokerEligibility,
   resolveTeamCredentialResourceTestCandidate,
 } from '@/providers/broker/resourceTestCandidate';
+import { resolveAgentManagedPurposeSelections } from '@/providers/managed/agentPurposeSelections';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { DaemonProviderModelProjectionGroupV1 } from '@happier-dev/protocol/rpc/providers';
 import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog, readConnectedAccountCatalogSources, type ResolveManagedProviderPurposeBindingIntentSelection } from './connectedAccountCatalog';
 import { qualifySessionTeamCredentialProviderModels, selectSessionTeamCredentialProviderModel } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { readProviderConnectionSourceCatalog, projectProviderConnectionSourceCatalog, projectProviderConnectionSourceModels } from './providerConnectionSourceCatalog';
@@ -512,7 +515,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
     // Shared workers supply Agent compatibility, never their custodian's
     // private Provider catalog. Source selectors must not reach an earlier
     // catalog branch or silently fall back to ambient Account authority.
-    if (foreignRequester && (!request.teamCredentialResources || request.providerConnection || request.connectedAccountTarget
+    if (foreignRequester && (!request.teamCredentialResources || request.connectedServices || request.providerConnection || request.connectedAccountTarget
       || request.sourceCatalog || request.nativeSource || request.sourceConnectionId || request.application || request.includeDirectMaterialization)) {
       return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: request.machineId }) };
     }
@@ -537,7 +540,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
 
     const target = parseBackendTargetKeyV2(request.agentTargetKey);
     // Source visibility is discovery policy, never Team/broker/route authorization.
-    const routeConsumer = Boolean(request.providerConnection || request.connectedAccountTarget
+    const routeConsumer = Boolean(request.connectedServices || request.providerConnection || request.connectedAccountTarget
       || request.application || request.includeTeamCredentialRequestPolicySupport);
     const operationLifetime = createProviderOperationLifetime({
       signal: accountContext?.signal ?? signal,
@@ -685,7 +688,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       // catalog, DNS work, or a managed-process probe for the same source.
       // Source-only reads use purpose selection/currentness and declarations;
       // an unrelated personal Provider catalog cannot admit or withhold them.
-      if (request.connectedAccountTarget) {
+      if (request.connectedAccountTarget || request.connectedServices) {
         const resolveSelection = accountContext
           ? accountContext.resolveManagedPurposeBindingIntentSelection
           : input.resolveManagedPurposeBindingIntentSelection;
@@ -694,20 +697,34 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
         if (!resolveSelection || request.providerConnection || request.sourceConnectionId) return unavailable();
         const invokeNative = accountContext ? accountContext.invokeConnectedAccountNativeModels : input.invokeConnectedAccountNativeModels;
         const observe = accountContext ? accountContext.observeConnectedAccountSourceModels : input.observeConnectedAccountSourceModels;
-        const projection = await awaitWithinProviderOperation(projectConnectedAccountCatalog({
-          request, registry, ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
-          providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
-          resolveSelection, signal: operationLifetime.signal,
-          ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
-            resolveContributedCatalogParsers: leasedCatalogParserResolver(lease) }) } : {}),
-        }), operationLifetime);
-        if (projection.error) return { status: 'error', error: projection.error };
-        if (projection.groups.length === 0
-          || !await awaitWithinProviderOperation(projection.isCurrent(), operationLifetime) || !await isAccountCurrent()
-          || (accountContext && !sourceProjection && !isAccountSnapshotCurrent())) return unavailable();
+        const sources = request.connectedServices
+          ? resolveAgentManagedPurposeSelections({ contributions: lease.registry.contributes, agentId: agentId!,
+              connectedServices: request.connectedServices }).map(candidate => ({ target: candidate.binding.target,
+                managedPurpose: candidate.declaration.managedProviderEndpoint }))
+          : [{ target: request.connectedAccountTarget!, managedPurpose: undefined }];
+        const groups: DaemonProviderModelProjectionGroupV1[] = [];
+        const { connectedServices: _selectedServices, ...sourceRequest } = request;
+        for (const source of sources) {
+          const route = source.managedPurpose;
+          const provider = route ? getProviderContribution(registry, buildQualifiedPluginContributionKey(route.provider)) : undefined;
+          if (route && !provider) return unavailable();
+          const projection = await awaitWithinProviderOperation(projectConnectedAccountCatalog({
+            request: { ...sourceRequest, connectedAccountTarget: source.target }, registry,
+            ...(route && provider ? { provider, purpose: route.purpose, managedPurpose: route } : {}), ...(adapter ? { support: adapter.support, adapterVersion: adapter.adapter.adapterVersion } : {}),
+            providerSettings: snapshot ? readProviderSettingsForCli(snapshot).settings : DEFAULT_PROVIDER_SETTINGS_V1,
+            resolveSelection, signal: operationLifetime.signal,
+            ...(invokeNative || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke: invokeNative, observe,
+              resolveContributedCatalogParsers: leasedCatalogParserResolver(lease) }) } : {}),
+          }), operationLifetime);
+          if (projection.error) return { status: 'error', error: projection.error };
+          if (projection.groups.length === 0
+            || !await awaitWithinProviderOperation(projection.isCurrent(), operationLifetime) || !await isAccountCurrent()
+            || (accountContext && !sourceProjection && !isAccountSnapshotCurrent())) return unavailable();
+          groups.push(...projection.groups);
+        }
         return DaemonProviderModelProjectionResponseV1Schema.parse({
           status: 'success', agentTargetKey: request.agentTargetKey,
-          groups: projection.groups.map(group => ({ ...group, rows: group.rows.map(row => {
+          groups: groups.map(group => ({ ...group, rows: group.rows.map(row => {
             const requestPolicySupport = request.includeTeamCredentialRequestPolicySupport && row.application
               ? projectDaemonProviderTeamCredentialRequestPolicySupportV1({
                   application: row.application, sourceRevision: group.sourceRevision!, descriptor: row.descriptor,

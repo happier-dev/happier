@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { modelProjectionScopeKey } from './modelProjectionScopeKey';
 
 describe('model projection query identity', () => {
+    it('isolates selected connected-account catalogs while retaining equal selections', () => {
+        const scope = { enabled: true, machineId: 'machine', agentTargetKey: 'agent', selectionKey: '',
+            favoriteKeys: [], accountScopeKey: 'account', credentialKey: 'credential' };
+        const selection = (profileId: string) => ({ v: 2 as const, bindingsByServiceId: {
+            'source/accounts': { source: 'connected' as const, selection: 'profile' as const, profileId },
+        } });
+        const first = modelProjectionScopeKey({ ...scope, connectedServices: selection('first') });
+        expect(modelProjectionScopeKey({ ...scope, connectedServices: selection('first') })).toBe(first);
+        expect(modelProjectionScopeKey({ ...scope, connectedServices: selection('second') })).not.toBe(first);
+        expect(modelProjectionScopeKey(scope)).not.toBe(first);
+    });
     it('does not serialize admitted catalog bodies on repeated renders and changes identity with the admitted input', () => {
         const resources = Array.from({ length: 400 }, (_, id) => ({ id: `resource-${id}`, displayName: `Resource ${id}` }));
         const input = { enabled: true, machineId: 'machine', agentTargetKey: 'agent', selectionKey: '',

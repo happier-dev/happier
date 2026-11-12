@@ -8,6 +8,7 @@ import { projectAccountProviderModelsV1 } from '@happier-dev/protocol/providers/
 
 import {
     buildSessionModelPickerSections,
+    resolveSessionModelSourceDescriptor,
     buildSessionModelSelectedTriggerPresentation,
     hiddenModelVisibilityKeys,
     withSessionModelSourceSuffixes,
@@ -66,6 +67,25 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('keeps a selected managed model available in the closed trigger', () => {
+        const group = providerGroup({ connectionId: 'connected-source:managed', modelId: 'source-model' });
+        const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'managed/source-model' };
+        const presentation = buildSessionModelSelectedTriggerPresentation({
+            declarationContext: { kind: 'account' }, agentTargetKey: selected.agentTargetKey,
+            nativeModels: [], providerGroups: [{ ...group, rows: group.rows.map(row => ({ ...row, ref: selected })) }],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected,
+            fallbackLabel: 'Unavailable selection', fieldLabel: 'Model',
+        });
+        expect(presentation.subtitle).toBe('Provider source-model');
+        expect(presentation.detail).not.toBe(t('agentInput.model.unavailable'));
+    });
+    it('uses the Provider catalog descriptor for a declaration-managed native model ref', () => {
+        const group = providerGroup({ connectionId: 'connected-source:managed', modelId: 'source-model' });
+        const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'managed/source-model' };
+        const managed = { ...group, rows: group.rows.map(row => ({ ...row, ref: selected })) };
+        expect(resolveSessionModelSourceDescriptor({ selected, providerGroups: [managed] })).toEqual(group.rows[0]?.descriptor);
+        expect(resolveSessionModelSourceDescriptor({ selected: { ...selected, modelId: 'unrelated' }, providerGroups: [managed] })).toBeNull();
+    });
     it('orders available model sources before refused ones and keeps the refusal separate from recovery actions', () => {
         const unavailable = providerGroup({ connectionId: 'pc_off', modelId: 'off' });
         const available = providerGroup({ connectionId: 'pc_ready', modelId: 'ready' });
