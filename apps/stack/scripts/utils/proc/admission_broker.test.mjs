@@ -11,9 +11,9 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { brokerAddress, createAdmissionBroker, readAdmissionMemorySample } from './admission_broker.mjs';
-import { connectAdmissionBroker, runAdmissionCommand } from './admission_client.mjs';
+import { connectAdmissionBroker, requestAdmissionSample, runAdmittedTask, runAdmissionCommand } from './admission_client.mjs';
 import { slotAddress } from './admission_socket.mjs';
-import { createWorkspaceBuildResourcePriorityScope, tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
+import { tryWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { createWorkspaceBundleLockPriorityScope } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
@@ -170,19 +170,44 @@ test('canonical validation floors admit concurrent focused work up to exact capa
   assert.equal(broker.status().reservedMemoryKiB, concurrentRuns * floorKiB);
 });
 
-test('a waiting client can reuse its priority after a reserved publication is unwound before payload admission', linux, async t => {
-  const { root } = await fixture(t);
+test('an interrupted reservation reconnects with released capacity and publication priority', linux, async t => {
+  const { root, broker } = await fixture(t);
   const locks = [{ path: join(root, 'publication.lock') }];
-  const priorityScope = createWorkspaceBuildResourcePriorityScope({ locks });
-  t.after(() => priorityScope.dispose());
-  const first = await tryWorkspaceBuildResources({ locks, priorityScope });
-  assert.equal(first.acquired, true);
-  await first.release();
-  // A broker connection can close after resources are reserved but before the
-  // payload is admitted. Its existing client then reconnects and tries again.
-  const retried = await tryWorkspaceBuildResources({ locks, priorityScope });
-  try { assert.equal(retried.acquired, true); }
-  finally { await retried.release?.(); }
+  let interrupted = false;
+  let offeredPeer;
+  const nativeWrite = Socket.prototype.write;
+  // Close the remote peer after publication acquisition and slot bind, before
+  // ready reaches the broker. Local destruction would not deliver input EOF.
+  t.mock.method(Socket.prototype, 'write', function (chunk, ...args) {
+    if (!interrupted && typeof chunk === 'string' && chunk.startsWith('{')) {
+      const response = JSON.parse(chunk);
+      if (response.kind === 'reserved') offeredPeer = this;
+      if (response.kind === 'ready') {
+        interrupted = true;
+        offeredPeer.destroy();
+        return false;
+      }
+    }
+    return nativeWrite.call(this, chunk, ...args);
+  });
+  let payloads = 0;
+  const options = { root, className: 'validation', floorKiB: 100, machine: 'fixture',
+    repoDir: root, cacheBaseDir: root, locks, env: {}, noWait: true };
+  const publish = () => runAdmittedTask(options, async () => {
+    payloads += 1;
+    assert.equal(broker.status().reservedMemoryKiB, 100);
+    assert.equal((await tryWorkspaceBuildResources({ locks })).acquired, false,
+      'the payload retains actual publication custody after reconnect');
+    return payloads;
+  });
+  assert.equal(await publish(), 1);
+  assert.equal(interrupted, true);
+  assert.equal((await requestAdmissionSample(root)).activeCount, 0,
+    'the interrupted offer and completed payload leave no reservation');
+  assert.equal(await publish(), 2, 'a second publication can reacquire the same capacity and lock');
+  const unlocked = await tryWorkspaceBuildResources({ locks });
+  try { assert.equal(unlocked.acquired, true); }
+  finally { await unlocked.release?.(); }
 });
 
 function otherUserCommand(command, args) {
@@ -948,6 +973,33 @@ test('broker restart recovers live kernel slots and closes release them without 
   const next = await queued.admit();
   assert.equal(replacement.status().reservedMemoryKiB, 30);
   await next.release();
+});
+
+test('restart discards crash-stale slot sockets while preserving live slots and unrelated files', linux, async t => {
+  const { root, broker, sampleResources } = await fixture(t);
+  const held = await (await acquire(root, 80, t)).admit();
+  await broker.close();
+  const staleAddress = slotAddress(root, process.pid, 90, '00000000-0000-4000-8000-000000000001', 1);
+  const stale = spawnSync(process.execPath, ['--input-type=module', '-e',
+    'import { createServer } from "node:net"; createServer().listen(process.argv[1], () => process.exit(0));',
+    staleAddress], { stdio: 'ignore' });
+  assert.equal(stale.status, 0);
+  assert.equal((await lstat(staleAddress)).isSocket(), true);
+  const unrelated = join(root, 'publication-note');
+  await writeFile(unrelated, 'retained');
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources });
+  t.after(() => replacement.close());
+  await replacement.start();
+  assert.equal(replacement.status().activeCount, 1);
+  assert.equal(replacement.status().reservedMemoryKiB, 80, 'only the live job consumes recovered capacity');
+  await assert.rejects(lstat(staleAddress), { code: 'ENOENT' });
+  assert.equal(await readFile(unrelated, 'utf8'), 'retained');
+  const queued = await acquire(root, 100, t);
+  const check = await request(root, { kind: 'check', floorKiB: 100 });
+  assert.equal((await check.next()).reason, 'HSTACK_MEMORY_BUSY');
+  check.socket.destroy();
+  await held.release();
+  await queued.admit();
 });
 
 test('canonical shell root names are numeric-UID scoped for the owner and another real UID', linux, async t => {
