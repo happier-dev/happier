@@ -660,10 +660,16 @@ describe("Home governance routes", () => {
             keyChallenge: process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED,
             mode: process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE,
             url: process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_URL,
+            keyless: process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED,
+            storage: process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY,
         };
         process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED = "1";
         process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE = "external";
         process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_URL = "https://sign-in.secret.example";
+        // Exercise the unlocked keyless ceiling under a deployment that permits
+        // plain storage, independently of the runner's encryption posture.
+        delete process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED;
+        process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         try {
             const response = await post(app, "/v1/home/governance/get", owner.token, {});
             expect(response.statusCode).toBe(200);
@@ -692,6 +698,10 @@ describe("Home governance routes", () => {
             else process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_MODE = previous.mode;
             if (previous.url === undefined) delete process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_URL;
             else process.env.HAPPIER_AUTH_SIGN_IN_SERVICE_URL = previous.url;
+            if (previous.keyless === undefined) delete process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED;
+            else process.env.HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED = previous.keyless;
+            if (previous.storage === undefined) delete process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY;
+            else process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = previous.storage;
         }
     });
 

@@ -1,12 +1,49 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { PluginUiPresentActionFailureRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { HappyError } from '@/utils/errors/errors';
 
 import { t } from '@/text';
 
 import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it('keeps consumer refusal reasons and recovery in prose, with correlation in Details', () => {
+        const cases = [
+            { consumer: 'plugin action', errorCode: 'credential_unavailable', message: 'Sign in to the provider.',
+                remediation: { kind: 'retry' as const }, expected: `Sign in to the provider. ${t('errors.tryAgain')}` },
+            { consumer: 'Account erasure', errorCode: 'action_forbidden', expected: t('errors.permissionDenied') },
+            { consumer: 'provider CLI', errorCode: 'managed_cli_unavailable', expected: t('errors.machineManagedCliUnavailable') },
+            { consumer: 'file save', errorCode: 'file_save_failed', expected: t('files.fileWriteFailed') },
+        ];
+        for (const row of cases) {
+            const requestId = `refusal-${row.consumer}`;
+            // Use the actual host API codec, rather than a fixture that bypasses its strict input boundary.
+            const failure = PluginUiPresentActionFailureRequestV1Schema.parse({
+                ok: false, errorCode: row.errorCode, requestId, effectAttempted: false,
+                ...(row.message ? { message: row.message } : {}),
+                ...(row.remediation ? { remediation: row.remediation } : {}),
+            });
+            const returned = { ok: false, ...failure };
+            const input = row.consumer === 'plugin action' ? { ok: true, result: returned } : returned;
+            expect(resolveActionExecutionFailureMessage(input, 'Fallback'), row.consumer).toBe(row.expected);
+            if (row.consumer === 'Account erasure') {
+                expect(resolveActionExecutionErrorMessage(new HappyError('Private transport detail', false,
+                    { code: row.errorCode, requestId }), 'Fallback')).toBe(row.expected);
+            }
+            const presented = presentActionExecutionFailure(failure);
+            expect(presented.reason, row.consumer).toBe(row.expected);
+            // Recovery is currently combined into reason by this owner; consumers must not invent a second step.
+            expect(presented.nextStep, row.consumer).toBeNull();
+            expect(presented.reason).not.toContain(requestId);
+            expect(presented.technicalDetails, row.consumer).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'code', value: row.errorCode }),
+                expect.objectContaining({ key: 'requestId', value: requestId }),
+                expect.objectContaining({ key: 'effectAttempted', value: 'false' }),
+            ]));
+        }
+    });
     it('presents an invalid Action envelope without diagnosing cryptography or losing its technical code', () => {
         const failure = { ok: false as const, errorCode: 'invalid_encrypted_envelope', error: 'invalid_encrypted_envelope',
             requestId: 'setup-plan-request', effectAttempted: false };

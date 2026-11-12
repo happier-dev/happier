@@ -218,8 +218,8 @@ describe('useMachineSelectionListModel', () => {
     });
 
     it.each([
-        { entry: 'MachineSelector dropdown / New Session picker', purpose: 'session', showCliGlyphs: false },
-        { entry: 'MachineSelector list', purpose: 'session', showCliGlyphs: true },
+        { entry: 'MachineSelector dropdown', purpose: 'session', showCliGlyphs: false },
+        { entry: 'MachineSelector list / New Session picker', purpose: 'session', showCliGlyphs: true },
         { entry: 'WorkerDestinationPicker finite', purpose: 'finite', showCliGlyphs: false },
         { entry: 'WorkerDestinationPicker service', purpose: 'service-start', showCliGlyphs: false },
     ] as const)('keeps section folds, custodian names and availability together for $entry', async ({ purpose, showCliGlyphs }) => {
