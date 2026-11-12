@@ -265,3 +265,22 @@ it('requires a local workspace for native materialization and refuses provider r
     await expect(readDeploymentSourceIntentForHost({ host, request: { environment, requireWorkspace: false, context } }))
         .rejects.toMatchObject({ code: 'deployment_source_unavailable' });
 });
+
+
+it('selects the retained serving stored U for Add after an undeployed edit B, while ordinary deploy stays strict', async () => {
+    const environment = createDeploymentEnvironmentDetailV1();
+    const serving = { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+        document: 'services:\n  app:\n    image: nginx:1\n', profiles: [], services: ['app'] };
+    environment.content.definition = { ...serving, contentRevision: 2, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services:\n  app:\n    image: nginx:2\n' };
+    const host = { credentials: { token: 'fixture', encryption: null }, serverId: 'home',
+        serverHttpBaseUrl: 'https://home.test', machineId: 'controller', async assertAuthority() {},
+        async resolveRequesterIdentity(): Promise<never> { throw new Error('Stored source needs no workspace'); } };
+    await expect(readDeploymentSourceIntentForHost({ host, request: { environment, sourceIntent: serving,
+        actionId: 'deployments.deploy', context: {} } })).rejects.toMatchObject({ code: 'deployment_conflict' });
+    const selected = await readDeploymentSourceIntentForHost({ host, request: { environment,
+        sourceIntent: serving, retainedSourceIntent: serving, actionId: 'deployments.deploy', context: {} } });
+    expect(selected.sourceIntent).toEqual(serving);
+    expect(selected.sourceIntent).not.toEqual(environment.content.definition);
+    expect(selected.workspace).toBeUndefined();
+});

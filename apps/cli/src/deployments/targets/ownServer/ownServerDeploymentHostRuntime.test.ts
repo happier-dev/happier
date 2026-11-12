@@ -780,7 +780,7 @@ describe('own-server installed host acquisition', () => {
         } finally { try { await mounted.dispose(); } finally { await release.abort(); } }
         expect(machineHttp).toHaveBeenCalled();
     });
-    it.for(['deployment', 'restoration'] as const)('acquires the exact stored snapshot for %s without Source checkout or SCM reads', async (kind, context) => {
+    it.for(['deployment', 'joining', 'restoration'] as const)('acquires the exact stored snapshot for %s without Source checkout or SCM reads', async (kind, context) => {
         const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
             controller: pluginReloadController, runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
         const keys = nacl.sign.keyPair();
@@ -814,8 +814,12 @@ describe('own-server installed host acquisition', () => {
                 actionId: 'deployments.backups.test',
                 materialization: { kind: 'restoration', deploymentId: 'deployment', sourceDeploymentId: 'uniform' },
             } : {}) } satisfies OwnServerDeploymentRuntimeRequest;
+            const edited = { ...definition, contentRevision: 3, document: 'services: {web: {image: next}}',
+                composeDigest: `sha256:${'d'.repeat(64)}` };
             const snapshot = { deployment: receipt.deployment,
-                environment: { ...environment, content: { ...environment.content, definition, bindings: [registryUse] } },
+                ...(kind === 'joining' ? { retainedSourceIntent: definition } : {}),
+                environment: { ...environment, content: { ...environment.content,
+                    definition: kind === 'deployment' ? definition : edited, bindings: [registryUse] } },
                 content: { ...receipt.content, sourceIntent: definition, images: [archive.image], ownServer: { imageArchives: [archive],
                     approvedInputBasis: { v: 1, environmentId: 'environment', environmentRevision: 2, targetLinkId: 'link', targetLinkRevision: 1,
                         sourceIntent: definition, members: [{ machineId: 'machine', installationId: 'installation' }], bindings: [], images: [archive.image],

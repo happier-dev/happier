@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
+import { createDeploymentReceiptDetailV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { admitOwnServerDeploymentTargetLink, selectOwnServerRetainedServingSource } from './ownServerTargetAdmission';
 
 describe('own-server catalog admission', () => {
     it('admits only the fixed host target and preserves target-member placement', () => {
@@ -32,4 +32,27 @@ describe('own-server catalog admission', () => {
         expect(() => admitOwnServerDeploymentTargetLink(link, 'controller', 'other-controller'))
             .toThrow(expect.objectContaining({ code: 'target_mismatch' }));
     });
+});
+
+
+it('selects only exact current serving U for a joining deploy, including a successor membership link', () => {
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+        id: 'serving-u', environmentId: 'environment', targetLinkId: 'predecessor', state: 'succeeded' }) });
+    const link = createDeploymentTargetLinkHeaderV1({ id: 'membership-successor', environmentId: 'environment',
+        activeDeploymentId: receipt.deployment.id, machines: ['machine-a', 'machine-d'], members: [
+            { machineId: 'machine-a', installationId: 'installation-a', state: 'active' },
+            { machineId: 'machine-d', installationId: 'installation-d', state: 'joining' },
+        ] });
+    const input = { actionId: 'deployments.deploy' as const, environmentId: 'environment', link,
+        sourceIntent: receipt.content.sourceIntent, servingReceipt: receipt };
+    expect(selectOwnServerRetainedServingSource(input)).toEqual(receipt.content.sourceIntent);
+    expect(selectOwnServerRetainedServingSource({ ...input, actionId: 'deployments.promote' })).toBeNull();
+    expect(selectOwnServerRetainedServingSource({ ...input, environmentId: 'foreign' })).toBeNull();
+    expect(selectOwnServerRetainedServingSource({ ...input, link: { ...link, activeDeploymentId: 'other' } })).toBeNull();
+    expect(selectOwnServerRetainedServingSource({ ...input, link: { ...link,
+        members: link.members.map(member => ({ ...member, state: 'active' as const })) } })).toBeNull();
+    expect(selectOwnServerRetainedServingSource({ ...input, servingReceipt: { ...receipt,
+        deployment: { ...receipt.deployment, state: 'failed' } } })).toBeNull();
+    const other = { ...receipt.content.sourceIntent, compose: { path: 'other.yaml', profiles: [], services: [] } };
+    expect(selectOwnServerRetainedServingSource({ ...input, sourceIntent: other })).toBeNull();
 });
