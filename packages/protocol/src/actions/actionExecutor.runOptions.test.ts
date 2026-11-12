@@ -1958,3 +1958,46 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     });
   });
 });
+
+describe('run start readiness admission', () => {
+  const fact = (overrides: Record<string, unknown>) => ({
+    agentId: 'codex', title: 'Codex', installed: true, version: '1', latestVersion: null,
+    update: { supported: false, command: null },
+    signIn: { status: 'signedIn', loginSupport: 'login_terminal' },
+    platform: { supported: true }, install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null },
+    dependencies: [], ...overrides,
+  });
+  const start = async (machineFact: Record<string, unknown>, route: 'native' | 'connected' = 'native') => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const machinesAgentsList = vi.fn(async () => ({ items: [fact(machineFact)] }));
+    const deps = createDeps({ executionRunStart, machinesAgentsList,
+      agentsConnectedDefaultRoutesRead: vi.fn(async () => ({ codex: route })) });
+    const result = await createActionExecutor(deps).execute('subagents.delegate.start', {
+      sessionId: 's1', instructions: 'Do the work', backendTargetKeys: [START_TARGET_KEY],
+    }, { ...RUN_DISPATCHER_CALLER, actionCaller: START_CONTEXT.caller, agentStartContext: START_CONTEXT });
+    return { result, starts: executionRunStart.mock.calls.length, machineIds: machinesAgentsList.mock.calls.map(call => (call as any)[0]?.machineId) };
+  };
+
+  it('starts no run on an Agent the Session Machine has not installed, with the typed launch code', async () => {
+    const missing = await start({ installed: false });
+    expect(missing.starts).toBe(0);
+    expect(missing.machineIds).toEqual(['m1']);
+    expect(missing.result).toMatchObject({ result: { results: [{ ok: false, errorCode: 'agent_cli_missing' }] } });
+  });
+
+  it('keeps the run-start failure contract on execution.run.start: no Run created, typed code', async () => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const deps = createDeps({ executionRunStart, machinesAgentsList: vi.fn(async () => ({ items: [fact({ installed: false })] })) });
+    const result = await createActionExecutor(deps).execute('execution.run.start', RUN_START_BASE,
+      { ...RUN_DISPATCHER_CALLER, actionCaller: START_CONTEXT.caller, agentStartContext: START_CONTEXT });
+    expect(result).toMatchObject({ ok: false, errorCode: 'agent_cli_missing',
+      details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+    expect(executionRunStart).not.toHaveBeenCalled();
+  });
+
+  it('leaves authentication to launch, including signed-out native inventory without a connected default', async () => {
+    expect((await start({})).starts).toBe(1);
+    expect((await start({ signIn: { status: 'signedOut', loginSupport: 'login_terminal' } })).starts).toBe(1);
+    expect((await start({ signIn: { status: 'signedOut', loginSupport: 'login_terminal' } }, 'connected')).starts).toBe(1);
+  });
+});

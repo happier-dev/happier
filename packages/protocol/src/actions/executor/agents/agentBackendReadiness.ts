@@ -1,7 +1,6 @@
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, PersistedBackendTargetRefV2Schema } from '../../../backends/targets/backendTargetRefV2.js';
 import {
   findMachineAgentInventoryItemForTargetV1,
-  isMachineAgentExecutionStateBlockingV1,
   MachinesAgentsListOutputSchema,
   resolveMachineAgentExecutionStateV1,
   type MachineAgentExecutionStateV1,
@@ -96,18 +95,17 @@ export async function listAgentBackendsWithReadinessV1(
 
 const START_REFUSAL_BY_READINESS = Object.freeze({
   notInstalled: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
-  needsSignIn: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
   unsupported: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_NOT_READY,
 } as const);
 
 /**
- * Run-start admission on the Machine that will run the Agent: a known blocking
- * readiness refuses with the same typed code a launch would, before any Run is
- * created. Unknown, checking, or unreadable readiness admits (launch stays the
- * authority), so this never refuses on a guess.
+ * Refuse known executable/platform prerequisites before creating a Run.
+ * Authentication belongs to the launch owner: it resolves the request's selected
+ * Connected Service (or Session defaults) under the requester's Account. Native
+ * sign-in and Account-default discovery cannot decide that selected route.
  */
 export async function refuseAgentStartWhenNotReadyV1(
-  deps: ReadinessDeps,
+  deps: Pick<ActionExecutorDeps, 'machinesAgentsList'>,
   args: Readonly<{ machineId: string | null | undefined; backendTarget: unknown }>,
   ctx: ActionExecutorContext,
 ): Promise<ActionExecuteFailure | null> {
@@ -115,8 +113,8 @@ export async function refuseAgentStartWhenNotReadyV1(
   const parsed = PersistedBackendTargetRefV2Schema.safeParse(args.backendTarget);
   if (!parsed.success) return null;
   const target = readInventoryTarget({ targetKey: buildBackendTargetKeyV2(parsed.data) } as AgentBackendInventoryItem);
-  const [readiness] = await readAgentTargetReadinessV1(deps, args.machineId, [target], ctx) ?? [];
-  if (!readiness || !isMachineAgentExecutionStateBlockingV1(readiness)) return null;
+  const [readiness] = await readAgentTargetReadinessV1({ machinesAgentsList: deps.machinesAgentsList }, args.machineId, [target], ctx) ?? [];
+  if (readiness !== 'notInstalled' && readiness !== 'unsupported') return null;
   const code = START_REFUSAL_BY_READINESS[readiness];
   // The existing run-start failure contract: a typed code and certain "no Run created" evidence.
   return { ok: false, errorCode: code, error: code, details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };

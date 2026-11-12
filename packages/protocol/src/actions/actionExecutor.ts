@@ -643,7 +643,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const current = resolved && machineId && machineId !== resolved.baseline.machineId
       ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
     // Every run start (execution.run.start, delegate, plan, voice, review) passes here: refuse a
-    // known not-ready Agent on the Machine that will run it before any Run exists.
+    // known executable/platform failure before any Run exists. Launch resolves auth.
     const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
       machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
       backendTarget: input.backendTarget,

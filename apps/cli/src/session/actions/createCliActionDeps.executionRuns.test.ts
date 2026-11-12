@@ -62,6 +62,8 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createCliActionDeps, type MachineActionDirectTargetTransport } from './createCliActionDeps';
+import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
+import { createCliMachineInventoryActionDeps } from './cliActionDeps/machineInventory';
 
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
 
@@ -432,6 +434,69 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   const directories: string[] = [];
   afterEach(async () => {
     await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  });
+  it('dispatches the selected connected Claude profile despite signed-out native inventory', async () => {
+    const credentials = { token: 'requesting-account', encryption: null };
+    const serviceId = 'happier.agent.claude/claude-subscription';
+    const agentId = 'happier.agent.claude/claude';
+    serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
+    const originalGet = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, ...args) => {
+      if (new URL(String(url)).pathname === '/v1/machines/machine-1') {
+        return { status: 200, data: { machine: { id: 'machine-1', machineKind: 'permanent',
+          managedMachineRef: null, installationId: null, active: true, activeAt: Date.now(),
+          revokedAt: null, replacedByMachineId: null } } };
+      }
+      if (new URL(String(url)).pathname === '/v1/account/entity-rows/connected-accounts/purposes') {
+        return { status: 200, data: { status: 'present', revision: 1,
+          content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } } } } };
+      }
+      return originalGet(url, ...args);
+    });
+    // These are the Machine and Session RPC boundaries. Keep Action admission,
+    // inventory projection, Account defaults, selection and Run dispatch real.
+    const machineRpc = async ({ method }: Readonly<{ method: string }>) => {
+      if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return runProtocolDescribeResponse();
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+          [agentId]: { id: 'claude', title: 'Claude', capabilities: {
+            sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+          } },
+        } } };
+      }
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+        [`cli.${agentId}`]: { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedOut', loginSupport: 'login_terminal' }, platform: { supported: true },
+          install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+        } },
+      } };
+      throw new Error(`Unexpected Machine RPC: ${method}`);
+    };
+    callMachineRpc.mockImplementation(machineRpc);
+    callSessionRpc.mockResolvedValue({ runId: 'run-connected', callId: 'call-connected', sidechainId: 'call-connected' });
+    const params = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null };
+    const inventoryDeps = createCliActionInventoryDeps(params);
+    const machineDeps = createCliMachineInventoryActionDeps(params, { inventoryDeps, callMachineAction: machineRpc });
+    expect(await machineDeps.machinesAgentsList!({ machineId: 'machine-1' }, {})).toMatchObject({
+      items: [{ agentId, signIn: { status: 'signedOut' } }],
+    });
+    expect(await inventoryDeps.agentsConnectedDefaultRoutesRead!({ agentIds: [agentId] }, {})).toEqual({ [agentId]: 'native' });
+    const executor = createActionExecutor({ ...createCliActionDeps(params), ...inventoryDeps, ...machineDeps });
+    const result = await executor.execute('execution.run.start', {
+      sessionId: 'session-1', intent: 'delegate', backendTarget: { kind: 'agent',
+        identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      instructions: 'Report ready.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response',
+      connectedServices: `${serviceId}:profile:owned-profile`,
+    }, { surface: 'cli', defaultSessionId: 'session-1', defaultSessionMachineId: 'machine-1' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { runId: 'run-connected' } });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      token: credentials.token, sessionId: 'session-1', method: `session-1:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`,
+      request: expect.objectContaining({ connectedServices: { v: 2, bindingsByServiceId: {
+        [serviceId]: { source: 'connected', selection: 'profile', profileId: 'owned-profile' },
+      } } }),
+    }));
   });
   it.each([null, 'source-session'])('does not send an admitted private stamp through public RPC (Session: %s)', async sessionId => {
     const credentials = { token: 'token', encryption: null };

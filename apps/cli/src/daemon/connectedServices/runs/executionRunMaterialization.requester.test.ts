@@ -78,7 +78,7 @@ describe('requester execution-run materialization', () => {
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain' } };
         if (path === '/v4/connect/qualified/configuration') return { status: 404, data: null };
         if (path === '/v4/connect/qualified/accounts') return { status: 200, data: QualifiedConnectedAccountListResponseV4Schema.parse({
-          service, accounts: ['work', 'backup'].map(accountId => ({ ref: { service, accountId }, status: 'connected', authenticationModeId: 'oauth',
+          service, accounts: ['work', 'backup', ...(accountId === 'alice' ? ['custodian-only'] : [])].map(accountId => ({ ref: { service, accountId }, status: 'connected', authenticationModeId: 'oauth',
             revisionSemantics: 'revisioned', credentialRevision: revision, configurationReady: true, configurationRevision: null, scopes: [] })),
         }) };
         if (path === '/v4/connect/qualified/group') return { status: 200, data: { group: groups.get(accountId) } };
@@ -176,6 +176,15 @@ describe('requester execution-run materialization', () => {
         resolveRequestAuthHttpPort: () => 42427,
         createRedactionLease: () => ({ add() {}, close() {} }), clearTerminalCleanupReceipt: async () => undefined,
       });
+      // An explicit profile selector is not authority to borrow the Machine
+      // custodian's Account. The same spawn resolver must refuse it for Bob.
+      const denied = await bridge.materialize({ activationId: randomUUID(), runId: 'bob-denied', runnerPid: process.pid, agentId,
+        cwd: runtime.happyHomeDir, connectedServices: { v: 2, bindingsByServiceId: { [qualifiedServiceId]: {
+          source: 'connected', selection: 'profile', profileId: 'custodian-only',
+        } } } });
+      expect(denied).toMatchObject({ ok: false });
+      expect(authenticatedCredentialAccounts).toEqual([]);
+      expect(registry.getRunTargetByRunKey('bob-denied')).toBeNull();
       const result = await bridge.materialize({ activationId: randomUUID(), runId: 'bob-run', runnerPid: process.pid, agentId, cwd: runtime.happyHomeDir,
         connectedServices: { v: 2, bindingsByServiceId: { [qualifiedServiceId]: {
           source: 'connected', selection: 'profile', profileId: 'work',
