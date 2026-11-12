@@ -796,7 +796,5 @@ export function createExecutionRunRuntime(opts: Readonly<{
             ...(opts.providerLaunch ? { providerLaunch: opts.providerLaunch } : {}),
         });
     const runtime = createLazyExecutionRunHostRuntime(runtimeShellConfig);
-    return opts.modelSelection?.providerConnectionId
-        ? withExecutionRunHostRuntimeCleanup(runtime, runtimeShellConfig.retireProviderResources)
-        : runtime;
+    return withExecutionRunHostRuntimeCleanup(runtime, runtimeShellConfig.retireProviderResources);
 }

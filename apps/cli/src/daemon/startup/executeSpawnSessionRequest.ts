@@ -202,6 +202,8 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     >;
     connectedAccountRequestAuthHttpPort?: number;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     activateSessionPurposeBindings?: ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     resolveSessionSyncPendingInputServerContractResult?: () =>
@@ -259,6 +261,8 @@ export async function executeSpawnSessionRequest(
             providerAccountUsageStore: requesterRuntime.providerAccountUsageStore,
             predictiveSwitchGuard: requesterRuntime.predictiveSwitchGuard,
             resolveManagedPurposeBindingIntent: requesterRuntime.resolveManagedPurposeBindingIntent,
+            resolveManagedPurposeBindingIntentSelection: requesterRuntime.resolveManagedPurposeBindingIntentSelection,
+            managedProviderAccountAuthority: params.managedProviderAccountAuthority ?? null,
             activateSessionPurposeBindings: requesterRuntime.activateSessionPurposeBindings,
             activatePurposeBindings: requesterRuntime.activatePurposeBindings };
     }
@@ -691,6 +695,8 @@ export async function executeSpawnSessionRequest(
                             params.resolveManagedPurposeBindingIntent,
                     }
                     : {}),
+                ...(params.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection } : {}),
+                managedProviderAccountAuthority: params.managedProviderAccountAuthority,
                 processEnv: params.processEnv ?? process.env,
             });
             recordPreparationPhase('provider_authorization');
@@ -925,7 +931,9 @@ export async function executeSpawnSessionRequest(
             let committedLaunchSession: CommittedDaemonLaunchSession | null = null;
             if (
                 !normalizedExistingSessionId
-                && daemonLaunchRequiresCommittedSession(optionsWithProviderIsolation)
+                && daemonLaunchRequiresCommittedSession(optionsWithProviderIsolation, {
+                    requiresSessionConsumer: Boolean(daemonProviderLaunch.managedPurpose),
+                })
             ) {
                 // A definite missing executable must not consume the creation
                 // key with a durable row that a later retry can only rejoin.
@@ -1294,6 +1302,7 @@ export async function executeSpawnSessionRequest(
                 connectedServiceAuth,
                 connectedServiceMaterializationIdentity,
                 providerBindingAttempt,
+                managedPurpose: daemonProviderLaunch.managedPurpose,
                 providerAgentTargetKey,
                 providerDiagnosticRedactionLease,
                 launchResourceScope,
