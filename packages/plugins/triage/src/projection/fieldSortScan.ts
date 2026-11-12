@@ -1,9 +1,5 @@
 import { deriveTriageConfiguredSourceInstanceDigestV1 } from '@happier-dev/triage-sources/runtime';
 import {
-    decodeTriagePagingTokenV1,
-    encodeTriagePagingTokenV1,
-    TriageScanResultV1Schema,
-    TriageListSortV1Schema,
     type TriageListSortV1,
     type TriageScanContinuationV1,
     type TriageScanResultV1,
@@ -57,7 +53,7 @@ function compareHeads(left: CorpusQualifiedObservationV1, right: CorpusQualified
 
 /**
  * Native pages are already ordered. Merge their heads and retain only the rows
- * not emitted, beside their native cursor in the existing invocation token.
+ * not emitted, beside their native cursor in the structured invocation frontier.
  * Qualification, page contracts, invocation errors and cancellation remain in
  * the ordinary scan owner, which reads exactly one page for this caller.
  */
@@ -103,20 +99,17 @@ export async function runTriageFieldSortedScanPass(input: TriageScanPassInputV1,
 
     await Promise.all(states.map(async state => {
         if (aborted() || input.observationBudget <= 0) return;
-        const frontier = state.lane.resume === undefined ? null : decodeTriagePagingTokenV1(state.lane.resume.token);
-        if (frontier?.kind !== 'triage-field-sort') {
+        const frontier = state.lane.retained;
+        if (frontier === undefined) {
             await read(state, state.lane.resume);
             return;
         }
-        const page = TriageScanResultV1Schema.safeParse(frontier.page);
-        const retainedSort = TriageListSortV1Schema.safeParse(frontier.sort);
         const sameInstance = frontier.instanceDigest === deriveTriageConfiguredSourceInstanceDigestV1(state.lane.configured);
-        const sameSort = retainedSort.success && retainedSort.data.field === sort.field && retainedSort.data.direction === sort.direction;
+        const sameSort = frontier.sort.field === sort.field && frontier.sort.direction === sort.direction;
         const observedAtMs = frontier.observedAtMs;
-        const validClock = typeof observedAtMs === 'number' && Number.isInteger(observedAtMs) && observedAtMs >= 0;
-        await read(state, undefined, sameInstance && sameSort && validClock && page.success && page.data.kind !== 'failed' ? page.data : {
+        await read(state, undefined, sameInstance && sameSort ? frontier.page : {
             kind: 'failed', failure: { class: 'unsupportedContract', code: 'triage/invalidSortContinuation' },
-        }, validClock ? observedAtMs : undefined);
+        }, observedAtMs);
     }));
 
     let blocked = false;
@@ -148,7 +141,6 @@ export async function runTriageFieldSortedScanPass(input: TriageScanPassInputV1,
     // boundary. It still cannot disappear from a later sorted continuation.
     blocked ||= states.some(state => state.consumed === state.observations.length
         && !state.settled.exhausted && state.next === undefined);
-    let overflow = false;
     const stopped: TriageScanPassStopV1[] = [];
     if (!aborted() && !blocked) for (const state of states) {
         const remaining = state.observations.length - state.consumed;
@@ -157,29 +149,24 @@ export async function runTriageFieldSortedScanPass(input: TriageScanPassInputV1,
             continue;
         }
         // Keep source-private currentness and locator fields exactly as read.
-        // The canonical source-result schema parses this page when resumed;
+        // The aggregate schema uses the canonical source page grammar;
         // no hand-authored copy of its observation grammar lives here.
         const selected = state.lane.selectedKindIds;
         const page = state.page!;
         const pendingPage = { ...page, observations: page.observations
             .filter(observation => selected === undefined || selected.includes(observation.localRef.kindId))
             .slice(state.consumed) };
-        const token = encodeTriagePagingTokenV1({ kind: 'triage-field-sort', instanceDigest: deriveTriageConfiguredSourceInstanceDigestV1(state.lane.configured), sort, observedAtMs: state.observations[0]!.observedAtMs, page: pendingPage });
-        if (token === null) {
-            overflow = true;
-            state.settled = { ...state.settled, exhausted: false, health: {
-                ...(state.settled.health.kind === 'partial' ? state.settled.health : {}),
-                kind: 'partial', reason: 'continuation-unavailable',
-            } };
-        } else stopped.push({ sourceInstanceId: state.lane.sourceInstanceId, pageLimit: state.pageLimit, continuation: { v: 1, token } });
+        stopped.push({ sourceInstanceId: state.lane.sourceInstanceId, pageLimit: state.pageLimit,
+            retained: { instanceDigest: deriveTriageConfiguredSourceInstanceDigestV1(state.lane.configured), sort,
+                observedAtMs: state.observations[0]!.observedAtMs, page: pendingPage } });
     }
 
     return Object.freeze({
         observationBudget: input.observationBudget,
         observations: Object.freeze(observations.filter(observation => !contractFailed.has(observation.sourceInstanceId))),
         lanes: Object.freeze(states.map(state => Object.freeze({ ...state.settled, exhausted: state.settled.exhausted && state.consumed === state.observations.length }))),
-        // Omitting one failing/overflowed lane would silently lose its rows on
+        // Omitting one failing lane would silently lose its rows on
         // later pages. Settle the whole sorted walk as visibly incomplete.
-        stopped: Object.freeze(aborted() || blocked || overflow ? [] : stopped.map(stop => Object.freeze(stop))),
+        stopped: Object.freeze(aborted() || blocked ? [] : stopped.map(stop => Object.freeze(stop))),
     });
 }

@@ -158,6 +158,7 @@ describe('cross-source field order', () => {
             configured: TriageConfiguredSourceInstanceV1Schema.parse({ ...lane.configured,
                 ...(change === 'configuration' ? { configuration: { v: 1, token: 'changed-routing-token' } }
                     : { binding: { purpose: 'triage-source', account: { service: { pluginId: SOURCE.pluginId, localId: 'accounts' }, accountId: 'other-account' } } }) }),
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const pass = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 1, nowMs: () => 2000 });
         expect(pass.observations).toEqual([]);
@@ -176,6 +177,7 @@ describe('cross-source field order', () => {
             : original.scan(request, options) } satisfies TriageScanLaneV1, orderedLane(OTHER_INSTANCE_ID, [2, 4, 6, 8], [])];
         const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
         const next = sources.map(lane => ({ ...lane,
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 4, nowMs: () => 2000 });
         expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002']);
@@ -192,6 +194,7 @@ describe('cross-source field order', () => {
         expect(first.observations.map(item => item.entryRef.entryId)).toEqual(Array.from({ length: 28 }, (_, index) => String(index).padStart(5, '0')));
         expect(first.stopped).toHaveLength(2);
         const next = sources.map(lane => ({ ...lane,
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const second = await runTriageScanPass({ lanes: next, pageLimit: 28, observationBudget: 56, nowMs: () => 2000 });
         expect(second.observations.map(item => item.entryRef.entryId)).toEqual(Array.from({ length: 28 }, (_, index) => String(index + 28).padStart(5, '0')));
@@ -211,6 +214,7 @@ describe('cross-source field order', () => {
         } } satisfies TriageScanLaneV1, orderedLane(OTHER_INSTANCE_ID, [2, 4, 6, 8], [])];
         const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000, signal: controller.signal });
         const next = sources.map(lane => ({ ...lane,
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 4, nowMs: () => 2000, signal: controller.signal });
         expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002', '00003']);
@@ -222,6 +226,7 @@ describe('cross-source field order', () => {
         const sources = [orderedLane(INSTANCE_ID, [1, 3], calls), orderedLane(OTHER_INSTANCE_ID, [2, 4], [])];
         const first = await runTriageScanPass({ lanes: sources, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
         const next = sources.map(lane => ({ ...lane,
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const second = await runTriageScanPass({ lanes: next, pageLimit: 2, observationBudget: 1, nowMs: () => 2000 });
         expect(second.observations.map(item => item.entryRef.entryId)).toEqual(['00002']);
@@ -268,7 +273,7 @@ describe('cross-source field order', () => {
         expect(pass.stopped).toEqual([]);
     });
 
-    it('ends the whole continuation visibly when an unshown source row exceeds the canonical token allocation', async () => {
+    it('retains structured rows beyond the former serialized token allocation', async () => {
         const pass = await runTriageScanPass({ lanes: [orderedLane(INSTANCE_ID, [1, 2], []),
             { ...answeringLane({ sourceInstanceId: OTHER_INSTANCE_ID, declaredKindIds: ['issue'], scan: async () => ({
                 kind: 'complete', evidence: { kind: 'partial', reason: 'native-partial', omittedItemCount: 1,
@@ -278,15 +283,17 @@ describe('cross-source field order', () => {
             }) }), sort: { field: 'created', direction: 'asc' } }],
             pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
         expect(pass.observations.map(item => item.entryRef.entryId)).toEqual(['00001']);
-        expect(pass.lanes[1]).toMatchObject({ exhausted: false, health: { kind: 'partial', reason: 'continuation-unavailable',
+        expect(pass.lanes[1]).toMatchObject({ exhausted: false, health: { kind: 'partial', reason: 'native-partial',
             omittedItemCount: 1, failure: { class: 'transient', code: 'native_omission' } } });
-        expect(pass.stopped).toEqual([]);
+        expect(pass.stopped).toHaveLength(2);
+        expect(pass.stopped[1]?.retained?.page.observations[0]).toMatchObject({ snapshot: { labels: ['x'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1)] } });
     });
 
     it('rejects a retained buffer resumed with a different field order', async () => {
         const original = [orderedLane(INSTANCE_ID, [1, 3], []), orderedLane(OTHER_INSTANCE_ID, [2, 4], [])];
         const first = await runTriageScanPass({ lanes: original, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
         const resumed = original.map(lane => ({ ...lane, sort: { field: 'created', direction: 'desc' } as const,
+            retained: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.retained,
             resume: first.stopped.find(stop => stop.sourceInstanceId === lane.sourceInstanceId)?.continuation }));
         const pass = await runTriageScanPass({ lanes: resumed, pageLimit: 2, observationBudget: 1, nowMs: () => 1000 });
         expect(pass.observations).toEqual([]);
@@ -308,7 +315,7 @@ describe('cross-source field order', () => {
             if (pass.stopped.length === 0) break;
             next = lanes.flatMap(lane => {
                 const stop = pass.stopped.find(item => item.sourceInstanceId === lane.sourceInstanceId);
-                return stop === undefined ? [] : [{ ...lane, resume: stop.continuation, pageLimit: stop.pageLimit }];
+                return stop === undefined ? [] : [{ ...lane, resume: stop.continuation, retained: stop.retained, pageLimit: stop.pageLimit }];
             });
         }
         expect(seen).toEqual(['00001', '00002', '00003', '00004', '00005', '00006', '00007', '00008']);

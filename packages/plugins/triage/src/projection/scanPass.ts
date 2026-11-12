@@ -13,7 +13,7 @@ import {
     type CorpusQualifiedObservationV1,
 } from '../corpus/fold/qualify.js';
 import type { TriageListLaneHealthV1, TriageListLaneV1 } from './listWindow.js';
-import { TriageListInvocationErrorV1Schema } from '../actions/listEntriesProtocol.js';
+import { type TriageListEntriesInputV1, TriageListInvocationErrorV1Schema } from '../actions/listEntriesProtocol.js';
 import { runTriageFieldSortedScanPass } from './fieldSortScan.js';
 
 /**
@@ -71,6 +71,7 @@ export type TriageScanLaneV1 = Readonly<{
      * anywhere, and is gone when the pass returns.
      */
     resume?: TriageScanContinuationV1;
+    retained?: NonNullable<TriageListEntriesInputV1['resume']>[number]['retained'];
     /** Geometry retained beside `resume`; omitted for a new lane. */
     pageLimit?: number;
     /** Source-declared native minimum, used only when starting a new walk. */
@@ -84,6 +85,7 @@ export type TriageScanPassStopV1 = Readonly<{
     pageLimit: number;
     /** Omitted for a lane the result budget did not allow us to start. */
     continuation?: TriageScanContinuationV1;
+    retained?: TriageScanLaneV1['retained'];
 }>;
 
 export type TriageScanPassResultV1 = Readonly<{

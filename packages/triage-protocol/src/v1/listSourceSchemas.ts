@@ -1,3 +1,6 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { TriageGetResultV1, TriageScanResultV1 } from './operations.js';
+
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -556,7 +559,22 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         TriageSourceScanObservationV1Schema,
     );
 
+    const TriageScanPageV1Schema = defineProtocolUnion([
+        defineProtocolObject({
+            kind: defineProtocolLiteral('page'),
+            observations: TriageScanObservationsV1ProtocolSchema,
+            evidence: TriageSourceScanEvidenceV1Schema,
+            continuation: TriageScanContinuationV1Schema,
+        }, { policy: 'closed' }),
+        defineProtocolObject({
+            kind: defineProtocolLiteral('complete'),
+            observations: TriageScanObservationsV1ProtocolSchema,
+            evidence: TriageSourceScanEvidenceV1Schema,
+        }, { policy: 'closed' }),
+    ]);
+
     return {
+        TriageScanPageV1Schema,
         TriageSourceEntryLocalRefV1Schema,
         TriageSourceScopeUnitIdV1Schema,
         TriageEntryLocatorV1Schema,
@@ -587,4 +605,23 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         TriageSourceScanEvidenceV1Schema,
         TriageScanObservationsV1ProtocolSchema,
     };
+}
+
+/** Triage's keyed fact identity admission, after host structural decoding.
+ * JSON Schema transport cannot preserve keyed-array semantics. Check the whole
+ * result before any observation can be folded or published; ids are snapshot-local.
+ */
+export function admitSourceFacts<T extends TriageGetResultV1 | TriageScanResultV1>(result: T): T {
+    const observations = result.kind === 'page' || result.kind === 'complete' ? result.observations : [result];
+    for (const observation of observations) {
+        if (observation.kind !== 'present') continue;
+        const ids = new Set<string>();
+        for (const fact of observation.snapshot.facts) {
+            if (ids.has(fact.id)) {
+                throw new PluginError({ code: 'plugin_targeted_operation_result_invalid', retryable: false });
+            }
+            ids.add(fact.id);
+        }
+    }
+    return result;
 }

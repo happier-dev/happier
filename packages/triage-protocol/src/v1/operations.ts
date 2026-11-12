@@ -25,12 +25,11 @@ import {
 } from './instances.js';
 import {
     TriageScanContinuationV1Schema,
-    TriageScanObservationsV1ProtocolSchema,
+    TriageScanPageV1Schema,
     TriageSourceAbsentObservationV1ProtocolSchema,
     TriageSourceMergedObservationV1ProtocolSchema,
     TriageSourcePresentObservationV1Fields,
     TriageSourceUnresolvedObservationV1ProtocolSchema,
-    TriageSourceScanEvidenceV1Schema,
 } from './observations.js';
 import { TriageListSortV1Schema } from './sorting.js';
 
@@ -97,17 +96,7 @@ export type TriageScanInputV1 = ReturnType<typeof TriageScanInputV1Schema.parse>
  * rather than delaying a successful page (`CONTRACT.md` §5.1, §5.2).
  */
 export const TriageScanResultV1Schema = defineProtocolUnion([
-    defineProtocolObject({
-        kind: defineProtocolLiteral('page'),
-        observations: TriageScanObservationsV1ProtocolSchema,
-        evidence: TriageSourceScanEvidenceV1Schema,
-        continuation: TriageScanContinuationV1Schema,
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('complete'),
-        observations: TriageScanObservationsV1ProtocolSchema,
-        evidence: TriageSourceScanEvidenceV1Schema,
-    }, { policy: 'closed' }),
+    TriageScanPageV1Schema,
     defineProtocolObject({
         kind: defineProtocolLiteral('failed'),
         failure: TriageSourceFailureV1Schema,

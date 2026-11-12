@@ -1,3 +1,4 @@
+import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
 import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
@@ -365,7 +366,7 @@ export async function assembleTriageListPass(
             ...(input.query?.trim() ? { query: input.query.trim() } : {}),
             ...(resume === undefined
                 ? {}
-                : { resume: resume.continuation, pageLimit: resume.pageLimit }),
+                : { resume: resume.continuation, retained: resume.retained, pageLimit: resume.pageLimit }),
             scan: (scanInput, scanOptions) => {
                 if (deps.readInternalTasks !== undefined && isInternalTaskConfiguredInstanceV1(scanInput.instance)) {
                     return taskReadFailure === undefined ? Promise.resolve(projectInternalTaskScan(scanInput, taskList))
@@ -558,8 +559,8 @@ export function createTriageListEntriesDeps(
                 observation.dispose();
             }
         },
-        executeScan: async (operation, scanInput, options) => await context.services.actions
-            .executeAdmittedTargetedOperation(operation, scanInput, { ...options, machineAvailability: 'current' }),
+        executeScan: async (operation, scanInput, options) => admitSourceFacts(await context.services.actions
+            .executeAdmittedTargetedOperation(operation, scanInput, { ...options, machineAvailability: 'current' })),
         executeScopeUnits: async (operation, scopeInput, options) => await context.services.actions
             .executeAdmittedTargetedOperation(operation, scopeInput, { ...options, machineAvailability: 'current' }),
         nowMs: () => Date.now(),

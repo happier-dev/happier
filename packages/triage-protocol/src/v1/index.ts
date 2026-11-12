@@ -255,6 +255,7 @@ export {
     TriageRowFactV1Schema,
     TriageRowFactValueV1Schema,
     TriageScanContinuationV1Schema,
+    TriageScanPageV1Schema,
     TriageSourceEntrySnapshotV1Schema,
     TriageSourceObservationV1Schema,
     TriageSourceScanEvidenceV1Schema,
@@ -436,3 +437,5 @@ export { TriageListInvocationErrorV1Schema } from './diagnostics.js';
 export type { TriageListInvocationErrorV1 } from './diagnostics.js';
 
 export { createTriageListResultSchemasV1, type TriageListResultSchemasV1 } from './listResultSchemas.js';
+
+export { admitSourceFacts } from './listSourceSchemas.js';

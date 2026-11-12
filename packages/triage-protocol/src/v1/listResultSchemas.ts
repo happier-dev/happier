@@ -13,14 +13,14 @@ import {
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from './constants.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
-import { TriageListSortFieldsV1Schema } from './sorting.js';
+import { TriageListSortV1Schema, TriageListSortFieldsV1Schema } from './sorting.js';
 import type { createTriageListSourceSchemasV1 } from './listSourceSchemas.js';
 
 type TriageListResultSourceSchemasV1 = Pick<ReturnType<typeof createTriageListSourceSchemasV1>,
     'TriageEntryLocatorV1Schema' | 'TriageEntryRepositoryRefV1Schema'
     | 'TriageSourceEntrySnapshotV1Schema' | 'TriageSourceFailureV1Schema'
     | 'TriageListInvocationErrorV1Schema' | 'TriageScanContinuationV1Schema'
-    | 'TriageSourceScanEvidenceV1Schema' | 'TriageSourceViewerFactsV1Schema'>;
+    | 'TriageSourceScanEvidenceV1Schema' | 'TriageSourceViewerFactsV1Schema' | 'TriageScanPageV1Schema'>;
 
 // Preserve the DSL's separate authored-input/admitted-output projections. Named
 // boundaries prevent the same snapshot type expanding through rows and arrays.
@@ -39,6 +39,13 @@ function laneContinuationFields(sourceSchemas: TriageListResultSourceSchemasV1) 
         }),
         /** Absent when the previous window had no capacity to start this lane. */
         continuation: TriageScanContinuationV1Schema.optional(),
+        /** Unconsumed source rows stay structured through Action redaction. */
+        retained: defineProtocolObject({
+            instanceDigest: TriageIdentifierV1ProtocolSchema,
+            sort: TriageListSortV1Schema,
+            observedAtMs: defineProtocolNumber({ integer: true, minimum: 0 }),
+            page: sourceSchemas.TriageScanPageV1Schema,
+        }, { policy: 'closed' }).optional(),
     };
 }
 type LaneContinuationSchemaV1 = ClosedSchemaV1<ReturnType<typeof laneContinuationFields>>;

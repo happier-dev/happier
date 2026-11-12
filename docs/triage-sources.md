@@ -22,6 +22,13 @@ label at its display boundary and sets `projectionTruncated` when shortened.
 This correction is development source;
 an already-loaded declaration requires the normal producer reload.
 
+Source fact ids are unique within each snapshot. Triage admits source scan and
+exact-get output through `admitSourceFacts` after host structural decoding. A
+duplicate id refuses the whole result with
+`plugin_targeted_operation_result_invalid` before any row is folded or sent to
+Composer; the same id in separate snapshots remains valid. This is a Triage
+domain rule, independent of the JSON Schema transport.
+
 ## Unavailable source diagnostics (0.3 development source)
 
 Plugin admission and loading own unavailable-plugin causes. Registration carries
@@ -87,13 +94,15 @@ acquisition. Named orders retain their existing retained-window behavior.
 For a field-sorted list, sources order their native pages before returning them.
 [`scanPass.ts`](../packages/plugins/triage/src/projection/scanPass.ts) owns the
 cross-source head merge and retains unshown rows with each native frontier in
-the existing list continuation. It compares the field and direction, then the
+the existing list continuation as typed `retained` data. The native page and
+its opaque source cursor stay structured through plugin Action result redaction;
+no JSON-looking string embeds the cursor. It compares the field and direction, then the
 stable entry id. A page stops when the next head is unknown; Load More resumes
 that frontier rather than re-sorting a partial client window. The mounted store
 preserves the admitted aggregate row sequence. Existing Pinned, attention and
 status bands (and board status columns) retain that field sequence inside each
-band. A source failure or an oversized
-continuation leaves coverage visibly incomplete rather than claiming exhaustion.
+band. A source failure leaves coverage visibly incomplete rather than claiming
+exhaustion. The canonical Action response envelope governs retained pages.
 
 GitHub configurations with all-repository security alerts offer no field sort:
 the repository directory cannot supply a globally ordered native alert page.
@@ -306,9 +315,10 @@ with explicit provider-fact examples rather than provider collection quotas.
 The 32-source value remains a catalog page and finite allocation witness; a
 field-sorted acquisition includes every selected source in one aggregate read.
 Selected membership, lane health and continuations have no competing count
-quota beneath the host response envelope. Buffered field-sort cursors receive
-a full scan-page share of the derived allocation rather than a scalar text
-field share; the same source schema and envelope calculation own both bounds.
+quota beneath the host response envelope. Buffered field-sort pages use the
+canonical source-page schema and remain under the real Action envelope,
+alongside other provider-sized adjuncts. The finite allocation still reserves
+opaque source cursor bytes.
 The browser-safe maximal-value derivation has one owner in
 [`maximumEncodedValue.ts`](../packages/triage-protocol/src/v1/maximumEncodedValue.ts);
 the existing testing subpath re-exports it. Retained configured-instance fields

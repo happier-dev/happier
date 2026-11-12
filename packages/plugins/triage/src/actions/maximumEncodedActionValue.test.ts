@@ -244,7 +244,7 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
             // Optional label collections carry provider-sized names. Exclude
             // them from this finite sub-envelope rather than invent maxima.
             Object.entries(fragment.properties)
-                .filter(([key]) => key !== 'labels' && key !== 'labelColors')
+                .filter(([key]) => key !== 'labels' && key !== 'labelColors' && key !== 'retained')
                 .map(([key, child]) => [key,
                 ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
                     ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }
@@ -525,5 +525,18 @@ describe('aggregate Action value shapes', () => {
         });
         expect(admits(result)).toBe(true);
         expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(false);
+        // The same provider-sized observation can be retained for a later field
+        // page. Structured retention does not bypass the host response envelope.
+        if (result.kind !== 'applied') throw new Error('Expected the applied fixture');
+        const retained = TriageListEntriesResultV1Schema.parse({
+            v: 1, configuredSources: [], configuredSourcesStatus: 'complete',
+            window: { v: 1, rows: [], lanes: [], coverage: 'partial', assembledAtMs: 1,
+                continuations: [{ sourceInstanceId: '11111111-1111-4111-8111-111111111111', pageLimit: 1,
+                    retained: { instanceDigest: 'digest', sort: { field: 'created', direction: 'asc' }, observedAtMs: 1,
+                        page: { kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [result.observation] } } }],
+            },
+        });
+        expect(admits(retained)).toBe(true);
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(retained)).toBe(false);
     });
 });

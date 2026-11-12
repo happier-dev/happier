@@ -2,6 +2,7 @@ import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 export type { TriageEntryRepositoryRefV1 } from './listSourceSchemas.js';
 
 export const {
+    TriageScanPageV1Schema,
     TriageRowFactValueV1Schema,
     TriageRowFactV1Schema,
     TriageEntryStateV1ProtocolSchema,

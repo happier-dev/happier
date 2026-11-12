@@ -1,3 +1,5 @@
+import { redactPluginInvocationResultData } from '../../../../cli-common/src/plugins/registration/actionResultRedaction.js';
+import { redactBugReportSensitiveText } from '../../../../protocol/src/bugs/reports/redaction.js';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
@@ -392,6 +394,54 @@ const finishedWalk: TriageAdmittedOperationExecutorV1 = async () => ({
 });
 
 describe('the aggregate list coverage claim', () => {
+    it('resumes unconsumed source rows through the redacted plugin Action result', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const ids = [INSTANCE_ID, SECOND_INSTANCE_ID];
+        for (const [index, sourceInstanceId] of ids.entries()) control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag(String(index)), sourceInstanceId, configuredAtMs: 1,
+        })));
+        const requests: import('@happier-dev/triage-protocol/v1').TriageScanInputV1[] = [];
+        const context = {
+            signal: new AbortController().signal,
+            services: {
+                storage: { account: { collection: (definition: PluginAccountCollectionDefinition) =>
+                    definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID ? collections.sourceInstances
+                        : definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID ? collections.sessionLinks : collections.userMarks } },
+                targetedContributions: { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [{
+                    ...ADMITTED_SOURCE, descriptor: { ...ADMITTED_SOURCE.descriptor, sortFields: ['created'], minimumScanPageSize: 2 },
+                }] }), dispose: () => {} }) },
+                actions: { executeAdmittedTargetedOperation: async (_operation: unknown, request: import('@happier-dev/triage-protocol/v1').TriageScanInputV1) => {
+                    requests.push(request);
+                    const index = ids.indexOf(request.instance.instance.sourceInstanceId);
+                    if (request.page.kind === 'continuation') expect(request.page.continuation.token).toBe('native-next');
+                    const initial = request.page.kind === 'initial';
+                    return { ...(initial ? { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: 'native-next' } }
+                        : { kind: 'complete', evidence: { kind: 'walkFinished' } }),
+                        observations: (initial ? [index + 1, index + 3] : [index + 5]).map(id => ({
+                            kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'repo', entryId: String(id) },
+                            snapshot: testkitSnapshot({ createdAtMs: id }), locator: testkitLocator(), viewer: testkitViewer(),
+                        })) };
+                } },
+            },
+        } as unknown as PluginAccountActionContext;
+        const handler = createTriageListEntriesActionHandler();
+        const input: TriageListEntriesInputV1 = { v: 1, sources: await selectTestkitConfiguredSources(ids, collections.sourceInstances),
+            limit: 1, order: 'newest', sort: { field: 'created', direction: 'asc' } };
+        const read = async (value: TriageListEntriesInputV1) => TriageListEntriesResultV1Schema.parse(
+            redactPluginInvocationResultData(AgentRuntimeJsonValueV1Schema.parse(await handler(value, context)), redactBugReportSensitiveText));
+        let page = await read(input);
+        const rows = page.window.rows.map(row => row.entryRef.entryId);
+        while (page.window.continuations?.length) {
+            const active = new Set(page.window.continuations.map(lane => lane.sourceInstanceId));
+            page = await read({ ...input, sources: { kind: 'selected', sourceInstances: input.sources.kind === 'selected'
+                ? input.sources.sourceInstances.filter(source => active.has(source.sourceInstanceId)) : [] }, resume: page.window.continuations });
+            rows.push(...page.window.rows.map(row => row.entryRef.entryId));
+        }
+        expect(rows).toEqual(['1', '2', '3', '4', '5', '6']);
+        expect(requests.filter(request => request.page.kind === 'initial')).toHaveLength(2);
+        expect(requests.filter(request => request.page.kind === 'continuation')).toHaveLength(2);
+    });
+
     it('carries source ordering across pages without activity re-ranking the source result', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(configuredRow({ instanceTag: paddedInstanceTag('s'),

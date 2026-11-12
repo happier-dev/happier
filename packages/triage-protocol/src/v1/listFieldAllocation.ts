@@ -12,10 +12,10 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(withTaskFactsWitness) }),
         ...(fragment.items === undefined ? {} : { items: withTaskFactsWitness(fragment.items) }),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
-            // Optional label collections carry provider-sized names. Exclude
-            // them from this finite sub-envelope rather than invent maxima.
+            // Provider-sized labels and retained source pages use the real Action
+            // envelope. They have no independent finite collection quota.
             Object.entries(fragment.properties)
-                .filter(([key]) => key !== 'labels' && key !== 'labelColors')
+                .filter(([key]) => key !== 'labels' && key !== 'labelColors' && key !== 'retained')
                 .map(([key, child]): [string, PluginJsonSchema] => [key,
                 ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
                     ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }

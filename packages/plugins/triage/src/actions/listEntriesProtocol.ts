@@ -23,7 +23,7 @@ import {
     TriageSourceFailureV1Schema,
     TriageListInvocationErrorV1Schema,
     TriageSourceInstanceIdV1Schema,
-    TriageScanContinuationV1Schema,
+    TriageScanContinuationV1Schema, TriageScanPageV1Schema,
     TriageSourceScanEvidenceV1Schema,
     TriageSourceViewerFactsV1Schema,
     TriageSourceScopeUnitDescriptorV1Schema,
@@ -234,7 +234,7 @@ const { TriageLaneContinuationV1Schema, TriageProjectedObservationV1Schema, Tria
     {
         TriageEntryLocatorV1Schema, TriageEntryRepositoryRefV1Schema,
         TriageSourceEntrySnapshotV1Schema, TriageSourceFailureV1Schema,
-        TriageListInvocationErrorV1Schema, TriageScanContinuationV1Schema,
+        TriageListInvocationErrorV1Schema, TriageScanContinuationV1Schema, TriageScanPageV1Schema,
         TriageSourceScanEvidenceV1Schema, TriageSourceViewerFactsV1Schema,
     },
     defineProtocolObject({
