@@ -1,6 +1,19 @@
 import { deploymentOperationalTranslations, type DeploymentOperationalTranslations } from './deploymentOperationalTranslations';
 import type { SupportedLanguage } from '../_all';
 
+/** English fallback for reviewed fleet membership, pending translation review. */
+const fleetCopy = {
+  title: 'Manage servers', add: 'Add a server', remove: 'Remove server',
+  sourceUnavailable: 'Serving version unavailable',
+  sourceUnavailableBody: 'Wait for the serving deployment to load, then reopen this review.',
+  noDestination: 'No other server is connected',
+  noDestinationBody: 'Connect another machine to this Home, then reopen this review.',
+  lastServer: 'This is the last server. Use Stop and remove on the environment to remove its whole target.',
+  firstAddBody: 'Add the server to this environment. Nothing starts until you deploy.',
+  addBody: 'The new server joins the version already serving. Existing servers keep running. Choose how traffic reaches the fleet; the run checks its network and ingress setup.',
+  removeBody: 'Stop sending traffic to this server, then stop its services and remove it from this environment. Other servers keep serving. If draining fails, the server stays in the fleet.',
+};
+
 /** English fallback until reviewed translations are supplied for this new repository flow. */
 const moveToRepositoryCopy = {
   title: 'Move to repository',
@@ -96,6 +109,7 @@ const restoreExtendedCopy = {
 
 /** Environment → Settings (Backups destination and keep counts, Checks): copy added by DEPLOY-COMPOSE-1107 lane L-D. */
 type DeploymentSettingsTranslations = Readonly<{
+  fleet: typeof fleetCopy;
   moveToRepository: typeof moveToRepositoryCopy;
   previewEditor: typeof previewEditorCopy;
   restoreExtended: typeof restoreExtendedCopy;
@@ -231,6 +245,7 @@ export const deploymentSettingsTranslations = {
   en: {
     ...deploymentOperationalTranslations['en'],
     fleetIngressSuggestedBody: "Suggested from the Machines’ network information. Choose to save it; Domain setup will still check the route.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -369,6 +384,7 @@ export const deploymentSettingsTranslations = {
   ru: {
     ...deploymentOperationalTranslations['ru'],
     fleetIngressSuggestedBody: "Предложено на основе сетевых данных машин. Сохраните этот вариант, если хотите его использовать; при настройке домена маршрут всё равно будет проверен.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -506,6 +522,7 @@ export const deploymentSettingsTranslations = {
   pl: {
     ...deploymentOperationalTranslations['pl'],
     fleetIngressSuggestedBody: "Sugestia na podstawie informacji o sieci maszyn. Wybierz ją, aby zapisać; trasa zostanie jeszcze sprawdzona podczas konfiguracji domeny.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -642,6 +659,7 @@ export const deploymentSettingsTranslations = {
   es: {
     ...deploymentOperationalTranslations['es'],
     fleetIngressSuggestedBody: "Sugerencia basada en la información de red de las máquinas. Elígela para guardarla; la ruta se comprobará al configurar el dominio.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -781,6 +799,7 @@ export const deploymentSettingsTranslations = {
   fr: {
     ...deploymentOperationalTranslations['fr'],
     fleetIngressSuggestedBody: "Suggestion basée sur les informations réseau des machines. Choisissez-la pour l’enregistrer ; la route sera encore vérifiée lors de la configuration du domaine.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -922,6 +941,7 @@ export const deploymentSettingsTranslations = {
   it: {
     ...deploymentOperationalTranslations['it'],
     fleetIngressSuggestedBody: "Suggerimento basato sulle informazioni di rete delle macchine. Sceglilo per salvarlo; il percorso verrà comunque verificato durante la configurazione del dominio.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1062,6 +1082,7 @@ export const deploymentSettingsTranslations = {
   pt: {
     ...deploymentOperationalTranslations['pt'],
     fleetIngressSuggestedBody: "Sugestão baseada nas informações de rede das máquinas. Escolha para salvar; a rota ainda será verificada na configuração do domínio.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1203,6 +1224,7 @@ export const deploymentSettingsTranslations = {
   ca: {
     ...deploymentOperationalTranslations['ca'],
     fleetIngressSuggestedBody: "Suggeriment basat en la informació de xarxa de les màquines. Tria’l per desar-lo; la ruta es comprovarà en configurar el domini.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1343,6 +1365,7 @@ export const deploymentSettingsTranslations = {
   de: {
     ...deploymentOperationalTranslations['de'],
     fleetIngressSuggestedBody: "Vorschlag anhand der Netzwerkinformationen der Maschinen. Wählen Sie ihn zum Speichern aus; bei der Domain-Einrichtung wird die Route noch geprüft.",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1483,6 +1506,7 @@ export const deploymentSettingsTranslations = {
   'zh-Hans': {
     ...deploymentOperationalTranslations['zh-Hans'],
     fleetIngressSuggestedBody: "根据机器的网络信息提供的建议。选择后才会保存；域名设置时仍会检查此路由。",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1616,6 +1640,7 @@ export const deploymentSettingsTranslations = {
   'zh-Hant': {
     ...deploymentOperationalTranslations['zh-Hant'],
     fleetIngressSuggestedBody: "根據機器的網路資訊提供的建議。選擇後才會儲存；設定網域時仍會檢查此路由。",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,
@@ -1749,6 +1774,7 @@ export const deploymentSettingsTranslations = {
   ja: {
     ...deploymentOperationalTranslations['ja'],
     fleetIngressSuggestedBody: "マシンのネットワーク情報に基づく候補です。選択すると保存されます。ドメイン設定時にもルートを確認します。",
+    fleet: fleetCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,

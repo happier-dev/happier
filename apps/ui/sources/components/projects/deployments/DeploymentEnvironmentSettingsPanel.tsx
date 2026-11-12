@@ -107,6 +107,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onLink?: (() => void) | null;
       /** Reuses Link a machine to replace a first placement before anything has deployed. */
       onChangeMachine?: (() => void) | null;
+      onManageServers?: (() => void) | null;
       /** Opens the Add platform target sheet; null where this viewer cannot link one. */
       onAddPlatform?: (() => void) | null;
       /** The backup the serving deploy kept before its migration, with the restore sheet that replaces data with it. */
@@ -202,6 +203,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               icon="arrows-left-right"
               onPress={onChangeMachine}
             />
+          ) : props.onManageServers ? (
+            <SectionActionButton testID={`${section('servers-build')}.manage`}
+              title={t('projects.deployments.overviewStatus.manage')} onPress={props.onManageServers} />
           ) : onAddPlatform && !runtimeLinkId ? (
             <SectionActionButton
               testID={`${section('servers-build')}.addPlatform`}
@@ -212,6 +216,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
           ) : undefined}
         >
           {changeOutcome('servers-build')}
+          {onChangeMachine && props.onManageServers ? <Item
+            testID={`${section('servers-build')}.manage`} title={t('projects.deployments.settingsSections.fleet.title')}
+            onPress={props.onManageServers} /> : null}
           {platformSource && runtimeLinkId ? (
             <Item
               testID={`${section('servers-build')}.platform`}
@@ -285,6 +292,12 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               mode="info"
             />
           )}
+          {detail.runtimeTargetLink?.targetKind === 'ownServer' ? (
+            <Item testID={`${section('servers-build')}.images`}
+              title={t('projects.deployments.receipt.imagesTitle')}
+              subtitle={t('projects.deployments.settingsSections.imageDistribution')}
+              mode="info" />
+          ) : null}
           <DeploymentFleetIngress detail={detail} editing={editing} machineName={machineName} />
         </ItemGroup>
 
@@ -653,7 +666,8 @@ function BackupRows(props: SectionProps) {
 
   return (
     <>
-      <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
+      <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions}
+        lifetime={props.lifetime ?? undefined} testID={props.testID} />
       <DeploymentBackupCredentialRows
         detail={props.detail} configuration={backup} lifetime={actions ? props.lifetime ?? null : null}
         actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}

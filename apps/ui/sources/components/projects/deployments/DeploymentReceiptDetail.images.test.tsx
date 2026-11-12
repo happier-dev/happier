@@ -197,7 +197,7 @@ describe('Receipt → failed', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it.each(['deployment_image_unavailable', 'build_platform_unsupported'])('offers the canonical remedy for the recorded cause (%s)', async code => {
+  it.each(['deployment_image_unavailable', 'build_platform_unsupported', 'stateful_service_multi_machine'])('offers the canonical remedy for the recorded cause (%s)', async code => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code, phase: 'build' as const };
     const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, buildMachineId: 'builder-c', failure });
@@ -235,9 +235,10 @@ describe('Receipt → failed', () => {
       expect(String(banner?.props.description)).toContain(readDeploymentFailureRecoveryV1(failure.code, failure).remedy);
       // The canonical next action opens where the cause is fixed.
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
-      expect(opened).toEqual([[readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
-        // A failed step's logs open on this receipt itself.
-        code === 'build_platform_unsupported' ? { machineId: 'builder-c' } : { deploymentId: receipt.deployment.id }]]);
+      expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['settings']
+        : [readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
+          // A failed step's logs open on this receipt itself.
+          code === 'build_platform_unsupported' ? { machineId: 'builder-c' } : { deploymentId: receipt.deployment.id }]]);
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

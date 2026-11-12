@@ -151,6 +151,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPullRequestDeploy } from './DeploymentPullRequestDeploy';
+import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 import { DeploymentLiveAddressActions, formatDeploymentLiveAddress, resolveDeploymentLiveUrl } from './deploymentLiveAddress';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
@@ -1042,6 +1043,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={() => openTab('settings')}
                 onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
                   ? () => openTab('settings') : null} /> : null}
+              <DeploymentPendingRequest pending={detail.pendingDeployment} serverId={props.serverId} />
               {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}

@@ -188,12 +188,11 @@ it.each([{ phone: false, receiptPage: false, stored: false }, { phone: true, rec
         review={noReview} onOpenReceipt={() => {}} />);
   try {
     await waitForContent(screen, 'project-deployments.environment.pending');
-    const { Item } = await import('@/components/ui/lists/Item');
-    const row = screen.root.findAllByType(Item).find(node => node.props.testID === 'project-deployments.environment.pending');
-    if (intent.sourceIntent.kind === 'repository') expect(row?.props.subtitle).toBe(intent.sourceIntent.sha);
+    const text = screen.getTextContent();
+    if (intent.sourceIntent.kind === 'repository') expect(text).toContain(intent.sourceIntent.sha);
     else {
-      expect(row?.props.subtitle).toContain(String(intent.sourceIntent.contentRevision));
-      expect(row?.props.subtitle).toContain(intent.sourceIntent.composeDigest);
+      expect(text).toContain(String(intent.sourceIntent.contentRevision));
+      expect(text).toContain(intent.sourceIntent.composeDigest);
     }
     const show = vi.spyOn(Modal, 'show');
     await screen.pressByTestIdAsync('project-deployments.environment.pending');
@@ -710,6 +709,7 @@ describe('Project deployments page', () => {
     scope.serverId = await homes.addHome({ name: 'Promotion', serverUrl: 'https://promotion-navigation.test',
       accountId: scope.accountId, currentAccount: true, serverIdentityId: `srv_${'8'.repeat(32)}` });
     const previousPromotionRequests = homes.requestsFor('/v1/actions/deployments.promote').length;
+    const promotionInputs: unknown[] = [];
     const { Modal, ModalProvider } = await import('@/modal');
     const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
     const { createDeploymentActions } = await import('./deploymentActions');
@@ -731,8 +731,7 @@ describe('Project deployments page', () => {
       environment: destination, targetLinks: [] } });
     await answerExternalActionAccountForHome(homes, scope.serverId, { actionId: 'deployments.promote', machineId: 'machine-a',
       tokenEpoch: 0, deploymentSource: { id: scope.projectSourceId, revision: 1 }, execute: input => {
-      expect(input).toEqual({ serverId: scope.serverId, environmentId: 'production',
-        sourceEnvironmentId: detail.environment.id, sourceDeploymentId: receipt.deployment.id, artifact: 'image' });
+      promotionInputs.push(input);
       return response === 'review'
         ? { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' }
         : response === 'refusal' ? { ok: false, error: 'deployment_access_denied' }
@@ -762,6 +761,8 @@ describe('Project deployments page', () => {
       const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
       await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/deployments.promote'),
         screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).filter(Boolean).join(', ')).toHaveLength(previousPromotionRequests + 1));
+      await waitForHomeGovernance(() => expect(promotionInputs).toEqual([{ serverId: scope.serverId, environmentId: 'production',
+        sourceEnvironmentId: detail.environment.id, sourceDeploymentId: receipt.deployment.id, artifact: 'image' }]));
       if (response === 'review') {
         await waitForHomeGovernance(() => expect(request, screen.getTextContent()).toHaveBeenCalledWith('promotion-review'));
         await waitForHomeGovernance(async () => {
@@ -2248,6 +2249,7 @@ describe('Deployment receipt header actions', () => {
   });
 
   it.each(['failed', 'outcome_unknown'] as const)('retries a failed teardown through the teardown Action instead of deploying its source again (%s)', async state => {
+    const { ModalProvider } = await import('@/modal');
     const homeIdentity = `srv_${'e'.repeat(32)}`;
     scope.serverId = await homes.addHome({ name: 'Teardown retry', serverUrl: 'https://teardown-retry.test',
       serverIdentityId: homeIdentity, accountId: scope.accountId, currentAccount: true });
@@ -2284,13 +2286,15 @@ describe('Deployment receipt header actions', () => {
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     routerMock.module.router.setParams({ deploymentEnvironment: detail.environment.id, deployment: receipt.deployment.id });
     try {
-      const screen = await renderScreen(<ProjectDeploymentsView controller={controller} demand={shown} lifetime={lifetime}
+      const screen = await renderScreen(<ModalProvider><ProjectDeploymentsView controller={controller} demand={shown} lifetime={lifetime}
         serverId={scope.serverId} accountId={scope.accountId} sourceId={scope.projectSourceId}
-        actions={createDeploymentActions(lifetime, scope.projectSourceId)} />);
+        actions={createDeploymentActions(lifetime, scope.projectSourceId)} /></ModalProvider>);
       await waitForContent(screen, 'project-deployments.receipt.deployAgain');
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.confirm).mockClear();
       await screen.pressByTestIdAsync('project-deployments.receipt.deployAgain');
+      await waitForContent(screen, 'actions.confirmation-review.decision-approve');
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
       await waitForHomeGovernance(() => {
         const requests = homes.requestsFor('/v1/actions/deployments.teardown').length - beforeTeardowns
           + homes.requestsFor('/v1/actions/deployments.deploy').length - beforeDeploys;
