@@ -337,6 +337,20 @@ async function readNativeDeliveryMutationInTx(tx: Tx, input: NativeDeliveryMutat
     return read;
 }
 
+/** Whole-policy installation waits for its incumbent outcome. Exact retries
+ * retain their claim; installed-rule release can recover a settled unknown. */
+export function hasCompetingSessionTeamCredentialNativeDelivery(
+    bindings: readonly SessionTeamCredentialNativeSelectionBinding[],
+    operation: NativeDeliveryMutationInput['operation'],
+    continuation?: Pick<NativeDeliveryMutationInput, 'sessionId' | 'requestId' | 'operation'>,
+): boolean {
+    return bindings.some(binding => operation === 'install' && binding.installation === 'unknown'
+        || binding.submission !== undefined && (!continuation
+            || binding.sessionId !== continuation.sessionId
+            || binding.submission.requestId !== continuation.requestId
+            || binding.submission.operation !== continuation.operation));
+}
+
 /** Durable pre-I/O claim using the verified ordinary Action request identity. */
 export async function submitSessionTeamCredentialNativeDeliveryInTx(tx: Tx, input: NativeDeliveryMutationInput): Promise<
     Readonly<{ ok: true; submitted: boolean }> | NativeDeliveryMutationRefusal
@@ -347,6 +361,10 @@ export async function submitSessionTeamCredentialNativeDeliveryInTx(tx: Tx, inpu
     if (!accepted.delivery) return { ok: false, code: 'resource_unavailable' };
     if (accepted.submission?.requestId === input.requestId && accepted.submission.operation === input.operation) {
         return { ok: true, submitted: false };
+    }
+    const census = await readSessionTeamCredentialNativeSelectionsForManagedMachineInTx(tx, { managedId: accepted.managedId });
+    if (!census.ok || hasCompetingSessionTeamCredentialNativeDelivery(census.bindings, input.operation)) {
+        return { ok: false, code: 'resource_changed' };
     }
     if (input.operation === 'install') {
         const current = await validateExistingSessionTeamCredentialResourceInTx(tx, { sessionId: input.sessionId,
@@ -1148,7 +1166,7 @@ export async function admitSessionTeamCredentialBindingInTx(
 
 /** The effect that uses a Team credential: a Session, Run, or finite platform operation. */
 export type TeamCredentialOperationConsumer =
-    | Readonly<{ kind: "platform_operation"; resourceId: string }>
+    | Readonly<{ kind: "platform_operation" | "action_operation"; resourceId: string }>
     | Readonly<{ kind: "session"; sessionId: string }>
     | Readonly<{
         kind: "execution_run";
@@ -1207,7 +1225,7 @@ export async function admitTeamCredentialOperationBindingInTx(
             ...placement,
         });
     }
-    return input.consumer.kind === "platform_operation" || input.consumer.parentSessionId === null
+    return input.consumer.kind !== "execution_run" || input.consumer.parentSessionId === null
         ? await validatePlannedSessionTeamCredentialResourceInTx(tx, {
             accountId: input.accountId,
             resourceId: input.consumer.resourceId,

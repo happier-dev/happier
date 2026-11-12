@@ -6,7 +6,7 @@ import type { SessionAccessAuthentication } from '@/app/session/access/sessionAc
 import type { TeamCredentialExecutionRunCurrentnessResolver } from '@/app/teams/credentials/providerBrokerAdmission';
 import { admitProviderBrokerConsumerInTx } from '@/app/providers/brokerConsumerAdmission';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
-import { admitTeamCredentialOperationBindingInTx, validateSessionTeamCredentialNativeCensusInTx } from '@/app/teams/credentials/sessionBinding';
+import { admitTeamCredentialOperationBindingInTx, hasCompetingSessionTeamCredentialNativeDelivery, validateSessionTeamCredentialNativeCensusInTx } from '@/app/teams/credentials/sessionBinding';
 import { readSessionTeamCredentialNativeSelectionInTx,
     readSessionTeamCredentialNativeSelectionsForManagedMachineInTx } from '@/app/teams/credentials/nativeDeliveryRead';
 import { computeTeamCredentialNativeBindingReadDigestV1, type TeamCredentialNativeBindingReadRequestV1,
@@ -127,6 +127,9 @@ async function readManagedCredentialDeliveryAuthority(tx: Tx, input: ManagedCred
         ? { ...target, binding: accepted, admission: null } : null;
     const census = await readSessionTeamCredentialNativeSelectionsForManagedMachineInTx(tx, { managedId: target.machine.id });
     if (!census.ok) return null;
+    const operation = request.operation ?? 'install';
+    if (hasCompetingSessionTeamCredentialNativeDelivery(census.bindings, operation,
+        input.continuingRequestId ? { sessionId: request.sessionId, requestId: input.continuingRequestId, operation } : undefined)) return null;
     const eligible = await validateSessionTeamCredentialNativeCensusInTx(tx, {
         accountId: input.actorAccountId, request, censusBindings: census.bindings, authentication: input.authentication,
     });
