@@ -53,7 +53,10 @@ describe('storage-only cancellation through the sole receipt transition route', 
         };
         // Retained builder configuration is not native authority for a plugin link.
         const staleBuilder = target === 'platform-retained-builder' ? await db.machine.create({ data: {
-            id: crypto.randomUUID(), accountId: owner.id, metadata: '{}', installationId: crypto.randomUUID(), revokedAt: new Date(),
+            id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(), revokedAt: new Date(),
+            metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } }) : null;
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
             createdByAccountId: owner.id, controllerMachineId: machineId, buildMachineId: staleBuilder?.id,
@@ -106,7 +109,9 @@ describe('storage-only cancellation through the sole receipt transition route', 
             const running = await transition(stage);
             expect(running.statusCode, running.body).toBe(200);
             const nextController = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-                metadata: '{}', installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
+                metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: 'test',
+                    homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+                dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
             const reassigned = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${environment.id}/controller`,
                 headers: { authorization: `Bearer ${token}` }, payload: { serverId, environmentId: environment.id,
                     expectedRevision: admitted.json().revision, controllerMachineId: nextController.id } });

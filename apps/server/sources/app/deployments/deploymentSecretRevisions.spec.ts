@@ -8,8 +8,9 @@ import { initEncrypt } from '@/modules/encrypt';
 import { encodeSensitiveContentForAtRestStorage } from '@/app/encryption/sensitiveContentAtRestStorage';
 import { SavedSecretResourceStoredContentV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 
-const mocks = createDbMocks({ account: ['findUnique'], projectSource: ['findUnique'],
-    deploymentEnvironment: ['findUnique'], deploymentTargetLink: ['findMany'],
+const mocks = createDbMocks({ account: ['findUnique'], projectSource: ['findUnique'], machine: ['findUnique'],
+    deploymentEnvironment: ['findUnique', 'findMany'], deploymentTargetLink: ['findMany'], projectDeploymentDefaults: ['findMany'],
+    deployment: ['findMany'], deploymentDomain: ['findMany'],
     artifact: ['findMany'], publicSessionShare: ['findMany'], savedSecretResource: ['findMany'] });
 // Only Prisma persistence is replaced. Source/Artifact admission, Account
 // mode and Saved Secret authorization/material parsing remain real.
@@ -44,6 +45,10 @@ it('projects current usable bound Secret revisions without acquiring values or e
         referencedSavedSecretRevisions: captures, pendingDeployContent: null, deletedAt: null,
         createdByAccountId: account.id, createdAt: now, updatedAt: now });
     mocks.db.deploymentTargetLink.findMany.mockResolvedValue([]);
+    // Controller availability and Source content-reference reads find no rows.
+    mocks.db.machine.findUnique.mockResolvedValue(null);
+    for (const reader of [mocks.db.deploymentEnvironment, mocks.db.projectDeploymentDefaults,
+        mocks.db.deployment, mocks.db.deploymentDomain]) reader.findMany.mockResolvedValue([]);
     mocks.db.publicSessionShare.findMany.mockResolvedValue([]);
     mocks.db.artifact.findMany.mockResolvedValue([{ id: 'artifact', accountId: account.id, account,
         kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, signedInLink: null,

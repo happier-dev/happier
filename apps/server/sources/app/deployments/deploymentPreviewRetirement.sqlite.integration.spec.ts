@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -29,11 +32,19 @@ async function createPreviewTemplateFixture() {
         requestKey: crypto.randomUUID(), name: 'Preview repository', audience: [], repository }));
     if (!source.ok) throw new Error(source.error);
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-        metadata: '{}', installationId: crypto.randomUUID() } });
+        installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({ host: 'Preview', platform: 'linux',
+            happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+        dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+    const composeDocument = '{"services":{"app":{"image":"app:1"}}}';
     const artifact = async (kind: string) => {
         const stored = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Preview' })),
-            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+            // Environment create opens plain content through its canonical schema (717576ac290).
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: kind === 'deployment-environment.v1'
+                ? JSON.stringify(DeploymentEnvironmentContentV1Schema.parse({ name: 'Preview', retainPreviousDeployments: 1, bindings: [],
+                    definition: { kind: 'stored', contentRevision: 1, document: composeDocument, profiles: [], services: ['app'],
+                        composeDigest: `sha256:${createHash('sha256').update(composeDocument).digest('hex')}` } }))
+                : '{}' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!stored.ok) throw new Error(stored.error);
         return { contentArtifactId: stored.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };

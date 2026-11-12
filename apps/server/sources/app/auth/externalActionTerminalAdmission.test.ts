@@ -17,9 +17,12 @@ describe('paired terminal Action admission', () => {
         },
     );
 
-    it('keeps Session permission decisions human-decided for original automation roots', () => {
-        expect(isOriginalAccountExecutionAction('session.permission.respond')).toBe(false);
-        expect(isOriginalTerminalExecutionAction('session.permission.respond')).toBe(false);
+    it('admits a Home-minted Session permission decision root and leaves the decision to its approval policy', () => {
+        // d22730f487e: a credentialed Home mint has no second presence floor; the
+        // receiving Action's approval policy decides, and external credentials stay
+        // refused by resolveCredentialActionAdmissionV1 (protocol invocationAuthority.test.ts).
+        expect(isOriginalAccountExecutionAction('session.permission.respond')).toBe(true);
+        expect(isOriginalTerminalExecutionAction('session.permission.respond')).toBe(true);
     });
 
     it.each(['search.conversations', 'ui.find', 'workspace.tabs.list'])(

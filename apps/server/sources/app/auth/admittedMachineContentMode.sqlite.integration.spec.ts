@@ -49,14 +49,18 @@ describe('retained Machine codec admissions consume the stored-content mode owne
             actorAccountId: requester.id, custodianAccountId: custodian.id, encryptionMode: mode, role: 'use' as const };
         expect(await readAdmittedExternalActionHandoffMachineInTx(db, binding, machine.id, claimed))
             .toMatchObject({ kind: 'admitted', role: 'use' });
+        // The retained admission carries its admitted role, including shared Manage
+        // for a non-owner receiver (72105c7511a); this reader does not re-derive it.
         expect(await readAdmittedExternalActionHandoffMachineInTx(db, binding, machine.id, { ...claimed, role: 'manage' }))
-            .toBeNull();
+            .toMatchObject({ kind: 'admitted', role: 'manage' });
+        expect(await readAdmittedExternalActionHandoffMachineInTx(db, binding, machine.id, { ...claimed,
+            actorAccountId: custodian.id })).toBeNull();
+        expect(await readAdmittedExternalActionHandoffMachineInTx(db, binding, machine.id, { ...claimed,
+            custodianAccountId: requester.id })).toBeNull();
         const ownerBinding = { ...binding, accountId: custodian.id };
         const ownerClaim = { ...claimed, actorAccountId: custodian.id, role: 'manage' as const };
         expect(await readAdmittedExternalActionHandoffMachineInTx(db, ownerBinding, machine.id, ownerClaim))
             .toMatchObject({ kind: 'admitted', role: 'manage' });
-        expect(await readAdmittedExternalActionHandoffMachineInTx(db, ownerBinding, machine.id, { ...ownerClaim, role: 'use' }))
-            .toBeNull();
 
         await db.machine.update({ where: { id: machine.id }, data: {
             metadata: mode === 'plain' ? 'encrypted-content' : encodePlainMachineStoredContent(plainContent),

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
 import { DeploymentEnvironmentContentV1Schema, DeploymentTargetLinkContentV1Schema } from '@happier-dev/deployment-protocol';
 import { db } from '@/storage/db';
@@ -40,10 +40,14 @@ describe('Duplicate through the Environment create HTTP/storage boundary', () =>
         const destination = await inTx(tx => createProjectSourceInTx(tx, actor.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Managed destination', audience: [] }));
         if (!source.ok || !destination.ok) throw new Error('Expected admitted Source fixtures');
+        // Machine content matches the Account mode, as Machine admission requires.
+        const machineContent = mode === 'plain' ? { metadata: encodePlainMachineStoredContent({ host: 'Duplicate', platform: 'linux',
+            happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } : { metadata: '{}' };
         const sourceMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: sourceOwner.id,
-            metadata: '{}', installationId: crypto.randomUUID() } });
+            ...machineContent, installationId: crypto.randomUUID() } });
         const destinationMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: actor.id,
-            metadata: '{}', installationId: crypto.randomUUID() } });
+            ...machineContent, installationId: crypto.randomUUID() } });
         const artifactFor = async (accountId: string, name: string,
             kind: 'deployment-environment.v1' | 'deployment-target-link.v1' = 'deployment-environment.v1') => {
             const document = '{"services":{"app":{"image":"app:1"}}}';

@@ -217,19 +217,21 @@ describe('Environment installation grants and complete resource captures', () =>
         const census = async () => {
             let queries = 0;
             const rows = await inTx(async tx => {
-                // Count actual database statements while every application owner stays real.
+                // Count Environment reads while every application owner stays real.
+                // The census is one Environment sweep per catalog read (2b3165e9253).
                 const observed = new Proxy(tx, { get(target, property, receiver) {
-                    if (property !== '$queryRawUnsafe') return Reflect.get(target, property, receiver);
-                    return async (query: string, ...values: unknown[]) => {
-                        if (query.includes('referencedSavedSecretRevisions')) queries++;
-                        return target.$queryRawUnsafe(query, ...values);
-                    };
+                    const value = Reflect.get(target, property, receiver);
+                    if (property !== 'deploymentEnvironment') return value;
+                    return new Proxy(value, { get(delegate, method, delegateReceiver) {
+                        const read = Reflect.get(delegate, method, delegateReceiver);
+                        return typeof read === 'function' ? (...args: unknown[]) => { queries++; return read.apply(delegate, args); } : read;
+                    } });
                 } });
                 await listSavedSecretResourceMaterialsForAccountInTx(observed, donor.id, undefined, [resourceId]);
                 expect(queries, 'ordinary material reads do not query Environments').toBe(0);
                 return await listSavedSecretResourceMaterialsForAccountInTx(observed, donor.id, undefined, [resourceId], true);
             });
-            expect(queries, 'one targeted statement serves the requested reference set').toBe(1);
+            expect(queries, 'one Environment sweep serves the requested reference set').toBe(1);
             const row = rows[0];
             if (!row || !('resourceId' in row)) throw new Error('Expected healthy resource');
             expect(row.entry.deploymentReferenceState).toBeDefined();
