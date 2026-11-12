@@ -96,6 +96,19 @@ it('retains local Account custody through Machine Actions into an Account Action
         }));
         expect(sessionScoped).toMatchObject({ matched: true, result: { ok: false,
             errorCode: 'plugin_action_execution_placement_unavailable' } });
+        // A guest admitted to the owner's Machine (Manage grant) must not run
+        // Account Actions as the Machine owner, even with a current admission.
+        const guest = await runWithServerHttpBaseUrl(origin, () => executeContributedAction({
+            runtimeRegistry: runtime!.registry,
+            actionId: buildQualifiedPluginContributionKey({ pluginId: parent.manifest.id, localId: 'start' }),
+            input: { sessionId: 'spawned-on-machine' }, context: { surface: 'cli' },
+            approvalContext: { runtimeAccountId: 'machine-guest',
+                machineAdmission: { actorAccountId: 'machine-guest', custodianAccountId: accountId, machineId: 'session-machine',
+                    installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+                verifyMachineAdmissionCurrent: async () => true },
+        }));
+        expect(guest).toMatchObject({ matched: true, result: { ok: false,
+            errorCode: 'plugin_action_execution_placement_unavailable' } });
     } finally {
         await runtime?.dispose(); await socket.close(); restore(); await app.close(); fetch.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests();
     }

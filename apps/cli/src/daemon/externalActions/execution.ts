@@ -5,7 +5,7 @@ import { isManagedControllerCodecActionV1, openManagedControllerActionCodecV1 } 
 import { isDeploymentActionIdV1 } from "@happier-dev/protocol";
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
 import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
-import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { carriesNonLocalRequesterAuthority, isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { executeScmSourceReadForRequester } from '@/scm/hostingProviders/resolveRefForHost';
 import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vitals/machineVitalsSampleV1";
 import { createOwnServerDeploymentRuntimeForHost } from "@/deployments/targets/ownServer/ownServerDeploymentHostRuntime";
@@ -722,12 +722,7 @@ resolveServerFeaturesSnapshot?: () =>
         && requesterAccountContext === undefined && requesterRuntime == null
         && executionContext?.machineAdmission === undefined
         && executionContext?.verifyMachineAdmissionCurrent === undefined
-        && executionContext?.callerInputAuthorization === undefined
-        && executionContext?.externalActionExecutionAuthorization === undefined
-        && executionContext?.externalActionCredential === undefined
-        && executionContext?.sessionActionOrigin === undefined
-        && executionContext?.rpcSessionAuthorization === undefined
-        && executionContext?.requesterSessionBootstrap === undefined;
+        && !carriesNonLocalRequesterAuthority(executionContext);
       const reachabilityHost = !ordinaryReachabilityTransport && apiMachineForSessions
         && (!MACHINE_REACHABILITY_ACTION_IDS_V1.some(id => id === actionId)
           || input && typeof input === 'object' && 'machineId' in input && input.machineId === params.machineId)

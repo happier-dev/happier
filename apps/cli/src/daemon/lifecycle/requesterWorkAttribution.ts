@@ -54,6 +54,20 @@ export async function canUseCustodianAccountForMachineRequest(context: Pick<RpcH
   catch { return false; }
 }
 
+/**
+ * True when ingress carries requester, external, API-token, Session-scoped or
+ * requester-Session authority. Such work never acts as this runtime's own
+ * Account; Machine admission is decided by canUseCustodianAccountForMachineRequest.
+ */
+export function carriesNonLocalRequesterAuthority(context: Readonly<{
+  callerInputAuthorization?: unknown; externalActionExecutionAuthorization?: unknown; externalActionCredential?: unknown;
+  sessionActionOrigin?: unknown; rpcSessionAuthorization?: unknown; requesterSessionBootstrap?: unknown;
+}> | undefined): boolean {
+  return context?.callerInputAuthorization !== undefined || context?.externalActionExecutionAuthorization !== undefined
+    || context?.externalActionCredential !== undefined || context?.sessionActionOrigin !== undefined
+    || context?.rpcSessionAuthorization !== undefined || context?.requesterSessionBootstrap !== undefined;
+}
+
 /** Transient launch currentness supplied by the verified ingress, not by stored attribution. */
 export async function isRequesterLaunchAdmissionCurrent(options: Pick<SpawnSessionOptions,
   'verifyRequesterMachineAdmissionCurrent'>): Promise<boolean> {
