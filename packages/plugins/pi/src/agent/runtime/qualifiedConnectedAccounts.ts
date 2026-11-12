@@ -21,6 +21,7 @@ import {
   PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
   PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES,
+  PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES,
 } from '../auth/services/qualifiedPurposes.js';
 import {
   ensurePiRequestAuthExtensionAsset,
@@ -125,12 +126,23 @@ function mergeQualifiedLaunchEnvironment(input: Readonly<{
 
 export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   launchEnvironment?: AgentLaunchEnvironment;
-  request?: Pick<AgentSessionOpenRequest | AgentExecutionRunOpenRequest, 'kind' | 'configuration'>;
+  request?: Pick<AgentSessionOpenRequest | AgentExecutionRunOpenRequest, 'kind' | 'configuration' | 'providerBinding'>;
   context: Readonly<{
     signal: AbortSignal;
     services: Readonly<{ connectedAccounts: Pick<ConnectedAccounts, 'getBinding' | 'materialize' | 'watch'> }>;
   }>;
 }>): Promise<PreparedPiQualifiedConnectedAccounts> {
+  // A Provider binding supplies the complete inference authority and native
+  // configuration. Connected Accounts must not replace its admitted source.
+  if (input.request?.providerBinding !== undefined) {
+    return Object.freeze({
+      launchEnvironment: input.launchEnvironment ?? Object.freeze({ values: Object.freeze({}), unset: Object.freeze([]) }),
+      isInvalidated: () => input.context.signal.aborted,
+      bind: (runtime) => runtime,
+      bindExecutionRun: (runtime) => runtime,
+      async dispose() {},
+    });
+  }
   const { connectedAccounts } = input.context.services;
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   const initialObservations: Promise<void>[] = [];
@@ -176,7 +188,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
   };
 
   try {
-    for (const declaration of PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES) {
+    for (const declaration of PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES) {
       let resolveInitial!: () => void;
       initialObservations.push(new Promise<void>((resolve) => {
         resolveInitial = resolve;
@@ -197,7 +209,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       input.context.signal,
     );
     const bindings = await Promise.all(
-      PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => {
+      PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES.map(async (declaration) => {
         const binding = await connectedAccounts.getBinding(
           declaration.purpose,
           { signal: input.context.signal, observation: true },
@@ -289,7 +301,7 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
       requestAuthPurposes['openai-codex'] =
         PI_REQUEST_AUTH_DECLARED_PURPOSES['openai-codex'];
     }
-    for (const declaration of PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES) {
+    for (const declaration of PI_NATIVE_CONNECTED_ACCOUNT_PURPOSES) {
       const binding = bindingFor(declaration.purpose);
       if (!binding) continue;
       const native = declaration.native;
@@ -326,7 +338,6 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
           directAuth[native.providerId] = { type: 'api_key', key: apiKey };
         }
       }
-      if ('headers' in native) nativeModels[native.providerId] = { headers: native.headers };
       if ('baseUrlEnvironmentKey' in native) {
         const baseUrl = readNonBlank(materialized.env[native.baseUrlEnvironmentKey]);
         if (!baseUrl) throw new Error('Pi native provider base URL is unavailable');

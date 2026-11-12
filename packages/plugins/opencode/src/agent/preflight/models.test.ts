@@ -56,8 +56,22 @@ describe('OpenCode native model normalization', () => {
 });
 
 
+it('leaves managed Muse source credentials to its Provider catalog owner', async () => {
+  const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+  const controls: AgentPreflightSessionControlsContributionV1 = OPENCODE_PREFLIGHT_SESSION_CONTROLS;
+  const prepared = await controls.prepareLaunchEnvironment!({ environment: {}, modelId: 'meta/muse-spark-1.3-contributor',
+    connectedAccounts: {
+      watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} }; },
+      async getBinding(purpose) { return purpose === 'meta-inference'
+        ? { purpose, service, account: { service, accountId: 'selected' }, target: { kind: 'account', displayName: 'Muse' } } : null; },
+      async materialize() { throw new Error('Managed Muse credentials cannot enter a native preflight'); },
+    }, signal: new AbortController().signal,
+  });
+  try { expect(prepared.environment).toEqual({}); }
+  finally { await prepared.dispose(); }
+});
+
 it.each([
-  { purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, modelId: 'meta/muse-spark-1.3-contributor', key: 'META_API_KEY', provider: 'meta' },
   { purpose: 'xai-api-key', service: { pluginId: 'happier.agent.grok', localId: 'xai' }, modelId: 'xai/grok-4', key: 'XAI_API_KEY', provider: 'xai' },
 ])('prepares selected $provider catalog credentials with the explicit model', async row => {
   const controls: AgentPreflightSessionControlsContributionV1 = OPENCODE_PREFLIGHT_SESSION_CONTROLS;

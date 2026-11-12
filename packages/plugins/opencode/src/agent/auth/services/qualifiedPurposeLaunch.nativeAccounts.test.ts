@@ -1,4 +1,7 @@
-import { readFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -36,21 +39,6 @@ const cases = [
 ] as const;
 const serviceAccountJson = JSON.stringify({ type: 'service_account', client_id: '123', client_email: 'fake@example.iam.gserviceaccount.com',
   project_id: 'fake-project', private_key: 'fake-private-key' });
-// OpenCode 1.19.0 native inventory, captured with an isolated dummy Meta API key.
-const metaContributorModel = {
-  id: 'muse-spark-1.3-contributor', providerID: 'meta', status: 'active', family: 'muse',
-  cost: { input: 0.1, output: 0.2, cache: { read: 0.002, write: 0 } },
-  capabilities: { temperature: true, reasoning: true, attachment: true, toolcall: true,
-    input: { text: true, audio: true, image: true, video: true, pdf: true },
-    output: { text: true, audio: false, image: false, video: false, pdf: false } },
-};
-const metaCases = ['manual', 'native'].flatMap(mode => ['muse-spark-1.3-contributor', 'muse-spark-1.2-contributor'].map(model => ({
-  purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
-  provider: 'meta', model, modelRecord: { ...metaContributorModel, id: model },
-  materialize: museAccountRuntimeDefinition.materialize,
-  context: producerContext({ credentialMode: mode, inferenceKey: 'fake-meta-selected', accountToken: 'fake-identity-token' }),
-  key: 'fake-meta-selected',
-})));
 function launchFixture(row: { purpose: string; service: { pluginId: string; localId: string }; materialize: Materialize; context: Parameters<Materialize>[1] }) {
   let acquisitions = 0;
   const context: Parameters<typeof prepareOpenCodeQualifiedConnectedAccounts>[1] = { services: { connectedAccounts: {
@@ -70,24 +58,58 @@ function request(provider: string, model: string) {
       OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ['ollama'] }) } } };
 }
 describe('OpenCode selected native accounts', () => {
-  it('uses the admitted Session account instead of re-reading a durable default', async () => {
-    const row = cases[2]!;
-    const f = launchFixture(row);
-    const selected = { service: row.service, accountId: 'session-selected' };
-    const originalGetBinding = f.context.services.connectedAccounts.getBinding;
-    f.context.services.connectedAccounts.getBinding = async (purpose: string) => {
-      const binding = await originalGetBinding(purpose);
-      return binding ? { ...binding, account: { ...binding.account, accountId: 'durable-default' } } : null;
-    };
-    const requestValue = { ...request(row.provider, row.model), connectedAccounts: [{ purpose: row.purpose, account: selected }] };
-    const prepared = await prepareOpenCodeQualifiedConnectedAccounts(requestValue, f.context);
+  it.each(['muse-spark-1.3-contributor', 'muse-spark-1.2-contributor'])('launches %s through the managed Provider config without raw Muse auth', async model => {
+    const directory = await mkdtemp(join(tmpdir(), 'OPENCODE-MANAGED-MUSE-'));
+    const provider = 'happier_managed_muse';
+    const config = { enabled_providers: [provider], model: `${provider}/${model}`,
+      provider: { [provider]: { npm: '@ai-sdk/openai', options: { baseURL: 'http://127.0.0.1:8317/v1',
+        apiKey: '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}' }, models: { [model]: { name: model } } } } };
+    await mkdir(join(directory, 'opencode'));
+    await writeFile(join(directory, 'opencode/opencode.json'), JSON.stringify(config));
+    const f = launchFixture({ purpose: 'meta-inference',
+      service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+      materialize: museAccountRuntimeDefinition.materialize,
+      context: producerContext({ credentialMode: 'native', inferenceKey: 'fake-raw-muse', accountToken: 'fake-identity' }) });
+    const boundary = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49213', managedServerRequest: async input => {
+      const path = input.pathAndQuery.split('?')[0]!;
+      if (path === '/event') return { ok: true, status: 200, headers: { 'content-type': 'text/event-stream' },
+        body: new ReadableStream<Uint8Array>({ start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\n\n'));
+          input.signal?.addEventListener('abort', () => controller.close(), { once: true });
+        } }) };
+      const body = path === '/session' || path === '/session/oc-managed-muse' ? { id: 'oc-managed-muse' }
+        : path === '/agent' ? [{ name: 'build', mode: 'primary' }]
+          : path === '/provider' ? { all: [{ id: provider, models: { [model]: { id: model } } }], connected: [provider] }
+            : path.endsWith('/message') ? [] : {};
+      return { ok: true, status: 200, headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(body)).body };
+    } });
+    const signal = new AbortController().signal;
+    const context = { signal, session: { id: 'managed-muse' }, services: {
+      ...f.context.services, exec: boundary.exec, logger: boundary.logger, managedServices: boundary.managedServices,
+      storage: boundary.storage, interactions: { askQuestions: boundary.ui.askQuestions,
+        requestApproval: boundary.sessions.current.permissions.requestDecision },
+    } } as unknown as AgentRuntimeContext;
+    const runtime = createOpenCodeAgentRuntime({ plugin: { id: 'happier.agent.opencode', version: '0.0.0' }, agent: { id: 'opencode' }, signal });
     try {
-      expect(f.acquisitions()).toBe(1);
-      expect(JSON.parse(prepared.request.launchEnvironment!.values.OPENCODE_AUTH_CONTENT!)[row.provider]).toEqual({ type: 'api', key: row.key });
-    } finally { await prepared.dispose(); }
+      const session = await runtime.sessions!.open({ kind: 'create', sessionId: 'managed-muse', cwd: '/repo',
+        providerBinding: { connectionId: ProviderConnectionIdSchema.parse('pc_managed_muse'), adapterBindingKey: provider,
+          model: { id: model, name: model }, materialization: { v: 1, kind: 'configFile', rootPath: directory, relativePaths: ['opencode/opencode.json'] } },
+        launchEnvironment: { values: { HAPPIER_OPENCODE_PROVIDER_API_KEY: 'fake-route-secret' }, unset: ['META_API_KEY'] },
+        runtimeDescriptorV1: { v: 1, agentId: 'opencode', agent: { backendMode: 'server' } },
+      }, context);
+      try {
+        const spec = vi.mocked(boundary.managedServices.supervise).mock.calls[0]![0];
+        if (spec.mode.kind !== 'spawn') throw new Error('Expected managed native launch');
+        const env = spec.mode.launch.env!;
+        expect(env.HAPPIER_OPENCODE_PROVIDER_API_KEY).toBe('fake-route-secret');
+        expect(env).not.toHaveProperty('META_API_KEY');
+        expect(env).not.toHaveProperty('OPENCODE_AUTH_CONTENT');
+        expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!).provider[provider].options).toEqual(config.provider[provider].options);
+        expect(f.acquisitions()).toBe(0);
+      } finally { await session.dispose(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
   });
-
-  it.each([...cases, ...metaCases, { ...metaCases[0]!, missingNativeProvider: true }, { ...cases[2], provider: 'google-vertex',
+  it.each([...cases, { ...cases[2], provider: 'google-vertex',
     context: producerContext({ serviceAccountJson }, 'service-account'), serviceAccountJson }])(
     'passes the selected $purpose credential through the real Session entry to managed launch', async row => {
     const f = launchFixture(row);
@@ -107,8 +129,8 @@ describe('OpenCode selected native accounts', () => {
         const selectedProviderEnabled = Array.isArray(config.enabled_providers) && config.enabled_providers.includes(row.provider);
         const body = path === '/session' || path === '/session/oc-native-account' ? { id: 'oc-native-account' }
           : path === '/agent' ? [{ name: 'build', mode: 'primary' }]
-            : path === '/provider' ? ('missingNativeProvider' in row || !selectedProviderEnabled ? { all: [{ id: 'ollama', models: {} }], connected: ['ollama'] } : { all: [{ id: row.provider,
-              models: { [row.model]: 'modelRecord' in row ? row.modelRecord : { id: row.model } },
+            : path === '/provider' ? (!selectedProviderEnabled ? { all: [{ id: 'ollama', models: {} }], connected: ['ollama'] } : { all: [{ id: row.provider,
+              models: { [row.model]: { id: row.model } },
               options: { apiKey: 'fake-private-provider-key' } }], connected: [row.provider] })
             : path.endsWith('/message') ? [] : {};
         return { ok: true, status: 200, headers: { 'content-type': 'application/json' }, body: new Response(JSON.stringify(body)).body };
@@ -122,21 +144,8 @@ describe('OpenCode selected native accounts', () => {
     } } as unknown as AgentRuntimeContext;
     const runtime = createOpenCodeAgentRuntime({ plugin: { id: 'happier.agent.opencode', version: '0.0.0' }, agent: { id: 'opencode' }, signal });
     const launch = request(row.provider, row.model);
-    // r1111d rows 2a/2b: explicit contributor model, yolo permission and minimal thinking.
-    // The public modelSelection is projected into configuration.model before this plugin boundary.
-    const replayConfiguration = 'modelRecord' in row ? {
-      ...launch.configuration,
-      model: { value: `meta/${row.model}`, updatedAtMs: 1794436944459 },
-      permissionIntent: { value: 'yolo' as const, updatedAtMs: 1794436944459 },
-      options: { reasoning_effort: { value: 'minimal', updatedAtMs: 1794436944459 } },
-    } : launch.configuration;
-    const opening = runtime.sessions!.open({ ...launch, configuration: replayConfiguration, kind: 'create', sessionId: 'native-account', cwd: '/repo',
+    const opening = runtime.sessions!.open({ ...launch, kind: 'create', sessionId: 'native-account', cwd: '/repo',
       runtimeDescriptorV1: { v: 1, agentId: 'opencode', agent: { backendMode: 'server' } } }, context);
-    if ('missingNativeProvider' in row) {
-      // Exact r1111d native response: only Ollama is present, so Meta cannot be selected.
-      await expect(opening).rejects.toThrow(/OpenCode model .* is not selectable/u);
-      return;
-    }
     const session = await opening;
     let adcFile: string | undefined;
     try {
@@ -157,37 +166,8 @@ describe('OpenCode selected native accounts', () => {
       }
       expect(JSON.stringify(env)).not.toContain('fake-ambient');
       expect(f.acquisitions()).toBe('serviceAccountJson' in row ? 2 : 1);
-      if ('modelRecord' in row) {
-        const observation = vi.mocked(boundary.logger.debug).mock.calls.find(([message]) => message === '[OpenCodeServer] provider inventory shape');
-        expect(observation?.[1]).toMatchObject({
-          providerIds: ['meta'], connectedProviderIds: ['meta'], providerId: 'meta', modelId: row.model,
-          modelIdKeys: [row.model], selectableModelIdKeys: [row.model],
-          modelFields: expect.arrayContaining(['status', 'capabilities', 'cost']),
-          inputFields: ['text', 'audio', 'image', 'video', 'pdf'],
-        });
-        expect(JSON.stringify(observation)).not.toContain('fake-private-provider-key');
-        expect(JSON.stringify(observation)).not.toContain('fake-meta-selected');
-        expect(JSON.stringify(observation)).not.toContain('fake-identity-token');
-      }
     } finally { await session.dispose(); }
     if (adcFile) await expect(stat(adcFile)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-  it.each(['manual', 'native'])('delivers Meta %s inference with version headers from its purpose', async mode => {
-    const { OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS } = await import('./purposes.js');
-    expect.soft(OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.find(row => row.purpose === ('meta-inference' as string))?.credentialKinds).toContain(mode === 'native' ? 'oauth' : 'token');
-    const f = launchFixture({ purpose: 'meta-inference', service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
-      materialize: museAccountRuntimeDefinition.materialize,
-      context: producerContext({ credentialMode: mode, inferenceKey: 'fake-meta-selected', accountToken: 'fake-identity-token' }) });
-    const prepared = await prepareOpenCodeQualifiedConnectedAccounts(request('meta', 'muse-spark-1.2-contributor'), f.context);
-    try {
-      const env = prepared.request.launchEnvironment!.values;
-      expect(JSON.parse(env.OPENCODE_AUTH_CONTENT!).meta).toEqual({ type: 'api', key: 'fake-meta-selected' });
-      const config = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
-      expect(config.provider.meta.options.headers).toEqual({ 'x-api-version': '1.0.0' });
-      expect(config.providers.meta.settings.headers).toEqual({ 'x-api-version': '1.0.0' });
-      expect(JSON.stringify(env)).not.toContain('fake-identity-token');
-      expect(f.acquisitions()).toBe(1);
-    } finally { await prepared.dispose(); }
   });
   it.each([null, 'openai/gpt-5'])('requires a selected-account model before acquiring secrets (%s)', async modelId => {
     const f = launchFixture(cases[1]);

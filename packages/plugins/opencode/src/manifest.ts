@@ -11,7 +11,7 @@ import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js
 import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import {
   OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS,
-  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS,
+  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS,
   OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS,
   OPEN_CODE_REQUEST_AUTH_USES,
 } from './agent/auth/services/purposes.js';
@@ -213,7 +213,7 @@ export const OPENCODE_PLUGIN = definePlugin({
       },
       factory: createOpenCodeAgentRuntime,
       connectedAccountLaunch: {
-        environmentUses: OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.flatMap(row =>
+        environmentUses: OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.flatMap(row =>
           row.requestAuthOrigin === null ? row.environmentKeys.map(environmentKey => ({
             purpose: row.declaration.purpose, environmentKey,
           })) : []),

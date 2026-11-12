@@ -11,6 +11,23 @@ import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath 
 const observation = (models: unknown[]) => JSON.stringify({ type: 'happier-pi-model-catalog', models });
 
 describe('Pi structured preflight model discovery', () => {
+  it('leaves managed Muse source credentials to its Provider catalog owner', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pi-preflight-managed-'));
+    const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+    const controls: AgentPreflightSessionControlsContributionV1 = PI_PREFLIGHT_SESSION_CONTROLS;
+    try {
+      const prepared = await controls.prepareLaunchEnvironment!({ environment: { PI_CODING_AGENT_DIR: directory },
+        connectedAccounts: {
+          watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: false }); return { dispose() {} }; },
+          async getBinding(purpose) { return purpose === 'meta-inference'
+            ? { purpose, service, account: { service, accountId: 'selected' }, target: { kind: 'account', displayName: 'Muse' } } : null; },
+          async materialize() { throw new Error('Managed Muse credentials cannot enter a native preflight'); },
+        }, signal: new AbortController().signal,
+      });
+      try { expect(prepared.environment).toEqual({ PI_CODING_AGENT_DIR: directory }); }
+      finally { await prepared.dispose(); }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it('prepares the selected Codex binding before the native probe consumes its extension', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pi-preflight-auth-'));
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };

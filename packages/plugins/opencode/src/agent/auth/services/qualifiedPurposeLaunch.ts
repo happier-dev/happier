@@ -26,8 +26,9 @@ import { normalizeOpenCodePromptConfigUpdate } from '../../runtime/server/prompt
 import {
   OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
   OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-  OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS,
+  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS,
   OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS,
+  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS,
   OPEN_CODE_NATIVE_AUTH_ENV_KEYS,
   OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS,
   openCodeAccountProviders,
@@ -35,6 +36,7 @@ import {
   OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
   OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
   type OpenCodeConnectedAccountPurposeId,
+  type OpenCodeNativeConnectedAccountPurposeId,
   type OpenCodeRequestAuthProvider,
   type OpenCodeNativeProvider,
 } from './purposes.js';
@@ -206,7 +208,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
   };
 
   try {
-    for (const purpose of OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS) {
+    for (const purpose of OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS) {
       initialObservations.set(purpose, new Promise<void>((resolve) => {
         resolveInitial.set(purpose, resolve);
       }));
@@ -225,7 +227,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     await waitForInitialPurposeObservations(initialObservations.values(), context.signal);
 
     const bindingEntries = await Promise.all(
-      OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS.map(async (purpose) => [
+      OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS.map(async (purpose) => [
         purpose,
         await context.services.connectedAccounts.getBinding(
           purpose,
@@ -234,10 +236,10 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       ] as const),
     );
     const bindings = Object.fromEntries(bindingEntries) as Record<
-      OpenCodeConnectedAccountPurposeId,
+      OpenCodeNativeConnectedAccountPurposeId,
       Binding
     >;
-    for (const purpose of OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS) {
+    for (const purpose of OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS) {
       assertExpectedBinding(purpose, bindings[purpose]);
     }
     const openAiCodexBinding = bindings[OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID];
@@ -250,7 +252,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     // Native saved/default models may target another provider. A selected
     // Account needs a concrete model of its declared provider before secrets.
     // A resolved helper/Session model remains concrete when its source is inherited.
-    if (hasSelectedAccount && (!selectedModel || !OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
+    if (hasSelectedAccount && (!selectedModel || !OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.some(
       (row) => bindings[row.declaration.purpose] && openCodeAccountProviders(row).some(provider => provider === selectedModel.providerID),
     ))) {
       throw modelSelectionRequired();
@@ -345,8 +347,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       const provider = openCodeAccountProviders(row).find(provider => provider === selectedModel?.providerID) ?? row.provider;
       const baseURL = 'baseURLKey' in row.nativeEnvironmentAuth ? result.env[row.nativeEnvironmentAuth.baseURLKey] : undefined;
       if ('baseURLKey' in row.nativeEnvironmentAuth && !baseURL?.trim()) throw new Error(`OpenCode ${purpose} did not materialize its native endpoint`);
-      directAccountCredentials[provider] = { key, service: binding.service, ...(baseURL ? { baseURL } : {}),
-        ...('headers' in row.nativeEnvironmentAuth ? { headers: row.nativeEnvironmentAuth.headers } : {}) };
+      directAccountCredentials[provider] = { key, service: binding.service, ...(baseURL ? { baseURL } : {}) };
     }
 
     let requestAuthEnvironment: Awaited<ReturnType<typeof materializeOpenCodeAuthEnvironment>> | undefined;

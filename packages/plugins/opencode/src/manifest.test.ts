@@ -85,7 +85,7 @@ describe('OpenCode plugin manifest', () => {
     expect(agent?.capabilities.sessions).not.toHaveProperty('usageLimitRecovery');
   });
 
-  it('declares request-time auth and native Meta key/subscription purposes', () => {
+  it('declares request-time auth and managed Muse inference purposes', () => {
     const agent = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'opencode');
 
     expect(agent?.connectedAccounts).toEqual(expect.arrayContaining([{
@@ -123,6 +123,10 @@ describe('OpenCode plugin manifest', () => {
     }, {
       purpose: 'meta-inference',
       service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
+      managedProviderEndpoint: {
+        provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        purpose: 'meta-upstream', modelIdPrefix: 'meta/',
+      },
       materializationKinds: ['environment'],
       credentialKinds: ['token', 'oauth'],
     }]));

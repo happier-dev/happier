@@ -1,5 +1,5 @@
 import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
-import { MUSE_ACCOUNT_SERVICE, META_API_KEY_ENV_KEY, META_INFERENCE_HEADERS } from '@happier-dev/plugins-muse/connected-account-service';
+import { MUSE_ACCOUNT_SERVICE, META_API_KEY_ENV_KEY } from '@happier-dev/plugins-muse/connected-account-service';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import type { ConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
@@ -87,9 +87,12 @@ export const OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
   },
   {
     declaration: { purpose: 'meta-inference', service: MUSE_ACCOUNT_SERVICE,
+      managedProviderEndpoint: {
+        provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        purpose: 'meta-upstream', modelIdPrefix: 'meta/',
+      },
       materializationKinds: ['environment'], credentialKinds: ['token', 'oauth'] },
     provider: 'meta', environmentKeys: [META_API_KEY_ENV_KEY],
-    nativeEnvironmentAuth: { key: META_API_KEY_ENV_KEY, headers: META_INFERENCE_HEADERS },
     requestAuthOrigin: null, requestAuthHeaderNames: [],
   },
   {
@@ -119,15 +122,20 @@ export function openCodeAccountProviders(row: AccountDescriptor) {
   return [row.provider, ...('additionalProviders' in row ? row.additionalProviders : [])];
 }
 
+export const OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze(
+  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.filter((row): row is Exclude<AccountDescriptor, { declaration: { managedProviderEndpoint: unknown } }> => !('managedProviderEndpoint' in row.declaration)),
+);
+export const OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS = Object.freeze(
+  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ declaration }) => declaration.purpose),
+);
+export type OpenCodeNativeConnectedAccountPurposeId = typeof OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS[number];
+
 export const OPEN_CODE_NATIVE_ACCOUNT_DESCRIPTORS = Object.freeze(
-  OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.filter((row): row is Extract<AccountDescriptor, { nativeEnvironmentAuth: unknown }> => 'nativeEnvironmentAuth' in row),
+  OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS.filter((row): row is Extract<typeof OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_DESCRIPTORS[number], { nativeEnvironmentAuth: unknown }> => 'nativeEnvironmentAuth' in row),
 );
 
 export const OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS = Object.freeze(
   OPEN_CODE_CONNECTED_ACCOUNT_DESCRIPTORS.map(({ declaration }) => declaration),
-);
-export const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS = Object.freeze(
-  OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.map(({ purpose }) => purpose),
 );
 export const OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS = Object.freeze(
   OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS.map(({ service }) => buildQualifiedPluginContributionKey(service)),
