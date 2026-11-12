@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { router } from 'expo-router';
 import { MachineServiceRowV1Schema, MachineServicesListResultV1Schema, ManagedServiceNativeLogResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -61,7 +62,7 @@ function service(name: string, overrides: Partial<MachineServiceRowV1> = {}) {
     });
 }
 
-function answerAction(actionId: string, read: (envelope: Envelope, request: Request) => unknown | Promise<unknown>) {
+function answerActionExecution(actionId: string, execute: (envelope: Envelope, request: Request) => ActionExecuteResult | Promise<ActionExecuteResult>) {
     const path = `/v1/actions/${actionId}`;
     homes.answer(serverId, `${path}/execution-authorization`, { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
@@ -76,8 +77,12 @@ function answerAction(actionId: string, read: (envelope: Envelope, request: Requ
         const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
         return { body: { v: 1, actionId, requestId: envelope.requestId,
-            execution: { ok: true, result: await read(envelope, request) } } };
+            execution: await execute(envelope, request) } };
     } });
+}
+
+function answerAction(actionId: string, read: (envelope: Envelope, request: Request) => unknown | Promise<unknown>) {
+    answerActionExecution(actionId, async (envelope, request) => ({ ok: true, result: await read(envelope, request) }));
 }
 
 /** Emulate the daemon's Resource wire; the production Resource store owns demand and refresh. */
@@ -243,7 +248,10 @@ beforeEach(async () => {
     serverId = await homes.addHome({ name: 'Services rendered', serverUrl: 'https://services-rendered.test',
         serverIdentityId, accountId, currentAccount: true, active: true });
     const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), isShared: false });
-    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId, machine }), installationId: 'installation' };
+    await sodium.ready;
+    const installationKey = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(23));
+    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId, machine }), installationId: 'installation',
+        installationPublicKey: encodeBase64(installationKey.publicKey, 'base64') };
     homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async input => ({ body:
         await createMachineReadBatchResponseFixture(input, () => row).json() }) });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -345,11 +353,13 @@ describe('MachineServicesTab rendered production wiring', () => {
     it('keeps the exact unavailable Stop refusal typed with a recovery step', async () => {
         const row = service('Web', { generation: 'b1c428a4-7926-46de-b6cd-71a59d6ebc3c', state: 'healthy' });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const controls: unknown[] = [];
+        answerActionExecution('machines.services.control', envelope => {
+            controls.push(envelope.input);
+            return { ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable' };
+        });
         machineTransport.rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
-            if (method === RPC_METHODS.MACHINES_SERVICE_CONTROL) return {
-                ok: false, errorCode: 'service_operation_unavailable', error: 'service_operation_unavailable',
-            };
             throw new Error(`Unexpected Machine method: ${method}`);
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
@@ -358,13 +368,14 @@ describe('MachineServicesTab rendered production wiring', () => {
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-stop')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-service-stop');
-        await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1));
+        await vi.waitFor(() => expect(controls).toEqual([{ serverId, machineId,
+            serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }]));
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-control-outcome-details-toggle'), screen.getTextContent()).not.toBeNull());
         expect(screen.getTextContent()).toContain(t('machineServices.control.unavailableRemedy'));
         expect(screen.getTextContent()).not.toContain(t('machineServices.control.failed', { service: row.name }));
         await screen.pressByTestIdAsync('machine-service-control-outcome-details-toggle');
         expect(screen.getTextContent()).toContain('service_operation_unavailable');
-        expect(machineTransport.rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_CONTROL)).toHaveLength(1);
+        expect(controls).toHaveLength(1);
     });
 
     async function shareWith(role: 'manage' | 'use') {
@@ -582,12 +593,14 @@ describe('MachineServicesTab rendered production wiring', () => {
             capabilities: { start: true, stop: true, restart: true, logs: false, accounting: false } });
         const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         const controls: unknown[] = [];
-        machineTransport.rpc.mockImplementation(async ({ method, payload: input }) => {
-            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
-            if (method !== RPC_METHODS.MACHINES_SERVICE_CONTROL) throw new Error(`Unexpected Machine method: ${String(method)}`);
-            controls.push(input);
+        answerAction('machines.services.control', envelope => {
+            controls.push(envelope.input);
             return { kind: 'observed', serviceId: row.serviceId, generation: row.generation,
                 state: 'stopped', operation: { operationId: 'stop-operation' } };
+        });
+        machineTransport.rpc.mockImplementation(async ({ method }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_DETAIL) return { kind: 'service', service: row };
+            throw new Error(`Unexpected Machine method: ${String(method)}`);
         });
         const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
         await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
@@ -600,7 +613,7 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => {
             const outcome = screen.findByTestId('machine-service-control-outcome');
             expect({ controls, outcome: outcome ? textOf(outcome) : null }).toEqual({
-                controls: [{ serverId: serverIdentityId, machineId, serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }],
+                controls: [{ serverId, machineId, serviceId: row.serviceId, expectedGeneration: row.generation, operation: 'stop' }],
                 outcome: null,
             });
         });

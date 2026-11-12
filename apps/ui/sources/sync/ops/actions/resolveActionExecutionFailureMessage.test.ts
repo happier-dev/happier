@@ -44,8 +44,13 @@ describe('Action failure presentation', () => {
             .toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
     });
     it.each(['access_denied', 'permission_denied', 'denied', RPC_ERROR_CODES.FORBIDDEN])('preserves the %s denial from a Machine Resource read', code => {
-        expect(resolveActionExecutionErrorMessage({ code }, 'Could not read services'))
+        expect(resolveActionExecutionErrorMessage({ code, message: 'Resource is unavailable' }, 'Could not read services'))
             .toBe(t('errors.permissionDenied'));
+    });
+    it('uses the surface fallback for projected adapter errors rather than treating their diagnostic message as authored repair', () => {
+        const fallback = t('machineDetailPage.security.staleFailed');
+        expect(resolveActionExecutionErrorMessage({ code: 'service_transport_unavailable', message: 'Resource is unavailable' }, fallback))
+            .toBe(fallback);
     });
     it.each(['approval_required', 'approval_canceled', 'plugin_action_current_intent_rejected'])
     ('preserves the known unapplied outcome for %s without recommending repetition', (code) => {

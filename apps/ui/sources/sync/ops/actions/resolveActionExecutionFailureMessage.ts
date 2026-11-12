@@ -104,7 +104,10 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
         return spawn.success && spawn.data.type === 'error' ? resolveSessionSpawnNewResultFailureMessage(spawn.data) : null;
     }
     const pluginError = isPluginError(value);
-    const authoredMessage = pluginError ? value.data.message : !(value instanceof Error) ? record.message : undefined;
+    // Resource snapshots retain adapter diagnostics in `message`; only an
+    // authored failure envelope (or PluginError) supplies user-facing repair.
+    const authoredMessage = pluginError ? value.data.message
+        : !(value instanceof Error) && isFailedResult(record) ? record.message : undefined;
     const message = typeof authoredMessage === 'string' ? authoredMessage.trim() : '';
     const remediation = pluginError ? readPluginActionFailureAuthorPayload(value.data).remediation
         : PluginDiagnosticRemediationV1Schema.safeParse(record.remediation).data;
