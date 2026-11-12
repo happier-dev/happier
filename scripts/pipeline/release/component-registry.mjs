@@ -1,4 +1,17 @@
 // @ts-check
+import { fileURLToPath } from 'node:url';
+import { readPublishablePlugins } from '../../plugins/publishable.mjs';
+
+export const publishablePlugins = Object.freeze(readPublishablePlugins(fileURLToPath(new URL('../../../', import.meta.url))));
+
+const pluginComponents = Object.fromEntries(publishablePlugins.map(({ id }) => [
+  `plugin:${id}`, { id: `plugin:${id}`, changedPrefixes: [`packages/plugins/${id}/`] },
+]));
+
+/** @param {string} id */
+export function pluginReleaseComponent(id) {
+  return { id: `plugin:${id}`, baselineTagPrefix: `plugin-${id}-v`, changedWhen: [`plugin:${id}`] };
+}
 
 // Central registry for release components.
 // Keep this as the single source of truth for:
@@ -8,6 +21,7 @@
 // This is intentionally JS (not YAML) so both scripts and workflows can consume it.
 
 export const components = Object.freeze({
+  ...pluginComponents,
   ui: {
     id: 'ui',
     changedPrefixes: ['apps/ui/'],
@@ -104,6 +118,9 @@ export const components = Object.freeze({
 });
 
 export const versionedComponents = Object.freeze({
+  ...Object.fromEntries(publishablePlugins.map(({ id }) => [
+    `plugin:${id}`, pluginReleaseComponent(id),
+  ])),
   app: {
     id: 'app',
     baselineTagPrefix: 'ui-web-v',
@@ -161,6 +178,7 @@ export const releaseTargets = Object.freeze([
   'server_runner',
   'plugin_sdk',
   'sdk',
+  ...publishablePlugins.map(({ id }) => `plugin:${id}`),
 ]);
 
 export function classifyChangedPaths(paths) {

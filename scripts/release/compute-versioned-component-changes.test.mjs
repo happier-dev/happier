@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -22,6 +22,36 @@ async function writeRepoFile(dir, relativePath, contents) {
   await mkdir(resolve(filePath, '..'), { recursive: true });
   await writeFile(filePath, contents, 'utf8');
 }
+
+test('plugin baselines emit selected plugin JSON only for changes in that plugin folder', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-plugin-component-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  git(dir, ['init']);
+  git(dir, ['config', 'user.email', 'test@example.com']);
+  git(dir, ['config', 'user.name', 'Test']);
+  for (const relative of ['scripts/pipeline/release/compute-versioned-component-changes.mjs', 'scripts/pipeline/release/component-registry.mjs', 'scripts/plugins/publishable.mjs']) {
+    await mkdir(resolve(dir, relative, '..'), { recursive: true });
+    await copyFile(resolve(process.cwd(), relative), resolve(dir, relative));
+  }
+  await writeRepoFile(dir, 'packages/plugins/asciinema/package.json', JSON.stringify({ name: '@example/fixture-plugin', happier: { bundled: false } }));
+  await writeRepoFile(dir, 'packages/plugins/asciinema/index.mjs', 'export {};\n');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'plugin baseline']);
+  git(dir, ['tag', 'plugin-asciinema-v0.3.0-preview.1']);
+  await writeRepoFile(dir, 'packages/plugin-sdk/README.md', 'SDK change\n');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'SDK change']);
+  const script = resolve(dir, 'scripts/pipeline/release/compute-versioned-component-changes.mjs');
+  const before = run(dir, process.execPath, [script, '--environment', 'preview', '--head', 'HEAD']);
+  assert.equal(before.status, 0, before.stderr);
+  assert.equal(JSON.parse(before.stdout).changed_plugins, '[]');
+  await writeRepoFile(dir, 'packages/plugins/asciinema/index.mjs', 'export const changed = true;\n');
+  git(dir, ['add', '.']);
+  git(dir, ['commit', '-m', 'plugin change']);
+  const after = run(dir, process.execPath, [script, '--environment', 'preview', '--head', 'HEAD']);
+  assert.equal(after.status, 0, after.stderr);
+  assert.equal(JSON.parse(after.stdout).changed_plugins, '["asciinema"]');
+});
 
 test('compute-versioned-component-changes keeps shared changes scoped to each component baseline tag', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-versioned-components-'));

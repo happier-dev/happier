@@ -89,7 +89,7 @@ test('release workflow derives promotion inputs from confirm and uses compact de
   const promoteMain = parsed.jobs.promote_main;
 
   assert.match(raw, /CONFIRM:\s*\$\{\{ inputs\.confirm \}\}/, 'confirm should cross the workflow boundary as environment data');
-  assert.match(promoteMain.with.source, /inputs\.confirm/, 'confirm should select the production source branch');
+  assert.equal(promoteMain.with.source, '${{ needs.release_preflight.outputs.source_ref }}', 'canonical preflight resolves the production source branch from confirm');
   assert.match(promoteMain.with.mode, /inputs\.confirm/, 'confirm should select the production promotion mode');
   assert.match(promoteMain.with.confirm, /inputs\.confirm/, 'confirm should select the promotion confirmation text');
   assert.doesNotMatch(raw, /confirm="\$\{\{ inputs\.confirm \}\}"/, 'workflow input must not be interpolated into shell source');

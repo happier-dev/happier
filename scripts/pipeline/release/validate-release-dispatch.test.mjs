@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { publishablePlugins } from './component-registry.mjs';
 import { validateReleaseDispatch } from './validate-release-dispatch.mjs';
 
 const sha = 'a'.repeat(40);
@@ -46,6 +47,11 @@ test('validates a materialized preview release and resolves planning facts', () 
   });
 });
 
+test('dispatch admission accepts an independently selected publishable plugin', { skip: publishablePlugins.length === 0 && 'checkout has no opted-in plugins' }, () => {
+  const target = `plugin:${publishablePlugins[0].id}`;
+  assert.deepEqual(validateReleaseDispatch(valid({ deployTargets: target })).deployTargets, [target]);
+});
+
 test('normalizes the grouped public SDK approval with fail-closed structured input validation', () => {
   const result = validateReleaseDispatch(valid({
     publicSdkReleaseApproval: JSON.stringify({
@@ -70,6 +76,14 @@ test('normalizes the grouped public SDK approval with fail-closed structured inp
       () => validateReleaseDispatch(valid({ publicSdkReleaseApproval })),
       /public_sdk_release_approval/u,
     );
+  }
+});
+
+test('grouped release approval carries exact plugin versions without weakening strict SDK fields', () => {
+  const result = validateReleaseDispatch(valid({ publicSdkReleaseApproval: JSON.stringify({ pluginVersions: { asciinema: '0.3.1' } }) }));
+  assert.deepEqual(result.publicSdkReleaseApproval.pluginVersions, { asciinema: '0.3.1' });
+  for (const pluginVersions of [[], null, { asciinema: 31 }]) {
+    assert.throws(() => validateReleaseDispatch(valid({ publicSdkReleaseApproval: JSON.stringify({ pluginVersions }) })), /plugin_versions/u);
   }
 });
 

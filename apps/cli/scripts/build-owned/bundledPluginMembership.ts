@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { isPublishablePluginPackage } from '../../../../scripts/plugins/publishable.mjs';
 
 export const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
@@ -52,7 +53,7 @@ export function readBundledPluginPackageNames(
     const pkgJson = readJson(pkgJsonPath) as { name?: unknown; happier?: unknown };
     if (isReservationOnlyPluginPackage(pkgJson)) continue;
     // First-party opt-in packages ship independently through npm.
-    if (isRecord(pkgJson.happier) && pkgJson.happier.bundled === false) continue;
+    if (isPublishablePluginPackage(pkgJson)) continue;
 
     const manifestPath = resolve(pluginsRoot, pluginPackageId, 'src/manifest.ts');
     if (requireManifestSource && !existsSync(manifestPath)) {

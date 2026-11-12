@@ -3,6 +3,10 @@ import test from 'node:test';
 
 import { resolveNpmReleaseInputs } from './resolve-npm-release-inputs.mjs';
 
+test('plugin-only publication is an admitted npm release target', () => {
+  assert.equal(resolveNpmReleaseInputs({ channel: 'preview', npmTag: 'next', sourceRef: 'auto', authorizedSha: 'a'.repeat(40), publishPlugins: ['asciinema'] }).channel, 'preview');
+});
+
 test('resolveNpmReleaseInputs gives preview releases their sole permitted source and dist-tag', () => {
   assert.deepEqual(
     resolveNpmReleaseInputs({

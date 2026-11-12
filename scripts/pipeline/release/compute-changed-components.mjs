@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { classifyChangedPaths, deriveVersionedComponentChanges } from './component-registry.mjs';
+import { classifyChangedPaths, deriveVersionedComponentChanges, publishablePlugins } from './component-registry.mjs';
 import { classifyReleaseValidationRisks } from '../release-validation/release-risk.mjs';
 
 function fail(msg) {
@@ -91,6 +91,7 @@ function main() {
     changed_shared: String(Boolean(classified.shared)),
     changed_stack: String(Boolean(classified.stack)),
     changed_plugin_sdk: String(Boolean(versioned.plugin_sdk)),
+    changed_plugins: JSON.stringify(publishablePlugins.filter(({ id }) => versioned[`plugin:${id}`]).map(({ id }) => id)),
     changed_sdk: String(Boolean(versioned.sdk)),
     changed_runner: String(Boolean(versioned.runner)),
     compatibility_analysis_required: String(risks.compatibilityAnalysisRequired),

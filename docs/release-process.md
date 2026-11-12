@@ -33,6 +33,46 @@ The nightly dev workflow publishes the promoted CLI candidate to npm with the sa
 version used by the GitHub release and the explicit `dev` dist-tag. Stable and preview npm
 publication remain owned by `release-channel.yml` (`latest` and `next`, respectively).
 
+## Opt-in plugin packages (0.3 development source)
+
+`scripts/plugins/publishable.mjs` owns selection of repository plugin packages
+with `happier.bundled === false`. CLI bundling exclusion and the release
+registry consume that selection. Each discovered package has its own
+`plugin:<directory-name>` release target and `plugin-<directory-name>-v` baseline
+tag prefix. Only changes under its own package directory propose a release;
+Plugin SDK changes do not fan out to plugin releases. Opt-in plugins that are
+not UI build inputs do not belong to `ui_dependencies`.
+
+Select an individual plugin target for a plugin-only release, or include the
+changed plugins in the normal all-changed dispatch. The generic npm plugin
+matrix runs after the Plugin SDK pair job. It reuses rolling npm version
+allocation and temporary package metadata rewriting, leaving source versions
+as placeholders. As with public SDK version inputs, production supplies an
+approved exact version per selected plugin through the `plugin_versions` JSON
+map. The public dispatch carries it as `pluginVersions` in
+`public_sdk_release_approval`; the local release CLI accepts `--plugin-versions`.
+Combined preview/production requests apply that map to production and allocate
+preview versions independently. Preview and dev allocate rolling versions. Missing production versions
+fail before packing, rather than reusing the placeholder. Plugin outcomes are optional component entries in the release
+status projection, with version and integrity evidence for published packages.
+
+The release pack resolves the exact `@happier-dev/plugin-sdk` runtime dependency
+from this run's successful SDK publication, otherwise from the channel's npm
+dist-tag. Missing channel SDK publication fails clearly. The pack host uses the
+canonical generated toolchain compatibility bindings for that SDK; publication
+does not bypass the packer's exact-version check. The normal `packLocalPlugin`
+path produces the archive, followed by temporary-host installation to check
+manifest admission and `engines.happier`, before `publish-tarball.mjs` publishes
+with provenance. Production, preview and dev use `latest`, `next` and `dev`
+respectively, under the public SDK approval policy. There is no post-publish
+live smoke in this pipeline.
+
+Publication prerequisites remain real: a plugin requiring `>=0.3.0-0` cannot be
+admitted by the current `0.2.10` source host, and a `happier.*` id fails public
+npm registry namespace admission. Local archive installation is not proof of
+registry namespace eligibility. Asciinema's package is currently an uncommitted
+consumer, not evidence of an npm release.
+
 ## Contributing flow (recommended)
 
 1. Create a feature branch from `dev`.

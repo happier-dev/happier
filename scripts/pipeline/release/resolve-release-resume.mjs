@@ -379,7 +379,7 @@ export function resolveReleaseResume(input) {
       if (identity.verified !== true) throw new Error(`[release] completed ${surfaceId} must carry verified identity evidence`);
       completed[/** @type {'cliRolling'|'stackRolling'|'serverRolling'|'runnerRolling'|'uiWebRolling'} */ (verifiedCompletionKey)] = true;
     }
-    if (['npm_plugin_sdk', 'npm_plugin_ui', 'npm_sdk'].includes(surfaceId) && surface.requested === true) {
+    if ((['npm_plugin_sdk', 'npm_plugin_ui', 'npm_sdk'].includes(surfaceId) || surfaceId.startsWith('npm_plugin:')) && surface.requested === true) {
       expandedNpmIntegrityRequested = true;
     }
     if (completionKey && surface.requested === true && surface.state === 'published' && surface.result === 'accepted') {

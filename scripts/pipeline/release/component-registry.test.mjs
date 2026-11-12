@@ -5,6 +5,8 @@ import {
   classifyChangedPaths,
   deriveVersionedComponentChanges,
   releaseTargets,
+  publishablePlugins,
+  versionedComponents,
 } from './component-registry.mjs';
 
 test('release target registry covers the local release CLI surface exactly', () => {
@@ -18,7 +20,19 @@ test('release target registry covers the local release CLI surface exactly', () 
     'server_runner',
     'plugin_sdk',
     'sdk',
+    ...publishablePlugins.map(({ id }) => `plugin:${id}`),
   ]);
+});
+
+test('opt-in plugins have independent release baselines and only their own sources select them', { skip: publishablePlugins.length === 0 && 'checkout has no opted-in plugins' }, () => {
+  for (const { id } of publishablePlugins) {
+    const key = `plugin:${id}`;
+    assert.equal(versionedComponents[key].baselineTagPrefix, `plugin-${id}-v`);
+    const own = classifyChangedPaths([`packages/plugins/${id}/src/index.ts`]);
+    assert.equal(deriveVersionedComponentChanges(own)[key], true);
+    assert.equal(own.ui_dependencies, false);
+    assert.equal(deriveVersionedComponentChanges(classifyChangedPaths(['packages/plugin-sdk/src/index.ts']))[key], false);
+  }
 });
 
 test('plugin SDK pair and public SDK each have a release component, while bundled protocol and agent changes are candidate-affecting', () => {

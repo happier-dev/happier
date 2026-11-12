@@ -1,13 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
+import { publishablePlugins } from '../pipeline/release/component-registry.mjs';
 import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './releaseCliDryRunTestkit.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('production plugin versions survive hosted dispatch and exact approved-intent replay', { skip: publishablePlugins.length === 0 && 'checkout has no opted-in plugins' }, () => {
+  const pluginId = publishablePlugins[0].id;
+  const stub = createReleaseCliDryRunEnv(process.env, { captureWorkflowDispatch: true });
+  const root = mkdtempSync(join(tmpdir(), 'approved-plugin-version-'));
+  const args = ['scripts/pipeline/run.mjs', 'release', '--confirm', 'release preview to main', '--repository', 'happier-dev/happier', '--deploy-environment', 'production', '--deploy-targets', `plugin:${pluginId}`, '--plugin-versions', JSON.stringify({ [pluginId]: '0.3.1', unselected: '9.9.9' }), '--release-notes-id', 'plugin-production', '--approve-public-sdk-release', 'true', '--ci-run-id', '455', '--operation-id', 'rel_pluginversions', '--dry-run', '--json'];
+  const versionOptionIndex = args.indexOf('--plugin-versions');
+  const approvedArgs = args.filter((_, index) => index !== versionOptionIndex && index !== versionOptionIndex + 1);
+  const invoke = (extra = [], approvedDefaults = false) => spawnSync(process.execPath, [...(approvedDefaults ? approvedArgs : args), ...extra], { cwd: repoRoot, env: stub.env, encoding: 'utf8' });
+  try {
+    const first = invoke();
+    assert.equal(first.status, 0, first.stderr);
+    const plan = JSON.parse(first.stdout);
+    assert.deepEqual(JSON.parse(plan.hostedDispatch.inputs.public_sdk_release_approval).pluginVersions, { [pluginId]: '0.3.1' });
+    const path = join(root, 'approved.json');
+    writeFileSync(path, JSON.stringify(plan));
+    const replay = invoke(['--approved-intent', path], true);
+    assert.equal(replay.status, 0, replay.stderr);
+    assert.deepEqual(JSON.parse(replay.stdout), plan);
+    const drift = invoke(['--approved-intent', path, '--plugin-versions', JSON.stringify({ [pluginId]: '0.3.2' })]);
+    assert.equal(drift.status, 1);
+    assert.match(drift.stderr, /approved release intent/u);
+  } finally { stub.cleanup(); rmSync(root, { recursive: true, force: true }); }
+});
 
 test('pipeline CLI release dry-run reports hosted inputs and release refinements without predicting npm jobs', async () => {
   const stub = createReleaseCliDryRunEnv();

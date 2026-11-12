@@ -6,12 +6,14 @@ import { parse } from 'yaml';
 const workflow = () => parse(readFileSync(new URL('../../.github/workflows/release-channel.yml', import.meta.url), 'utf8'));
 
 function context(source) {
-  return {
+  const state = {
     inputs: { dry_run: false, force_deploy: false, environment: 'production' },
     needs: Object.fromEntries(Object.keys(source.jobs).map((id) => [id, {
       result: 'success', outputs: new Proxy({}, { get: (value, key) => value[key] ?? '' }),
     }])),
   };
+  state.needs.plan.outputs.publish_plugins = '[]';
+  return state;
 }
 
 function evaluate(expression, { inputs, needs }) {
@@ -34,16 +36,16 @@ test('accepted completed Docker and generic npm writes are skipped through admit
   }
 });
 
-test('current SDK integrity requests override generic npm completion from an older origin', () => {
+test('current SDK and plugin integrity requests override generic npm completion from an older origin', () => {
   const source = workflow();
   for (const environment of ['preview', 'production']) {
-    for (const selected of ['publish_plugin_sdk', 'publish_sdk']) {
+    for (const [selected, value, forwarded] of [['publish_plugin_sdk', 'true', true], ['publish_sdk', 'true', true], ['publish_plugins', '["asciinema"]', '["asciinema"]']]) {
       const state = context(source);
       state.inputs.environment = environment;
       state.needs.resolve_resume.outputs.npm_complete = 'true';
-      state.needs.plan.outputs[selected] = 'true';
+      state.needs.plan.outputs[selected] = value;
       assert.equal(evaluate(source.jobs.publish_npm.if, state), true, `${environment}: ${selected}`);
-      assert.equal(evaluate(source.jobs.publish_npm.with[selected], state), true, `${environment}: ${selected} reaches the canonical publisher`);
+      assert.equal(evaluate(source.jobs.publish_npm.with[selected], state), forwarded, `${environment}: ${selected} reaches the canonical publisher`);
     }
   }
 });

@@ -5,6 +5,7 @@ import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { releaseTargets } from './component-registry.mjs';
+import { parsePluginVersions } from './plugin-publication.mjs';
 import { validateReleaseValidationRefinements } from '../release-validation/resolve-validation-plan.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
@@ -54,7 +55,7 @@ export function parsePublicSdkReleaseApproval(value) {
   try { parsed = JSON.parse(raw); }
   catch { throw new Error('public_sdk_release_approval must be valid JSON.'); }
   if (!record(parsed)) throw new Error('public_sdk_release_approval must be a JSON object.');
-  rejectUnknownKeys(parsed, new Set(['pluginSdk', 'sdk']), 'object');
+  rejectUnknownKeys(parsed, new Set(['pluginSdk', 'sdk', 'pluginVersions']), 'object');
 
   const pluginSdk = parsed.pluginSdk ?? {};
   if (!record(pluginSdk)) throw new Error('public_sdk_release_approval pluginSdk must be a JSON object.');
@@ -79,6 +80,7 @@ export function parsePublicSdkReleaseApproval(value) {
   }
 
   return {
+    ...(parsed.pluginVersions === undefined ? {} : { pluginVersions: parsePluginVersions(parsed.pluginVersions) }),
     pluginSdk: {
       ready,
       apiClassification: pluginClassification,
@@ -242,6 +244,7 @@ export async function main() {
       `source_ref=${result.sourceRef}`,
       `base_ref=${result.baseRef}`,
       `compare_label=${result.compareLabel}`,
+      `plugin_versions=${JSON.stringify(approval.pluginVersions ?? {})}`,
       `plugin_sdk_ready=${approval.pluginSdk.ready}`,
       `plugin_sdk_api_classification=${approval.pluginSdk.apiClassification}`,
       `plugin_sdk_migration_notes=${approval.pluginSdk.migrationNotes}`,

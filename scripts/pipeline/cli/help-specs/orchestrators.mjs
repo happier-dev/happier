@@ -61,6 +61,7 @@ export const COMMAND_HELP_ORCHESTRATORS = {
       '--repository <owner/repo>         Required; e.g. happier-dev/happier.',
       "--deploy-environment <env>        dev|preview|production (default: preview).",
       `--deploy-targets <csv>            ${releaseTargetChoices} (default: ui,server,website,docs).`,
+      '--plugin-versions <json>          Plugin id to exact publish version; required for selected production plugins (default: {}).',
       '--release-profile <integrated|stable|deep>  Defaults to integrated for dev/preview and stable for production; deep is dry-run only.',
       '--waive-ci <bool>                 Maintainer-only exact-candidate CI waiver; requires --override-reason.',
       '--include-validation-suites <csv> Add risk-selected validation suites for this candidate.',

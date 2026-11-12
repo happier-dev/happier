@@ -2,7 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { classifyChangedPaths, deriveVersionedComponentChanges, versionedComponents } from './component-registry.mjs';
+import { classifyChangedPaths, deriveVersionedComponentChanges, versionedComponents, publishablePlugins } from './component-registry.mjs';
 
 function fail(msg) {
   process.stderr.write(`[compute-versioned-component-changes] ${msg}\n`);
@@ -168,6 +168,8 @@ function main() {
     outputs[`changed_${key}`] = derived[key] ? 'true' : 'false';
     outputs[`${key}_baseline_tag`] = baseline?.tag ?? '';
   }
+
+  outputs.changed_plugins = JSON.stringify(publishablePlugins.filter(({ id }) => outputs[`changed_plugin:${id}`] === 'true').map(({ id }) => id));
 
   if (outPath) {
     const lines = Object.entries(outputs).map(([key, value]) => `${key}=${value}`);

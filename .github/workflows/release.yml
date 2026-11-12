@@ -28,7 +28,7 @@ on:
         default: false
         type: boolean
       public_sdk_release_approval:
-        description: 'Public SDK detail JSON — {"pluginSdk": {"ready", "apiClassification", "migrationNotes"}, "sdk": {"authReadiness", "authWaiver", "apiClassification", "migrationNotes"}}'
+        description: 'Public package detail JSON (optional pluginVersions maps plugin ids to production versions) — {"pluginSdk": {"ready", "apiClassification", "migrationNotes"}, "sdk": {"authReadiness", "authWaiver", "apiClassification", "migrationNotes"}}'
         required: false
         default: "{}"
         type: string
@@ -274,6 +274,7 @@ jobs:
       contents: read
     outputs:
       source_ref: ${{ steps.dispatch.outputs.source_ref }}
+      plugin_versions: ${{ steps.dispatch.outputs.plugin_versions }}
       base_ref: ${{ steps.dispatch.outputs.base_ref }}
       compare_label: ${{ steps.dispatch.outputs.compare_label }}
       plugin_sdk_ready: ${{ steps.dispatch.outputs.plugin_sdk_ready }}
@@ -431,6 +432,7 @@ jobs:
   release_single:
     name: Release single channel
     needs:
+      - release_preflight
       - snapshot_release_issues
       - source_validation
       - resolve_validation_profile
@@ -450,6 +452,7 @@ jobs:
       waive_ci: ${{ inputs.waive_ci }}
       approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       public_sdk_release_approval: ${{ inputs.public_sdk_release_approval }}
+      plugin_versions: ${{ needs.release_preflight.outputs.plugin_versions }}
       include_validation_suites: ${{ inputs.include_validation_suites }}
       waive_validation_suites: ${{ inputs.waive_validation_suites }}
       override_reason: ${{ inputs.override_reason }}
@@ -504,6 +507,7 @@ jobs:
       waive_ci: ${{ inputs.waive_ci }}
       approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       public_sdk_release_approval: ${{ inputs.public_sdk_release_approval }}
+      plugin_versions: '{}'
       include_validation_suites: ${{ inputs.include_validation_suites }}
       waive_validation_suites: ${{ inputs.waive_validation_suites }}
       override_reason: ${{ inputs.override_reason }}
@@ -539,6 +543,7 @@ jobs:
   release_production:
     name: Release production channel
     needs:
+      - release_preflight
       - snapshot_release_issues
       - source_validation
       - resolve_validation_profile
@@ -558,6 +563,7 @@ jobs:
       waive_ci: ${{ inputs.waive_ci }}
       approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       public_sdk_release_approval: ${{ inputs.public_sdk_release_approval }}
+      plugin_versions: ${{ needs.release_preflight.outputs.plugin_versions }}
       include_validation_suites: ${{ inputs.include_validation_suites }}
       waive_validation_suites: ${{ inputs.waive_validation_suites }}
       override_reason: ${{ inputs.override_reason }}

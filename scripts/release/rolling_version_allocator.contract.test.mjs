@@ -87,6 +87,21 @@ test('exact finalized candidate versions preserve allocated dev and preview iden
   }), /Invalid version/);
 });
 
+test('explicit preview versions use opted-in plugin identity from the admitted candidate root', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const root = join(tmpdir(), `candidate-only-plugin-${process.pid}-${Date.now()}`);
+  const packageDir = join(root, 'packages/plugins/source-only');
+  try {
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@example/source-only', happier: { bundled: false } }));
+    const result = await resolveRollingPublishVersion({
+      repoRoot: root, productId: 'plugin:source-only', channel: 'preview', baseVersion: '0.3.0', explicitVersion: '0.3.0-preview.8', publishSurface: 'npm',
+      env: { ...process.env, HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: { '@example/source-only': ['0.3.0-preview.7'] } }) },
+    });
+    assert.equal(result.version, '0.3.0-preview.8');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('rolling version allocation uses the max published GitHub or npm version for a product channel', async () => {
   const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
 
@@ -360,6 +375,21 @@ test('support preview version allocation uses published npm support versions', a
   });
 
   assert.equal(result.version, '0.1.5-preview.9');
+});
+
+test('opt-in plugin allocation uses its own npm history and tag prefix', async () => {
+  const { resolveRollingPublishVersion } = await import('../pipeline/release/lib/rolling-version-allocation.mjs');
+  const root = join(tmpdir(), `plugin-own-history-${process.pid}-${Date.now()}`);
+  const packageDir = join(root, 'packages/plugins/asciinema');
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-asciinema', happier: { bundled: false } }));
+  try {
+    const result = await resolveRollingPublishVersion({ repoRoot: root, productId: 'plugin:asciinema', channel: 'preview', baseVersion: '0.3.0', publishSurface: 'npm', env: {
+      ...process.env,
+      HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: { '@happier-dev/plugins-asciinema': ['0.3.0-preview.7'], '@happier-dev/plugin-sdk': ['0.3.0-preview.99'] } }),
+    } });
+    assert.equal(result.version, '0.3.0-preview.8');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('plugin SDK pair allocation reuses the SDK version after a UI publication fault instead of allocating a new missing version', async () => {

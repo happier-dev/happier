@@ -63,6 +63,7 @@ export function buildPublicReleaseContractV1() {
         'combined-preview-production-v1',
         'approved-release-packet-v1',
         'public-sdk-release-approval',
+        'plugin-release-versions',
       ],
     },
     targets: Object.values(versionedComponents).map(({ id, baselineTagPrefix, changedWhen }) => ({
@@ -71,6 +72,15 @@ export function buildPublicReleaseContractV1() {
       changedWhen: [...changedWhen],
     })),
     releaseTargets: [...releaseTargets],
+    dispatchInputs: {
+      public_sdk_release_approval: {
+        type: 'string',
+        default: '{}',
+        fields: {
+          pluginVersions: { type: 'object', valueType: 'string', description: 'Plugin id to exact publish version; required for selected production plugins. Combined preview and production uses this map for production and allocates preview versions.' },
+        },
+      },
+    },
     validationSuites: RELEASE_VALIDATION_SUITES.map(projectValidationSuite),
     validationProfiles: RELEASE_VALIDATION_PROFILES.map(projectValidationProfile),
   };

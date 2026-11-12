@@ -3,6 +3,9 @@ name: RELEASE — npm publish (cli/stack/server/plugin-sdk/sdk)
 on:
   workflow_call:
     outputs:
+      plugins_json:
+        description: "Per-plugin npm publication results"
+        value: ${{ jobs.collect-plugin-results.outputs.plugins_json }}
       plugin_sdk_result:
         description: "Verified publish result for @happier-dev/plugin-sdk"
         value: ${{ jobs.publish-plugin-sdk-pair.outputs.plugin_sdk_result }}
@@ -107,6 +110,16 @@ on:
         required: false
         default: false
         type: boolean
+      publish_plugins:
+        description: "Publish (Plugins) — JSON array of opt-in plugin ids"
+        required: false
+        default: "[]"
+        type: string
+      plugin_versions:
+        description: 'Plugin ids mapped to approved exact versions (required for production plugins)'
+        required: false
+        default: "{}"
+        type: string
       publish_sdk:
         description: "Publish (SDK) — Publish @happier-dev/sdk to npm"
         required: false
@@ -226,6 +239,7 @@ jobs:
           INPUT_STACK_VERSION: ${{ inputs.stack_version }}
           INPUT_SERVER_VERSION: ${{ inputs.server_version }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_PLUGINS: ${{ inputs.publish_plugins }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
           INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
         run: |
@@ -242,6 +256,7 @@ jobs:
             --stack-version "$INPUT_STACK_VERSION" \
             --server-version "$INPUT_SERVER_VERSION" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
+            --publish-plugins "$INPUT_PUBLISH_PLUGINS" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
             --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
             --github-output "$GITHUB_OUTPUT"
@@ -299,6 +314,8 @@ jobs:
       plugin_sdk_version: ${{ steps.meta.outputs.plugin_sdk_version }}
       sdk_version: ${{ steps.meta.outputs.sdk_version }}
       channels_protocol_version: ${{ steps.meta.outputs.channels_protocol_version }}
+      publish_plugins: ${{ steps.select_plugins.outputs.publish_plugins }}
+      plugin_versions: ${{ steps.select_plugins.outputs.plugin_versions }}
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -327,6 +344,7 @@ jobs:
           INPUT_STACK_VERSION: ${{ inputs.stack_version }}
           INPUT_SERVER_VERSION: ${{ inputs.server_version }}
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
+          INPUT_PUBLISH_PLUGINS: ${{ inputs.publish_plugins }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
           INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
         run: |
@@ -343,6 +361,7 @@ jobs:
             --stack-version "$INPUT_STACK_VERSION" \
             --server-version "$INPUT_SERVER_VERSION" \
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
+            --publish-plugins "$INPUT_PUBLISH_PLUGINS" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
             --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
             --github-output "$GITHUB_OUTPUT"
@@ -439,6 +458,19 @@ jobs:
           node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/github/resolve-authorized-release-source.mjs" \
             --source-ref "refs/heads/$source_ref" \
             --authorized-sha "$AUTHORIZED_SHA" "${args[@]}"
+
+      - name: Select publishable plugins
+        id: select_plugins
+        env:
+          INPUT_PUBLISH_PLUGINS: ${{ inputs.publish_plugins }}
+          INPUT_PLUGIN_VERSIONS: ${{ inputs.plugin_versions }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/release/plugin-publication.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --select-input "$INPUT_PUBLISH_PLUGINS" \
+            --versions "$INPUT_PLUGIN_VERSIONS" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Resolve release metadata
         id: meta
@@ -822,6 +854,172 @@ jobs:
             --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/plugin-sdk" \
             --authorized-sha "${AUTHORIZED_SHA}" \
+            --github-output "$GITHUB_OUTPUT"
+
+  publish-plugins:
+    name: npm publish (plugin — ${{ matrix.plugin }})
+    if: ${{ always() && needs.release.result == 'success' && needs.release.outputs.publish_plugins != '[]' && (inputs.publish_plugin_sdk != true || needs.publish-plugin-sdk-pair.result == 'success') }}
+    needs: [release_actor_guard, release, publish-plugin-sdk-pair]
+    runs-on: ubuntu-22.04
+    environment: release-shared
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.release.outputs.publish_plugins) }}
+    steps:
+      - name: Checkout admitted plugin source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout trusted npm release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node (npm publish)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: trusted-control/.node-version
+          registry-url: https://registry.npmjs.org
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: apps/stack/scripts/provision/.bun-version
+
+      - name: Install dependencies
+        env:
+          npm_config_production: "false"
+        uses: ./trusted-control/.github/actions/install-pnpm-dependencies
+        with:
+          args: --frozen-lockfile
+
+      - name: Build plugin packing prerequisites
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/protocol
+
+      - name: Pack and admit plugin tarball
+        id: pack
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          PLUGIN_ID: ${{ matrix.plugin }}
+          PLUGIN_SDK_VERSION: ${{ needs.publish-plugin-sdk-pair.outputs.plugin_sdk_version }}
+          PLUGIN_VERSION: ${{ fromJSON(needs.release.outputs.plugin_versions)[matrix.plugin] || '' }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/npm/release-plugin.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --channel "$RELEASE_CHANNEL" \
+            --plugin "$PLUGIN_ID" \
+            --version "$PLUGIN_VERSION" \
+            --sdk-version "$PLUGIN_SDK_VERSION" \
+            --approve-public-sdk-release "$APPROVE_PUBLIC_SDK_RELEASE" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --mode pack \
+            --out-dir "$RUNNER_TEMP/plugin-tarball" \
+            --status-file "$RUNNER_TEMP/plugin-publish-status/$PLUGIN_ID.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: npm publish (plugin tarball)
+        id: publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          AUTHORIZED_SHA: ${{ needs.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/npm/publish-tarball.mjs" \
+            --channel "$RELEASE_CHANNEL" \
+            --tarball-dir "$RUNNER_TEMP/plugin-tarball" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Record plugin publication result
+        if: always()
+        env:
+          PLUGIN_ID: ${{ matrix.plugin }}
+          PUBLISH_RESULT: ${{ steps.publish.outcome }}
+          PUBLISH_VERSION: ${{ steps.publish.outputs.version }}
+          PUBLISH_INTEGRITY: ${{ steps.publish.outputs.integrity }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/release/plugin-publication.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --record-status "$RUNNER_TEMP/plugin-publish-status/$PLUGIN_ID.json" \
+            --plugin "$PLUGIN_ID" \
+            --result "$PUBLISH_RESULT" \
+            --version "$PUBLISH_VERSION" \
+            --integrity "$PUBLISH_INTEGRITY"
+
+      - name: Upload plugin publication result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plugin-publish-status-${{ matrix.plugin }}
+          path: ${{ runner.temp }}/plugin-publish-status/${{ matrix.plugin }}.json
+          if-no-files-found: warn
+
+  collect-plugin-results:
+    name: Collect plugin publication results
+    if: ${{ always() && needs.release.result == 'success' }}
+    needs: [release, publish-plugins]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    outputs:
+      plugins_json: ${{ steps.aggregate.outputs.plugins_json }}
+    steps:
+      - name: Checkout admitted plugin source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout trusted npm release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: trusted-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: trusted-control/.node-version
+
+      - name: Download plugin publication results
+        if: needs.release.outputs.publish_plugins != '[]'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: plugin-publish-status-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/plugin-publish-status
+
+      - name: Aggregate every selected plugin result
+        if: always()
+        id: aggregate
+        env:
+          PUBLISH_PLUGINS: ${{ needs.release.outputs.publish_plugins }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/trusted-control/scripts/pipeline/release/plugin-publication.mjs" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --aggregate "$RUNNER_TEMP/plugin-publish-status" \
+            --plugins "$PUBLISH_PLUGINS" \
             --github-output "$GITHUB_OUTPUT"
 
   publish-sdk:

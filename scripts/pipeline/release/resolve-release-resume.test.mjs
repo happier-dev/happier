@@ -123,7 +123,7 @@ test('resume retains exact downstream completion, UI intent, Runner rolling stat
   assert.equal(resolved.requestedDeployUi, true);
   assert.equal(resolved.uiIntentRecorded, true);
   assert.deepEqual(resolved.resumeInputs.deployUi, { deployWeb: true, expoAction: 'full', desktopMode: 'build_and_publish' });
-  for (const id of ['npm_plugin_sdk', 'npm_plugin_ui', 'npm_sdk']) {
+  for (const id of ['npm_plugin_sdk', 'npm_plugin_ui', 'npm_sdk', 'npm_plugin:asciinema']) {
     assert.equal(resolveReleaseResume(standardInput([...accepted, { id, requested: true }])).completed.npm, false);
   }
   for (const bad of [

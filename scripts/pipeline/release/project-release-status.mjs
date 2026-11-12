@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 import { summarizeReleaseStatus } from './summarize-release-status.mjs';
+import { parsePluginSelection } from './plugin-publication.mjs';
 
 /** @param {Record<string, string | undefined>} env @param {string} name */
 const value = (env, name) => env[name] === 'true';
@@ -59,13 +60,11 @@ export function projectReleaseStatus(mode, env) {
       recoveryHint,
     };
   };
-  const npmPackage = (id, packageName, requestedValue, resultName, versionName, integrityName, recoveryHint) => {
-    const version = env[versionName] || '';
-    const integrity = env[integrityName] || '';
-    const verified = requestedValue && exact(resultName) && version !== '' && integrity !== '';
+  const npmPublication = (id, packageName, requestedValue, publishResult, version, integrity, recoveryHint) => {
+    const verified = requestedValue && publishResult === 'success' && version !== '' && integrity !== '';
     return {
       id,
-      result: requestedValue ? (verified ? 'success' : result(env, resultName)) : 'skipped',
+      result: requestedValue ? (verified ? 'success' : publishResult) : 'skipped',
       identity: {
         sourceSha,
         verified,
@@ -74,6 +73,21 @@ export function projectReleaseStatus(mode, env) {
       recoveryHint,
     };
   };
+  const npmPackage = (id, packageName, requestedValue, resultName, versionName, integrityName, recoveryHint) => npmPublication(
+    id, packageName, requestedValue, result(env, resultName), env[versionName] || '', env[integrityName] || '', recoveryHint,
+  );
+  const pluginRecords = JSON.parse(env.NPM_PLUGINS_JSON || '[]');
+  const pluginPublications = parsePluginSelection(env.REQUEST_PLUGINS || '[]').map((id) => {
+    const record = pluginRecords.find((entry) => entry.id === id);
+    const publishResult = record?.result === 'success' ? 'success' : 'failed';
+    const { version = '', integrity = '', packageName = '' } = record ?? {};
+    return {
+      ...npmPublication(`npm_plugin:${id}`, packageName, true, publishResult, version, integrity, { job: 'publish_plugins', plugin: id }),
+      requested: true,
+      required: false,
+      evidence: 'verified',
+    };
+  });
 
   if (mode === 'nightly') {
     const desktopOriginRunId = Number(env.DESKTOP_ORIGIN_RUN_ID || env.RELEASE_RUN);
@@ -97,6 +111,7 @@ export function projectReleaseStatus(mode, env) {
     });
     const promotedVerified = (name) => exact(name) && exact('POST_PROMOTION_RESULT');
     const items = [
+      ...pluginPublications,
       item('candidate', true, 'verified', 'CANDIDATE_RESULT', exact('CANDIDATE_RESULT'), { job: 'prepare_release_candidate' }),
       item('immutable_candidate_verification', true, 'verified', 'IMMUTABLE_VERIFICATION_RESULT', exact('IMMUTABLE_VERIFICATION_RESULT'), { job: 'release_verify' }),
       candidateItem('cli-immutable-candidate', 'cli', 'CLI_CANDIDATE_RESULT', 'CLI_CANDIDATE_VERSION', 'CLI_RESUME_VERIFIED', { job: 'cli' }),
@@ -141,6 +156,7 @@ export function projectReleaseStatus(mode, env) {
     channel: env.RELEASE_CHANNEL,
     sourceSha,
     requestedSurfaces: [
+      ...pluginPublications.map(({ id, requested, required, evidence }) => ({ id, requested, required, evidence })),
       ...(env.CHANNEL_PROMOTION_RESULT === undefined ? [] : [requested('channel_promotion', true, false, 'verified')]),
       ...(env.GITHUB_LATEST_RESULT === undefined ? [] : [requested('github_latest', env.RELEASE_CHANNEL === 'production', false, 'accepted')]),
       requested('candidate', true, true, 'verified'), requested('immutable_candidate_verification', true, true, 'verified'),
@@ -151,6 +167,7 @@ export function projectReleaseStatus(mode, env) {
       requested('npm_plugin_sdk', request.pluginSdk, false, 'verified'), requested('npm_plugin_ui', request.pluginSdk, false, 'verified'), requested('npm_sdk', request.sdk, false, 'verified'),
     ],
     surfaces: [
+      ...pluginPublications.map(({ id, result, identity, recoveryHint }) => ({ id, result, identity, recoveryHint })),
       ...(env.CHANNEL_PROMOTION_RESULT === undefined ? [] : [observed('channel_promotion', 'CHANNEL_PROMOTION_RESULT', exact('CHANNEL_PROMOTION_RESULT'), { job: env.RELEASE_CHANNEL === 'production' ? 'promote_main' : 'promote_preview' })]),
       ...(env.GITHUB_LATEST_RESULT === undefined ? [] : [accepted('github_latest', 'GITHUB_LATEST_RESULT', '', { job: 'promote_github_latest' })]),
       observed('candidate', 'CANDIDATE_RESULT', exact('CANDIDATE_RESULT'), { job: 'prepare_release_candidate' }),

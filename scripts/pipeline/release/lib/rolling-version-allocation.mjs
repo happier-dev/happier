@@ -4,6 +4,9 @@ import { execFileSync } from 'node:child_process';
 
 import { resolveGitHubRepoSlug } from '../../github/resolve-github-repo-slug.mjs';
 import { resolveRollingReleaseTagSuffix } from './public-release-rings.mjs';
+import { fileURLToPath } from 'node:url';
+import { readPublishablePlugins } from '../../../plugins/publishable.mjs';
+import { pluginReleaseComponent } from '../component-registry.mjs';
 
 const PRODUCT_SOURCES = Object.freeze({
   cli: Object.freeze({
@@ -76,6 +79,7 @@ export function normalizeRollingBaseVersion(version) {
  *   channel: import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId;
  *   baseVersion: string;
  *   version: string;
+ *   repoRoot?: string;
  * }} opts
  */
 export function validateExactRollingPublishVersion(opts) {
@@ -89,7 +93,7 @@ export function validateExactRollingPublishVersion(opts) {
     }
     return explicitVersion;
   }
-  const product = getProductSource(opts.productId);
+  const product = getProductSource(opts.productId, opts.repoRoot);
   const channelSuffix = resolveRollingReleaseTagSuffix(opts.channel);
   const explicitBuild = parseRollingVersionBuild(explicitVersion, {
     baseVersion,
@@ -409,8 +413,14 @@ function collectGitHubReleaseVersions(opts) {
 
 /**
  * @param {string} productId
+ * @param {string} [repoRoot]
  */
-function getProductSource(productId) {
+function getProductSource(productId, repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))) {
+  if (productId.startsWith('plugin:')) {
+    const plugin = readPublishablePlugins(repoRoot).find(({ id }) => `plugin:${id}` === productId);
+    if (!plugin) throw new Error(`Unknown rolling release product: ${productId}`);
+    return { githubTagPrefix: pluginReleaseComponent(plugin.id).baselineTagPrefix, npmPackage: plugin.packageName };
+  }
   const product = PRODUCT_SOURCES[/** @type {keyof typeof PRODUCT_SOURCES} */ (productId)];
   if (!product) {
     throw new Error(`Unknown rolling release product: ${productId}`);
@@ -443,7 +453,7 @@ export async function resolveRollingPublishVersion(opts) {
     };
   }
 
-  const product = getProductSource(opts.productId);
+  const product = getProductSource(opts.productId, opts.repoRoot);
   const channelSuffix = resolveRollingReleaseTagSuffix(opts.channel);
   const explicitVersion = String(opts.explicitVersion ?? '').trim();
   const publishSurface = opts.publishSurface ?? 'all';
@@ -526,6 +536,7 @@ export async function resolveRollingPublishVersion(opts) {
 
   if (explicitVersion) {
     validateExactRollingPublishVersion({
+      repoRoot: opts.repoRoot,
       productId: opts.productId,
       channel: opts.channel,
       baseVersion,

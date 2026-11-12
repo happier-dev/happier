@@ -42,6 +42,37 @@ the author source stays intact. See
 [Publish a plugin](/plugins/packaging/authoring-cli#publish-a-plugin) for candidate
 review, npm approval, and recovery.
 
+## Repository-managed npm releases (0.3 development)
+
+Opt-in plugins maintained in the Happier repository participate in the release
+pipeline when their `package.json` declares `happier.bundled: false`. The
+pipeline discovers these packages; authors do not maintain a separate release
+list. Changes to the plugin's own directory propose its release. An SDK-only
+change does not release every plugin.
+
+Maintainers can include a plugin in a release of all changed components or
+select only its `plugin:<directory-name>` target, such as `plugin:asciinema`.
+The source package version remains a placeholder; publication allocates the
+channel version. Production requires an approved exact version for each selected
+plugin; preview and development allocate rolling
+versions. Production uses npm's `latest` tag, preview uses `next`, and
+development uses `dev`.
+
+Publication waits for the Plugin SDK pair step. The packed plugin depends on
+the exact Plugin SDK version published in that run, or the version already
+published on the channel when the SDK was not selected. A channel without a
+published SDK cannot release a plugin. The release host's toolchain must agree
+with that exact SDK version.
+
+The pipeline uses the normal plugin packer and installs the archive into a
+temporary host before publication, including manifest and declared
+`engines.happier` admission. A failed pack or install stops publication. The
+same public SDK approval policy and npm provenance requirements apply.
+This describes development-source release support, not an announcement that
+any plugin package has been published. Plugin ids must also satisfy npm
+registry admission; passing a local archive check does not grant a reserved
+registry identity.
+
 ## Include
 
 - the generated `.happier-plugin/plugin.json` cold projection

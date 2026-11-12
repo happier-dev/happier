@@ -42,9 +42,10 @@ import {
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from './release/lib/public-release-rings.mjs';
-import { resolveReleasePromotionIntent } from './release/validate-release-dispatch.mjs';
+import { parsePublicSdkReleaseApproval, resolveReleasePromotionIntent } from './release/validate-release-dispatch.mjs';
 import { assertApprovedReleaseIntent, readApprovedReleaseIntent } from './release/approved-release-intent.mjs';
-import { releaseTargets } from './release/component-registry.mjs';
+import { publishablePlugins, releaseTargets } from './release/component-registry.mjs';
+import { selectPluginPublications, selectPluginVersions } from './release/plugin-publication.mjs';
 import { buildPublicReleaseContractV1 } from './release/public-release-contract.mjs';
 import { resolveReleaseEnvironmentChannel } from './release/resolve-release-environment-channel.mjs';
 import {
@@ -4631,6 +4632,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               repository: { type: 'string' },
               'deploy-environment': { type: 'string', default: 'preview' },
               'deploy-targets': { type: 'string', default: 'ui,server,website,docs' },
+              'plugin-versions': { type: 'string', default: '{}' },
               'release-profile': { type: 'string', default: '' },
               'waive-ci': { type: 'string', default: 'false' },
               'approve-public-sdk-release': { type: 'string', default: 'false' },
@@ -4775,6 +4777,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               );
             }
           }
+          const approvedPluginVersions = parsePublicSdkReleaseApproval(approvedInputs.public_sdk_release_approval).pluginVersions;
+          const pluginVersions = selectPluginVersions(
+            releaseValue('plugin-versions', approvedPluginVersions === undefined ? undefined : JSON.stringify(approvedPluginVersions)),
+            selectPluginPublications(publishablePlugins, deployTargets),
+          );
           const forceDeploy = parseBoolString(releaseValue('force-deploy', approvedInputs.force_deploy), '--force-deploy');
           const bumpPreset = 'none';
 
@@ -4832,6 +4839,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 apiClassification: sdkApiClassification || 'unreviewed',
                 migrationNotes: sdkMigrationNotes,
               },
+              ...(Object.keys(pluginVersions).length > 0 ? { pluginVersions } : {}),
             });
             return {
               repository,

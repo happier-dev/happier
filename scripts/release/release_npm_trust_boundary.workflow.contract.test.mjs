@@ -13,6 +13,55 @@ async function loadWorkflow() {
   return YAML.parse(await readFile(workflowPath, 'utf8'));
 }
 
+test('opt-in plugin publishing is one generic matrix after the SDK pair with artifact-aggregated results', async () => {
+  const workflow = await loadWorkflow();
+  assert.equal(workflow.on.workflow_call.inputs.publish_plugins.default, '[]');
+  const job = workflow.jobs['publish-plugins'];
+  assert.ok(job);
+  assert.ok(job.needs.includes('publish-plugin-sdk-pair'));
+  assert.deepEqual(job.permissions, { contents: 'read', 'id-token': 'write' });
+  assert.equal(job.strategy['fail-fast'], false);
+  assert.match(job.strategy.matrix.plugin, /needs.release.outputs.publish_plugins/u);
+  const publisher = job.steps.find(({ id }) => id === 'publish');
+  assert.match(publisher.run, /trusted-control\/scripts\/pipeline\/npm\/publish-tarball\.mjs/u);
+  const packer = job.steps.find(({ id }) => id === 'pack');
+  assert.match(packer.run, /release-plugin\.mjs/u);
+  assert.equal(packer.env.PLUGIN_SDK_VERSION, '${{ needs.publish-plugin-sdk-pair.outputs.plugin_sdk_version }}');
+  assert.equal(packer.env.APPROVE_PUBLIC_SDK_RELEASE, '${{ inputs.approve_public_sdk_release }}');
+  assert.doesNotMatch(JSON.stringify(packer), /secrets\.|NODE_AUTH_TOKEN|NPM_TOKEN/u);
+  const upload = job.steps.find(({ uses }) => uses?.startsWith('actions/upload-artifact@'));
+  assert.equal(upload.if, 'always()');
+  assert.match(upload.with.name, /matrix.plugin/u);
+  const aggregate = workflow.jobs['collect-plugin-results'];
+  assert.match(aggregate.if, /always\(\)/u);
+  assert.match(JSON.stringify(aggregate), /plugin-publish-status-\*/u);
+  assert.equal(workflow.on.workflow_call.outputs.plugins_json.value, '${{ jobs.collect-plugin-results.outputs.plugins_json }}');
+});
+
+test('explicit plugin versions reach every release channel and the generic plugin packer', async () => {
+  const npm = await loadWorkflow();
+  const release = YAML.parse(await readFile(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8'));
+  const channel = YAML.parse(await readFile(new URL('../../.github/workflows/release-channel.yml', import.meta.url), 'utf8'));
+  assert.equal(release.on.workflow_dispatch.inputs.plugin_versions, undefined);
+  assert.ok(Object.keys(release.on.workflow_dispatch.inputs).length <= 25);
+  assert.equal(release.jobs.release_preflight.outputs.plugin_versions, '${{ steps.dispatch.outputs.plugin_versions }}');
+  assert.equal(channel.on.workflow_call.inputs.plugin_versions.default, '{}');
+  assert.equal(npm.on.workflow_call.inputs.plugin_versions.default, '{}');
+  for (const id of ['release_single', 'release_production']) {
+    assert.equal(release.jobs[id].with.plugin_versions, '${{ needs.release_preflight.outputs.plugin_versions }}');
+    assert.ok(release.jobs[id].needs.includes('release_preflight'));
+  }
+  assert.equal(release.jobs.release_preview.with.plugin_versions, '{}', 'combined preview allocates a preview version while production consumes the approved stable version');
+  assert.equal(channel.jobs.publish_npm.with.plugin_versions, '${{ inputs.plugin_versions }}');
+  const selection = npm.jobs.release.steps.find(({ id }) => id === 'select_plugins');
+  assert.equal(selection.env.INPUT_PLUGIN_VERSIONS, '${{ inputs.plugin_versions }}');
+  assert.match(selection.run, /--versions "\$INPUT_PLUGIN_VERSIONS"/u);
+  assert.equal(npm.jobs.release.outputs.plugin_versions, '${{ steps.select_plugins.outputs.plugin_versions }}');
+  const pack = npm.jobs['publish-plugins'].steps.find(({ id }) => id === 'pack');
+  assert.equal(pack.env.PLUGIN_VERSION, "${{ fromJSON(needs.release.outputs.plugin_versions)[matrix.plugin] || '' }}");
+  assert.match(pack.run, /--version "\$PLUGIN_VERSION"/u);
+});
+
 function checkoutSteps(job) {
   return (job?.steps ?? []).filter((step) => step?.uses === 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262');
 }

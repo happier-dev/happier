@@ -5,6 +5,7 @@
 import { appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { parsePluginSelection } from './plugin-publication.mjs';
 
 /** @param {unknown} value @param {string} name */
 function parseBoolean(value, name) {
@@ -30,6 +31,7 @@ function parseBoolean(value, name) {
  *   publishPluginSdk: boolean;
  *   publishSdk: boolean;
  *   publishChannelsProtocol: boolean;
+ *   publishPlugins?: string[];
  * }} input
  */
 export function resolveNpmReleaseInputs(input) {
@@ -45,6 +47,7 @@ export function resolveNpmReleaseInputs(input) {
     input.publishPluginSdk,
     input.publishSdk,
     input.publishChannelsProtocol,
+    (input.publishPlugins?.length ?? 0) > 0,
   ];
   if (!requested.some(Boolean)) {
     throw new Error('At least one npm publication target must be true.');
@@ -85,6 +88,7 @@ function main() {
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
       'publish-channels-protocol': { type: 'string', default: 'false' },
+      'publish-plugins': { type: 'string', default: '[]' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -101,6 +105,7 @@ function main() {
     publishPluginSdk: parseBoolean(values['publish-plugin-sdk'], '--publish-plugin-sdk'),
     publishSdk: parseBoolean(values['publish-sdk'], '--publish-sdk'),
     publishChannelsProtocol: parseBoolean(values['publish-channels-protocol'], '--publish-channels-protocol'),
+    publishPlugins: parsePluginSelection(values['publish-plugins']),
   });
 
   const githubOutput = String(values['github-output'] ?? '').trim();

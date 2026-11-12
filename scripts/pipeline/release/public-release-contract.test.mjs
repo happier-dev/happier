@@ -99,4 +99,7 @@ test('public release-contract CLI advertises packet materialization and SDK appr
   assert.equal(contract.conductorProtocol.version, 1);
   assert.ok(contract.conductorProtocol.capabilities.includes('approved-release-packet-v1'));
   assert.ok(contract.conductorProtocol.capabilities.includes('public-sdk-release-approval'));
+  assert.ok(contract.conductorProtocol.capabilities.includes('plugin-release-versions'));
+  assert.equal(contract.dispatchInputs.public_sdk_release_approval.fields.pluginVersions.type, 'object');
+  assert.equal(contract.dispatchInputs.public_sdk_release_approval.fields.pluginVersions.valueType, 'string');
 });

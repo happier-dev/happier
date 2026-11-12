@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 
 import { projectReleaseStatus } from './project-release-status.mjs';
 
+test('each selected plugin keeps its own optional exact npm publication status', () => {
+  const status = projectReleaseStatus('standard', {
+    RELEASE_RUN: '43', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/43', RELEASE_RUN_NAME: 'RELEASE', SOURCE_SHA: 'b'.repeat(40), RELEASE_CHANNEL: 'preview',
+    CANDIDATE_RESULT: 'success', IMMUTABLE_VERIFICATION_RESULT: 'success', RELEASE_VERIFY_RESULT: 'success',
+    REQUEST_PLUGINS: '["new-source-plugin"]',
+    NPM_PLUGINS_JSON: JSON.stringify([{ id: 'new-source-plugin', packageName: '@example/custom-plugin', result: 'success', version: '0.3.0-preview.4', integrity: 'sha512-plugin' }]),
+  });
+  const plugin = status.surfaces.find(({ id }) => id === 'npm_plugin:new-source-plugin');
+  assert.equal(plugin?.required, false);
+  assert.equal(plugin?.state, 'complete');
+  assert.equal(plugin?.identity?.package, '@example/custom-plugin');
+  assert.equal(plugin?.identity?.version, '0.3.0-preview.4');
+  const failed = projectReleaseStatus('standard', { RELEASE_RUN: '43', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/43', RELEASE_RUN_NAME: 'RELEASE', SOURCE_SHA: 'b'.repeat(40), RELEASE_CHANNEL: 'preview', REQUEST_PLUGINS: '["asciinema"]' });
+  assert.equal(failed.surfaces.find(({ id }) => id === 'npm_plugin:asciinema')?.result, 'failed');
+});
+
 test('a published web product remains complete beside a failed CLI and pending deployment', () => {
   const status = projectReleaseStatus('standard', {
     RELEASE_RUN: '42', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/42',
