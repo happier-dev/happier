@@ -89,6 +89,33 @@ export function rewriteMcpJsonSchemaReferences(schema: JsonSchemaObject, rewrite
     return mapMcpJsonSchema(schema, node => typeof node.$ref === 'string' ? { ...node, $ref: rewrite(node.$ref) } : node);
 }
 
+/** xAI accepts object/boolean items, not draft-7 positional tuples.
+ * Discovery advertises the union; the original parser owns positional validation.
+ */
+function projectProviderTupleItems(document: JsonSchemaObject): JsonSchemaObject {
+    const rewritten = rewriteMcpJsonSchemaReferences(document, ref => {
+        if (!ref.startsWith('#/')) return ref;
+        const parts = ref.slice(2).split('/');
+        const projected: string[] = [];
+        let value: unknown = document;
+        for (const [index, part] of parts.entries()) {
+            if (Array.isArray(value) && parts[index - 1] === 'items') projected.push('anyOf');
+            const tuple = asObject(value);
+            if (part === 'additionalItems' && Array.isArray(tuple?.items)) {
+                projected.push('items', 'anyOf', String(tuple.items.length));
+            } else projected.push(part);
+            value = value !== null && typeof value === 'object'
+                ? Reflect.get(value, part.replace(/~1/g, '/').replace(/~0/g, '~')) : undefined;
+        }
+        return `#/${projected.join('/')}`;
+    });
+    return mapMcpJsonSchema(rewritten, schema => {
+        if (!Array.isArray(schema.items)) return schema;
+        const { items, additionalItems, ...rest } = schema;
+        return { ...rest, items: { anyOf: [...items, additionalItems ?? {}] } };
+    });
+}
+
 function projectProviderEnum(schema: JsonSchemaObject): JsonSchemaObject {
     const values = schema.enum;
     if (!Array.isArray(values) || !values.every(value => typeof value === 'string')) return schema;
@@ -144,7 +171,7 @@ export function projectMcpToolInputJsonSchema(schema: JsonSchemaObject): JsonSch
 }
 
 function projectMcpToolObjectRoot(schema: JsonSchemaObject): JsonSchemaObject {
-    schema = projectRecursiveReferences(mapMcpJsonSchema(schema, projectProviderEnum));
+    schema = projectRecursiveReferences(mapMcpJsonSchema(projectProviderTupleItems(schema), projectProviderEnum));
     const projected = projectObjectInputSchema(schema, schema, new Set());
     const removed = ['anyOf', 'oneOf', 'allOf'].filter(key => Array.isArray(schema[key]));
     if (removed.length === 0) return projected;

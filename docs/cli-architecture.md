@@ -5694,6 +5694,12 @@ Meta: deeper subtrees become opaque objects with `action_spec_get` guidance.
 Shared references remain compact; a shared subtree is cut to fit its deepest
 advertised use. MCP output schemas and Action discovery schemas are unchanged.
 
+Draft-7 positional tuple `items` are advertised as an item-schema union for xAI,
+which accepts object or boolean `items`. References into tuple entries and their
+additional-item schema follow the projected locations; literal data is unchanged.
+The original parser retains positional and length validation. This projection
+applies at the shared discovery owner, without a provider-specific sanitizer.
+
 The development definition family delegates to Protocol's
 `createWorkflowDefinitionActions`; CLI Artifact transport is a host adapter,
 not a second definition owner. Same-id create rejoins only matching normalized

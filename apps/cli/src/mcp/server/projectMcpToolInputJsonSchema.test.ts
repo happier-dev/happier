@@ -79,6 +79,27 @@ function recursiveReferences(document: unknown): string[] {
 }
 
 describe('MCP provider input projection', () => {
+    it('advertises draft-7 tuples as homogeneous items while retaining references and server tuple validation', () => {
+        const parser = z.object({ executionRunContext: z.object({ versions: z.tuple([z.literal(1)]) }) });
+        const source = zodSchemaToJsonSchemaObject(parser, { target: 'draft-7' });
+        const schema = { ...source, definitions: { pair: { type: 'array', items: [{ type: 'string' }, { type: 'number' }], additionalItems: false } },
+            properties: { ...source.properties as Record<string, unknown>, label: { $ref: '#/definitions/pair/items/0' },
+                count: { $ref: '#/properties/open/additionalItems' },
+                open: { type: 'array', items: [{ type: 'string' }], additionalItems: { type: 'number' } } },
+            default: { items: [{ const: 'literal data' }] } };
+        const projected = projectMcpToolInputJsonSchema(schema);
+        expect(projected).toMatchObject({ properties: {
+            executionRunContext: { properties: { versions: { items: { anyOf: [{ type: 'number', const: 1 }, false] } } } },
+            label: { $ref: '#/definitions/pair/items/anyOf/0' },
+            count: { $ref: '#/properties/open/items/anyOf/1' },
+            open: { items: { anyOf: [{ type: 'string' }, { type: 'number' }] } },
+        }, default: schema.default });
+        const validate = new Ajv({ strict: false }).compile(projected);
+        expect(validate({ executionRunContext: { versions: [1] }, label: 'ok', count: 2, open: ['a', 2] })).toBe(true);
+        expect(validate({ executionRunContext: { versions: [2] }, label: 42 })).toBe(false);
+        expect(parser.safeParse({ executionRunContext: { versions: [2] } }).success).toBe(false);
+        expect(schema.definitions.pair.items).toHaveLength(2);
+    });
     it('keeps every exported MCP tool input non-recursive and within provider enum and depth thresholds', () => {
         const offenders = HAPPIER_BUILT_IN_TOOLS.flatMap(tool => {
             const schema = zodSchemaToJsonSchemaObject(toMcpToolObjectSchema(tool.inputSchema, 'inputSchema'));
