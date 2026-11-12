@@ -21,8 +21,9 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 
-import { homeDomainFailureKindForHttpStatus, requestHomeDomain, type HomeDomainFailure } from './homeServerActionTransport';
+import { homeDomainFailureKindForHttpStatus, requestHomeDomain, type HomeDomainFailure, type HomeDomainResult } from './homeServerActionTransport';
 
 /**
  * The UI's Home family port.
@@ -182,9 +183,9 @@ export function homeDomainFailureFromActionFailure(
     }
     const savedSecret = SavedSecretResourceActionErrorV1Schema.safeParse(details);
     if (savedSecret.success && savedSecret.data.error === code
-        && (code === 'settings_conflict' || code === 'references_conflict' && httpStatus === 409)) {
-        // Settings CAS and the resource's reference census retain their canonical
-        // currentness refusal through the Action envelope.
+        && (code === 'backup_rekey_required' || code === 'settings_conflict' || code === 'references_conflict' && httpStatus === 409)) {
+        // Resource replacement recovery, Settings CAS and reference census refusals
+        // retain the Home owner's classification through the Action envelope.
         return withDetails({ kind: 'conflict', retryable: false, code });
     }
     if (parsedDetails?.code === code) {
@@ -235,6 +236,8 @@ export function createHomeDomainActionExecutorForScope(
         // A snapshot's demand can end while Account settings/approval admit the
         // read. Recheck its owner immediately before issuing the transport.
         if (readCurrentness?.() === false) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        const retiredSessionId = actionId === 'session.delete' && typeof input === 'object' && input !== null
+            && 'sessionId' in input && typeof input.sessionId === 'string' ? input.sessionId : null;
         const result = await requestHomeDomain<unknown, string>({
             scope,
             method: request.method,
@@ -244,6 +247,11 @@ export function createHomeDomainActionExecutorForScope(
             effect: spec.sideEffectClass === 'read' ? 'read' : 'write',
             ...(errorSchema ? { errorSchema } : {}),
             ...(signal ? { signal } : {}),
+            ...(retiredSessionId ? { projectCurrentAccountResult: (settled: HomeDomainResult<unknown, string>) => {
+                if (settled.ok || settled.failure.code === 'session_absent') {
+                    getSyncSingleton().retireLocalSession(retiredSessionId, scope.serverId);
+                }
+            } } : {}),
         });
         return result.ok ? result.value : toActionFailure(actionId, result.failure);
     };

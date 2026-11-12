@@ -6,11 +6,13 @@ import { DeploymentBackupConfigurationV1Schema, DeploymentBackupRetentionV1Schem
 import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentBackupAnotherMachineSetupV1Schema, DeploymentBackupReceiverSetupOperationV1Schema } from './deploymentBackupAnotherMachineV1.js';
 import { EnvironmentBackupDestinationBindingInputV1Schema } from './storedAppInputV1.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import { StoragePathCapacityV1Schema } from '../storage/storageV1.js';
 
 export const DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 = [
   { value: 'test', label: 'Test destination' }, { value: 'save', label: 'Save existing repository' },
   { value: 'initializeAndSave', label: 'Initialize repository and save' }, { value: 'markNotNeeded', label: 'Backups not needed' },
+  { value: 'rekeyAndSave', label: 'Re-key backups' },
 ] as const;
 export const DeploymentBackupConfigureIntentV1Schema = z.enum(DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1.map(option => option.value));
 const header = () => ({ serverId: id, environmentId: id, expectedRevision: revision });
@@ -30,6 +32,7 @@ export const DeploymentBackupConfigureInputV1Schema = lazyZodSchema(() => z.disc
   z.strictObject({ ...preparation(), intent: z.literal('save') }),
   z.strictObject({ ...preparation(), intent: z.literal('initializeAndSave') }),
   z.strictObject({ ...header(), intent: z.literal('markNotNeeded') }),
+  z.strictObject({ ...header(), intent: z.literal('rekeyAndSave'), replacement: SharedSavedSecretReferenceSelectionV1Schema }),
 ]));
 export type DeploymentBackupConfigureInputV1 = z.infer<typeof DeploymentBackupConfigureInputV1Schema>;
 

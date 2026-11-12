@@ -6,7 +6,7 @@ import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImport
 import type { AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1, SavedSecretResourceContentV1Schema, prepareSavedSecretResourceRecipientEnvelopesV1, prepareSavedSecretResourceUpdateContentV1, type SavedSecretExternalSourceV1, type SavedSecretResourceSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { admitSavedSecretResourceAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SavedSecretBackupRekeyRequiredV1Schema, type SavedSecretBackupRekeyRequiredV1, SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { SavedSecretLegacyImportResult, SavedSecretVerifiedImportReference } from '@/sync/domains/settings/savedSecretTypes';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -38,7 +38,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { sealOwnerSavedSecretResourceEnvelope } from '@/sync/encryption/savedSecretOwnerEnvelope';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { randomUUID } from '@/platform/randomUUID';
-import { isTeamActionApprovalPendingError, runTeamAction } from '@/sync/ops/teams/teamActionClient';
+import { isTeamActionApprovalPendingError, runTeamAction, type HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { captureSavedSecretReferenceCatalogsInContext, captureSavedSecretNotificationChannelsInContext, prepareSavedSecretReferenceCatalogMutationsInContext,
     publishAcknowledgedSavedSecretReferenceCatalogsInContext,
     type SavedSecretReferenceCatalogFacets, type SavedSecretReferenceCatalogKey } from './savedSecretReferenceCatalogs';
@@ -76,6 +76,18 @@ function isHealthySavedSecretResourceMaterialV1(
 export type SavedSecretResourceOperationResult =
     | Readonly<{ ok: true }>
     | Readonly<{ ok: false; reason: 'changed' | 'unavailable' | 'failed' | 'outcome_unknown' | 'recipient_mode_unsupported' }>;
+
+export type SavedSecretResourceUpdateResult = SavedSecretResourceOperationResult
+    | Readonly<{ ok: false; reason: 'backup_rekey_required'; details: SavedSecretBackupRekeyRequiredV1 }>;
+
+/** Both private Action and shared Resource updates consume the same Home refusal. */
+export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailure<string>): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
+    if (failure.code === 'backup_rekey_required') {
+        const details = SavedSecretBackupRekeyRequiredV1Schema.safeParse(failure.details);
+        if (details.success) return { ok: false, reason: 'backup_rekey_required', details: details.data };
+    }
+    return { ok: false, reason: operationFailureReason(failure.kind) };
+}
 
 export type SavedSecretPromotionResult =
     | Readonly<{ ok: true; resourceRef: string }>
@@ -1697,7 +1709,7 @@ export async function updateSavedSecretResource(params: Readonly<{
     /** Explicit owner directive; absent follows the shared Account write-mode policy. */
     toMode?: 'plain' | 'e2ee';
     decryptDataKeyEnvelope: (encryptedDataKey: string) => Promise<Uint8Array | null>;
-}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceOperationResult> {
+}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceUpdateResult> {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     let context: ProfileAccountContext | undefined;
     try {
@@ -1718,7 +1730,7 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
     resourceId: string; expectedRevision?: number; nextName?: string; nextValue?: string; nextSource?: SavedSecretExternalSourceV1;
     toMode?: 'plain' | 'e2ee'; executeAdmittedMutation?: SavedSecretAdmittedMutationExecute;
     decryptDataKeyEnvelope?: (encryptedDataKey: string) => Promise<Uint8Array | null>;
-}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceOperationResult> {
+}> & SavedSecretApprovalHandlers<SavedSecretMutationOutput>): Promise<SavedSecretResourceUpdateResult> {
     const scope = { serverId: context.serverId, accountId: context.accountId };
     const decryptDataKeyEnvelope = params.decryptDataKeyEnvelope ?? (async (encryptedDataKey: string) => {
         const { encryption } = await context.resolveAccountEncryption();
@@ -1834,7 +1846,7 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
             });
             context.assertResultCurrent('write');
             if (outcome.kind !== 'succeeded') {
-                return { ok: false, reason: operationFailureReason(outcome.failure.kind) };
+                return projectSavedSecretResourceUpdateFailure(outcome.failure);
             }
             publishReceipt(outcome.value);
             if (convertedResourceDataKey) {

@@ -390,7 +390,19 @@ export const SharedSavedSecretPromoteOutputV1Schema = lazyZodSchema(() => z.stri
 }));
 export const SharedSavedSecretDeleteOutputV1Schema = lazyZodSchema(() => z.strictObject({ resourceId: z.string() }));
 
-export const SavedSecretResourceActionErrorV1Schema = lazyZodSchema(() => z.union([z.strictObject({
+/** Replacement leaves the current revision intact until repository keys are migrated or legacy routing is refreshed. */
+export const SavedSecretBackupRekeyRequiredV1Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('backup_rekey_required'),
+  backups: z.array(z.strictObject({
+    environmentId: z.string().check(z.minLength(1)),
+    role: z.enum(['repositoryPassword', 'unknown']),
+  })),
+  // Preserve the existing global-use boolean; inaccessible Environment identities remain private.
+  hasOtherBackups: z.boolean(),
+}));
+export type SavedSecretBackupRekeyRequiredV1 = z.infer<typeof SavedSecretBackupRekeyRequiredV1Schema>;
+
+export const SavedSecretResourceActionErrorV1Schema = lazyZodSchema(() => z.union([SavedSecretBackupRekeyRequiredV1Schema, z.strictObject({
   error: z.enum([
     'invalid_resource', 'resource_not_found', 'forbidden', 'resource_changed',
     'recipient_changed', 'recipient_key_unavailable', 'invalid_cursor',

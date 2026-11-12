@@ -90,7 +90,13 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                         const { encryption } = await account.resolveAccountEncryption(); account.assertCurrent();
                         return encryption ? encryption.decryptEncryptionKey(encryptedDataKey, scope) : null;
                     } });
-                if (!result.ok) refusal(result.reason);
+                if (!result.ok) {
+                    // Carry the validated Home refusal through the Action owner's public failure channel.
+                    if ('details' in result) throw Object.assign(new Error(result.reason, { cause: {
+                        ok: false, errorCode: result.reason, error: result.reason, details: result.details,
+                    } }), { code: result.reason });
+                    refusal(result.reason);
+                }
                 return { revision: args.expectedUpdatedAt + 1 };
             },
             delete: async args => {

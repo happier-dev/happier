@@ -42,6 +42,7 @@ import {
 import {
   deleteSavedSecretResource,
   updateSavedSecretResource,
+  projectSavedSecretResourceUpdateFailure,
   type SavedSecretCreationResult,
   type SavedSecretResourceDeleteResult,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
@@ -693,15 +694,7 @@ export function useSavedSecretCatalog(
       const result = await updatePrivateResource(scope, input);
       return result.kind === 'succeeded'
         ? { ok: true as const }
-        : {
-            ok: false as const,
-            reason:
-              result.failure.kind === 'outcome_unknown'
-                ? ('outcome_unknown' as const)
-                : result.failure.kind === 'conflict'
-                  ? ('changed' as const)
-                  : ('failed' as const),
-          };
+        : projectSavedSecretResourceUpdateFailure(result.failure);
     },
     [personalSecrets, scope, scopeIsActive],
   );

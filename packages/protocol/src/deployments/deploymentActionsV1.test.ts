@@ -899,6 +899,11 @@ describe('deployment semantic preparation', () => {
       async request => request.workspace.id === 'checkout' ? { ok: true, machineId: 'checkout-machine' }
         : { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' });
     expect(selected).toEqual({ ok: true, machineId: 'checkout-machine' });
+    expect(projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', input))
+      .toMatchObject({ workspace: { kind: 'workspace-ref', id: 'checkout' } });
+    expect(projectDeploymentPreparationAdmissionV1('deployments.templates.instantiate', {
+      ...input, destination: { kind: 'stored' },
+    })).not.toHaveProperty('workspace');
     expect(getActionSpec('deployments.templates.instantiate').inputSchema.safeParse({ ...input,
       destination: { ...input.destination, cwd: '/caller-controlled-path' } }).success).toBe(false);
   });
@@ -1211,4 +1216,38 @@ describe('recorded data teardown intent', () => {
     const prepared = { ...withoutCreation, contentArtifactId: 'native-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
     expect(schema.parse(prepared)).toEqual(prepared);
   });
+});
+
+
+it('captures backup credential roles while accepting legacy role-less prepared captures', () => {
+  const source = { kind: 'secret', ref: formatSharedSavedSecretRefV1('backup-key'), resourceRevision: 1 };
+  const bindings = ['repositoryPassword', 'accessKeyId'].map(role => EnvironmentSecretBindingV1Schema.parse({
+    purpose: 'backupDestination', configKey: 'destination', role, source }));
+  const captured = captureDeploymentBindingSavedSecretRevisionsV1(bindings);
+  expect(captured).toEqual([{ resourceId: 'backup-key', revision: 1, requiredBindings: [
+    { purpose: 'backupDestination', role: 'accessKeyId' }, { purpose: 'backupDestination', role: 'repositoryPassword' },
+  ] }]);
+  expect(matchesDeploymentBindingSavedSecretCapturesV1(captured, [{ resourceId: 'backup-key', revision: 1,
+    requiredBindings: [{ purpose: 'backupDestination' }] }])).toBe(true);
+  expect(matchesDeploymentBindingSavedSecretCapturesV1(captured, [{ resourceId: 'backup-key', revision: 1,
+    requiredBindings: [{ purpose: 'backupDestination', role: 'accessKeyId' }] }])).toBe(false);
+});
+
+
+it('binds backup re-key admission to the replacement without permitting configuration changes', () => {
+  const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, intent: 'rekeyAndSave',
+    replacement: { ref: formatSharedSavedSecretRefV1('new-password'), resourceRevision: 1 } };
+  const schema = DeploymentActionInputSchemasV1['deployments.backups.configure'];
+  expect(schema.parse(input)).toEqual(input);
+  for (const extra of [{ configuration: {} }, { backupBindings: [] },
+    { destinationSetup: { kind: 'anotherMachine', machineId: 'receiver', expectedInstallationId: 'installed', receiverInputs: {} } }]) {
+    expect(schema.safeParse({ ...input, ...extra }).success).toBe(false);
+  }
+  const native = projectDeploymentNativeAdmissionV1('deployments.backups.configure', input);
+  const other = projectDeploymentNativeAdmissionV1('deployments.backups.configure', { ...input,
+    replacement: { ...input.replacement, ref: formatSharedSavedSecretRefV1('different-password') } });
+  expect(native).toMatchObject({ kind: 'backupConfigure', intent: 'rekeyAndSave', environmentId: 'environment', expectedRevision: 3 });
+  if (!native || !('kind' in native) || native.kind !== 'backupConfigure'
+    || !other || !('kind' in other) || other.kind !== 'backupConfigure') throw new Error('Expected backup Configure admissions');
+  expect(native.inputDigest).not.toEqual(other.inputDigest);
 });

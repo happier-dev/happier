@@ -3467,6 +3467,26 @@ describe('Saved Secret operations through their real Account and Action owners',
             nextName: 'Renamed external source', decryptDataKeyEnvelope: async () => key?.slice() ?? null })).toEqual({ ok: true });
     });
 
+    it.each(['shared', 'private'] as const)('preserves backup re-key recovery through the %s replacement transport', async entry => {
+        const account = await openAccount('plain');
+        const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        if (entry === 'private') account.resources.set('resource-a', { ...row, entry: { ...row.entry,
+            audience: { accounts: [], teams: [], groups: [] } } });
+        const details = { error: 'backup_rekey_required', backups: [{ environmentId: 'environment-a', role: 'repositoryPassword' }],
+            hasOtherBackups: true };
+        account.setEffect(() => Response.json(details, { status: 409 }));
+        await refreshCatalogAndWaitForLegacyImport(account.scope);
+        const hook = entry === 'private' ? await renderHook(() => useSavedSecretCatalog({ scope: account.scope })) : null;
+        try {
+            if (hook) await vi.waitFor(() => expect(hook.getCurrent().personalSecrets).toHaveLength(1));
+            const input = { resourceId: 'resource-a', expectedRevision: 3, nextValue: 'fixture-new', decryptDataKeyEnvelope: async () => null };
+            const result = hook ? await hook.getCurrent().updateResource(input)
+                : await updateSavedSecretResource({ ...input, scope: account.scope });
+            expect(result).toEqual({ ok: false, reason: 'backup_rekey_required', details });
+            expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
+        } finally { await hook?.unmount(); }
+    });
+
     it('refuses changing Team-shared E2EE inline material to an external source before dispatch', async () => {
         const account = await openAccount('e2ee');
         const key = new Uint8Array(32).fill(9);

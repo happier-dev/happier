@@ -4,7 +4,7 @@ import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactCon
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
-import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema,
+import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
     environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
     type EnvironmentSecretBindingV1 } from './storedAppInputV1.js';
 
@@ -20,7 +20,8 @@ export type DeploymentEnvironmentSecretScopeV1 = z.infer<typeof DeploymentEnviro
 export const EnvironmentSecretBindingRoutingV1Schema = lazyZodSchema(() => z.union([
     z.strictObject({ purpose: z.literal('variable'), phase: z.enum(['build', 'runtime']) }),
     z.strictObject({ purpose: z.literal('registry'), targetLinkId: DeploymentIdentifierV1Schema, access: z.enum(['pull', 'pushPull']) }),
-    z.strictObject({ purpose: z.enum(['backupDestination', 'domainCredential', 'dataRole']) }),
+    z.strictObject({ purpose: z.literal('backupDestination'), role: z.optional(DeploymentBackupDestinationBindingIdentityV1Schema.shape.role) }),
+    z.strictObject({ purpose: z.enum(['domainCredential', 'dataRole']) }),
 ]));
 export type EnvironmentSecretBindingRoutingV1 = z.infer<typeof EnvironmentSecretBindingRoutingV1Schema>;
 
@@ -28,6 +29,7 @@ function routingFor(binding: EnvironmentSecretBindingRoutingV1): EnvironmentSecr
     switch (binding.purpose) {
         case 'variable': return { purpose: 'variable', phase: binding.phase };
         case 'registry': return { purpose: 'registry', targetLinkId: binding.targetLinkId, access: binding.access };
+        case 'backupDestination': return { purpose: binding.purpose, ...(binding.role ? { role: binding.role } : {}) };
         default: return { purpose: binding.purpose };
     }
 }
@@ -62,6 +64,20 @@ export function normalizeDeploymentBindingSavedSecretRevisionsV1(captures: reado
     })).sort((a, b) => a.resourceId.localeCompare(b.resourceId));
 }
 
+// The pre-role producer collapsed all backup credentials to one purpose-only routing row.
+// It remains incomplete metadata; a supplied known role must still cover every actual use.
+function matchesRequiredRouting(expected: readonly EnvironmentSecretBindingRoutingV1[], supplied: readonly EnvironmentSecretBindingRoutingV1[]): boolean {
+    const expectedKeys = new Set(expected.map(routingKey));
+    const suppliedKeys = new Set(supplied.map(routingKey));
+    const legacyBackupKey = routingKey({ purpose: 'backupDestination' });
+    const hasLegacyBackup = suppliedKeys.has(legacyBackupKey);
+    return supplied.every(binding => expectedKeys.has(routingKey(binding))
+        || (binding.purpose === 'backupDestination' && binding.role === undefined
+            && expected.some(binding => binding.purpose === 'backupDestination')))
+        && expected.every(binding => suppliedKeys.has(routingKey(binding))
+            || (hasLegacyBackup && binding.purpose === 'backupDestination'));
+}
+
 /** Older prepared callers may omit routing; supplied routing must match the opened content. */
 export function matchesDeploymentBindingSavedSecretCapturesV1(
     expected: readonly DeploymentBindingSavedSecretRevisionV1[], captured: readonly DeploymentBindingSavedSecretRevisionV1[],
@@ -71,7 +87,8 @@ export function matchesDeploymentBindingSavedSecretCapturesV1(
     return canonical.length === supplied.length && supplied.every((capture, index) => {
         const reference = canonical[index]!;
         return capture.resourceId === reference.resourceId && capture.revision === reference.revision
-            && (!capture.requiredBindings || sameStrictJsonValue(capture.requiredBindings, reference.requiredBindings));
+            && (!capture.requiredBindings || (reference.requiredBindings !== undefined
+                && matchesRequiredRouting(reference.requiredBindings, capture.requiredBindings)));
     });
 }
 

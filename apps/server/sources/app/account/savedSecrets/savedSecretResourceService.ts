@@ -7,6 +7,8 @@ import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type S
 import { canShareSavedSecretResourceContentV1, describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
+import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
+import type { SavedSecretBackupRekeyRequiredV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
@@ -1193,18 +1195,24 @@ export async function admitSavedSecretResourceManagementInTx(tx: Tx, input: Read
     return { ok: true, value: row };
 }
 
-/** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
+/** One metadata owner serves both the catalog census and replacement admission. */
+async function readDeploymentSavedSecretUsesInTx(tx: Tx) {
+    const environments = await tx.deploymentEnvironment.findMany({ where: { deletedAt: null },
+        select: { id: true, projectSourceId: true, referencedSavedSecretRevisions: true } });
+    return environments.map(environment => ({ environmentId: environment.id, projectSourceId: environment.projectSourceId,
+        captures: readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions) }));
+}
+
 async function readDeploymentSavedSecretReferenceStatesInTx(tx: Tx, resourceIds: readonly string[]) {
     const states = new Map<string, 'referenced' | 'unreferenced' | 'unavailable'>();
     if (resourceIds.length === 0) return states;
     // One metadata sweep for the admitted Account catalog, independent of secret count.
     // This existing dependency contract reveals only whether a resource is used anywhere.
-    const environments = await tx.deploymentEnvironment.findMany({ where: { deletedAt: null },
-        select: { referencedSavedSecretRevisions: true } });
+    const environments = await readDeploymentSavedSecretUsesInTx(tx);
     const referenced = new Set<string>();
     let unknown = false;
     for (const environment of environments) {
-        const captures = readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions);
+        const captures = environment.captures;
         if (captures === null) unknown = true;
         else for (const capture of captures) referenced.add(capture.resourceId);
     }
@@ -1670,10 +1678,39 @@ export type SavedSecretAccountModeTransition = Readonly<{
  * write lands in decides which stored container is correct, so a mode/content
  * mismatch stays rejected in every arm.
  */
+export type SavedSecretResourceUpdateResult =
+    | SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>
+    | Readonly<SavedSecretBackupRekeyRequiredV1 & { ok: false }>;
+
+async function readSavedSecretBackupReplacementRefusalInTx(tx: Tx, input: UpdateSavedSecretResourceInput): Promise<
+    Readonly<SavedSecretBackupRekeyRequiredV1 & { ok: false }> | null
+> {
+    const uses = (await readDeploymentSavedSecretUsesInTx(tx)).flatMap(environment => {
+        const capture = environment.captures?.find(capture => capture.resourceId === input.resourceId
+            && capture.revision === input.expectedRevision);
+        if (!capture) return [];
+        const backups = capture.requiredBindings?.filter(binding => binding.purpose === 'backupDestination');
+        // Older prepared callers could omit all routing, including a repository password use.
+        // Only an exact matched resource/revision acquires this incomplete-use meaning.
+        const role = backups?.some(binding => binding.role === 'repositoryPassword') ? 'repositoryPassword' as const
+            : backups === undefined || backups.some(binding => binding.role === undefined) ? 'unknown' as const : null;
+        return role ? [{ environmentId: environment.environmentId, projectSourceId: environment.projectSourceId, role }] : [];
+    });
+    if (uses.length === 0) return null;
+    const access = await resolveProjectSourcesAccessInTx(tx, input.accountId, uses.map(use => use.projectSourceId), input.authentication);
+    const backups: SavedSecretBackupRekeyRequiredV1['backups'] = [];
+    let hasOtherBackups = false;
+    for (const use of uses) {
+        if (access.get(use.projectSourceId)?.ok) backups.push({ environmentId: use.environmentId, role: use.role });
+        else hasOtherBackups = true;
+    }
+    return { ok: false, error: 'backup_rekey_required', backups, hasOtherBackups };
+}
+
 export async function updateSavedSecretResourceInTx(
     tx: Tx,
     input: UpdateSavedSecretResourceInput,
-): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
+): Promise<SavedSecretResourceUpdateResult> {
     const ownership = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
         select: { ownerAccountId: true },
@@ -1774,6 +1811,12 @@ export async function updateSavedSecretResourceInTx(
                 return { ok: false, error: "invalid_resource" };
             }
         }
+    }
+    // The admitted Account migration re-seals the same value in either direction.
+    // Public mode conversion or replacement cannot supply this internal transition authority.
+    if (!transition) {
+        const backupRefusal = await readSavedSecretBackupReplacementRefusalInTx(tx, input);
+        if (backupRefusal) return backupRefusal;
     }
     const updated = await tx.savedSecretResource.updateMany({
         where: { id: input.resourceId, ownerAccountId: input.accountId, revision: input.expectedRevision },

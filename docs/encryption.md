@@ -355,6 +355,22 @@ non-secret variable grants and Machine connector grants are unaffected. The
 running generation may finish using its in-memory sanitizer, but deleted
 ciphertext is not retained for log recovery. Resource deletion uses the existing
 foreign-key cascade.
+Development-source Saved Secret payload, label and mode updates first consume
+existing Environment use facts. A current-revision backup repository-password
+pin refuses the update with `backup_rekey_required`, before advancing the
+revision or withdrawing its installation grants. Older captures with incomplete
+routing require refreshed binding-use metadata before replacement. The refusal
+names only Environments the caller can read; other uses remain a boolean.
+Internal Account-mode migrations preserve the value and re-seal it when
+switching between Plain and E2EE, so they bypass this replacement refusal
+after the existing transition and key checks. Ordinary replacements do not. Known
+non-password backup credentials and audience withdrawal keep their existing
+behavior. This adds no retained old-revision grants or separate backup-use
+table. Explicit backup re-keying creates a separate Saved Secret from the
+entered replacement, adds and verifies its repository key while the old
+password is available, then changes the Environment password binding by CAS.
+Only after all affected backups are re-keyed does the original replacement
+withdraw the old revision.
 Environment admission derives the current Account or Team principal from its
 Source. A Team workload needs that Team's explicit Machine grant. For a Saved
 Secret, its actual owner can consent by linking it; a non-owner configurer needs

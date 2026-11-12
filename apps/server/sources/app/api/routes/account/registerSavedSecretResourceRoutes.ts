@@ -364,6 +364,9 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
         });
         if (!result.ok) {
+            if (result.error === 'backup_rekey_required') return reply.code(409).send({
+                error: result.error, backups: result.backups, hasOtherBackups: result.hasOtherBackups,
+            });
             return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });
         }
         return reply.send(result.value);
