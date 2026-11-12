@@ -1,5 +1,5 @@
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
@@ -14,10 +14,11 @@ const providerIdentity = { type: 'object', additionalProperties: false, properti
 const product: PluginJsonSchema = { type: 'string', enum: ['workers', 'pages'] };
 const inputSchema: PluginJsonSchema = { type: 'object', additionalProperties: false, properties: {
   credentialRef: base.properties!.credentialRef!, credentialPrincipal: base.properties!.credentialPrincipal!,
-  product, providerIdentity, scriptName: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
+  product, providerIdentity, providerAccountId: base.properties!.providerAccountId!,
+  resourceName: DeploymentTargetRoleInputProtocolSchemasV1.create.jsonSchema.properties!.resourceName!, scriptName: text, fieldPath: text, query: { type: 'string' }, cursor: { type: 'string', pattern: '^[1-9][0-9]*$' },
 }, required: ['credentialRef', 'credentialPrincipal', 'fieldPath'] };
 type Input = Readonly<{ product?: 'workers' | 'pages'; providerIdentity?: { providerAccountId?: string; providerResourceId?: string };
-  scriptName?: string;
+  providerAccountId?: string; resourceName?: string; scriptName?: string;
   fieldPath: string; query?: string; cursor?: string }>;
 type Option = { value: JsonValue; label: string };
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
@@ -43,11 +44,11 @@ async function read(input: Input, context: DeploymentContext) {
   if (input.cursor) params.set('page', input.cursor);
   let reply;
   let selectedScript: string | undefined;
-  if (input.fieldPath === 'providerIdentity.providerAccountId') {
+  if (input.fieldPath === 'providerIdentity.providerAccountId' || input.fieldPath === 'providerAccountId') {
     if (input.query) params.set('name', input.query);
     reply = await requestAccounts(context, params.size ? `?${params}` : '');
   } else {
-    const accountId = input.providerIdentity?.providerAccountId;
+    const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
     if (!accountId) missingDependency('providerIdentity.providerAccountId');
     let path: string;
     if (input.fieldPath === 'triggerUuid') {
@@ -59,6 +60,9 @@ async function read(input: Input, context: DeploymentContext) {
       ], input.query) };
       path = `/pages/projects${params.size ? `?${params}` : ''}`;
     } else if (input.product === 'workers') {
+      if (input.fieldPath === 'providerEnvironment' && input.resourceName) return { options: options([
+        { value: { kind: 'script', scriptName: input.resourceName }, label: input.resourceName },
+      ], input.query) };
       selectedScript = input.fieldPath === 'providerEnvironment' ? input.scriptName : undefined;
       if (selectedScript && input.query) params.set('name', input.query);
       path = selectedScript ? `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}` : '/workers/scripts';
@@ -69,7 +73,7 @@ async function read(input: Input, context: DeploymentContext) {
   if (!Array.isArray(reply.value)) invalid();
   const rows: Option[] = reply.value.map((row: unknown): Option => {
     if (!isObject(row)) return invalid();
-    if (input.fieldPath === 'providerIdentity.providerAccountId') {
+    if (input.fieldPath === 'providerIdentity.providerAccountId' || input.fieldPath === 'providerAccountId') {
       if (!name(row.id) || !name(row.name)) return invalid();
       return { value: row.id, label: row.name };
     }
@@ -132,7 +136,7 @@ function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceR
     // The options owner has admitted this partial draft against its Action schema.
     const draft = query.draftInput as Readonly<Record<string, JsonValue>>;
     const input: Record<string, JsonValue> = { fieldPath: query.fieldPath };
-    for (const key of ['credentialRef', 'credentialPrincipal', 'providerIdentity']) {
+    for (const key of ['credentialRef', 'credentialPrincipal', 'providerIdentity', 'providerAccountId', 'resourceName']) {
       if (draft[key] !== undefined) input[key] = draft[key];
     }
     const selectedProduct = product ?? draftProduct(draft);

@@ -29,3 +29,13 @@ it('keeps a readable native server refusal as known rather than unknown', async 
   await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects', 'link', 'POST', { name: 'app' }))
     .rejects.toMatchObject({ code: 'provider_request_failed', data: { failureCause: { httpStatus: 503, errorCode: '1000' } } });
 });
+
+
+it.each([400, 404])('retains known bare HTTP refusal status %s with no invented native code', async status => {
+  const http = createPluginHttpFixture({ async request() {
+    return { status, headers: {}, body: new TextEncoder().encode('unreadable-body') };
+  } });
+  await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects', 'link', 'POST', { name: 'app' }))
+    .rejects.toMatchObject({ code: status === 404 ? 'deployment_unavailable' : 'provider_request_failed',
+      data: { details: { phase: 'link' }, failureCause: { httpStatus: status, errorCode: null } } });
+});

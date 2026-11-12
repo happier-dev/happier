@@ -61,7 +61,7 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   const nativeError = isObject(body) && Array.isArray(body.errors) ? body.errors[0] : undefined;
   const nativeCode = isObject(nativeError) && (typeof nativeError.code === 'number' || typeof nativeError.code === 'string')
     ? String(nativeError.code) : null;
-  if (response.status === 401 || response.status === 403
+  if (response.status >= 400 && response.status < 500
     || isObject(body) && body.success === false
     || (response.status < 200 || response.status >= 300) && isObject(nativeError)) {
     throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'deployment_access_denied'
@@ -69,7 +69,6 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
       failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: nativeCode, httpStatus: response.status } });
   }
   // Preserve acknowledged results even when local cancellation races with the response.
-  if (response.status === 404) return failure('deployment_unavailable', phase);
   if (response.status < 200 || response.status >= 300) return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase);
   if (body === undefined) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
   // Cloudflare's deletion, asset upload and hash-registration ACKs contain success/errors/messages,
