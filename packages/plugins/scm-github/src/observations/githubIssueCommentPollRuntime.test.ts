@@ -173,48 +173,23 @@ function secondlyComments(input: Readonly<{ firstId: number; count: number; firs
 }
 
 describe('GitHub issue-comment Channel polling', () => {
-  it.each([false, true])('uses the account overview for a headerless 304 and keeps the complete checkpoint (overview headers: %s)', async overviewHeaders => {
-    const nowMs = Date.parse('2026-08-10T12:01:00Z');
+  it('uses the approved headerless fallback without acquiring an account overview and preserves the complete checkpoint', async () => {
     const checkpoint = { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head' };
     const requests: string[] = [];
-    const result = await pollGithubIssueCommentsForChannels(pollInput({ nowMs, checkpoint, limit: 10, client: {
+    const result = await pollGithubIssueCommentsForChannels(pollInput({ checkpoint, limit: 10, client: {
       requestWithoutFollowingRedirects: refuseManualRedirectRead,
       async request({ url }) {
         requests.push(url);
-        if (new URL(url).pathname === '/rate_limit') {
-          const headers: Readonly<Record<string, string>> = overviewHeaders
-            ? { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': String(nowMs / 1_000 + 600) } : {};
-          return {
-            status: 200, headers,
-            // Headers are authoritative; the other bucket must never supply cadence.
-            body: new TextEncoder().encode(JSON.stringify({ resources: {
-              core: { remaining: overviewHeaders ? 999 : 10, reset: nowMs / 1_000 + 600 }, graphql: { remaining: 1, reset: nowMs / 1_000 + 60 },
-            } })),
-          };
-        }
         return { status: 304, headers: {}, body: new Uint8Array() };
       },
     } }));
     expect(result).toEqual({ kind: 'batch', observations: [], checkpointAfterBatch: checkpoint, retryHint: { retryAfterMs: 60_000 } });
-    expect(requests).toHaveLength(2);
-    expect(requests[1]).toBe('https://api.github.com/rate_limit');
-  });
-
-  it('refuses malformed account-budget facts instead of committing a successful unpaced poll', async () => {
-    const checkpoint = { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head' };
-    const before = structuredClone(checkpoint);
-    await expect(pollGithubIssueCommentsForChannels(pollInput({ checkpoint, limit: 10, client: {
-      requestWithoutFollowingRedirects: refuseManualRedirectRead,
-      request: async ({ url }) => new URL(url).pathname === '/rate_limit'
-        ? { status: 200, headers: {}, body: new TextEncoder().encode('{"resources":{"core":{"remaining":"unknown","reset":0}}}') }
-        : { status: 304, headers: {}, body: new Uint8Array() },
-    } }))).rejects.toMatchObject({ code: 'github_api_response_invalid' });
-    expect(checkpoint).toEqual(before);
+    expect(requests).toHaveLength(1);
   });
 
   it.each([null, {
     v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: null,
-  }])('paces a no-poll-header response from its remaining provider budget, including baseline %j', async checkpoint => {
+  }])('uses the approved fallback for a no-poll-header response, including baseline %j', async checkpoint => {
     const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
     const client: GithubApiClientV1 = {
       requestWithoutFollowingRedirects: refuseManualRedirectRead,
@@ -229,7 +204,7 @@ describe('GitHub issue-comment Channel polling', () => {
     expect(result).toMatchObject({ retryHint: { retryAfterMs: 60_000 } });
   });
 
-  it('waits only until the provider reset when the next poll needs more reads than remain', async () => {
+  it('keeps cadence separate from provider budget admission', async () => {
     const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
     const result = await pollGithubIssueCommentsForChannels(pollInput({
       checkpoint: { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: null },
@@ -244,15 +219,15 @@ describe('GitHub issue-comment Channel polling', () => {
         },
       },
     }));
-    expect(result).toMatchObject({ retryHint: { retryAfterMs: 600_000 } });
+    expect(result).toMatchObject({ retryHint: { retryAfterMs: 60_000 } });
     expect(fullTextObservations(expectPollBatch(result))).toHaveLength(1);
   });
 
   it.each<{ status: number; remaining: string; hints: Readonly<Record<string, string>>; delay: number }>([
     { status: 200, remaining: '10', hints: { 'X-Poll-Interval': '30', 'Retry-After': '90' }, delay: 90_000 },
     { status: 304, remaining: '10', hints: {}, delay: 60_000 },
-    { status: 304, remaining: '0', hints: {}, delay: 600_000 },
-  ])('preserves explicit waits and rate-budget pacing for response $status / remaining $remaining', async ({ status, remaining, hints, delay }) => {
+    { status: 304, remaining: '0', hints: {}, delay: 60_000 },
+  ])('preserves explicit waits and the headerless fallback for response $status / remaining $remaining', async ({ status, remaining, hints, delay }) => {
     const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
     const checkpoint = status === 304 ? {
       v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head',

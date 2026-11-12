@@ -3,6 +3,7 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 import { describe, expect, it, vi } from 'vitest';
 
 import { classifyGithubTransportFailure } from '../triage/errors.js';
+import { createGithubReadCadence } from './githubChannelPollCadence.js';
 import { GITHUB_API_VERSION } from './githubProviderContracts.js';
 
 import {
@@ -274,6 +275,46 @@ describe('account request ownership', () => {
     await expect(requestOwner.request(input, { transport })).resolves.toBe(ok);
     await expect(requestOwner.request({ url: 'https://api.github.com/graphql' }, { transport })).resolves.toBe(ok);
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('isolates conditional bodies by Account and credential and clears them on rotation and retirement', async () => {
+    const retire = beginGithubAccountRequestOccurrenceV1();
+    type HttpBoundaryRequest = Parameters<Parameters<typeof createPluginHttpFixture>[0]['request']>[0];
+    const attempted: HttpBoundaryRequest[] = [];
+    const request = async (input: HttpBoundaryRequest) => {
+      attempted.push(input);
+      return { status: input.headers?.['If-None-Match'] === 'same-etag' ? 304 : 200,
+        headers: { etag: 'same-etag', 'x-poll-interval': '37' },
+        body: input.headers?.['If-None-Match'] === 'same-etag' ? new Uint8Array()
+          : new TextEncoder().encode(JSON.stringify({ acquired: attempted.length })),
+      };
+    };
+    // Genuine HTTP and credential-materialization boundaries; admission and request owners stay real.
+    const makeClient = (ref: ConnectedAccountRef, credential: string) => createGithubListedAccountApiClient({
+      signal: new AbortController().signal, plugin: { id: ACCOUNT_REF.service.pluginId },
+      services: { connectedAccounts: { materializeListedAccount: async () => ({
+        kind: 'httpHeaders', headers: { authorization: credential },
+      }) }, http: createPluginHttpFixture({ request }) },
+    } as unknown as Parameters<typeof createGithubListedAccountApiClient>[0], ref);
+    const read = (client: Awaited<ReturnType<typeof makeClient>>) => createGithubReadCadence(client, 0).client.request(input);
+    try {
+      const original = await makeClient(ACCOUNT_REF, 'Bearer original');
+      const first = await read(original);
+      expect((await read(await makeClient(ACCOUNT_REF, 'Bearer original'))).body).toEqual(first.body);
+      expect(attempted[1]?.headers?.['If-None-Match']).toBe('same-etag');
+      await read(await makeClient({ ...ACCOUNT_REF, accountId: 'another' }, 'Bearer original'));
+      expect(attempted[2]?.headers?.['If-None-Match']).toBeUndefined();
+      const rotated = await makeClient(ACCOUNT_REF, 'Bearer rotated');
+      await read(rotated);
+      expect(attempted[3]?.headers?.['If-None-Match']).toBeUndefined();
+      await read(original);
+      expect(attempted[4]?.headers?.['If-None-Match']).toBeUndefined();
+      retire();
+      await expect(read(rotated)).rejects.toMatchObject({ name: 'AbortError' });
+      expect(attempted).toHaveLength(5);
+      await read(await makeClient(ACCOUNT_REF, 'Bearer rotated'));
+      expect(attempted[5]?.headers?.['If-None-Match']).toBeUndefined();
+    } finally { retire(); }
   });
 
   it('finishes an admitted page walk with captured credentials across refresh while new admissions use the new owner', async () => {

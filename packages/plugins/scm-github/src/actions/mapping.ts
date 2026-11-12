@@ -74,7 +74,29 @@ export function mapGithubRun(value: unknown, repository: ScmHostingRepositoryIde
     ...(raw.workflow_id === undefined ? {} : { workflow: { id: readGithubPositiveDecimal(raw.workflow_id, 'workflow ID'), ...(typeof raw.path === 'string' ? { path: raw.path } : {}) } }),
     ...(attempt === undefined ? {} : { currentAttempt: { run: ref, attemptId: attempt, number: Number(attempt) }, attemptCount: Number(attempt) }) };
 }
-export function mapGithubJob(value: unknown, repository: ScmHostingRepositoryIdentityV1, selection?: ForgeCiSelectionV1, check?: GithubCheckObservationV1): ForgeCiJobV1 {
+function mapGithubJobSteps(value: unknown, requestId?: string): ForgeCiJobV1['steps'] {
+  const failure = (code: string): ForgeCiJobV1['steps'] => ({ kind: 'unavailable', failure: {
+    class: 'unsupportedContract', code, ...(requestId === undefined ? {} : { requestId }),
+  } });
+  if (!Array.isArray(value)) return failure('github_job_steps_missing');
+  try {
+    const values: ForgeCiStepV1[] = value.map(value => {
+      const step = githubRecord(value);
+      const id = readGithubPositiveDecimal(step.number, 'step number');
+      if (typeof step.name !== 'string') throw new RangeError('Invalid GitHub step');
+      const secondPrecision = typeof step.started_at === 'string' && !step.started_at.includes('.')
+        && typeof step.completed_at === 'string' && !step.completed_at.includes('.');
+      return { id, number: Number(id), name: step.name, state: mapGithubCiState(step), ...timeFields(step),
+        ...(secondPrecision ? { timestampPrecision: 'second' as const } : {}) };
+    });
+    return { kind: 'available', values };
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return failure('github_job_steps_invalid');
+  }
+}
+
+export function mapGithubJob(value: unknown, repository: ScmHostingRepositoryIdentityV1, selection?: ForgeCiSelectionV1, check?: GithubCheckObservationV1, requestId?: string): ForgeCiJobV1 {
   const raw = githubRecord(value);
   const runId = readGithubPositiveDecimal(raw.run_id, 'job run ID');
   const expectedRun = selection?.kind === 'run' ? selection.run : selection?.attempt.run;
@@ -84,15 +106,7 @@ export function mapGithubJob(value: unknown, repository: ScmHostingRepositoryIde
   const run = selected.kind === 'run' ? selected.run : selected.attempt.run;
   if (run.runId !== runId || (selected.kind === 'attempt' && (raw.run_attempt === undefined || String(raw.run_attempt) !== selected.attempt.attemptId))) throw new RangeError('GitHub job selection mismatch');
   if (typeof raw.name !== 'string') throw new RangeError('Invalid GitHub job');
-  const steps: ForgeCiStepV1[] = Array.isArray(raw.steps) ? raw.steps.map(value => {
-    const step = githubRecord(value);
-    const id = readGithubPositiveDecimal(step.number, 'step number');
-    if (typeof step.name !== 'string') throw new RangeError('Invalid GitHub step');
-    const secondPrecision = typeof step.started_at === 'string' && !step.started_at.includes('.')
-      && typeof step.completed_at === 'string' && !step.completed_at.includes('.');
-    return { id, number: Number(id), name: step.name, state: mapGithubCiState(step), ...timeFields(step),
-      ...(secondPrecision ? { timestampPrecision: 'second' as const } : {}) };
-  }) : [];
+  const steps = mapGithubJobSteps(raw.steps, requestId);
   const webUrl = readGithubAbsoluteWebUrl(raw.html_url);
   let checkRunId: string | undefined;
   if (typeof raw.check_run_url === 'string') {
@@ -109,7 +123,7 @@ export function mapGithubJob(value: unknown, repository: ScmHostingRepositoryIde
     && checkSelection?.kind === selected.kind
     && (selected.kind !== 'attempt' || checkSelection?.kind === 'attempt' && checkSelection.attempt.attemptId === selected.attempt.attemptId);
   return { ref: { selection: selected, jobId: readGithubPositiveDecimal(raw.id, 'job ID') }, name: raw.name,
-    state: mapGithubCiState(raw), steps: Array.isArray(raw.steps) ? { kind: 'available', values: steps } : { kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'github_job_steps_missing' } },
+    state: mapGithubCiState(raw), steps,
     ...(typeof raw.runner_name === 'string' ? { runnerName: raw.runner_name } : {}),
     ...(Array.isArray(raw.labels) && raw.labels.every(label => typeof label === 'string') ? { runnerLabels: raw.labels } : {}),
     ...(typeof raw.head_sha === 'string' ? { headSha: raw.head_sha } : {}), ...timeFields(raw),

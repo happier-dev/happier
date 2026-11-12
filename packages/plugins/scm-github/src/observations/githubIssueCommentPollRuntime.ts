@@ -601,7 +601,7 @@ async function pollGithubIssueCommentsAndPullRequests(input: GithubChannelPollIn
   }
   const pullRequestEndpoints: ConversationResolvedEndpointV1[] = [];
   const pullRequests: Array<{ endpoint: Extract<ConversationResolvedEndpointV1, { kind: 'githubPullRequest' }>;
-    number: number; pr: JsonRecord; headSha: string | null }> = [];
+    number: number; pr: JsonRecord; headSha: string | null; pullRequestUrl: string }> = [];
   for (const endpoint of endpoints.values()) {
     signal.throwIfAborted();
     const parsed = parseGithubChannelEndpoint(endpoint, input.config.repository.repositoryId);
@@ -609,7 +609,8 @@ async function pollGithubIssueCommentsAndPullRequests(input: GithubChannelPollIn
     // PR numbers do not transfer between repositories. Pin the repository ID so
     // rename/reuse cannot substitute another PR at the old owner/name route.
     const repositoryRoute = `/repositories/${encodeURIComponent(input.config.repository.repositoryId)}`;
-    const prResponse = await input.client.request({ url: `${GITHUB_API_ORIGIN}${repositoryRoute}/pulls/${parsed.issueNumber}` });
+    const pullRequestUrl = `${GITHUB_API_ORIGIN}${repositoryRoute}/pulls/${parsed.issueNumber}`;
+    const prResponse = await input.client.request({ url: pullRequestUrl });
     if (prResponse.status !== 200) throw new GithubIssueCommentPollResponseError(prResponse);
     const pr = decodeJson(prResponse);
     const repository = isRecord(pr) && isRecord(pr.base) && isRecord(pr.base.repo) ? pr.base.repo : null;
@@ -623,11 +624,12 @@ async function pollGithubIssueCommentsAndPullRequests(input: GithubChannelPollIn
       if (!head || typeof head.sha !== 'string' || !head.sha) throw new RangeError('GitHub PR head is unavailable');
       headSha = head.sha;
     }
-    pullRequests.push({ endpoint, number: parsed.issueNumber, pr, headSha });
+    pullRequests.push({ endpoint, number: parsed.issueNumber, pr, headSha, pullRequestUrl });
   }
   const ciPullRequests = pullRequests.filter(({ endpoint }) => ciEndpointIds.has(endpoint.id));
-  const checks = await readGithubChecksConditionBatch(ciPullRequests.map(({ number, headSha }) => ({
-    route: input.config.repository, pullRequestNumber: number, headSha: headSha!, includeStatus: true,
+  const checks = await readGithubChecksConditionBatch(ciPullRequests.map(({ number, headSha, pullRequestUrl }) => ({
+    route: input.config.repository, repositoryId: input.config.repository.repositoryId, pullRequestUrl,
+    pullRequestNumber: number, headSha: headSha!, includeStatus: true,
   })), { client: input.client, now: () => input.nowMs ?? Date.now(), signal });
   const surfaces = new Map(ciPullRequests.map(({ endpoint }, index) => [endpoint.id, checks[index]?.surface ?? undefined]));
   for (const { endpoint, number, pr, headSha } of pullRequests) {

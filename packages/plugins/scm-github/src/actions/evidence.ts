@@ -45,8 +45,8 @@ export async function readGithubFailureContext(client: GithubApiMediaClientV1, i
   const jobs: ForgeCiJobV1[] = [];
   let cursor: string | undefined;
   do {
-    const page = await readGithubCiPage(client, new URL(githubCiRepositoryUrl(input.repository, 'actions', 'runs', ref.runId, 'attempts', String(raw.run_attempt), 'jobs')), { cursor }, 'jobs', value => {
-      const job = mapGithubJob(value, input.repository, selection);
+    const page = await readGithubCiPage(client, new URL(githubCiRepositoryUrl(input.repository, 'actions', 'runs', ref.runId, 'attempts', String(raw.run_attempt), 'jobs')), { cursor }, 'jobs', (value, requestId) => {
+      const job = mapGithubJob(value, input.repository, selection, undefined, requestId);
       if (run.headSha === undefined || job.headSha !== run.headSha) throw new RangeError('GitHub failure job head mismatch');
       return job;
     }, false, repositoryId);

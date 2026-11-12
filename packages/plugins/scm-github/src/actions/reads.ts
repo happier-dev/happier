@@ -62,7 +62,7 @@ export function applyGithubCiRunFilters(url: URL, filters: ForgeCiRunFiltersV1):
 const GITHUB_CI_PAGE_SIZE_V1 = 100;
 /** One provider page only; the public source-private codec binds the continuation to its exact query. */
 export async function readGithubCiPage<T>(client: GithubApiClientV1, baseUrl: URL, input: Readonly<{ cursor?: string; validator?: string }>,
-  arrayKey: string | null, map: (value: unknown) => T, filteredRuns = false, admittedRepositoryId?: string,
+  arrayKey: string | null, map: (value: unknown, requestId?: string) => T, filteredRuns = false, admittedRepositoryId?: string,
   perPage = GITHUB_CI_PAGE_SIZE_V1) {
   baseUrl.searchParams.set('per_page', String(perPage));
   const query = baseUrl.toString();
@@ -85,7 +85,7 @@ export async function readGithubCiPage<T>(client: GithubApiClientV1, baseUrl: UR
   if (!Array.isArray(body)) throw new RangeError('Invalid GitHub CI page');
   const rows: T[] = [];
   let omittedRowCount = 0;
-  for (const row of body) { try { rows.push(map(row)); } catch { omittedRowCount += 1; } }
+  for (const row of body) { try { rows.push(map(row, result.response.requestId)); } catch { omittedRowCount += 1; } }
   const namedRepository = /^\/repos\/([^/]+)\/([^/]+)\//u.exec(baseUrl.pathname);
   const route = namedRepository === null ? null : parseGithubRoutingToken(`${namedRepository[1]}/${namedRepository[2]}`);
   if (repositoryId === null && arrayKey === 'workflow_runs' && route !== null) {
@@ -127,7 +127,7 @@ export async function readSelectedGithubJob(client: GithubApiClientV1, input: Re
   const selection = githubRunSelection(input.repository, input.runId, attempt);
   const result = await requestGithubCiJson(client, githubCiRepositoryUrl(input.repository, 'actions', 'jobs', readGithubPositiveDecimal(input.jobId, 'job ID')));
   if (result.kind !== 'value') throw new RangeError('Unexpected conditional job read');
-  const job = mapGithubJob(result.value, input.repository, selection);
+  const job = mapGithubJob(result.value, input.repository, selection, undefined, result.response.requestId);
   if (job.ref.jobId !== input.jobId) throw new RangeError('GitHub job identity mismatch');
   if (job.headSha === undefined || job.headSha !== run.head_sha) throw new RangeError('GitHub job head mismatch');
   return job;
@@ -179,13 +179,13 @@ export async function readGithubCiOperation<K extends ReadOperation>(operation: 
       case 'listJobs': {
         const operands = input as ForgeCiActionInputByOperationV1['listJobs'];
         const selection = githubRunSelection(repository, operands.runId, operands.attempt);
-        return await readGithubCiPage(client, new URL(githubCiRepositoryUrl(repository, 'actions', 'runs', readGithubPositiveDecimal(operands.runId, 'run ID'), ...(operands.attempt === undefined ? [] : ['attempts', readGithubPositiveDecimal(operands.attempt, 'attempt')]), 'jobs')), operands, 'jobs', raw => mapGithubJob(raw, repository, selection));
+        return await readGithubCiPage(client, new URL(githubCiRepositoryUrl(repository, 'actions', 'runs', readGithubPositiveDecimal(operands.runId, 'run ID'), ...(operands.attempt === undefined ? [] : ['attempts', readGithubPositiveDecimal(operands.attempt, 'attempt')]), 'jobs')), operands, 'jobs', (raw, requestId) => mapGithubJob(raw, repository, selection, undefined, requestId));
       }
       case 'readJob': {
         const operands = input as ForgeCiActionInputByOperationV1['readJob'];
         const result = await requestGithubCiJson(client, githubCiRepositoryUrl(repository, 'actions', 'jobs', readGithubPositiveDecimal(operands.jobId, 'job ID')), operands.validator);
         if (result.kind !== 'value') return result;
-        const job = mapGithubJob(result.value, repository);
+        const job = mapGithubJob(result.value, repository, undefined, undefined, result.response.requestId);
         if (job.ref.jobId !== operands.jobId) throw new RangeError('Job identity mismatch');
         return { kind: 'value', value: job, ...(result.validator === undefined ? {} : { validator: result.validator }) };
       }

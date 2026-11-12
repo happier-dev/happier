@@ -22,6 +22,7 @@ import {
   isGithubConnectedAccountRef,
 } from './githubProviderContracts.js';
 import { createGithubRequestHeaders } from './githubRequestHeaders.js';
+import { clearGithubConditionalReads } from './githubConditionalRead.js';
 
 export type GithubApiResponseV1 = Readonly<{
   requestId?: string;
@@ -140,7 +141,10 @@ export function getGithubAccountRequestOwnerV1(scope: Readonly<{
   type Flight = { controller: AbortController; promise: Promise<GithubApiResponseV1>; consumers: number };
   const reads = new Map<string, Flight>();
   const pending = new Set<Flight>();
-  const clearJoins = () => { reads.clear(); };
+  const clearJoins = () => {
+    reads.clear();
+    clearGithubConditionalReads(owner);
+  };
   const owner: GithubAccountRequestOwnerV1 = Object.freeze({
     dispose(): void {
       retired = true;
@@ -262,7 +266,7 @@ export function getGithubAccountRequestOwnerV1(scope: Readonly<{
 export type GithubApiClientV1 = Readonly<{
   /** Originating host-issued operation identity, distinct from provider request headers. */
   requestId?: string;
-  /** Immutable workflow definitions share this admitted account/materialization lifetime. */
+  /** Provider representations share this admitted account/materialization lifetime. */
   immutableDefinitionLifetime?: object;
   request(input: Readonly<{
     url: string;

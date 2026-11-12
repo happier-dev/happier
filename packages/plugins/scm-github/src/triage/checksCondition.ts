@@ -1,3 +1,8 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { getGithubConditionalChecksCache, readGithubConditionalWitness } from '../observations/githubConditionalRead.js';
+import { readValidatedGithubFollowUpPage } from './scan/link.js';
+import { buildGithubApiUrl } from './locator.js';
+import { GITHUB_MAX_PAGE_SIZE_V1 } from './types.js';
 import { decodeGithubJsonResponse } from '../observations/githubApiClient.js';
 import { GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
 import { classifyGithubResponseFailure, classifyGithubTransportFailure } from './errors.js';
@@ -230,7 +235,7 @@ function decode(raw: unknown, expected: Readonly<{ route: GithubRepositoryRouteV
   return null;
 }
 
-type ChecksInput = Readonly<{ route: GithubRepositoryRouteV1; headSha?: string;
+type ChecksInput = Readonly<{ route: GithubRepositoryRouteV1; headSha?: string; repositoryId?: string | null; pullRequestUrl?: string;
     observation: Readonly<{ pullRequestNumber: number; selection: 'all' | 'required' }>;
     includeStatus?: boolean;
     /** Also read each check's own output (Check Run title/summary/text, status description). */
@@ -322,6 +327,8 @@ export type GithubChecksBatchTargetV1 = Readonly<{
   pullRequestNumber?: number;
   /** A Watch read must correspond to the head captured by its admitted PR read. */
   headSha?: string;
+  repositoryId?: string | null;
+  pullRequestUrl?: string;
   includeStatus?: boolean;
   /** `counts` reads only the outcome counts a list row shows. */
   depth?: 'rows' | 'counts';
@@ -331,17 +338,68 @@ export type GithubChecksBatchReadV1 = Readonly<{
   surface: GithubChecksSurfaceV1 | null;
 }>;
 
+/** A PR validator cannot establish independent CI state. Watch reads revalidate
+ * every REST check/status page before reusing the complete GraphQL projection.
+ * Fresh Overview and mutation reads have no cadence scope and remain fresh.
+ */
+async function prepareConditionalChecks(input: ChecksInput, dependencies: GithubChecksDependenciesV1) {
+  const cache = getGithubConditionalChecksCache(dependencies.client);
+  if (cache === undefined || input.headSha === undefined) return undefined;
+  const key = JSON.stringify([input.route, input.repositoryId, input.pullRequestUrl, input.headSha,
+    input.observation, input.includeStatus === true, input.includeOutput === true, input.depth]);
+  const witnesses: string[] = [];
+  try {
+    const prUrl = input.pullRequestUrl ?? buildGithubApiUrl(['repos', input.route.owner, input.route.name,
+      'pulls', String(input.observation.pullRequestNumber)]);
+    const pr = await readGithubConditionalWitness(dependencies.client, { url: prUrl });
+    const prEtag = readTriageResponseHeaderV1(pr.headers, 'etag');
+    if (pr.status !== 200 || !prEtag) { cache.delete(key); return undefined; }
+    witnesses.push(prUrl, prEtag);
+    const prefix = input.repositoryId ? ['repositories', input.repositoryId] : ['repos', input.route.owner, input.route.name];
+    for (const resource of ['check-runs', 'status']) {
+      let url = `${buildGithubApiUrl([...prefix, 'commits', input.headSha, resource])}?${resource === 'check-runs' ? 'filter=all&' : ''}per_page=${GITHUB_MAX_PAGE_SIZE_V1}`;
+      while (true) {
+        dependencies.signal.throwIfAborted();
+        const response = await readGithubConditionalWitness(dependencies.client, { url });
+        const etag = readTriageResponseHeaderV1(response.headers, 'etag');
+        if (response.status !== 200 || !etag) { cache.delete(key); return undefined; }
+        witnesses.push(url, etag);
+        const next = readValidatedGithubFollowUpPage(response.headers, url, input.repositoryId);
+        if (next.kind === 'invalid') { cache.delete(key); return undefined; }
+        if (next.kind === 'ended') break;
+        url = next.url;
+      }
+    }
+  } catch {
+    dependencies.signal.throwIfAborted();
+    cache.delete(key);
+    return undefined;
+  }
+  const prior = cache.get(key);
+  return { cache, key, witnesses, reused: prior !== undefined && prior.witnesses.length === witnesses.length
+    && prior.witnesses.every((value, index) => value === witnesses[index]) ? prior.value : undefined };
+}
+function retainConditionalChecks(prepared: Awaited<ReturnType<typeof prepareConditionalChecks>>, value: GithubChecksBatchReadV1) {
+  const surface = value.surface;
+  if (prepared === undefined) return;
+  if (surface === null || surface.state === 'unknown' || surface.state === 'superseded'
+    || surface.checkRunsFailure !== null || surface.commitStatusFailure !== null) prepared.cache.delete(prepared.key);
+  else prepared.cache.set(prepared.key, { witnesses: prepared.witnesses, value });
+}
+
 /** One consumed native search page; only unfinished check connections remain in later requests. */
 export async function readGithubChecksConditionBatch(
   targets: readonly GithubChecksBatchTargetV1[], dependencies: GithubChecksDependenciesV1,
 ): Promise<readonly GithubChecksBatchReadV1[]> {
-  const states = targets.map(target => ({ target, repositoryId: null as string | null,
+  const prepared = await Promise.all(targets.map(target => target.pullRequestNumber === undefined ? undefined
+    : prepareConditionalChecks({ ...target, observation: { pullRequestNumber: target.pullRequestNumber, selection: 'all' } }, dependencies)));
+  const states = targets.map((target, index) => ({ target, repositoryId: prepared[index]?.reused?.repositoryId ?? null as string | null,
     traversal: target.pullRequestNumber === undefined ? null : createChecksTraversal({ route: target.route,
       headSha: target.headSha, includeStatus: target.includeStatus, depth: target.depth,
       observation: { pullRequestNumber: target.pullRequestNumber, selection: 'all' } }),
-    surface: null as GithubChecksSurfaceV1 | null,
+    surface: prepared[index]?.reused?.surface ?? null as GithubChecksSurfaceV1 | null,
   }));
-  let pending = states.map((_state, index) => index);
+  let pending = states.flatMap((_state, index) => prepared[index]?.reused === undefined ? [index] : []);
   while (pending.length > 0) {
     dependencies.signal.throwIfAborted();
     const definitions: string[] = [];
@@ -398,11 +456,24 @@ export async function readGithubChecksConditionBatch(
     }
     pending = next;
   }
-  return states.map(({ repositoryId, surface }) => ({ repositoryId, surface }));
+  return states.map(({ repositoryId, surface }, index) => {
+    const value = { repositoryId, surface };
+    retainConditionalChecks(prepared[index], value);
+    return value;
+  });
 }
 
 /** Current PR rollup, distinct from the detail reader's historical REST rows. */
 export async function readGithubChecksConditionSurface(
+  input: ChecksInput & Readonly<{ headSha: string }>, dependencies: GithubChecksDependenciesV1,
+): Promise<GithubChecksSurfaceV1> {
+  const prepared = await prepareConditionalChecks(input, dependencies);
+  if (prepared?.reused?.surface) return prepared.reused.surface;
+  const surface = await readFreshGithubChecksConditionSurface(input, dependencies);
+  retainConditionalChecks(prepared, { repositoryId: input.repositoryId ?? null, surface });
+  return surface;
+}
+async function readFreshGithubChecksConditionSurface(
   input: ChecksInput & Readonly<{ headSha: string }>, dependencies: GithubChecksDependenciesV1,
 ): Promise<GithubChecksSurfaceV1> {
   const traversal = createChecksTraversal(input);

@@ -26,7 +26,7 @@ const reviewedFork = mapGithubRun(nativeForkRun, repository);
 const forkOperands = { headSha: reviewedFork.headSha!, contributor: reviewedFork.forkApproval!.contributor!,
   sourceRepository: reviewedFork.forkApproval!.sourceRepository! };
 
-async function invoke(id: string, input: JsonValue, respond: Parameters<typeof createStubGithubTransport>[0]['respond']) {
+async function invoke(id: string, input: JsonValue, respond: Parameters<typeof createStubGithubTransport>[0]['respond'], requestId?: string) {
   const transport = createStubGithubTransport({ respond: async request => {
     const response = await respond(request);
     // Native HTTP supplies timing facts; this fixture explicitly requests one minute.
@@ -38,12 +38,32 @@ async function invoke(id: string, input: JsonValue, respond: Parameters<typeof c
     const registration = kit.registration('actions', id);
     expect(registration).toBeTypeOf('function');
     if (typeof registration !== 'function') throw new Error('Action is not registered');
-    return { result: await registration(input, transport.context), transport };
+    return { result: await registration(input, { ...transport.context, ...(requestId === undefined ? {} : { requestId }) }), transport };
   } finally { await kit.dispose(); }
 }
 
 describe('GitHub Actions through generated activation', () => {
-  it('paces active Forge reads from provider budget and 304 hints, with no reads while hidden or released', async () => {
+  it.each([
+    { label: 'missing', steps: undefined, code: 'github_job_steps_missing' },
+    { label: 'malformed', steps: [{ number: 1, name: 42 }], code: 'github_job_steps_invalid' },
+  ])('retains a healthy job and its issued diagnostic when inline steps are $label', async ({ steps, code }) => {
+    const requestId = 'github-job-steps-request-91';
+    const { result, transport } = await invoke(GITHUB_CI_ACTION_IDS_V1.listJobs,
+      { repository, runId: '81', attempt: '2' }, request => {
+        if (new URL(request.url).pathname.endsWith('/actions/runs/81/attempts/2/jobs')) return { status: 200, body: { jobs: [{
+          id: 91, run_id: 81, run_attempt: 2, head_sha: sha, name: 'unit', status: 'completed', conclusion: 'success',
+          ...(steps === undefined ? {} : { steps }),
+        }] } };
+        return undefined;
+      }, requestId);
+    expect(ForgeCiActionResultSchemasV1.listJobs.parse(result)).toMatchObject({ kind: 'value', value: {
+      rows: [{ name: 'unit', state: { outcome: 'success' }, steps: { kind: 'unavailable',
+        failure: { class: 'unsupportedContract', code, requestId } } }], omittedRowCount: 0,
+    } });
+    expect(transport.requests.filter(request => request.url.includes('/jobs'))).toHaveLength(1);
+  });
+
+  it('paces active Forge reads from the approved fallback and 304 hints, with no reads while hidden or released', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-09T00:00:00Z'));
     let completed = false;
@@ -68,7 +88,7 @@ describe('GitHub Actions through generated activation', () => {
       await lease.refresh();
       expect(lease.getValue()?.state.phase).toBe('running');
       expect(transport.requests).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(29_999);
+      await vi.advanceTimersByTimeAsync(59_999);
       expect(transport.requests).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(transport.requests).toHaveLength(2);

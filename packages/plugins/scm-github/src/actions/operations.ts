@@ -29,7 +29,6 @@ export async function executeGithubCiAction<K extends ForgeCiOperationIdV1>(oper
         const result = ForgeCiActionResultSchemasV1[readOperation].parse(
           await readGithubCiOperation(operation, input as Parameters<typeof readGithubCiOperation>[1], cadence.client));
         if (result.kind === 'unavailable') return result;
-        await cadence.acquireMissingBudget();
         const refreshAfterMs = cadence.refreshAfterMs();
         return { ...result, ...(refreshAfterMs === undefined ? {} : { refreshAfterMs }) };
       }

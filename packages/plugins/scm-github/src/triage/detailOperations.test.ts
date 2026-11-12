@@ -1783,13 +1783,30 @@ describe('GitHub pull-request status operation', () => {
 
   function statusTransport(checkRuns?: StubHttpResponse, native: Readonly<Record<string, unknown>> = {}, errors?: readonly unknown[],
     rules?: (request: RecordedGithubRequest) => StubHttpResponse, rest: Readonly<Record<string, unknown>> = {},
-    repository: Readonly<Record<string, unknown>> = {}, responseHeaders: Readonly<Record<string, string>> = {}) {
+    repository: Readonly<Record<string, unknown>> = {}, responseHeaders: Readonly<Record<string, string>> = {},
+    conditionalCheckRevision: () => string = () => 'checks') {
     return createStubGithubTransport({ respond: (request) => {
       const path = new URL(request.url).pathname;
+      if (path.endsWith('/pulls/1284') && responseHeaders.etag && request.headers?.['If-None-Match'] === responseHeaders.etag) {
+        return { status: 304, headers: responseHeaders };
+      }
       if (path.endsWith('/pulls/1284')) return jsonResponse({
         ...GITHUB_PULL_REQUEST_RESPONSE, mergeable: true, mergeable_state: 'blocked',
         additions: 18, deletions: 3, ...rest,
       }, responseHeaders);
+      if ((path.includes('/check-runs') || path.endsWith('/status')) && responseHeaders.etag) {
+        const url = new URL(request.url);
+        const pageTwo = url.searchParams.get('page') === '2';
+        const etag = path.includes('/check-runs') ? pageTwo ? conditionalCheckRevision() : 'checks-first-page' : 'statuses';
+        const headers: Record<string, string> = { etag };
+        if (path.includes('/check-runs') && !pageTwo) {
+          url.searchParams.set('page', '2');
+          headers.link = `<${url.toString()}>; rel="next"`;
+        }
+        if (request.headers?.['If-None-Match'] === etag) return { status: 304, headers };
+        return { ...(path.includes('/check-runs') ? checkRuns ?? jsonResponse(githubCheckRunsResponse({ runs: [] }))
+          : jsonResponse(githubCombinedStatusResponse({ state: 'success', statuses: [] }))), headers };
+      }
       if (path.includes('/check-runs')) return checkRuns ?? jsonResponse(githubCheckRunsResponse({ runs: [
         githubCheckRun({ id: 9001, name: 'build', status: 'completed', conclusion: 'failure' }),
         githubCheckRun({ id: 9002, name: 'test', status: 'in_progress' }),
@@ -1850,6 +1867,30 @@ describe('GitHub pull-request status operation', () => {
       } } });
     } });
   }
+
+  it('revalidates PR and check witnesses without GraphQL over fake minutes, then refreshes once for a later-page check change', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-31T10:11:12Z'));
+    try {
+      let checksRevision = 'checks';
+      const stub = statusTransport(undefined, {}, undefined, undefined, {}, {}, { etag: 'retained-pr', 'x-poll-interval': '37' }, () => checksRevision);
+      const first = await readGithubPullRequestStatus(statusInput(), stub.context);
+      expect(first.kind).toBe('status');
+      for (let minute = 1; minute <= 20; minute += 1) {
+        clock.mockReturnValue(Date.parse('2026-08-31T10:11:12Z') + minute * 60_000);
+        expect(await readGithubPullRequestStatus(statusInput(), stub.context)).toEqual({ ...first, observedAtMs: Date.now() });
+      }
+      const rest = stub.requests.filter(request => new URL(request.url).pathname.endsWith('/pulls/1284'));
+      expect(rest).toHaveLength(21);
+      expect(rest.filter(request => request.headers?.['If-None-Match'] !== 'retained-pr')).toHaveLength(1);
+      expect(stub.requests.filter(request => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
+      checksRevision = 'checks-changed';
+      expect((await readGithubPullRequestStatus(statusInput(), stub.context)).kind).toBe('status');
+      expect(stub.requests.filter(request => new URL(request.url).pathname === '/graphql')).toHaveLength(2);
+      const laterPages = stub.requests.filter(request => request.url.includes('/check-runs') && new URL(request.url).searchParams.get('page') === '2');
+      expect(laterPages).toHaveLength(22);
+      expect(laterPages.slice(1).every(request => request.headers?.['If-None-Match'] === 'checks')).toBe(true);
+    } finally { clock.mockRestore(); }
+  });
 
   it.each<{ headers: Readonly<Record<string, string>>; expected: number }>([
     { headers: { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': '1788171672' }, expected: 60_000 },

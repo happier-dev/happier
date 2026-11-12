@@ -17,19 +17,61 @@ function response(body: unknown, status = 200) {
 }
 
 describe('GitHub Channel CI observations', () => {
-  it.each([false, true])('batches only CI-demanded PRs and preserves captured-head correspondence (advanced=%s)', async advanced => {
+  it('spends no primary budget on an unchanged watched PR and sends no HTTP after its watch is withdrawn', async () => {
+    let requests = 0;
+    let charged = 0;
+    const client: GithubApiClientV1 = { immutableDefinitionLifetime: {},
+      requestWithoutFollowingRedirects: async () => { throw new Error('Unexpected redirect'); },
+      async request(input) {
+        requests += 1;
+        const unchanged = input.headers?.['If-None-Match'] === 'watched-pr';
+        if (!unchanged) charged += 1;
+        return { status: unchanged ? 304 : 200, headers: { etag: 'watched-pr', 'x-poll-interval': '37' },
+          body: unchanged ? new Uint8Array() : new TextEncoder().encode(JSON.stringify({
+            id: 5, number: 1, base: { repo: { id: 77 } }, state: 'open', merged: false,
+          })) };
+      },
+    };
+    const poll = (minute: number, watched: boolean) => pollGithubIssueCommentsForChannels({
+      client, config, checkpoint, limit: 10, connectionId: 'connection-1', providerConnectionKey: 'github:repository:77',
+      commentDemand: false, pullRequestEndpoints: watched ? [endpoint] : [], nowMs: minute * 60_000,
+    });
+    const baseline = await poll(0, true);
+    expect(baseline).toMatchObject({ kind: 'batch', pullRequestEndpoints: [{ pullRequestState: { state: 'open' } }] });
+    for (let minute = 1; minute <= 20; minute += 1) {
+      expect(await poll(minute, true)).toMatchObject({ retryHint: { retryAfterMs: 37_000 } });
+    }
+    expect(charged).toBe(1);
+    expect(requests).toBe(21);
+    for (let minute = 21; minute <= 40; minute += 1) await poll(minute, false);
+    expect(requests).toBe(21);
+  });
+
+  it.each([{ advanced: false, conditional: false }, { advanced: true, conditional: false }, { advanced: false, conditional: true }])('batches only CI-demanded PRs and preserves captured-head correspondence ($advanced/$conditional)', async ({ advanced, conditional }) => {
     const urls: string[] = [];
+    const graphRows: unknown[][] = [];
+    let changed = false;
+    let charged = 0;
     const endpoints = [1, 2, 3].map(number => ({ ...endpoint, id: `github:repository:77:issue:${number + 4}:number:${number}` }));
     const client = { requestWithoutFollowingRedirects: async () => { throw new Error('No redirects'); },
       request: async (input: Parameters<GithubApiClientV1['request']>[0]) => {
         urls.push(input.url);
         const pathname = new URL(input.url).pathname;
         const pr = /\/pulls\/(\d+)$/u.exec(pathname);
+        if (conditional && pathname !== '/graphql') {
+          const etag = pathname.includes('/commits/head-2/check-runs') && changed ? 'changed-check' : pathname;
+          const unchanged = input.headers?.['If-None-Match'] === etag;
+          if (!unchanged) charged += 1;
+          const body = pr ? { number: Number(pr[1]), base: { repo: { id: 77 } }, state: 'open', mergeable: true,
+            head: { sha: `head-${pr[1]}`, ref: `feature-${pr[1]}` } } : {};
+          return { ...response(body, unchanged ? 304 : 200), headers: { etag } };
+        }
         if (pr) return response({ number: Number(pr[1]), base: { repo: { id: 77 } }, state: 'open', mergeable: true,
           head: { sha: `head-${pr[1]}`, ref: `feature-${pr[1]}` } });
         if (pathname === '/graphql') {
           // GitHub HTTP is the boundary: honor the requested aliases and the summary selection.
           const { variables } = JSON.parse(new TextDecoder().decode(input.body)) as { variables: Record<string, unknown> };
+          graphRows.push(Object.entries(variables).filter(([key]) => key.startsWith('number')).map(([, number]) => number));
           const data: Record<string, unknown> = {};
           for (const [key, number] of Object.entries(variables)) {
             if (!key.startsWith('number')) continue;
@@ -71,8 +113,23 @@ describe('GitHub Channel CI observations', () => {
     expect(result.pullRequestEndpoints?.[2]?.kind === 'githubPullRequest' && result.pullRequestEndpoints[2].pullRequestState)
       .not.toHaveProperty('fixResolution');
     expect(urls.filter(url => new URL(url).pathname === '/graphql')).toHaveLength(1);
-    expect(urls).toHaveLength(4); // Three stable PR reads and one demanded checks batch.
+    expect(urls).toHaveLength(conditional ? 8 : 4); // Three PRs, one batch, plus conditional CI witnesses.
     expect(urls.filter(url => new URL(url).pathname.startsWith('/repositories/77/pulls/'))).toHaveLength(3);
+    if (conditional) {
+      const baselineCharge = charged;
+      const poll = () => pollGithubIssueCommentsForChannels({ client, config, checkpoint, limit: 10,
+        connectionId: 'connection-1', providerConnectionKey: 'github:repository:77', commentDemand: false,
+        pullRequestEndpoints: endpoints, ciEndpoints: endpoints.slice(0, 2), nowMs: 60_000,
+        signal: new AbortController().signal });
+      for (let minute = 1; minute <= 20; minute += 1) expect((await poll()).kind).toBe('batch');
+      expect(charged).toBe(baselineCharge);
+      expect(graphRows).toEqual([[1, 2]]);
+      changed = true;
+      const changedResult = await poll();
+      expect(changedResult.kind).toBe('batch');
+      expect(graphRows).toEqual([[1, 2], [2]]);
+      expect(charged).toBe(baselineCharge + 1);
+    }
   });
 
   it('reads one immutable repository route per cycle across rename/reuse and still publishes changed PR state', async () => {
