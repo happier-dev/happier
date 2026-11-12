@@ -8,6 +8,7 @@ import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayNam
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { createTeamAddress, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { observeTeam, refreshTeam } from '@/sync/engine/teams/teamsDirectoryEngine';
 import {
@@ -105,6 +106,7 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
         void refreshTeam(target, targetAddress);
     }, [scopeServerId, scopeAccountId, teamId]);
 
+    const resolvedAddressRef = React.useRef<TeamAddress | undefined>(undefined);
     return React.useMemo<TeamBinding>(() => {
         if (!address) return INVALID_ADDRESS;
         switch (resolution.kind) {
@@ -116,18 +118,24 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
                 return UNKNOWN_HOME;
             case 'signed_out':
                 return Object.freeze({ kind: 'signed_out' as const, homeName });
-            case 'bound':
+            case 'bound': {
+                const resolvedAddress = retainShallow(resolvedAddressRef.current, {
+                    serverId: resolution.scope.serverId,
+                    teamId: address.teamId,
+                });
+                resolvedAddressRef.current = resolvedAddress;
                 return Object.freeze({
                     kind: 'bound' as const,
                     scope: resolution.scope,
                     // A route may retain a URL alias after credential restoration promotes
                     // the Home identity. Writes must address the same snapshot as its reads.
-                    address: { serverId: resolution.scope.serverId, teamId: address.teamId },
+                    address: resolvedAddress,
                     homeName,
                     state: resolveTeamViewState(snapshot),
                     snapshot,
                     refresh,
                 });
+            }
         }
     }, [address, resolution, homeName, snapshot, refresh]);
 }

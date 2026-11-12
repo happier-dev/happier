@@ -290,11 +290,10 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     const coverage = result?.coverage ?? null;
     const showRequests = coverage !== null
         && (coverage.requestCountCoverage === 'complete' || coverage.requestAdmissionCount > 0);
-    const tokenChartAvailable = coverage !== null
-        && coverage.tokenCoverage !== 'unavailable';
+    const tokenChartAvailable = result !== null
+        && result.totals.tokens.total !== null;
     const resolvedCost = result === null ? null : resolveAnalyticsCost(result.totals.cost, costMode);
-    const costChartAvailable = coverage !== null
-        && coverage.costCoverage !== 'unavailable';
+    const costChartAvailable = resolvedCost !== null;
     const chartMetrics: readonly UsageVolumeMetric[] = coverage === null
         ? ['tokens', 'cost']
         : [
@@ -328,7 +327,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
 
     // Offered from the totals themselves, exactly as the personal dashboard
     // does; a chosen mode stays offered so it can be switched back.
-    const costModes: readonly UsageCostMode[] = result === null || coverage?.costCoverage === 'unavailable'
+    const costModes: readonly UsageCostMode[] = result === null
         ? []
         : [...new Set([...resolveAvailableCostModes(result.totals.cost), costMode])];
     const limits = result ? orderTeamCredentialLimitsByRemaining(result.limits) : [];
@@ -428,9 +427,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                                             && entry.totals.requestCount === 0
                                             ? t('common.unavailable')
                                             : formatTokenCountLong(entry.totals.requestCount),
-                                        tokens: result.coverage.tokenCoverage === 'unavailable'
-                                            ? t('common.unavailable')
-                                            : formatTokenCountLong(entry.totals.tokens.total),
+                                        tokens: formatTokenCountLong(entry.totals.tokens.total),
                                     })].filter(Boolean).join(' · ')}
                                     showChevron={false}
                                 />
@@ -639,9 +636,7 @@ export function TeamCredentialUsageSummary(props: Readonly<{
                     <Item
                         testID="team-credential-usage-tokens"
                         title={limitMetricLabel('total_tokens')}
-                        detail={coverage?.tokenCoverage === 'unavailable'
-                            ? t('common.unavailable')
-                            : formatTokenCountLong(result.totals.tokens.total)}
+                        detail={formatTokenCountLong(result.totals.tokens.total)}
                         showChevron={false}
                     />
                     <Item
