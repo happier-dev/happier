@@ -1051,7 +1051,7 @@ exports[`preserves every declared method and complete effective policy through d
     "ownerPacket": "PMS-5",
     "rationale": "Private native vault metadata/write exchange; values stay inside the Account content codec and no invocation receipt is persisted.",
     "routeClass": "direct_ephemeral",
-    "rpcClassification": "advisory_unclassified",
+    "rpcClassification": "internal_only",
     "scope": {
       "accountRequired": true,
       "machineRequired": true,

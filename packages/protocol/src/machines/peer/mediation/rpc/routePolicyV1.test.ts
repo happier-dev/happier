@@ -183,7 +183,9 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE)).toMatchObject({ sharedMachineAccess: 'manage' });
   });
   it('admits private native vault operations only with Machine Manage authority', async () => {
-    const { resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    const { resolveMachineRpcRoutePolicy, validateMachineRpcGrantAllowedMethods } = await import('./routePolicyV1');
+    expect(validateMachineRpcGrantAllowedMethods([RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE])).toEqual({ ok: true });
+    expect(resolveMachineRpcGovernance(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE)).toEqual({ rpcClassification: 'internal_only' });
     expect(resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE)).toMatchObject({
       routeClass: 'direct_ephemeral', sharedMachineAccess: 'manage',
       scope: { accountRequired: true, machineRequired: true, serverRequired: false },

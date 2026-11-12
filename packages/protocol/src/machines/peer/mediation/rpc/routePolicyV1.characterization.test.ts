@@ -5,6 +5,8 @@ import { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } from './rout
 it('preserves every declared method and complete effective policy through declaration consolidation', () => {
   // Captured before removing the access overlays; includes duplicate rows and
   // all fields, so a lost method, custody fact or route distinction is visible.
+  // RPC-GOV-SECRET-1112 repairs the native vault row to internal_only;
+  // its Manage intent is unchanged (83c145e74d2, docs/encryption.md).
   expect(MACHINE_RPC_ROUTE_POLICIES).toMatchSnapshot();
   expect(resolveMachineRpcRoutePolicy('unknown.method')).toMatchObject({
     routeClass: 'server_required', sharedMachineAccess: 'custodian_only', serverRequiredReason: 'unclassified',
