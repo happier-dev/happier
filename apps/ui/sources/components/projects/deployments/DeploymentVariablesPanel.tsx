@@ -511,14 +511,17 @@ export const DeploymentVariablesPanel = React.memo(
               label: t('projects.deployments.editors.useNewRevision'),
               onPress: () => {
                 // One draft edit for every stale row; Save stays the one `deployments.bindings.set` write.
+                const bindings: VariableBinding[] = [];
+                const identities: string[] = [];
                 for (const row of stale) {
                   const source = row.binding.source;
                   const revision = rowRotation(row, rotated);
                   if (source.kind !== 'secret' || revision === null) continue;
                   const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
-                  editor.putMany(phases.map(phase => ({ ...row.binding, phase, source: { ...source, resourceRevision: revision } })),
-                    row.identities);
+                  bindings.push(...phases.map(phase => ({ ...row.binding, phase, source: { ...source, resourceRevision: revision } })));
+                  identities.push(...row.identities);
                 }
+                editor.putMany(bindings, identities);
               },
             } : stale.length === 0 && !draft.dirty && props.onDeploy ? {
               label: t('projects.deployments.deploy'),

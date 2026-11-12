@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 async function mount(phone = true, referenceTargets?: readonly unknown[],
-  rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number }>) {
+  rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number; additionalBindings?: readonly EnvironmentSecretBindingV1[] }>) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
     handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
       ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
@@ -53,7 +53,7 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   const binding = createDeploymentSecretVariableBindingV1({ name: 'API_KEY', phase: 'runtime', resourceId: 'resource-a',
     resourceRevision: rotation?.bindingRevision ?? 3 });
   const base = createDeploymentEnvironmentDetailV1();
-  const detail = { ...base, content: { ...base.content, bindings: [binding] } };
+  const detail = { ...base, content: { ...base.content, bindings: [binding, ...rotation?.additionalBindings ?? []] } };
   const scope = home.scope;
   const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
   const { useEnvironmentSecretBindingsDraft } = await import('./useEnvironmentSecretBindingsDraft');
@@ -180,6 +180,19 @@ it('names a rotated secret from the controller facts and re-binds the newest rev
   await screen.pressByTestIdAsync('project-deployments.environment.variables.rotated.action');
   await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull());
   expect(onDeploy).not.toHaveBeenCalled();
+});
+
+it('updates every stale variable sharing a saved secret in one revision edit', async () => {
+  const other = createDeploymentSecretVariableBindingV1({ name: 'SECOND_KEY', phase: 'runtime',
+    resourceId: 'resource-a', resourceRevision: 3 });
+  const facts = rotatedFact(4);
+  facts[0]!.facts.push({ ...facts[0]!.facts[0]!, name: 'SECOND_KEY' });
+  const { screen, readBindings } = await mount(false, undefined, { secretRevisions: facts, additionalBindings: [other] });
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.rotated.action');
+  expect(readBindings().map(binding => binding.source)).toEqual([
+    { kind: 'secret', ref: formatSharedSavedSecretRefV1('resource-a'), resourceRevision: 4 },
+    { kind: 'secret', ref: formatSharedSavedSecretRefV1('resource-a'), resourceRevision: 4 },
+  ]);
 });
 
 it('offers Deploy once the binding already names the newest revision', async () => {
