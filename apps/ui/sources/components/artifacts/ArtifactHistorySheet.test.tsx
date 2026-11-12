@@ -3,7 +3,6 @@ import * as ReactNative from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
-import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { HappierArtifactRevisionList } from '@happier-dev/plugin-ui/presentation';
 import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -150,13 +149,13 @@ describe('Artifact History continuity', () => {
         expect(served.requests.filter(request => request.home === 'b' && request.accountId === 'another-b-account'
             && request.path.startsWith('/v1/artifacts/document'))).toEqual([]);
     });
-    it.each(['restore', 'approval'] as const)('keeps direct Discussion Compare, current prose and Restore on captured Home B while ambient A changes (%s)', async mode => {
+    it.each(['restore', 'ask-first'] as const)('keeps direct Discussion Compare, current prose and Restore on captured Home B while ambient A changes (%s)', async mode => {
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 900, height: 900, scale: 1, fontScale: 1 });
         let restored = false;
         const persisted = createArtifactStoreBoundary({ ownerAccountId: () => 'reader-b', encryptionMode: 'plain' });
         const served = await serveActionHomes({ homes: [
             { key: 'b', serverUrl: 'https://history-captured-b.test', accountId: 'reader-b', currentAccount: true,
-                settings: mode === 'approval' ? { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+                settings: mode === 'ask-first' ? { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
                     actions: { 'artifact.revisions.restore': { approvalRequiredSurfaces: ['ui'] } } }) } : undefined },
             { key: 'c', serverUrl: 'https://history-ambient-c.test', accountId: 'reader-c', currentAccount: true },
             { key: 'a', serverUrl: 'https://history-ambient-a.test', accountId: 'reader-a', currentAccount: true },
@@ -205,20 +204,17 @@ describe('Artifact History continuity', () => {
             .toMatchObject({ oldText: 'B original prose', newText: 'B current prose' });
         expect(served.requests.filter(request => request.path.endsWith('/revisions'))).toHaveLength(1);
         await screen.pressByTestIdAsync('artifact-history:restore');
-        await vi.waitFor(() => expect(screen.findByTestId('artifact-history')).toBeNull());
-        if (mode === 'restore') {
-            expect(served.requests.find(request => request.path.endsWith('/restore'))).toMatchObject({ home: 'b', accountId: 'reader-b',
-                path: '/v1/artifacts/document/revisions/1/restore', body: { expectedHeaderVersion: 3, expectedBodyVersion: 3 } });
-        } else {
-            const approval = persisted.list()[0];
-            expect(approval).toBeDefined();
-            expect(ApprovalRequestSchema.parse(JSON.parse(persisted.readPlainBody(approval!.id)!))).toMatchObject({
-                actionId: 'artifact.revisions.restore', status: 'open', actionArgs: {
-                    artifactId: 'document', bodyVersion: 1, expectedRevision: { headerVersion: 3, bodyVersion: 3 },
-                } });
+        if (mode === 'ask-first') {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
             expect(served.requests.some(request => request.path.endsWith('/restore'))).toBe(false);
-            expect(navigation.push).toHaveBeenLastCalledWith(`/inbox/approvals/${encodeURIComponent(approval!.id)}?serverId=${encodeURIComponent(scope.serverId)}`);
+            expect(persisted.list()).toHaveLength(0);
+            await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         }
+        await vi.waitFor(() => expect(screen.findByTestId('artifact-history')).toBeNull());
+        expect(served.requests.find(request => request.path.endsWith('/restore'))).toMatchObject({ home: 'b', accountId: 'reader-b',
+            path: '/v1/artifacts/document/revisions/1/restore', body: { expectedHeaderVersion: 3, expectedBodyVersion: 3 } });
+        expect(persisted.list()).toHaveLength(0);
+        expect(navigation.push).not.toHaveBeenCalled();
         expect(getActiveServerSnapshot().serverId).toBe(served.homes.c!.id);
         expect(served.requests.filter(request => request.path.startsWith('/v1/artifacts/document')).every(request => request.home === 'b')).toBe(true);
     });
@@ -358,23 +354,33 @@ describe('Artifact History continuity', () => {
         expect(redundantRead).not.toHaveBeenCalled();
     });
 
-    it('opens the durable approval destination when Restore requires approval, retaining the current head', async () => {
-        let approvalId: string | undefined;
+    it('retains the current head after native Ask rejection and restores only after explicit approval', async () => {
+        let restored = false;
         const { screen, served } = await setup(request => {
             if (request.path.endsWith('/revisions')) return Response.json(revisions);
-            if (request.path === '/v1/artifacts' && request.method === 'POST' && request.body && typeof request.body === 'object') {
-                const input = request.body as Record<string, unknown>;
-                approvalId = String(input.id);
-                return Response.json({ ...storedHead, ...input, headerVersion: 1, bodyVersion: 1 });
+            if (request.path.endsWith('/restore')) {
+                restored = true;
+                return Response.json({ success: true, headerVersion: 4, bodyVersion: 4 });
             }
+            if (request.path === '/v1/artifacts/document' && restored) return Response.json({ ...storedHead,
+                headerVersion: 4, bodyVersion: 4, body: encodePlainArtifactStoredContent({ body: 'Notes 1' }) });
         }, { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
             actions: { 'artifact.revisions.restore': { approvalRequiredSurfaces: ['ui'] } } }) });
         await screen.pressByTestIdAsync('artifact-history:version:1');
         await screen.pressByTestIdAsync('artifact-history:restore');
-        await vi.waitFor(() => expect(approvalId).toBeDefined());
-        await vi.waitFor(() => expect(navigation.push).toHaveBeenCalledWith(`/inbox/approvals/${encodeURIComponent(approvalId!)}?serverId=${encodeURIComponent(served.homes.owner!.id)}`));
-        expect(served.requests.some(request => request.path.endsWith('/restore'))).toBe(false);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+        expect(restored).toBe(false);
         expect(getStorage().getState().artifacts.document?.bodyVersion).toBe(3);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        expect(restored).toBe(false);
+        expect(screen.findByType(HappierArtifactRevisionList).props.selectedVersion).toBe(1);
+        await screen.pressByTestIdAsync('artifact-history:restore');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await waitForHomeGovernance(() => expect(getStorage().getState().artifacts.document).toMatchObject({ bodyVersion: 4, body: 'Notes 1' }));
+        expect(served.requests.filter(request => request.path.endsWith('/restore'))).toHaveLength(1);
+        expect(served.requests.some(request => request.path === '/v1/artifacts' && request.method === 'POST')).toBe(false);
+        expect(navigation.push).not.toHaveBeenCalled();
     });
 
     it('keeps the selected revision available after a restore conflict settles', async () => {

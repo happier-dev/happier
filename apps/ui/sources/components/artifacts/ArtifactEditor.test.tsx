@@ -1,15 +1,14 @@
 import * as React from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { changeTextTestInstance, renderScreen } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { Modal } from '@/modal';
-import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { Modal, ModalProvider } from '@/modal';
 import { runGuardedNavigation, runGuardedTabNavigation } from '@/utils/navigation/runGuardedNavigation';
 import type { TextEditorHandle, CodeEditorProps } from '@/components/ui/code/editor/codeEditorTypes';
 
@@ -31,7 +30,7 @@ vi.mock('expo-router', async () => {
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit');
     // These save intents accept canonical Action confirmation; navigation discard choices below stay explicit.
-    return createModalModuleMock({ confirmResult: true }).module;
+    return createModalModuleMock({ confirmResult: true, renderCustomModals: true }).module;
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit');
@@ -86,6 +85,7 @@ describe('ArtifactEditor', () => {
     let disposeHome: Awaited<ReturnType<typeof installRealActionExecutorModuleLoader>> | undefined;
     let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
     afterEach(async () => {
+        Modal.hideAll();
         await connection?.dispose();
         connection = undefined;
         await disposeHome?.();
@@ -97,12 +97,15 @@ describe('ArtifactEditor', () => {
         installHomeGovernanceBoundaries(homes);
         await homes.reset();
         const serverId = await homes.addHome({ name: 'Editor', serverUrl, accountId: 'owner', currentAccount: true });
+        homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { markdownDefaultEditMode: 'raw' } }, version: 1 } });
         homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         await loadSyncSingletonForTests();
         disposeHome = await installRealActionExecutorModuleLoader();
         connection = await restoreServerAccountForTest({ serverUrl, accountId: 'owner', request: homes.request,
             credentials: { token: createAccountTokenForTests('owner', { currentAccount: true }) } });
         installHomeGovernanceBoundaries(homes);
+        // This suite substitutes the raw platform editor boundary below.
+        getStorage().setState({ settings: { ...getStorage().getState().settings, markdownDefaultEditMode: 'raw' } });
         return serverId;
     }
     beforeEach(() => {
@@ -142,10 +145,10 @@ describe('ArtifactEditor', () => {
         expect(screen.findByTestId(placeholderId)?.props.accessibilityLabel).toBe('artifacts.bodyLabel');
         expect(screen.getTextContent()).toContain('artifacts.bodyPlaceholder');
         expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('');
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'My document'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'My document'); });
         expect(screen.getTextContent()).not.toContain('artifacts.bodyPlaceholder');
         expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('My document');
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', ''); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), ''); });
         expect(screen.getTextContent()).toContain('artifacts.bodyPlaceholder');
         await screen.unmount();
     });
@@ -241,7 +244,7 @@ describe('ArtifactEditor', () => {
                 canGoBack: () => navigation.canGoBack, pushRetainingCurrent: navigation.push }}>
             <ArtifactEditor artifact={null} mode="new" />
         </DestinationInstanceHost>);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'Saved document'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'Saved document'); });
         const close = vi.fn();
         const pending = runGuardedTabNavigation(['artifact-draft'], close);
         await vi.waitFor(() => expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]).toBeDefined());
@@ -281,8 +284,8 @@ describe('ArtifactEditor', () => {
             const second = await renderScreen(host('second-artifact', false));
             screens.push(first, second);
             await act(async () => {
-                first.changeTextByTestId('artifact-editor:body:source', 'First draft');
-                second.changeTextByTestId('artifact-editor:body:source', 'Second draft');
+                changeTextTestInstance(first.findHostByTestId('artifact-editor:body:source'), 'First draft');
+                changeTextTestInstance(second.findHostByTestId('artifact-editor:body:source'), 'Second draft');
             });
             const choose = async (choice: 'common.keepEditing' | 'common.discard') => {
                 await vi.waitFor(() => expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]).toBeDefined());
@@ -298,7 +301,7 @@ describe('ArtifactEditor', () => {
             expect(closeAll).not.toHaveBeenCalled();
             expect(first.findByTestId('artifact-editor:body:source')?.props.value).toBe('First draft');
             expect(second.findByTestId('artifact-editor:body:source')?.props.value).toBe('Second draft');
-            await act(async () => { first.changeTextByTestId('artifact-editor:body:source', 'First draft continued'); });
+            await act(async () => { changeTextTestInstance(first.findHostByTestId('artifact-editor:body:source'), 'First draft continued'); });
             const closeFirst = vi.fn();
             const nextClose = runGuardedTabNavigation(['first-artifact'], closeFirst);
             await choose('common.keepEditing');
@@ -336,7 +339,7 @@ describe('ArtifactEditor', () => {
         current.id = id;
         const ArtifactEditor = await loadArtifactEditor();
         const screen = await renderScreen(<ArtifactEditor artifact={opening} mode="edit" />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'My draft'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'My draft'); });
         await act(async () => { await sync.updateArtifactWithHeader(id, current.rawHeader, current.body,
             { expectedRevision: { headerVersion: 1, bodyVersion: 1 } }); });
         await screen.update(<ArtifactEditor artifact={current} mode="edit" />);
@@ -356,36 +359,40 @@ describe('ArtifactEditor', () => {
         await screen.unmount();
     });
 
-    it.each(['new', 'edit'] as const)('routes a policy-required %s save to its approval without discarding the draft', async mode => {
-        await loadSyncSingletonForTests();
-        const artifact: DecryptedArtifact = { id: 'approval-document', title: 'Opening', isDecrypted: true,
-            header: { kind: 'artifact.legacy', title: 'Opening' }, rawHeader: { kind: 'artifact.legacy', title: 'Opening' },
-            body: 'Opening body', headerVersion: 3, bodyVersion: 7, seq: 1, createdAt: 1, updatedAt: 1,
-            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain' };
+    it.each(['new', 'edit'] as const)('saves a person’s %s draft under Ask without creating an agent approval', async mode => {
         const serverId = await restoreEditorHome('https://artifact-editor-approval.test');
         const persisted = homes.artifacts(serverId);
         const { sync } = await import('@/sync/sync');
-        if (mode === 'edit') artifact.id = await sync.createArtifactWithHeader(artifact.rawHeader!, artifact.body ?? '');
+        let artifact: DecryptedArtifact | null = null;
+        if (mode === 'edit') {
+            const artifactId = await sync.createArtifactWithHeader({ kind: 'artifact.legacy', title: 'Opening' }, 'Opening body');
+            await sync.fetchArtifactWithBody(artifactId);
+            artifact = getStorage().getState().artifacts[artifactId]!;
+        }
         await homes.requireUiApproval(serverId, mode === 'new' ? 'artifact.create' : 'artifact.update');
         const ArtifactEditor = await loadArtifactEditor();
-        const screen = await renderScreen(<ArtifactEditor artifact={mode === 'edit' ? artifact : null} mode={mode} />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'Approval draft'); });
+        const screen = await renderScreen(<ModalProvider><ArtifactEditor artifact={artifact} mode={mode} /></ModalProvider>);
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'Approval draft'); });
         await screen.pressByTestIdAsync('artifact-editor:save');
-        const approval = persisted.list().find(row => row.id !== artifact.id);
-        expect(approval).toBeDefined();
-        const request = ApprovalRequestSchema.parse(JSON.parse(persisted.readPlainBody(approval!.id)!));
-        expect(request).toMatchObject({ actionId: mode === 'new' ? 'artifact.create' : 'artifact.update',
-            actionArgs: { body: 'Approval draft', ...(mode === 'edit' ? { expectedRevision: { headerVersion: 3, bodyVersion: 7 } } : {}) } });
-        expect(navigation.push).toHaveBeenCalledWith(`/inbox/approvals/${approval!.id}?serverId=${encodeURIComponent(serverId)}`);
-        expect(navigation.back).not.toHaveBeenCalled();
-        expect(navigation.replace).not.toHaveBeenCalled();
-        expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('Approval draft');
-        expect(homes.requestsFor(`/v1/artifacts/${artifact.id}`).filter(request => request.input !== null)).toEqual([]);
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(persisted.list()).toHaveLength(mode === 'new' ? 0 : 1);
+        if (artifact) expect(persisted.readPlainBody(artifact.id)).toBe('Opening body');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await vi.waitFor(() => expect(persisted.list().some(row => persisted.readPlainBody(row.id) === 'Approval draft')).toBe(true));
+        expect(persisted.list()).toHaveLength(1);
+        const saved = persisted.list()[0]!;
+        expect(persisted.readPlainBody(saved.id)).toBe('Approval draft');
+        expect(navigation.push).not.toHaveBeenCalled();
+        if (mode === 'new') expect(navigation.replace).toHaveBeenCalledWith(`/artifacts/${saved.id}`);
+        else {
+            expect(saved.id).toBe(artifact!.id);
+            expect(navigation.back).toHaveBeenCalledOnce();
+        }
         await screen.unmount();
     });
 
     it('returns to the collection when responsive navigation loses its back stack', async () => {
-        await loadSyncSingletonForTests();
+        await restoreEditorHome('https://artifact-editor-back-stack.test');
         const ArtifactEditor = await loadArtifactEditor();
         const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
         navigation.canGoBack = false;
@@ -399,7 +406,7 @@ describe('ArtifactEditor', () => {
         const persisted = homes.artifacts(serverId);
         const ArtifactEditor = await loadArtifactEditor();
         const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'First body'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'First body'); });
         await screen.pressByTestIdAsync('artifact-editor:save');
         const stored = persisted.list()[0];
         expect(stored).toBeDefined();
@@ -411,7 +418,7 @@ describe('ArtifactEditor', () => {
         await sync.fetchArtifactWithBody(stored!.id);
         const artifact = getStorage().getState().artifacts[stored!.id]!;
         const editor = await renderScreen(<ArtifactEditor artifact={artifact} mode="edit" />);
-        await act(async () => { editor.changeTextByTestId('artifact-editor:body:source', 'Second body'); });
+        await act(async () => { changeTextTestInstance(editor.findHostByTestId('artifact-editor:body:source'), 'Second body'); });
         const { MarkdownCodeEditorField } = await import('@/components/ui/markdown/editor/MarkdownCodeEditorField');
         expect(editor.findByType(MarkdownCodeEditorField).props.editorRef.current.getValue()).toBe('Second body');
         await editor.pressByTestIdAsync('artifact-editor:save');
@@ -428,7 +435,7 @@ describe('ArtifactEditor', () => {
         const persisted = homes.artifacts(serverId);
         const ArtifactEditor = await loadArtifactEditor();
         const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'Draft'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'Draft'); });
         editorBoundary.pendingValue = 'Draft with final native keystroke';
         editorBoundary.rejectFlush = true;
         await expect(screen.pressByTestIdAsync('artifact-editor:save')).resolves.toBeUndefined();
@@ -462,7 +469,7 @@ describe('ArtifactEditor', () => {
             body: { error: 'quota_exceeded', budget: 'document', limitBytes: 1, usedBytes: 10 } });
         const ArtifactEditor = await loadArtifactEditor();
         const screen = await renderScreen(<ArtifactEditor artifact={null} mode="new" />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'My document'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'My document'); });
         await screen.pressByTestIdAsync('artifact-editor:save');
         expect(screen.findByTestId('artifact-editor:quota')).not.toBeNull();
         expect(screen.getTextContent()).toContain('artifacts.browser.quota.documentTitle');
@@ -481,7 +488,7 @@ describe('ArtifactEditor', () => {
         const second = { ...first, id: 'second', title: 'Second', body: 'Second body',
             header: { title: 'Second' }, rawHeader: { title: 'Second' }, headerVersion: 4, bodyVersion: 6 };
         const screen = await renderScreen(<EditArtifactContent id={first.id} artifact={first} />);
-        await act(async () => { screen.changeTextByTestId('artifact-editor:body:source', 'First draft'); });
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId('artifact-editor:body:source'), 'First draft'); });
         await screen.update(<EditArtifactContent id={second.id} artifact={second} />);
         expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('Second body');
         expect(screen.findByTestId('artifact-editor:title')?.props.value).toBe('Second');

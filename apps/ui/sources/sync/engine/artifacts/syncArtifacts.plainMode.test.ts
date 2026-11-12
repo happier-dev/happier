@@ -6,6 +6,8 @@ import type { ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { createUsageNoticeArtifactFixture, createAccountNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import { readAccountNoticeArtifactHeader } from '@/sync/domains/artifacts/usageNoticeArtifacts';
+import { ApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
@@ -56,6 +58,7 @@ import {
     decryptArtifactListItem,
     decryptArtifactWithBody,
     decryptSocketNewArtifactUpdate,
+    fetchAndApplyArtifactBodies,
     fetchAndApplyArtifactsList,
     fetchArtifactWithBodyFromApi,
     updateArtifactWithHeaderViaApi,
@@ -157,8 +160,8 @@ describe('syncArtifacts plaintext account storage', () => {
         expect(artifactDataKeys.size).toBe(0);
     });
 
-    it('hydrates actionable plain approval bodies after publishing headers', async () => {
-        const request = {
+    it('leaves plain approval bodies to explicit Inbox demand after publishing headers', async () => {
+        const request = ApprovalRequestV1Schema.parse({
             v: 1,
             status: 'open',
             createdAtMs: 1,
@@ -167,18 +170,10 @@ describe('syncArtifacts plaintext account storage', () => {
             actionId: 'session.list',
             actionArgs: {},
             summary: 'List sessions',
-        };
+        });
         const full = {
             ...buildPlainArtifact(),
-            header: encodePlainArtifactStoredContent({
-                v: 1,
-                kind: 'approval_request.v1',
-                title: request.summary,
-                approvalStatus: request.status,
-                actionId: request.actionId,
-                sessionId: 'session-1',
-                sessions: ['session-1'],
-            }),
+            header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
         };
         const { body: _body, ...listRow } = full;
@@ -186,13 +181,17 @@ describe('syncArtifacts plaintext account storage', () => {
         mocks.fetchArtifact.mockResolvedValueOnce(full);
         const applyArtifacts = vi.fn();
 
-        await fetchAndApplyArtifactsList({
+        const params = {
             request: httpRequest,
             credentials: { token: 'token-only' },
             encryption: null,
             artifactDataKeys: new Map(),
             applyArtifacts,
-        });
+        };
+        await fetchAndApplyArtifactsList(params);
+        expect(applyArtifacts.mock.calls[0]?.[0][0]).toMatchObject({ id: full.id, body: undefined });
+        expect(mocks.fetchArtifact).not.toHaveBeenCalled();
+        await fetchAndApplyArtifactBodies({ ...params, artifactIds: [full.id] });
 
         expect(applyArtifacts).toHaveBeenCalledWith([
             expect.objectContaining({ id: full.id, body: JSON.stringify(request) }),
@@ -214,7 +213,7 @@ describe('syncArtifacts plaintext account storage', () => {
         expect(mocks.fetchArtifact).not.toHaveBeenCalled();
     });
 
-    it.each(['usage', 'account'] as const)('enriches open %s notice headers with exact-read privacy and body before Inbox admission', async kind => {
+    it.each(['usage', 'account'] as const)('leaves open %s notice bodies to exact Inbox demand after publishing headers', async kind => {
         const notice = kind === 'usage' ? createUsageNoticeArtifactFixture({ ownerAccountId: 'owner' })
             : createAccountNoticeArtifactFixture({ ownerAccountId: 'owner' });
         const full: Artifact = { ...buildPlainArtifact(), id: notice.id,
@@ -226,10 +225,13 @@ describe('syncArtifacts plaintext account storage', () => {
         mocks.fetchArtifact.mockResolvedValueOnce(full);
         const applied: DecryptedArtifact[][] = [];
 
-        await fetchAndApplyArtifactsList({ credentials: { token: 'token-only' }, request: httpRequest,
-            encryption: null, artifactDataKeys: new Map(), applyArtifacts: rows => applied.push(rows) });
+        const params = { credentials: { token: 'token-only' }, request: httpRequest,
+            encryption: null, artifactDataKeys: new Map(), applyArtifacts: (rows: DecryptedArtifact[]) => applied.push(rows) };
+        await fetchAndApplyArtifactsList(params);
 
-        expect(applied[0]?.[0]).toMatchObject({ id: notice.id, publicAudience: 'unknown' });
+        expect(applied[0]?.[0]).toMatchObject({ id: notice.id, publicAudience: 'unknown', body: undefined });
+        expect(mocks.fetchArtifact).not.toHaveBeenCalled();
+        await fetchAndApplyArtifactBodies({ ...params, artifactIds: [full.id] });
         expect(applied.at(-1)?.[0]).toMatchObject({ id: notice.id, publicAudience: 'none', body: notice.body });
         expect(readAccountNoticeArtifactHeader(applied.at(-1)![0], 'owner'))
             .toMatchObject({ kind: 'account_notice.v1', status: 'open', resolved: false });

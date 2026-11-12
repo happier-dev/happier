@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 import { Encryption } from '@/sync/encryption/encryption';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
@@ -16,13 +17,20 @@ describe('createArtifactWithHeaderViaApi', () => {
   it('honors explicit provenance omission for a portable release on create and update', async () => {
     const writes: Record<string, unknown>[] = [];
     let current: DecryptedArtifact | undefined;
+    let stored: Artifact | undefined;
     const request = async (path: string, init?: RequestInit) => {
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-      const wire = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      writes.push(wire);
-      return Response.json(path === '/v1/artifacts'
-        ? { ...wire, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }
-        : { success: true, headerVersion: 2, bodyVersion: 2 });
+      if (stored && path === `/v1/artifacts/${stored.id}` && (init?.method ?? 'GET') === 'GET') return Response.json(stored);
+      if (stored && path === `/v1/artifacts/${stored.id}/access/grants`) return Response.json(
+        ArtifactAccessGrantsListResponseV1Schema.parse({ artifactId: stored.id, ownerAccountId: 'owner', access: 'owner', grants: [] }));
+      const wire = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
+      writes.push({ ...wire });
+      if (path === '/v1/artifacts') {
+        stored = { ...wire, ...projectArtifactStoredKind(wire.kind), ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        return Response.json(stored);
+      }
+      return Response.json({ success: true, headerVersion: 2, bodyVersion: 2 });
     };
     const { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
     const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'owner' })), 'base64url')}.signature`;

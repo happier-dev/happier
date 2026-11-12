@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { act, createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
-import { Modal } from '@/modal';
+import { Modal, ModalProvider } from '@/modal';
 import { encodeBase64 } from '@/encryption/base64';
 import { hashArtifactBinaryContent, openArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { fetchArtifactBlob } from '@/sync/api/artifacts/apiArtifacts';
@@ -12,7 +12,6 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createArtifactActionsClient, type ArtifactActionsClient } from './artifactActionsClient';
@@ -45,7 +44,7 @@ vi.mock('expo-modules-core', async importOriginal => ({
 
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ renderCustomModals: true }).module;
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit');
@@ -80,7 +79,7 @@ beforeEach(async () => {
     account = await captureLazyActionAccountContext(home.home.id);
 });
 
-afterEach(async () => { account?.dispose(); await home?.dispose(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(async () => { Modal.hideAll(); account?.dispose(); await home?.dispose(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 function binarySource(artifactId: string, mime: string, bytes = new Uint8Array([0, 255, 128])) {
     const reference: ArtifactBlobReferenceV1 = { blobId: 'b6a4bb92-8b93-4b18-b8b4-230041388a62', mime,
@@ -164,7 +163,7 @@ describe('ArtifactBinaryBody', () => {
             await screen.unmount();
         } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: previous }); }
     });
-    it('keeps an explicitly requested export approval in place and resumes the same client download once', async () => {
+    it('keeps export bytes private until native Ask is approved and downloads once', async () => {
         accountSettings.replaceAccountSettings(account.accountId, AccountSettingsV2GetResponseSchema.parse({
             content: { t: 'plain', v: { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
                 actions: { 'artifact.export': { approvalRequiredSurfaces: ['ui'] } } }) } }, version: 1,
@@ -183,20 +182,19 @@ describe('ArtifactBinaryBody', () => {
             pending = hook.getCurrent().actions?.exportArtifact({ artifactId: 'approved-export', destination: 'client',
                 reference: source.reference, fileName: 'approved.zip' });
         });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().approval.approvalStatus).toBe('open'));
-        const approvalId = hook.getCurrent().approval.approvalId;
-        expect(approvalId).toEqual(expect.any(String));
-        expect(hook.getCurrent().approval.artifact?.id).toBe(approvalId);
-        expect(hook.getCurrent().approval.approvalPending).toBe(true);
+        const review = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+        await waitForHomeGovernance(() => expect(review.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(hook.getCurrent().approval.approvalId).toBeNull();
         expect(anchor.click).not.toHaveBeenCalled();
         expect(source.request).not.toHaveBeenCalled();
         expect(router.push).not.toHaveBeenCalled();
-        await expect(decideApprovalAsInbox(home.home.id, approvalId!, 'approve')).resolves.toMatchObject({ ok: true });
+        await review.pressByTestIdAsync('actions.confirmation-review.decision-approve');
         await expect(pending).resolves.toMatchObject({ ok: true, value: { status: 'saved', fileName: 'approved.zip' } });
         expect(anchor.click).toHaveBeenCalledOnce();
         await hook.rerender();
         expect(anchor.click).toHaveBeenCalledOnce();
         expect(router.push).not.toHaveBeenCalled();
+        await review.unmount();
         await hook.unmount();
     });
     it('does not retarget a captured export from another Account to the active Account', async () => {

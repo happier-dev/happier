@@ -7,6 +7,7 @@ import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/appr
 import * as approvalAdmission from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import React from 'react';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { act } from 'react-test-renderer';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -177,7 +178,7 @@ describe('Artifact body hydration publications', () => {
                 { approval: discussion[0]!, serverId: target.serverId }));
             const executed = await renderScreen(React.createElement(ApprovalRequesterThreadCard,
                 { approval: discussion[1]!, serverId: target.serverId }));
-            expect(failed.findByTestId('approval-requester-thread-receipt-failed')).not.toBeNull();
+            expect(failed.findByTestId('approval-requester-thread-receipt-stale')).not.toBeNull();
             expect(executed.findByTestId('approval-requester-thread-receipt-done')).not.toBeNull();
             for (const screen of [failed, executed]) {
                 expect(screen.findByTestId('approval-requester-thread-approve')).toBeNull();
@@ -231,6 +232,7 @@ describe('Artifact body hydration publications', () => {
     });
 
     it.each(['plain', 'e2ee'] as const)('admits a socket approval once through unchanged list/body revalidation (%s)', async mode => {
+        await loadSyncSingletonForTests();
         const store = getStorage();
         const previous = store.getState();
         const target = { serverId: 'socket-refresh-home', sessionId: `socket-refresh-${mode}` };

@@ -135,7 +135,10 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         } finally {
             await act(async () => { release.resolve(); });
         }
-        await vi.waitFor(() => expect(repository.getSnapshot().mutations[attempt.localId]?.status).toBe('outcome_unknown'));
+        await vi.waitFor(() => expect(repository.getSnapshot().mutations[attempt.localId]).toMatchObject({
+            status: 'failed', errorCode: 'database_transaction_conflict_exhausted', recovery: 'retry',
+            failureCause: { errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503 },
+        }));
         await screen.unmount();
         screen = await renderScreen(element);
         expect(Object.keys(repository.getSnapshot().mutations)).toEqual([attempt.localId]);
@@ -299,7 +302,7 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         writeDiscussionSessionDraft({ scope, address: { kind: 'newDiscussion', draftId: nextDraftId }, patch: { title: 'Next passage title', text: 'Next passage question' } });
         answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
         route.params = Object.fromEntries(href.searchParams.entries());
-        const screen = await renderScreen(createElement(DiscussionRouteScreen, { kind: 'new' }));
+        const screen = await renderScreen(createElement(AppPaneProvider, null, createElement(DiscussionRouteScreen, { kind: 'new' })));
         await vi.waitFor(() => expect(screen.findByTestId('session-discussion-title')?.props.value, screen.getTextContent()).toBe('Passage title'));
         const unrelated = await renderHook(() => useDiscussionDraft({ scope, address: { kind: 'newDiscussion' } }));
         let submission: DiscussionDraftSubmission | undefined;
@@ -312,11 +315,11 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         expect(screen.findByTestId('session-discussion-new-empty')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('Unrelated N2 text');
         route.params = Object.fromEntries(nextHref.searchParams.entries());
-        await screen.update(createElement(DiscussionRouteScreen, { kind: 'new' }));
+        await screen.update(createElement(AppPaneProvider, null, createElement(DiscussionRouteScreen, { kind: 'new' })));
         expect(screen.findByTestId('session-discussion-title')?.props.value).toBe('Next passage title');
         expect(screen.findByTestId('session-discussion-new-empty')).not.toBeNull();
         route.params = { ...route.params, draftId: 'unsupported-key' };
-        await screen.update(createElement(DiscussionRouteScreen, { kind: 'new' }));
+        await screen.update(createElement(AppPaneProvider, null, createElement(DiscussionRouteScreen, { kind: 'new' })));
         expect(screen.findByTestId('session-discussion-new-details')).toBeNull();
         await unrelated.unmount();
         await screen.unmount();
@@ -518,7 +521,7 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         const target = captureDocPassageV1({ ref: { kind: 'doc', artifactId: 'missing', serverId },
             revision: { headerVersion: 1, bodyVersion: 1 }, source: 'Private retained quote', range: { start: 0, end: 22 } });
         const result = await client.replyToPassage({ target, localId: 'denied-comment', content: { v: 1, parts: [{ t: 'text', text: 'Review' }] } });
-        expect(result).toEqual({ ok: false, failure: { code: 'discussion_content_unavailable' } });
+        expect(result).toMatchObject({ ok: false, failure: { code: 'discussion_content_unavailable' } });
         expect(JSON.stringify(result)).not.toContain(target.quote);
         expect('value' in result).toBe(false);
     });
