@@ -432,7 +432,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         const common = {
-            credentials,
+            credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
             clearPendingSettings: vi.fn(),
@@ -494,7 +494,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         const common = {
-            credentials,
+            credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
             clearPendingSettings: vi.fn(),
@@ -556,7 +556,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         const result = await syncSettings({
-            credentials,
+            credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
             clearPendingSettings: vi.fn(),
@@ -595,7 +595,7 @@ describe('syncSettings account settings ciphertext', () => {
         });
 
         const result = await syncSettings({
-            credentials,
+            credentials: { token: 'token-only' },
             encryption: null,
             pendingSettings: {},
             clearPendingSettings: vi.fn(),

@@ -84,7 +84,6 @@ import {
     removeCommittedPendingSettings,
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { confirmAccountSettingsHead, readRetainedAccountSettingsRawSnapshot, retainAccountSettingsRawSnapshot } from './accountSettingsRawSnapshot';
 import { createRemoteAlertPolicyWriteback } from './writeback/remoteAlertPolicyWriteback';
 import { assertUiAccountEncryptionModeAllowed } from '@/sync/domains/settings/clientEncryptionRequirement';
@@ -877,7 +876,7 @@ async function syncSettingsUnlocked<TOneShotMutationValue>(params: SyncSettingsP
         && storage.getState().settingsRemoteAlertPolicyStatus != null) {
         const admitted = readRetainedAccountSettingsRawSnapshot(settingsScope);
         if (admitted && admitted.version === loadSettingsForCapturedScope().version
-            && (await fetchAccountEncryptionCurrentness(credentials, { request })).settingsVersion === admitted.version) {
+            && writeMaterial.settingsVersion === admitted.version) {
             confirmAccountSettingsHead(settingsScope, admitted.version);
             await maybeImportLegacySessionOrganization({ ...admitted.raw });
             return;

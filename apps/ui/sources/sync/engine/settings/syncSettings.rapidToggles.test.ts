@@ -3,6 +3,9 @@ import { createHomeGovernanceHarness, createAccountTokenForTests, installHomeGov
 import type { Settings } from '@/sync/domains/settings/settings';
 import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { markAccountSettingsHeadUnverified } from './accountSettingsRawSnapshot';
+import { bindAccountEncryptionObservation } from '@/sync/http/accountEncryptionObservationBinding';
+import { createSocketAccountEncryptionObservation } from '@/sync/api/account/apiAccountEncryptionMode';
+import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
@@ -95,6 +98,59 @@ describe('rapid Account settings intents', () => {
         expect(documentReads).toBe(2);
         expect(storage.getState().settingsVersion).toBe(6);
         expect(storage.getState().settings.analyticsOptOut).toBe(true);
+    });
+
+    it('adds no settings-head probes while the socket observation is live and catches up after a gap', async () => {
+        // Owner ruling 2026-11-12: reuse the delivered head, preserving fresh encryption admission.
+        const endpointUrl = 'https://live-settings-head.example';
+        const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }) };
+        const serverId = await harness.addHome({ name: 'Live head', serverUrl: endpointUrl, accountId: 'owner', credentials });
+        const scope = { serverId, accountId: 'owner' };
+        let raw: Record<string, unknown> = { analyticsOptOut: false };
+        let version = 5;
+        let documentReads = 0;
+        let currentnessReads = 0;
+        storage.setState({ settingsScope: scope, settingsVersion: null, settings: settingsParse({}), settingsRemoteAlertPolicyStatus: null });
+        savePendingAccountSettings(scope, {});
+        harness.answer(serverId, '/v2/account/settings', { select: () => { documentReads++;
+            return { body: { content: { t: 'plain', v: raw }, version },
+                headers: { [ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER]: 'disabled' } }; } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { select: () => { currentnessReads++;
+            return { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }) }; } });
+        const request = createServerFetchAtEndpoint({ endpointUrl, serverId, credentials });
+        const observation = createSocketAccountEncryptionObservation({ credentials, serverId, endpointUrl,
+            runtimeOrigin: endpointUrl, homeCarrierEndpointId: null, isCurrent: () => true, request });
+        bindAccountEncryptionObservation(request, observation.binding);
+        observation.connected();
+        const refresh = () => syncSettings({ credentials, encryption: null, settingsScope: scope,
+            pendingSettings: {}, getPendingSettings: () => ({}), clearPendingSettings: () => {},
+            requestContext: { scope, endpointUrl, request } });
+        try {
+            await observation.binding.read();
+            await refresh();
+            currentnessReads = 0;
+            for (let index = 0; index < 24; index++) await refresh();
+            // One required fresh-authority read per refresh, zero redundant head reads or writes.
+            expect(currentnessReads).toBe(24);
+            expect(documentReads).toBe(1);
+            expect(harness.requests.filter(request => request.method === 'POST' && request.path === '/v2/account/settings')).toHaveLength(0);
+
+            observation.disconnected();
+            markAccountSettingsHeadUnverified();
+            raw = { analyticsOptOut: true };
+            version = 6;
+            observation.connected();
+            await observation.binding.read();
+            currentnessReads = 0;
+            await refresh();
+            expect(currentnessReads).toBe(1);
+            expect(documentReads).toBe(2);
+            expect(storage.getState().settingsVersion).toBe(6);
+            expect(storage.getState().settings.analyticsOptOut).toBe(true);
+            await refresh();
+            expect(currentnessReads).toBe(2);
+            expect(documentReads).toBe(2);
+        } finally { observation.dispose(); }
     });
 
     it('reads the document at an unchanged head only while the remote-alert policy status is unknown', async () => {
