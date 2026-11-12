@@ -581,7 +581,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const ordinaryMint = await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport(ordinaryInput)));
             expect(ordinaryMint.statusCode, ordinaryMint.body).toBe(200);
             const ordinary = ExternalActionExecutionAuthorizationV1Schema.parse(ordinaryMint.json());
-            expect(ordinary.binding.deploymentPreparationAdmission).toBeUndefined();
+            expect(ordinary.binding.deploymentPreparationAdmission).toEqual({ operation: 'setup', machineTargets: ['machine'], deployments: [] });
             const subject = { v: 1 as const, kind: 'connectorToken' as const, machineId: 'machine', installationId: 'installation',
                 provider: { pluginId: 'example.network', localId: 'connector' }, connectorId: 'connector' };
             const connectorPath = '/v1/deployments/machines/machine/connector-secret-grant';
@@ -594,9 +594,9 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const connectorRequest = (body: unknown, path = connectorPath, effect = actionId, method = 'POST') =>
                 verifyExternalActionDomainExecutionRequest(signedRequestProof(ordinary, path, body, effect, method, body));
             expect(await connectorRequest(connectorRead)).not.toBeNull();
-            expect(await connectorRequest({ ...connectorRead, operation: 'remove' })).not.toBeNull();
+            expect(await connectorRequest({ ...connectorRead, operation: 'remove' })).toBeNull();
             expect(await connectorRequest({ ...connectorRead, operation: 'set',
-                grant: { ...subject, sealedContent: 'ciphertext' } })).not.toBeNull();
+                grant: { ...subject, sealedContent: 'ciphertext' } })).toBeNull();
             for (const body of [
                 { ...connectorRead, serverId: 'another-home' },
                 { ...connectorRead, hostMachineId: 'another-machine' },
@@ -672,7 +672,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         }
     });
 
-    it('admits an app update only to its selected current Environment and private content', async () => {
+    it('keeps an admitted app update within its selected Environment across revision and Source changes', async () => {
         const rows = storage.state.deploymentRead;
         rows.enabled = true;
         rows.sourceReadable = true;
@@ -705,13 +705,14 @@ describe('installed Session proposal admission at the Home mint route', () => {
             ] as const) expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 path, body, effect, method, routeInput)), path).toBeNull();
             rows.environment.revision = 2;
-            expect(await metadata()).toBeNull();
-            expect(await relay()).toBeNull();
+            expect(await metadata()).not.toBeNull();
+            expect(await relay()).not.toBeNull();
             expect((await mint(actionId, requested)).statusCode).toBe(403);
             rows.environment.revision = 1;
             rows.sourceReadable = false;
-            expect(await metadata()).toBeNull();
-            expect(await relay()).toBeNull();
+            expect(await metadata()).not.toBeNull();
+            expect(await relay()).not.toBeNull();
+            expect((await mint(actionId, requested)).statusCode).toBe(403);
             expect(dispatch).not.toHaveBeenCalled();
         } finally { rows.environment.revision = 1; rows.sourceReadable = true; await app.close(); }
     });
@@ -783,10 +784,10 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' }))).not.toBeNull();
             const defaultsRead = `/v1/projects/source/deployment-defaults?serverId=${serverId}`;
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization, defaultsRead,
-                undefined, actionId, 'GET', { serverId, projectSourceId: 'source' }))).not.toBeNull();
+                undefined, actionId, 'GET', { serverId, id: 'source' }))).not.toBeNull();
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 defaultsRead.replace('/source/', '/another/'), undefined, actionId, 'GET',
-                { serverId, projectSourceId: 'another' }))).toBeNull();
+                { serverId, id: 'another' }))).toBeNull();
             const body = { serverId, environmentId: 'staging', expectedRevision: 1,
                 contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
             for (const [path, effect, method] of [
@@ -804,13 +805,14 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 'POST', { ...body, patch: { buildMachineId: 'another' } }))).toBeNull();
             storage.state.deploymentRead.sourceReadable = false;
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization, read,
-                undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' }))).toBeNull();
+                undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' }))).not.toBeNull();
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 '/v1/deployments/environments/staging/template', body, actionId, 'POST', body))).toBeNull();
+            expect((await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport(input)))).statusCode).toBe(403);
         } finally { await app.close(); }
     });
 
-    it('admits only reviewed deployment preparation reads and withdraws them after Source access loss', async () => {
+    it('retains reviewed deployment preparation reads and refuses fresh admission after Source access loss', async () => {
         const actionId = 'deployments.prepare';
         storage.state.deploymentRead.enabled = true;
         storage.state.deploymentRead.sourceReadable = true;
@@ -855,14 +857,15 @@ describe('installed Session proposal admission at the Home mint route', () => {
             ] as const) expect.soft(await verifyExternalActionDomainExecutionRequest(signedRequestProof(
                 authorization, path, body, effect, method, routeInput)), path).toBeNull();
             storage.state.deploymentRead.sourceReadable = false;
-            expect.soft(await verifyExternalActionDomainExecutionRequest(signedRequestProof(
-                authorization, relayPath, relayBody)), 'revoked Source cannot re-enter the semantic root').toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(
+                authorization, relayPath, relayBody))).not.toBeNull();
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
-                `/v1/projects/sources/source?serverId=${serverId}`, undefined, 'projects.sources.read', 'GET', { serverId, id: 'source' }))).toBeNull();
+                `/v1/projects/sources/source?serverId=${serverId}`, undefined, 'projects.sources.read', 'GET', { serverId, id: 'source' }))).not.toBeNull();
+            expect((await mint(actionId, proposal(actionId, projectNativeJsonValueForTransport(input)))).statusCode).toBe(403);
         } finally { await app.close(); }
     });
 
-    it.each(['manage', 'use'] as const)('admits %s deployment restart only for the exact existing Environment target', async role => {
+    it.each(['manage', 'use'] as const)('admits %s deployment restart through its native handle without private deployment reads', async role => {
         const rows = storage.state.deploymentRead;
         rows.enabled = true; rows.sourceReadable = true;
         rows.source.owner = role === 'use' ? { kind: 'team', teamId: 'source-team' } : { kind: 'account', accountId: 'account' };
@@ -904,13 +907,15 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`;
             const relayBody = { ...request(), executionAuthorization: authorization };
             expect.soft(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization, relayPath, relayBody))).not.toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                '/v1/machines/machine', undefined, actionId, 'GET', { id: 'machine' }))).not.toBeNull();
             for (const [path, effect, routeInput] of [
                 [`/v1/deployments/environments/staging?serverId=${serverId}`, 'deployments.environments.get', { serverId, environmentId: 'staging' }],
                 [`/v1/deployments/receipts/active-receipt?serverId=${serverId}`, 'deployments.receipts.get', { serverId, deploymentId: 'active-receipt' }],
                 ['/v1/artifacts/environment-content', actionId, { id: 'environment-content' }],
                 ['/v1/artifacts/receipt-content', actionId, { id: 'receipt-content' }],
             ] as const) expect.soft(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
-                path, undefined, effect, 'GET', routeInput)), path).not.toBeNull();
+                path, undefined, effect, 'GET', routeInput)), path).toBeNull();
             for (const [path, effect, routeInput] of [
                 [`/v1/deployments/environments/foreign?serverId=${serverId}`, 'deployments.environments.get', { serverId, environmentId: 'foreign' }],
                 [`/v1/deployments/receipts/foreign?serverId=${serverId}`, 'deployments.receipts.get', { serverId, deploymentId: 'foreign' }],
@@ -998,6 +1003,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     [`/v1/deployments/environments/staging?serverId=${serverId}`, 'deployments.environments.get', { serverId, environmentId: 'staging' }],
                     [`/v1/deployments/receipts/active-receipt?serverId=${serverId}`, 'deployments.receipts.get', { serverId, deploymentId: 'active-receipt' }],
                     ['/v1/artifacts/environment-content', actionId, { id: 'environment-content' }],
+                    [`/v1/projects/sources/source?serverId=${serverId}`, 'projects.sources.read', { serverId, id: 'source' }],
                     ['/v1/artifacts/runtime-content', actionId, { id: 'runtime-content' }],
                     ['/v1/artifacts/receipt-content', actionId, { id: 'receipt-content' }],
                 ] as const) {
@@ -1011,7 +1017,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     ['/v1/artifacts/another', actionId, 'GET', undefined, { id: 'another' }],
                     ['/v1/artifacts', actionId, 'POST', { id: 'new', header: 'sealed', body: 'sealed' }, undefined],
                     ['/v1/deployments/environments/staging/deploy', 'deployments.deploy', 'POST', input, input],
-                    [`/v1/projects/sources/source?serverId=${serverId}`, 'projects.sources.read', 'GET', undefined, { serverId, id: 'source' }],
+                    [`/v1/projects/sources/another?serverId=${serverId}`, 'projects.sources.read', 'GET', undefined, { serverId, id: 'another' }],
                 ] as const) {
                     expect.soft(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                         path, body, effect, method, routeInput)), path).toBeNull();
@@ -2089,6 +2095,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
     );
 
     it('authenticates the original receipt-list root only for its schema-bound Home read', async () => {
+        storage.state.deploymentRead.enabled = true;
+        storage.state.deploymentRead.sourceReadable = true;
         const { app, mint } = createApp('account');
         const domain = fastify().withTypeProvider<ZodTypeProvider>();
         enableAuthentication(domain);
@@ -2097,7 +2105,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             schema: { querystring: { type: 'object', properties: { serverId: { type: 'string' } }, additionalProperties: false } },
         }, async request => ({ accountId: request.userId }));
         const actionId = 'deployments.receipts.list';
-        const input = { serverId: storage.state.homeId, environmentId: 'environment' };
+        const input = { serverId: storage.state.homeId, environmentId: storage.state.deploymentRead.environment.id };
         try {
             const minted = await mint(actionId, { v: 1, machineId: 'machine', envelope: {
                 v: 1, requestId: 'original-account-receipt-read', target: { kind: 'machine', machineId: 'machine' }, input,
@@ -2115,15 +2123,14 @@ describe('installed Session proposal admission at the Home mint route', () => {
             expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                 request.path, request.body, 'deployments.receipts.get', request.method, input))).toBeNull();
             expect(await verifyProposalCurrentness(authorization)).not.toBeNull();
-            const { projectExternalActionRequesterHttpAuthorization } = await import('../../../../../../cli/src/api/externalActionExecutionAuthorization');
-            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization, serverId: 'profile',
-                serverIdentityId: storage.state.homeId, serverHttpBaseUrl: 'http://home.test',
-                target: authorization.binding.target, installationId: 'installation', privateKey: installation.secretKey,
-                rootAdmitted: true });
-            const headers = await projected?.requesterHttpProjection?.createRequestHeaders({
-                effectActionId: actionId, method: request.method, path: request.path, body: request.body });
-            expect(headers).toBeTruthy();
-            if (!headers) throw new Error('Real requester HTTP projection refused the admitted receipt root');
+            // Server tests use the protocol's real signing boundary; the CLI projection
+            // is covered in its own package, whose @ alias is intentionally distinct.
+            const headers = {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: proof.encodedTarget,
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: proof.machineSignature,
+            };
             const accepted = await domain.inject({ method: 'GET', url: request.path, headers });
             expect(accepted.statusCode, accepted.body).toBe(200);
             expect(accepted.json()).toEqual({ accountId: 'account' });

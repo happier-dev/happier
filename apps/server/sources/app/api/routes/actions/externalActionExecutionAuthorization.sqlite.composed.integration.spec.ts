@@ -366,7 +366,7 @@ describe("external Action execution authorization", () => {
 
     it.each([['plain', 'deployments.receipts.list'], ['plain', 'deployments.receipts.get'], ['plain', 'artifact.get'],
         ['e2ee', 'deployments.receipts.list'], ['e2ee', 'deployments.receipts.get'], ['e2ee', 'artifact.get']] as const)(
-        'reads owned receipt scope/content through the signed %s %s Action', async (mode, actionId) => {
+        'reads owned receipt scope/content through the signed %s %s Action with internal-kind restrictions', async (mode, actionId) => {
         const fixture = await createFixture({ qualifiedPat: false });
         const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
         const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
@@ -493,8 +493,8 @@ describe("external Action execution authorization", () => {
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), artifactAction: execute });
                 const result = await runWithServerHttpBaseUrl(origin, () => executor.execute(actionId,
                     { artifactId: receiptArtifact.artifact.id }, { surface: 'cli', externalActionExecutionAuthorization: projected }));
-                expect(result, JSON.stringify({ result, readResponses })).toMatchObject({ ok: true, result: { artifact: {
-                    artifactId: receiptArtifact.artifact.id, body: '{"result":"succeeded"}' } } });
+                expect(result, JSON.stringify({ result, readResponses })).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+                expect(readResponses.some(response => response.startsWith('200:'))).toBe(true);
                 if (keyRecipientAccountId) expect(await db.artifactKeyEnvelope.count({ where: {
                     artifactId: receiptArtifact.artifact.id, recipientAccountId: keyRecipientAccountId } })).toBe(1);
             } else {
@@ -1540,7 +1540,7 @@ describe("external Action execution authorization", () => {
         // Construct the retained DB condition; storage lifecycle production is
         // exercised separately by deploymentPending.sqlite.integration.spec.
         const retained = await db.deploymentEnvironment.update({ where: { id: created.environmentId },
-            data: { pendingDeployContent: pendingDeploy, revision: { increment: 1 } } });
+            data: { pendingDeployContent: { pendingDeploy }, revision: { increment: 1 } } });
         const actionId = 'action.operations.cancel';
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
             artifactsRoutes(routes);
@@ -1554,7 +1554,7 @@ describe("external Action execution authorization", () => {
                 headers: { authorization: `Bearer ${token}` } });
             expect(unsigned.statusCode, unsigned.body).toBe(403);
             expect(unsigned.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
-            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).pendingDeployContent).toEqual(pendingDeploy);
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).pendingDeployContent).toEqual({ pendingDeploy });
             const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
                     envelope: { ...fixture.envelope, input: { serverId: homeId, machineId: fixture.machine.id, operationId } } } });
@@ -1593,7 +1593,7 @@ describe("external Action execution authorization", () => {
                 contentBodyVersion: foreignArtifact.artifact.bodyVersion,
             }));
             if (!foreignEnvironment.ok) throw new Error(foreignEnvironment.error);
-            await db.deploymentEnvironment.update({ where: { id: foreignEnvironment.environmentId }, data: { pendingDeployContent: pendingDeploy } });
+            await db.deploymentEnvironment.update({ where: { id: foreignEnvironment.environmentId }, data: { pendingDeployContent: { pendingDeploy } } });
             const foreignPath = `/v1/deployments/environments/${foreignEnvironment.environmentId}/pending/cancel`;
             const foreignBody = { ...body, environmentId: foreignEnvironment.environmentId, expectedRevision: foreignEnvironment.revision };
             const deniedSource = await app.inject({ method: 'POST', url: foreignPath, payload: foreignBody,
@@ -1601,12 +1601,12 @@ describe("external Action execution authorization", () => {
                     method: 'POST', path: foreignPath, body: foreignBody, privateKey: fixture.keyPair.secretKey }) });
             expect(deniedSource.statusCode, deniedSource.body).toBe(404);
             expect(deniedSource.json()).toEqual({ ok: false, error: 'deployment_unavailable' });
-            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: foreignEnvironment.environmentId } })).pendingDeployContent).toEqual(pendingDeploy);
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: foreignEnvironment.environmentId } })).pendingDeployContent).toEqual({ pendingDeploy });
             const wrongEffect = await app.inject({ method: 'POST', url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: root.token, effectActionId: 'deployments.deploy',
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
             expect(wrongEffect.statusCode).toBe(401);
-            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).pendingDeployContent).toEqual(pendingDeploy);
+            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).pendingDeployContent).toEqual({ pendingDeploy });
             const cleared = await app.inject({ method: 'POST', url: path, payload: body,
                 headers: machineHeaders({ authorizationToken: root.token, effectActionId: actionId,
                     method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
@@ -2056,7 +2056,7 @@ describe("external Action execution authorization", () => {
             expect(reached).toEqual([actionId]);
             // The missing source is a domain refusal after the UI-enabled
             // Action executes, not a surface/catalog/transport admission denial.
-            expect(produced.execution).toMatchObject({ ok: false, errorCode: 'invalid_source',
+            expect(produced.execution, JSON.stringify(produced.execution)).toMatchObject({ ok: false, errorCode: 'invalid_source',
                 details: { registryStatus: { state: 'invalid_source' } } });
             expect(getActionSpec(actionId).surfaces.rpc).toBe(false);
         } finally { installationSettings.mockRestore(); await app.close(); }

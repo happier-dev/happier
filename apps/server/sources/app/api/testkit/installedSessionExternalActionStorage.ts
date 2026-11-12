@@ -34,12 +34,13 @@ export function createInstalledSessionExternalActionStorage() {
         deploymentRead: {
             enabled: false, sourceReadable: true,
             candidate: { id: 'candidate', headerVersion: 1, bodyVersion: 1 },
-            source: { id: 'source', revision: 1, name: 'App', repository: null, defaultRef: null, subdir: null,
+            source: { id: 'source', revision: 1, deletedAt: null as Date | null, name: 'App', repository: null, defaultRef: null, subdir: null,
                 audience: [], owner: ProjectSourceOwnerV1Schema.parse({ kind: 'account', accountId: 'account' }), createdByAccountId: 'account', attachments: [] },
             environment: { id: 'staging', projectSourceId: 'source', revision: 1, runtimeTargetLinkId: 'runtime',
-                deployerMode: 'members',
+                deployerMode: 'members', controllerMachineId: 'machine', protection: 'nonProduction', purpose: 'standard',
+                contentHeaderVersion: 1, contentBodyVersion: 1, previewTemplateEnvironmentId: null,
                 buildMachineId: 'machine', deletedAt: null as Date | null, contentArtifactId: 'environment-content' },
-            link: { id: 'runtime', environmentId: 'staging', role: 'runtime', sourceKind: 'host', targetKind: 'ownServer',
+            link: { id: 'runtime', revision: 1, environmentId: 'staging', role: 'runtime', sourceKind: 'host', targetKind: 'ownServer',
                 activeDeploymentId: 'active-receipt', deletedAt: null as Date | null, detachedAt: null as Date | null,
                 contentArtifactId: 'runtime-content', machines: [{ machineId: 'machine', installationId: 'installation', state: 'active' }] },
             receipt: { id: 'active-receipt', environmentId: 'staging', targetLinkId: 'runtime', contentArtifactId: 'receipt-content' },
@@ -67,14 +68,28 @@ export function createInstalledSessionExternalActionStorage() {
         if (!state.bound || id !== state.sessionId && !state.sessionIds.has(id)) return null;
         const accountId = state.sessionOwners.get(id) ?? state.accountId;
         return { id, accountId, account: accountId === otherAccount.id ? otherAccount : account,
+            active: true, archivedAt: null, lastActiveAt: new Date(2),
+            publisherGeneration: 1n, publisherGenerationLastActiveAt: new Date(2),
             shares: [], teamGrants: [], groupGrants: [] };
     };
     const readSessions = () => [...new Set([state.sessionId, ...state.sessionIds])].flatMap(id => {
         const row = readSession(id);
         return row ? [row] : [];
     });
+    const environmentRow = () => ({ ...state.deploymentRead.environment,
+        targetLinks: [state.deploymentRead.link], domains: [],
+    });
+    const sourceRows = () => state.deploymentRead.enabled && state.deploymentRead.sourceReadable
+        ? [state.deploymentRead.source] : [];
     const reader = {
         ...homeConfigSnapshotPostgresQueryMock,
+        // Substitute the database clock query alongside Home snapshot SQL.
+        async $queryRawUnsafe(query: string, id?: unknown): Promise<unknown[]> {
+            if (query === 'SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::double precision AS milliseconds') {
+                return [{ milliseconds: Date.now() }];
+            }
+            return homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(reader, query, id);
+        },
         // The real transaction owner now establishes a PostgreSQL read snapshot.
         // Replace only that database command, leaving currentness/policy real.
         ...inTxPostgresControlStatementMock,
@@ -85,6 +100,7 @@ export function createInstalledSessionExternalActionStorage() {
                 where.id.in.includes(state.machineId) ? [machine()] : [],
         },
         ephemeralRunnerActivation: { findFirst: async () => null },
+        managedMachine: { findFirst: async () => null },
         session: {
             fields: sessionFields,
             findFirst: async ({ where }: { where: unknown }) => readSessions().find(row => matchesDbMockWhere(row, where)) ?? null,
@@ -114,11 +130,14 @@ export function createInstalledSessionExternalActionStorage() {
                 ? { machine: machine(), session, data: 'existing-session-machine-key', dataVersion: 1,
                     createdAt: new Date(0), updatedAt: new Date(0) } : null;
         } },
+        repeatKey: { findUnique: async () => null },
         simpleCache: { findUnique: async () => ({ value: state.homeId }) },
         homeSettings: { findUnique: async () => null },
         homeGovernancePolicy: { findUnique: async () => null },
-        projectSource: { findUnique: async ({ where }: { where: { id: string } }) => state.deploymentRead.enabled
-            && state.deploymentRead.sourceReadable && where.id === state.deploymentRead.source.id ? state.deploymentRead.source : null },
+        projectSource: {
+            findUnique: async ({ where }: { where: unknown }) => sourceRows().find(row => matchesDbMockWhere(row, where)) ?? null,
+            findMany: async ({ where }: { where: unknown }) => sourceRows().filter(row => matchesDbMockWhere(row, where)),
+        },
         projectDeploymentDefaults: { findUnique: async () => null },
         artifact: {
             findUnique: async ({ where }: { where: { id: string } }) => where.id === state.creation.artifact.id
@@ -130,14 +149,23 @@ export function createInstalledSessionExternalActionStorage() {
                 return matchesDbMockWhere(row, where) ? row : null;
             },
         },
-        deploymentEnvironment: { findUnique: async ({ where }: { where: { id: string } }) => state.deploymentRead.enabled
-            && where.id === state.deploymentRead.environment.id ? state.deploymentRead.environment : null,
+        deploymentEnvironment: {
+            findUnique: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
+                && matchesDbMockWhere(environmentRow(), where) ? environmentRow() : null,
+            findFirst: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
+                && matchesDbMockWhere(environmentRow(), where) ? environmentRow() : null,
             findMany: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
-                && matchesDbMockWhere(state.deploymentRead.environment, where) ? [state.deploymentRead.environment] : [],
+                && matchesDbMockWhere(environmentRow(), where) ? [environmentRow()] : [],
         },
-        deploymentTargetLink: { findFirst: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
+        deploymentDomain: { count: async () => 0 },
+        deploymentTargetLink: {
+            count: async ({ where }: { where: unknown }) => Number(state.deploymentRead.enabled
+                && matchesDbMockWhere(state.deploymentRead.link, where)),
+            findFirst: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
             && matchesDbMockWhere(state.deploymentRead.link, where) ? state.deploymentRead.link : null },
         deployment: {
+            count: async ({ where }: { where: unknown }) => Number(state.deploymentRead.enabled
+                && matchesDbMockWhere(state.deploymentRead.receipt, where)),
             findUnique: async ({ where }: { where: { id: string } }) => state.deploymentRead.enabled
                 && where.id === state.deploymentRead.receipt.id ? state.deploymentRead.receipt : null,
             findFirst: async ({ where }: { where: unknown }) => state.deploymentRead.enabled
