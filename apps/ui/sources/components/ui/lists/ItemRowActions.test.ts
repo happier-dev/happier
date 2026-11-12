@@ -48,14 +48,12 @@ vi.mock('@/utils/web/reactDomCjs', async () => {
     return createReactDomCjsRendererMock();
 });
 
-const vendorIconState = vi.hoisted(() => ({ renderText: false }));
-
-// Keep Icon and its normalization real; only the third-party glyph leaves emit fallback text.
+// Keep Icon and its normalization real; Phosphor's external glyph leaves render SVG views.
 vi.mock('phosphor-react-native/src/icons/DotsThree', () => ({
-    DotsThreeIcon: () => vendorIconState.renderText ? '.' : React.createElement('Svg'),
+    DotsThreeIcon: () => React.createElement('Svg', { testID: 'vendor-overflow-glyph' }),
 }));
 vi.mock('phosphor-react-native/src/icons/Star', () => ({
-    StarIcon: () => vendorIconState.renderText ? '.' : React.createElement('Svg'),
+    StarIcon: () => React.createElement('Svg', { testID: 'vendor-inline-glyph' }),
 }));
 
 // Prepare the real owner outside a case's deadline; its cold source import also loads the host UI graph.
@@ -365,7 +363,7 @@ describe('ItemRowActions', () => {
         expect(originalOwner).not.toHaveBeenCalled();
     });
 
-    it('opens its ⋯ menu below the trigger as a non-blocking menu: the page is neither blurred nor dimmed and no caret points back', async () => {
+    it('opens its ⋯ menu below the trigger with the shared frost backdrop and no caret', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
         const { Popover } = await import('@/components/ui/popover');
         const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
@@ -376,9 +374,8 @@ describe('ItemRowActions', () => {
         }));
         await screen.pressByTestIdAsync('row-actions-trigger');
         const popover = screen.tree.root.findByType(Popover);
-        // DESIGN.md: do not dim the world for parallel, non-blocking work (lab wgmenu M: the page stays sharp).
-        const backdrop = popover.props.backdrop;
-        expect(['blur', 'dim']).not.toContain(backdrop && typeof backdrop === 'object' ? backdrop.effect : undefined);
+        // Owner a7da4336c31: popovers use the one light frost scrim, including row menus.
+        expect(popover.props.backdrop).toEqual(expect.objectContaining({ effect: 'blur' }));
         expect(['bottom', 'auto-vertical']).toContain(popover.props.placement);
         expect(popover.props.portal).toEqual(expect.objectContaining({ anchorAlign: 'end' }));
         const surface = popover.props.children({ maxHeight: 280, maxWidth: 260, placement: 'bottom', requestClose: () => {} });
@@ -521,11 +518,10 @@ describe('ItemRowActions', () => {
         }));
     });
 
-    it('does not emit raw text nodes under Pressable when the vendor overflow glyph renders text on web', async () => {
+    it('renders the vendor overflow SVG without raw text under Pressable on web', async () => {
         const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
         const previousFamily = getIconFamily();
         act(() => setIconFamily('phosphor'));
-        vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -540,14 +536,10 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByTestId('row-actions-trigger')).toBeTruthy();
 
-            // The vendor component sits inside native Text; test the rendered subtree,
-            // not whether React collapses that component into its parent's direct children.
-            expect(screen.tree.root.findAllByType('Text' as never).some(node =>
-                node.findAll(child => child.children.includes('.')).length > 0)).toBe(true);
+            expect(screen.findByTestId('vendor-overflow-glyph')).not.toBeNull();
 
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
-            vendorIconState.renderText = false;
             act(() => {
                 screen?.tree.unmount();
                 setIconFamily(previousFamily);
@@ -555,11 +547,10 @@ describe('ItemRowActions', () => {
         }
     });
 
-    it('does not emit raw text nodes when the vendor inline glyph renders text on web', async () => {
+    it('renders the vendor inline SVG without raw text on web', async () => {
         const { getIconFamily, setIconFamily } = await import('@/components/ui/icons/iconFamily');
         const previousFamily = getIconFamily();
         act(() => setIconFamily('phosphor'));
-        vendorIconState.renderText = true;
         const { ItemRowActions } = await import('./ItemRowActions');
 
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -574,12 +565,10 @@ describe('ItemRowActions', () => {
 
             expect(screen.findByProps({ accessibilityLabel: 'Favorite' })).toBeTruthy();
 
-            expect(screen.tree.root.findAllByType('Text' as never).some(node =>
-                node.findAll(child => child.children.includes('.')).length > 0)).toBe(true);
+            expect(screen.findByTestId('vendor-inline-glyph')).not.toBeNull();
 
             expect(collectUnexpectedRawTextNodes(screen?.tree.toJSON())).toEqual([]);
         } finally {
-            vendorIconState.renderText = false;
             act(() => {
                 screen?.tree.unmount();
                 setIconFamily(previousFamily);
