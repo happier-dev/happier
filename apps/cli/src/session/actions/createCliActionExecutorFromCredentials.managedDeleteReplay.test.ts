@@ -8,7 +8,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ClientToServerEvents } from '@/api/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -35,12 +35,16 @@ it.each(([
     ['deployments.environments.create', 'plain'], ['deployments.environments.create', 'e2ee'],
     ['deployments.environments.create', 'plain', 'existing-source-first-link'],
     ['deployments.environments.create', 'plain', 'new-project-first-link'],
+    ['machines.managed.delete', 'e2ee', 'admission-refused'],
 ] as const).map(([actionId, encryptionMode, createShape]) => [actionId, encryptionMode, createShape ?? ''] as const))
 ('settles public CLI %s approval replay at its origin (%s) %s', async (actionId, encryptionMode, createShape) => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-delete-replay-' }, async () => {
         const accountId = 'delete-owner';
+        const admissionRefused = createShape === 'admission-refused';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
-            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            provenance: admissionRefused
+                ? { v: 2, kind: 'terminal', authority: 'account_automation', evidence: [{ kind: 'home_method', methodId: 'key_challenge' }] }
+                : { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const machineKey = new Uint8Array(32).fill(37);
         const credentials = { token, encryption: encryptionMode === 'e2ee' ? { type: 'dataKey' as const,
             machineKey, publicKey: libsodiumPublicKeyFromSecretKey(machineKey) } : null, credentialProvenance: 'stored_session' as const };
@@ -133,6 +137,13 @@ it.each(([
             access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: encryptionMode, accessState: 'ready' } };
         app.get('/v1/machines/controller', async () => ({ machine }));
         app.get('/v1/machines', async () => [machine]);
+        if (admissionRefused) app.post('/v1/actions/approval.request.decide/execution-authorization', async (request, reply) => {
+            // Substitute the Home HTTP refusal observed on READY106. Keep the
+            // real CLI decision, Artifact lifecycle, E2EE sealing and replay.
+            const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+            expect(body.envelope.v).toBe(2);
+            return reply.code(403).send({ error: 'credential_scope_denied' });
+        });
         const origin = 'https://delete-home.test';
         const restore = installAxiosFastifyAdapter({ app, origin });
         const sockets = await createRequesterCurrentnessSocketHarness();
@@ -174,6 +185,22 @@ it.each(([
                     getAccountSettings: () => accountSettings } });
             const result = await executor.execute('approval.request.decide', { artifactId: 'delete-approval', decision: 'approve' },
                 { surface: 'cli', authority: 'present_user', actionRequestId: 'approve-delete' });
+            if (admissionRefused) {
+                expect(paths, JSON.stringify(result)).toContain('/v1/actions/approval.request.decide/execution-authorization');
+                expect(paths).not.toContain('/v1/actions/approval.request.decide');
+                expect(calls).toEqual([]);
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+                    ok: false, effectAttempted: false, errorCode: 'credential_scope_denied',
+                } } });
+                const persisted = await runWithServerHttpBaseUrl(origin, () =>
+                    createCredentialedAccountArtifactStore(credentials).read('delete-approval'));
+                expect(persisted && approvalArtifactBodyMatchesHeaderV1(persisted.header, persisted.body)).toMatchObject({
+                    family: 'built_in', request: { status: 'failed', execution: {
+                        ok: false, effectAttempted: false, errorCode: 'credential_scope_denied',
+                    } },
+                });
+                return;
+            }
             if (actionId === 'deployments.teardown') {
                 // #59: a relay admission refusal must settle the existing approval,
                 // without admitting a teardown receipt or advertising unknown effects.

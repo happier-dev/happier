@@ -745,7 +745,8 @@ export function dispatchOriginalAccountAction(input: OriginalAccountActionInput)
  * the incumbent disclosure and signed-requester-context admission.
  */
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
-  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+  // Preparation cannot start the effect; delivery owns evidence after submission.
+  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode, effectAttempted: false });
   const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
   input.signal?.throwIfAborted();
   const installedCaller = input.installedWorkflow?.context.actionCaller;
