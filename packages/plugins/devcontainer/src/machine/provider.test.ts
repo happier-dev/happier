@@ -39,7 +39,7 @@ function native(overrides: Readonly<{ runtime?: 'docker' | 'podman'; up?: Plugin
   let managedMachineId = 'managed-a';
   let cpuCores = 2;
   let memoryBytes = 2 * 1024 ** 3;
-  const exec: Pick<ExecService, 'run'> = { run: async request => {
+  const exec: Pick<ExecService, 'run' | 'spawn'> = { spawn: async () => { throw new Error('No channel in this fixture'); }, run: async request => {
     requests.push(request);
     if (request.args?.[0] === 'read-configuration') return result({ configuration: JSON.parse(await readFile(request.args[request.args.indexOf('--config') + 1]!, 'utf8')),
       workspace: { workspaceFolder: '/work/custom', workspaceMount: `type=bind,source=${configurationRoot},target=/work/custom` }, mergedConfiguration: { remoteUser: 'coder', workspaceFolder: '/work/custom' },
@@ -92,7 +92,12 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
   let ready = false;
   const containerImageId = options.imageId ?? 'sha256:image';
   const volume = `happier${Buffer.from(options.managedId ?? 'managed-a').toString('hex')}-workspace`;
-  const exec: Pick<ExecService, 'run'> = { run: async request => {
+  const spawns: Readonly<{ args: readonly string[] | undefined; outputDelivery: string | undefined }>[] = [];
+  const exec: Pick<ExecService, 'run' | 'spawn'> = { spawn: async (request, spawnOptions) => {
+    spawns.push({ args: request.args, outputDelivery: spawnOptions?.outputDelivery });
+    const termination = { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } };
+    return { waitForExit: async () => termination, dispose: async () => undefined } as unknown as Awaited<ReturnType<ExecService['spawn']>>;
+  }, run: async request => {
     requests.push(request);
     expect(request.executable).toMatchObject({ id: { localId: runtime } });
     const args = request.args ?? [];
@@ -126,10 +131,65 @@ function imageNative(runtime: 'docker' | 'podman' = 'docker', options: { imageId
   } };
   const tools = { exec, docker: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: runtime } },
     signal: new AbortController().signal, observedAt: 42 } satisfies Parameters<typeof createDevcontainerProvider>[0];
-  return { requests, tools, volume, provider: createDevcontainerProvider(tools) };
+  return { requests, spawns, tools, volume, provider: createDevcontainerProvider(tools) };
 }
 
 describe('Devcontainer native roles', () => {
+  it.each([
+    { runtime: 'docker', selected: 'docker' }, { runtime: 'podman', selected: 'podman' }, { runtime: undefined, selected: 'docker' },
+  ] as const)('settles an unacknowledged acquisition as absent through $selected (runtime=$runtime) without evaluating launch effects', async ({ runtime, selected }) => {
+    const { requests, tools } = native({ runtime, inventory: result('') });
+    const dependencies: string[] = [];
+    const services = { exec: tools.exec, managedServices: { dependencies: { status: async (id: string) => {
+      dependencies.push(id);
+      return id === selected ? { state: 'ready', executable: tools.docker } : { state: 'missing', supported: true };
+    } } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('reconcile', { correlation: { managedId: 'managed-a', requestId: 'request-a',
+        launch: { ...(runtime ? { runtime } : {}), workspaceFolder: configurationRoot, configuration: { kind: 'inline', config: '{}' } } } }, { surface: 'plugin' }))
+        .toEqual({ kind: 'rejected', code: 'managed_not_found' });
+      expect(dependencies).toEqual([selected]);
+      expect(requests.map(request => request.args)).toEqual([['ps', '--all', '--no-trunc', '--filter',
+        'label=happier.managed-machine=managed-a', '--format', '{{.ID}}']]);
+    } finally { await kit.dispose(); }
+  });
+
+  it('keeps an unacknowledged acquisition unknown when its default Docker runtime is unavailable', async () => {
+    const dependencies: string[] = [];
+    const services = { exec: { run: async () => { throw new Error('An unavailable runtime must not execute'); } },
+      managedServices: { dependencies: { status: async (id: string) => {
+        dependencies.push(id);
+        return id === 'podman' ? { state: 'ready', executable: { kind: 'managedDependency', id: { pluginId: 'happier.devcontainer', localId: id } } }
+          : { state: 'missing', supported: true };
+      } } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('reconcile', { correlation: { managedId: 'managed-a', requestId: 'request-a',
+        launch: { configuration: { kind: 'image', image: 'example:latest' } } } }, { surface: 'plugin' }))
+        .toEqual({ kind: 'unknown', recovery: { reference: 'managed-a', reason: 'provider_unavailable' } });
+      expect(dependencies).toEqual(['docker']);
+    } finally { await kit.dispose(); }
+  });
+
+  it.each([
+    { label: 'one retained container', inventory: result(`${containerId}\n`), reason: 'native_realization_unknown' },
+    { label: 'ambiguous containers', inventory: result(`${containerId}\n${'b'.repeat(64)}\n`), reason: 'native_realization_unknown' },
+    { label: 'malformed native output', inventory: result('unrecognized-container\n'), reason: 'native_realization_unknown' },
+    { label: 'failed inventory', inventory: result('', 1), reason: 'native_observation_unavailable' },
+    { label: 'truncated inventory', inventory: { ...result(''), stdoutTruncated: true }, reason: 'native_observation_unavailable' },
+  ])('does not claim absence or issue effects for $label after an unacknowledged acquisition', async ({ inventory, reason }) => {
+    const { requests, tools } = native({ inventory });
+    const services = { exec: tools.exec, managedServices: { dependencies: { status: async () => ({ state: 'ready', executable: tools.docker }) } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      expect(await kit.invokeAction('reconcile', { correlation: { managedId: 'managed-a', requestId: 'request-a',
+        launch: { configuration: { kind: 'image', image: 'example:latest' } } } }, { surface: 'plugin' }))
+        .toEqual({ kind: 'unknown', recovery: { reference: 'managed-a', reason } });
+      expect(requests.every(request => request.args?.[0] === 'ps')).toBe(true);
+    } finally { await kit.dispose(); }
+  });
+
   it.each(['docker', 'podman'] as const)('updates CPU and memory live through %s and observes native limits', async runtime => {
     const { provider, requests, tools } = native({ runtime });
     const size = { cpuCores: 4, memoryBytes: 4 * 1024 ** 3 };
@@ -187,7 +247,7 @@ describe('Devcontainer native roles', () => {
       resource: { value: { configuration, containerId: 'b'.repeat(64) } } });
   });
   it.each(['docker', 'podman'] as const)('creates an image with retained volume through %s and enrolls guest commands without the Dev Containers CLI', async runtime => {
-    const { requests, tools, volume } = imageNative(runtime);
+    const { requests, spawns, tools, volume } = imageNative(runtime);
     const dependencies: string[] = [];
     const services = { exec: tools.exec, managedServices: { dependencies: { status: async (id: string) => {
       dependencies.push(id);
@@ -215,6 +275,11 @@ describe('Devcontainer native roles', () => {
       expect(await kit.invokeAction('bootstrap', { resource: retained }, { surface: 'plugin' })).toMatchObject({ kind: 'native' });
       const executed = await kit.invokeAction('exec', { resource: retained, argv: ['printf', 'guest-command-complete'] }, { surface: 'plugin' });
       expect(executed).toMatchObject({ stdoutBase64: Buffer.from('guest-command-complete\n').toString('base64') });
+      // The optional stream role: one interactive non-PTY child carrying the invocation channel.
+      expect(await kit.invokeAction('stream', { resource: retained, argv: ['hshim', 'attach', '--socket', '/s'] }, { surface: 'plugin' }))
+        .toEqual({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } } });
+      expect(spawns).toEqual([{ args: ['exec', '--interactive', '--workdir', '/workspace', containerId, 'hshim', 'attach', '--socket', '/s'],
+        outputDelivery: 'invocation' }]);
       expect(await kit.invokeAction('power', { resource: retained, intent: 'stop' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(await kit.invokeAction('power', { resource: retained, intent: 'start' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(1);

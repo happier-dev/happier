@@ -32,13 +32,14 @@ function flags(launch: DevcontainerLaunch) {
 }
 function imageSource(launch: DevcontainerLaunch) { return launch.configuration?.kind === 'image' ? launch.configuration : undefined; }
 function readyPath(managedMachineId: string) { return `/tmp/.${devcontainerComposeProjectName(managedMachineId)}-ready`; }
-function nativeLabels(launch: DevcontainerLaunch, managedMachineId: string) {
-  return imageSource(launch) ? { 'happier.managed-machine': managedMachineId, 'happier.image-review': launch.reviewedEffectDigest }
-    : { 'devcontainer.local_folder': launch.workspaceFolder!, 'devcontainer.config_file': launch.configPath!, 'happier.managed-machine': managedMachineId };
+function nativeLabels(launch: DevcontainerLaunch | undefined, managedMachineId: string) {
+  const managed = { 'happier.managed-machine': managedMachineId };
+  return !launch ? managed : imageSource(launch) ? { ...managed, 'happier.image-review': launch.reviewedEffectDigest }
+    : { 'devcontainer.local_folder': launch.workspaceFolder!, 'devcontainer.config_file': launch.configPath!, ...managed };
 }
 function managedFlags(launch: DevcontainerLaunch, managedMachineId: string) {
-  return [...flags(launch), '--id-label', `devcontainer.local_folder=${launch.workspaceFolder}`,
-    '--id-label', `devcontainer.config_file=${launch.configPath}`, '--id-label', `happier.managed-machine=${managedMachineId}`];
+  return [...flags(launch), ...Object.entries(nativeLabels(launch, managedMachineId))
+    .flatMap(([key, value]) => ['--id-label', `${key}=${value}`])];
 }
 function quote(value: string) { return `'${value.replace(/'/gu, `'"'"'`)}'`; }
 function mountArgument(fields: readonly string[]) {
@@ -57,15 +58,17 @@ function commandFailure(result: PluginProcessResult,
 /** Docker effects exist only behind this provisioner's admitted native roles.
  * Enrollment, credentials, revision and Session custody remain host-owned. */
 export function createDevcontainerProvider(input: Readonly<{
-  exec: Pick<ExecService, 'run'>; docker: ManagedExecutableRef; devcontainer?: ManagedExecutableRef;
+  exec: Pick<ExecService, 'run' | 'spawn'>; docker: ManagedExecutableRef; devcontainer?: ManagedExecutableRef;
   signal: AbortSignal; observedAt: number; environment?: Readonly<Record<string, string>>;
 }>) {
   const environment = input.environment ?? readDevcontainerNativeEnvironment();
   const nativeInput = { ...input, environment };
   const cli = () => input.devcontainer ?? fail('provider_unavailable');
+  const request = (executable: ManagedExecutableRef, args: readonly string[], managedMachineId?: string, workspaceFolder?: string) => ({
+    executable, args, ...(workspaceFolder ? { cwd: workspaceFolder } : {}),
+    env: { ...environment, ...(managedMachineId ? { COMPOSE_PROJECT_NAME: devcontainerComposeProjectName(managedMachineId) } : {}) } });
   const run = (executable: ManagedExecutableRef, args: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string, workspaceFolder?: string) =>
-    input.exec.run({ executable, args, ...(stdin === undefined ? {} : { stdin }), ...(workspaceFolder ? { cwd: workspaceFolder } : {}),
-      env: { ...environment, ...(managedMachineId ? { COMPOSE_PROJECT_NAME: devcontainerComposeProjectName(managedMachineId) } : {}) } },
+    input.exec.run({ ...request(executable, args, managedMachineId, workspaceFolder), ...(stdin === undefined ? {} : { stdin }) },
       { signal: input.signal, ...(live ? { outputDelivery: 'invocation' as const } : {}) });
   async function inspectContainer(containerId: string, launch: DevcontainerLaunch, managedMachineId: string) {
     const inspected = await run(input.docker, ['inspect', '--type', 'container', containerId], undefined, false, managedMachineId, launch.workspaceFolder);
@@ -108,10 +111,14 @@ export function createDevcontainerProvider(input: Readonly<{
     const labels = record(record(native.Config).Labels);
     if (Object.entries(nativeLabels(launch, managedMachineId)).some(([key, value]) => labels[key] !== value)) fail('resource_mismatch');
   }
-  const childExec = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string) =>
+  const childCommand = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], interactive: boolean) =>
     imageSource(launch)
-      ? run(input.docker, ['exec', ...(stdin === undefined ? [] : ['--interactive']), '--workdir', '/workspace', containerId, ...argv], stdin, live, managedMachineId, launch.workspaceFolder)
-      : run(cli(), ['exec', ...flags(launch), '--container-id', containerId, ...argv], stdin, live, managedMachineId, launch.workspaceFolder);
+      ? { executable: input.docker, args: ['exec', ...(interactive ? ['--interactive'] : []), '--workdir', '/workspace', containerId, ...argv] }
+      : { executable: cli(), args: ['exec', ...flags(launch), '--container-id', containerId, ...argv] };
+  const childExec = (launch: DevcontainerLaunch, containerId: string, argv: readonly string[], stdin?: Uint8Array, live = false, managedMachineId?: string) => {
+    const command = childCommand(launch, containerId, argv, stdin !== undefined);
+    return run(command.executable, command.args, stdin, live, managedMachineId, launch.workspaceFolder);
+  };
   async function namespace(launch: DevcontainerLaunch, containerId: string, managedMachineId: string) {
     // Even id/pwd applies the configured userEnvProbe and can evaluate shell
     // startup. Keep that IO behind the same reviewed-effects owner as launch.
@@ -161,10 +168,10 @@ export function createDevcontainerProvider(input: Readonly<{
         workspaceFolder: resource.workspaceRoot, storage: resource.storage },
     } };
   }
-  async function inventory(launch: DevcontainerLaunch, managedMachineId: string) {
+  async function inventory(launch: DevcontainerLaunch | undefined, managedMachineId: string) {
     return output(await run(input.docker, ['ps', '--all', '--no-trunc',
       ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--filter', `label=${key}=${value}`]),
-      '--format', '{{.ID}}'], undefined, false, managedMachineId, launch.workspaceFolder))
+      '--format', '{{.ID}}'], undefined, false, managedMachineId, launch?.workspaceFolder))
       .trim().split(/\r?\n/u).filter(Boolean);
   }
   async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId, guestHome?: MachineProvisionerGuestHomeV1) {
@@ -262,6 +269,16 @@ export function createDevcontainerProvider(input: Readonly<{
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
           ...(/^[a-f0-9]{64}$/u.test(result.recovery.reference) ? { nativeResourceId: result.recovery.reference } : {}) },
       } };
+    },
+    async reconcileAcquisition(managedMachineId: string) {
+      try {
+        // Lost acknowledgements retain no reviewed launch facts. The managed
+        // label alone can prove absence without reviewing or adopting a child.
+        if ((await inventory(undefined, managedMachineId)).length !== 0) fail('native_realization_unknown');
+        return { kind: 'rejected' as const, code: 'managed_not_found' as const };
+      } catch (error) {
+        return { kind: 'unknown' as const, recovery: { reference: managedMachineId, reason: code(error) } };
+      }
     },
     async reconcile(raw: DevcontainerNativeOperation) {
       const operation = DevcontainerNativeOperationSchema.parse(raw);
@@ -369,6 +386,13 @@ export function createDevcontainerProvider(input: Readonly<{
     async exec(raw: DevcontainerResource, argv: readonly string[], stdin?: Uint8Array) {
       const { resource } = await exact(raw, true);
       return childExec(resource, resource.containerId, argv, stdin, true, resource.managedMachineId);
+    },
+    /** The optional `stream` role: one interactive non-PTY child process carrying the invocation's channel. */
+    async stream(raw: DevcontainerResource, argv: readonly string[]) {
+      const { resource } = await exact(raw, true);
+      const command = childCommand(resource, resource.containerId, argv, true);
+      return input.exec.spawn(request(command.executable, command.args, resource.managedMachineId, resource.workspaceFolder),
+        { signal: input.signal, outputDelivery: 'invocation' });
     },
     async putFile(raw: DevcontainerResource, guestPath: string, bytes: Uint8Array, mode = 0o600) {
       if (!guestPath.startsWith('/') || guestPath.includes('\u0000') || !Number.isInteger(mode) || mode < 0) return { kind: 'refused' as const, code: 'invalid_request' };

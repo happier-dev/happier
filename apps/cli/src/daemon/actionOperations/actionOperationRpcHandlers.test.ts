@@ -141,13 +141,13 @@ describe('action operation observation RPC handlers', () => {
       network.mockRestore();
     }
   });
-  it('limits delegated managed discovery and reads to the exact creator resource', async () => {
+  it.each(['machines.managed.acquire', 'machines.managed.delete'] as const)('limits delegated %s discovery and reads to the exact creator resource', async actionId => {
     const store = createActionOperationStore();
     const scope = { accountId: 'requester', machineId: 'controller' };
     for (const [operationId, accountId, managedId] of [
       ['own-operation', 'requester', 'own-resource'], ['neighbor-operation', 'requester', 'neighbor-resource'],
       ['other-requester', 'other', 'own-resource'],
-    ] as const) store.create({ operationId, actionId: 'machines.managed.acquire', title: 'Create', scope: { ...scope, accountId },
+    ] as const) store.create({ operationId, actionId, title: 'Managed operation', scope: { ...scope, accountId },
       cancellation: 'supported', inputIdentity: '{}', domainRef: { kind: 'managedMachine', id: managedId } });
     const handlers = createActionOperationRpcHandlers({ store, runner: createActionOperationRunner({ store, resolveAction: () => null }),
       machineId: 'controller', resolveAccountId: async () => 'custodian' });

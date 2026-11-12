@@ -88,8 +88,7 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
     return admission.input.managedId;
   };
   const matchesManagedRead = (snapshot: ActionOperationSnapshotV1, managedId: string) =>
-    (snapshot.actionId === 'machines.managed.acquire' || snapshot.actionId === 'machines.managed.bootstrap.retry')
-    && snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === managedId;
+    snapshot.domainRef?.kind === 'managedMachine' && snapshot.domainRef.id === managedId;
 
   const list = async (raw: unknown, context: ActionOperationRpcContext | undefined, version: 1 | 2): Promise<ActionOperationListV1Response> => {
       const request: ActionOperationListV2Request = (version === 2 ? ActionOperationListV2RequestSchema : ActionOperationListV1RequestSchema).parse(raw);

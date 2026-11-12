@@ -5,7 +5,7 @@ import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
+  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerResizeResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -69,7 +69,7 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
     memoryBytes: { kind: 'supported', requiresRestart: false, changes: 'any' },
     diskBytes: { kind: 'unsupported', code: 'container_disk_resize_unsupported' } },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild', resize: 'resize' },
-  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+  bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   reconciliation: { nativeOperationSchema: DevcontainerNativeOperationSchema.jsonSchema, action: 'reconcile' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
@@ -191,7 +191,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
     reconcile: { ...defaults, title: 'Observe Devcontainer replacement', dangerLevel: 'safe',
       inputSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.input, resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
       async run(input, context) {
-        if (!('nativeOperation' in input)) return { kind: 'rejected' as const, code: 'provider_unavailable' as const };
+        if (!('nativeOperation' in input)) {
+          try { return await (await provider(context, { runtime: input.correlation.launch.runtime })).reconcileAcquisition(input.correlation.managedId); }
+          catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.correlation.managedId, reason: code(error) } }; }
+        }
         const selection = 'launch' in input.nativeOperation ? input.nativeOperation.launch : input.nativeOperation;
         return (await provider(context, selection)).reconcile(input.nativeOperation); } },
     exec: { ...defaults, title: 'Execute private child bootstrap IO', dangerLevel: 'writesLocal',
@@ -202,6 +205,13 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
           input.inputBase64 === undefined ? undefined : bytes(input.inputBase64));
         return { termination: result.termination, stdoutBase64: Buffer.from(result.stdout).toString('base64'),
           stderrBase64: Buffer.from(result.stderr).toString('base64'), stdoutTruncated: result.stdoutTruncated, stderrTruncated: result.stderrTruncated };
+      } },
+    stream: { ...defaults, title: 'Open a private child channel', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Open a Devcontainer channel' },
+      inputSchema: DEVCONTAINER_ROLE_SCHEMAS.streamInput, resultSchema: MachineProvisionerNativeStreamResultV1Schema,
+      async run(input, context) {
+        const channel = await (await provider(context, input.resource)).stream(input.resource, input.argv);
+        try { return { termination: await channel.waitForExit() }; } finally { await channel.dispose(); }
       } },
     'put-file': { ...defaults, title: 'Write private child bootstrap payload', dangerLevel: 'writesLocal',
       confirmation: { title: 'Write Devcontainer enrollment payload' },

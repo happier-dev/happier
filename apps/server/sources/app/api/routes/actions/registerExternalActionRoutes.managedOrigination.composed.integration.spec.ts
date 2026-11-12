@@ -1,3 +1,6 @@
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -6,7 +9,7 @@ import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-    MACHINE_PLAIN_DATA_KEY_MARKER, PluginManifestV2Schema, encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER, ARTIFACT_PLAIN_DATA_KEY_MARKER, PluginManifestV2Schema, encodePlainMachineStoredContent, encodePlainArtifactStoredContent,
     MachineOperationProtocolCapabilitiesV1Schema, signAccountContentKeyBindingV1,
 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
@@ -14,17 +17,18 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispa
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
     defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV1Schema,
     MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerObservationV1Schema,
-    MachineProvisionerPowerResultV1Schema,
+    MachineProvisionerPowerResultV1Schema, MachineProvisionerResizeResultV1Schema,
 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from '@/app/api/socket/externalActionDispatcher';
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
 import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
@@ -50,7 +54,7 @@ import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/s
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '../../../../../../cli/src/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '../../../../../../cli/src/settings/accountSettings/accountSettingsScopeKey';
 import { createAccountServerActionDeps } from '../../../../../../cli/src/api/accountServerActionDeps';
-import { createActionExecutor, type ActionExecuteResult } from '@happier-dev/protocol';
+import { createActionExecutor, type ActionExecuteResult, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { managedQb56Input, managedQb56RequestId } from './managedQb56Input.testkit';
 import { snapshotEnv, restoreEnv } from '@/testkit/env';
@@ -66,7 +70,38 @@ import { initEncrypt } from '@/modules/encrypt';
 import { dispatchOriginalAccountAction, dispatchLocalManagedMachineAgentIsolation, verifyExternalActionExecutionAuthorizationCurrent, createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import * as daemonPublication from '../../../../../../cli/src/daemon/multiDaemon';
+import { createDaemonControlApp } from '../../../../../../cli/src/daemon/controlServer';
+import { resolveManagedControlControllerTarget } from '../../../../../../cli/src/daemon/externalActions/reconcileExternalActionTarget';
+import { registerPluginAvailabilityRoutes } from '@/app/plugins/availability/routes';
+import { buildAuthoredAccountActionRelease } from '../../../../../../cli/src/plugins/runtime/accountPluginActions.testkit';
+import { encodePluginUiArtifactArchiveBodyV1 } from '@happier-dev/protocol/plugins/ui';
+import type { RequesterAccountActionContext } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionContext';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { DEVCONTAINER_PLUGIN } from '@happier-dev/plugins-devcontainer';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { createDaemonManagedMachineActionAdapter } from '../../../../../../cli/src/daemon/startup/managedMachineActionAdapter';
+import { readSettings, updateSettings } from '../../../../../../cli/src/persistence';
+import { configuration } from '../../../../../../cli/src/configuration';
+import { normalizePluginManifestV2 } from '../../../../../../cli/src/plugins/manifest/normalize';
+import { activateContributionModule } from '../../../../../../cli/src/plugins/runtime/lifecycle/activation/activateContributionModule';
+import { createPluginRuntimeOccurrenceId } from '../../../../../../cli/src/plugins/runtime/runtimeSlots';
+import { fixture as nativeCustodyFixture } from '../../../../../../cli/src/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from '../../../../../../cli/src/plugins/runtime/invocation/services/factory';
+import { createTargetActionHostBindingResolver } from '../../../../../../cli/src/plugins/runtime/hostAccess/resolve';
+import { createUnavailableManagedServices } from '../../../../../../cli/src/plugins/runtime/invocation/services/managedServicesAdapter';
+import { createManagedServicesOwner } from '../../../../../../cli/src/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '../../../../../../cli/src/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createEnrollmentJourneyProviderAuthority } from '../../../../../../cli/src/machines/managed/enrollmentJourney.testkit';
+import { createHostActionOperationRuntime } from '../../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
+
+const nativeVendor = vi.hoisted(() => ({ request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }));
+// test-policy-boundary: only the provider's third-party HTTP transport is substituted.
+vi.mock('undici', async importOriginal => {
+    const original = await importOriginal<typeof import('undici')>();
+    return { ...original, fetch: (url: string, init?: RequestInit) => new URL(String(url)).origin === 'https://native-provider.test'
+        ? nativeVendor.request(String(url), init) : original.fetch(url, init) };
+});
 
 describe('composed CLI managed Action origination', () => {
     const homeId = managedQb56Input.selection.homeId;
@@ -74,6 +109,14 @@ describe('composed CLI managed Action origination', () => {
     let harness: LightSqliteHarness;
     const initialEnv = snapshotEnv();
     beforeAll(async () => {
+        const cliRoot = resolve(import.meta.dirname, '../../../../../../cli');
+        nativeRelease = await buildAuthoredAccountActionRelease({ manifest: fixtureManifests.native,
+            artifactId: 'portable', accountArtifactId: crypto.randomUUID(), manifestExport: null,
+            activateExport: 'activate', archiveDigestCharacter: 'a', source: { manifest: fixtureManifests.native,
+                projectRoot: cliRoot, entryPath: join(cliRoot, 'src/testkit/machines/nativeAccountControlPlugin.testkit.ts') } });
+        Object.assign(process.env, { HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__ENABLED: 'true',
+            HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ARTIFACT_BYTES: String(16 * 1024 * 1024),
+            HAPPIER_FEATURE_PLUGINS_UI_ARTIFACT_HOSTING__MAX_ACCOUNT_BYTES: String(256 * 1024 * 1024) });
         if (process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             if (process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
                 throw new Error('Use only the disposable PostgreSQL DB-contract harness');
@@ -97,7 +140,40 @@ describe('composed CLI managed Action origination', () => {
         finally { restoreEnv(initialEnv); }
     });
 
-    async function fixture(online: boolean, mode: 'plain' | 'e2ee' = 'plain', qb56 = false) {
+    function createFixtureManifest(nativeControls: boolean) {
+        const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+        const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
+        const roles = defineMachineProvisionerSchemas({ launch, resource: native });
+        const actions = [
+            { id: 'check', inputSchema: roles.checkInput.jsonSchema, resultSchema: MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
+            { id: 'acquire', inputSchema: roles.acquireInput.jsonSchema, resultSchema: roles.acquireResult.jsonSchema },
+            { id: 'bootstrap', inputSchema: roles.bootstrapInput.jsonSchema, resultSchema: MachineProvisionerBootstrapCarrierV1Schema.jsonSchema },
+            { id: 'inspect', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerObservationV1Schema.jsonSchema },
+            { id: 'power', inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+            ...(nativeControls ? [{ id: 'resize', inputSchema: roles.resizeInput.jsonSchema, resultSchema: MachineProvisionerResizeResultV1Schema.jsonSchema }] : []),
+            { id: 'destroy', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+        ];
+        return PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'fixture.origination', version: '1.0.0',
+            displayName: 'Compute', description: 'Managed origination fixture', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+            ...(nativeControls ? { hostAccess: { required: [{ id: 'native-provider', capability: 'network',
+                reason: 'Control the retained native provider resource.', scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://native-provider.test' }],
+                    methods: ['POST'] } }], optional: [] } } : {}), contributes: {
+                machineProvisioners: [{ id: 'compute', title: 'Compute', icon: 'machine', resourceKind: 'VM', schemaVersion: 1,
+                    launchSchema: launch.jsonSchema, resourceSchema: native.jsonSchema, platforms: ['linux'], prerequisites: [],
+                    billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', ...(nativeControls ? { resize: 'resize' } : {}) },
+                    ...(nativeControls ? { resize: { cpuCores: { kind: 'supported', requiresRestart: false, changes: 'any' },
+                        memoryBytes: { kind: 'unsupported', code: 'unsupported' }, diskBytes: { kind: 'unsupported', code: 'unsupported' } } } : {}) }],
+                actions: actions.map(action => ({ ...action, title: action.id, execution: nativeControls
+                    ? { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } } : { target: 'daemon' },
+                    surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe', ...(nativeControls ? { hostAccess: ['native-provider'] } : {}) })),
+            } });
+    }
+    // Parse every declaration at collection before the database and public CLI factory are started.
+    const fixtureManifests = { daemon: createFixtureManifest(false), native: createFixtureManifest(true) };
+    let nativeRelease: Awaited<ReturnType<typeof buildAuthoredAccountActionRelease>>;
+
+    async function fixture(online: boolean, mode: 'plain' | 'e2ee' = 'plain', qb56 = false, nativeControls = false) {
         const signing = mode === 'e2ee' ? tweetnacl.sign.keyPair() : null;
         const content = signing ? tweetnacl.box.keyPair() : null;
         const account = await db.account.create({ data: { encryptionMode: mode,
@@ -127,26 +203,7 @@ describe('composed CLI managed Action origination', () => {
             const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
             return { account, controller, keys, token, input: managedQb56Input, requestId: managedQb56RequestId };
         }
-        const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
-        const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
-        const roles = defineMachineProvisionerSchemas({ launch, resource: native });
-        const actions = [
-            { id: 'check', inputSchema: roles.checkInput.jsonSchema, resultSchema: MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
-            { id: 'acquire', inputSchema: roles.acquireInput.jsonSchema, resultSchema: roles.acquireResult.jsonSchema },
-            { id: 'bootstrap', inputSchema: roles.bootstrapInput.jsonSchema, resultSchema: MachineProvisionerBootstrapCarrierV1Schema.jsonSchema },
-            { id: 'inspect', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerObservationV1Schema.jsonSchema },
-            { id: 'power', inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
-            { id: 'destroy', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
-        ];
-        const manifest = PluginManifestV2Schema.parse({ schemaVersion: 2, id: 'fixture.origination', version: '1.0.0',
-            displayName: 'Compute', description: 'Managed origination fixture', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: {
-                machineProvisioners: [{ id: 'compute', title: 'Compute', icon: 'machine', resourceKind: 'VM', schemaVersion: 1,
-                    launchSchema: launch.jsonSchema, resourceSchema: native.jsonSchema, platforms: ['linux'], prerequisites: [],
-                    billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
-                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } }],
-                actions: actions.map(action => ({ ...action, title: action.id, execution: { target: 'daemon' },
-                    surfaces: ['plugin'], scopes: ['global'], dangerLevel: 'safe' })),
-            } });
+        const manifest = nativeControls ? fixtureManifests.native : fixtureManifests.daemon;
         const declaration = createReleaseLessDeclarationV1(manifest);
         await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id, enabled: true,
             writableCollections: [], releaseLessDeclaration: declaration } });
@@ -159,7 +216,7 @@ describe('composed CLI managed Action origination', () => {
         const input = { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const }, selection: { kind: 'one-off' as const, homeId, controller,
             launch: { provider: { pluginId: manifest.id, localId: 'compute' }, schemaVersion: 1, name: 'Reviewed', choices: { image: 'linux' } },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
-        return { account, controller, keys, token, input, requestId: crypto.randomUUID() };
+        return { account, controller, keys, token, input, manifest, requestId: crypto.randomUUID() };
     }
 
     async function app(forwardRpc: ExternalActionForwardRpcCall, configureHttp: (instance: AppFastify) => void,
@@ -181,6 +238,199 @@ describe('composed CLI managed Action origination', () => {
         await instance.ready();
         return instance;
     }
+
+    it.each([['power', 'missing'], ['resize', 'missing'], ['power', 'signed'], ['resize', 'signed'],
+        ['power', 'account'], ['resize', 'account'], ['power', 'explicit'], ['resize', 'explicit'],
+        ['power', 'unreachable'], ['resize', 'unreachable'], ['deferred', 'missing']] as const)(
+        'roots terminal Account-native %s before effects (signer=%s)', async (control, signer) => {
+        const selected = await fixture(true, 'plain', false, true);
+        if (!('manifest' in selected) || !selected.manifest) throw new Error('Expected native fixture');
+        // Real author compilation, release projection and Home storage back the portable provider.
+        const nativeReleaseFacts = nativeRelease.release;
+        const release = await db.accountPluginRelease.create({ data: { accountId: selected.account.id, pluginId: selected.manifest.id,
+            version: nativeReleaseFacts.ref.version, archiveDigestSha256: nativeReleaseFacts.archiveDigestSha256,
+            normalizedManifest: nativeReleaseFacts.normalizedManifest, collectionContracts: nativeReleaseFacts.collectionContracts,
+            uiSlots: nativeReleaseFacts.uiSlots, packageAssetArchive: nativeReleaseFacts.packageAssetArchive } });
+        // Account execution consumes the canonical web slot of the portable artifact.
+        for (const slot of nativeReleaseFacts.uiSlots.filter(slot => slot.platform === 'web')) {
+            const hosted = nativeRelease.hostedArtifacts.find(hosted => hosted.graphArtifactId === slot.artifactId);
+            if (!hosted) throw new Error('Expected compiled Account artifact');
+            const artifactId = crypto.randomUUID();
+            await db.artifact.create({ data: { id: artifactId, accountId: selected.account.id,
+                header: decodeBase64(encodePlainArtifactStoredContent(hosted.archive.header), 'base64'),
+                body: decodeBase64(encodePlainArtifactStoredContent({ body: encodePluginUiArtifactArchiveBodyV1(hosted.archive.body) }), 'base64'),
+                dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            await db.accountPluginUiArtifact.create({ data: { releaseId: release.id, contributionId: slot.contributionId,
+                tier: slot.tier, platform: slot.platform, artifactId, artifactDigest: slot.artifactDigest,
+                compatibility: { hostUiApiRange: slot.hostUiApiRange } } });
+        }
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: selected.account.id, pluginId: selected.manifest.id } },
+            data: { desiredVersion: selected.manifest.version, offlineUiHosting: 'enabled', releaseLessDeclaration: null } });
+        const accountCredentials = { token: selected.token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const terminalCredentials = { ...accountCredentials, token: await auth.createToken(selected.account.id, undefined,
+            { kind: 'terminal', authority: 'account_automation' }) };
+        const provisioner = selected.manifest.contributes.machineProvisioners[0]!;
+        const launch = selected.input.selection.launch;
+        const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: selected.account.id,
+            metadata: encodePlainMachineStoredContent({ host: 'retained-guest', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: selected.account.id,
+            enrolledMachineId: guest.id, admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            desired: 'stop', desiredWhen: 'now', intentRevision: 1, launch,
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native-resource' } },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+                retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained', size: { cpuCores: 1 } } } });
+        const actionId = control === 'resize' ? 'machines.managed.resize' : 'machines.managed.power.set';
+        const input = control !== 'resize' ? { homeId, managedId: row.id, ...(control === 'deferred' ? { when: 'after-idle' } : { expectedRevision: 1, when: 'now' }), intent: 'stop' }
+            : { homeId, managedId: row.id, size: { cpuCores: 2 } };
+        const serverUrl = 'http://native-root-composed.test';
+        const settings = (['machines.managed.power.set', 'machines.managed.resize'] as const).reduce((settings, actionId) =>
+            setActionApprovalOverride({ settings, actionId, surface: 'cli', approvalRequired: false }),
+            ActionsSettingsV1Schema.parse({ v: 1 }));
+        const storedSettings = { actionsSettingsV1: settings };
+        const policy = { getActionsSettings: () => settings, getAccountSettings: () => accountSettingsParse(storedSettings) };
+        const native: string[] = [];
+        const rootAuthentications: string[] = [];
+        const rootAuthorities: string[] = [];
+        let dispatchedRoot: ReturnType<typeof ExternalActionDaemonDispatchRequestSchema.parse> | undefined;
+        const receiverInput = { token: selected.token, credentials: accountCredentials, serverId: homeId, serverIdentityId: homeId,
+            serverHttpBaseUrl: serverUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId };
+        const accountHome = await mkdtemp(join(tmpdir(), 'native-account-control-'));
+        nativeVendor.request.mockImplementation(async url => {
+            const role = new URL(url).pathname.slice(1);
+            native.push(role);
+            return Response.json(role === 'inspect'
+                ? { observedAt: 2, availability: 'present', power: 'stopped', storage: 'retained', size: { cpuCores: 2 } }
+                : { kind: 'confirmed' });
+        });
+        const prepareRequester = (authorization: Parameters<typeof prepareRequesterAccountActionContext>[0]['authorization'], signal?: AbortSignal) =>
+            prepareRequesterAccountActionContext({ authorization, ...(signal ? { signal } : {}), purpose: { kind: 'external_action' },
+                machineId: selected.controller.machineId, installationId: selected.controller.installationId,
+                installationPrivateKey: selected.keys.secretKey, serverId: homeId, serverIdentityId: homeId,
+                serverHttpBaseUrl: serverUrl, ownCredentials: accountCredentials, isCurrent: async () => true,
+                createExecutor: context => createReceiver(context) });
+        function createReceiver(context?: RequesterAccountActionContext) {
+            const host = context ? { ...receiverInput, token: context.credentials.token, credentials: context.credentials,
+                savedSecretOperationContext: context.savedSecretOperationContext, isCredentialCurrent: context.isCurrent } : receiverInput;
+            return createCliActionExecutor({ ...host, sessionId: '', mode: 'plain', ctx: null, happyHomeDir: accountHome,
+                actionsSettingsProvider: policy, accountServerActionDeps: createAccountServerActionDeps(host),
+                prepareApprovalExecutionAuthorization: async ({ authorization, signal }) => {
+                    const prepared = await prepareRequester(authorization, signal);
+                    if (!prepared) return null;
+                    const { actionsSettings, ...context } = prepared;
+                    return { ...context, ...(actionsSettings ? { actionsSettings } : {}) };
+                } });
+        }
+        const receiver = createReceiver();
+        const resolveTarget = createDaemonExternalActionTargetResolver({ credentials: accountCredentials, serverApiUrl: serverUrl });
+        const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            dispatchedRoot = dispatch;
+            if ('authentication' in dispatch.principal) rootAuthentications.push(dispatch.principal.authentication.kind);
+            rootAuthorities.push(dispatch.principal.authority);
+            const result = await executeExternalAction({ ...dispatch, executor: receiver,
+                currentMachineId: selected.controller.machineId, currentInstallationId: selected.controller.installationId,
+                currentServerId: homeId, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                prepareRequesterAccountContext: request => prepareRequester(request.authorization, request.signal),
+                verifyExecutionAuthorization: async ({ authorization }) => await verifyCurrentExternalActionPrincipal(authorization.binding) !== null,
+                resolveTarget });
+            if (result.kind !== 'response') throw new Error(`Native root rejected: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
+        }, http => {
+            registerAccountProfileRoute(http);
+            registerAccountEncryptionRoutes(http);
+            registerPluginAvailabilityRoutes(http);
+            artifactsRoutes(http);
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
+        }, phases);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverUrl });
+        const sockets = await createRequesterCurrentnessSocketHarness();
+        const daemon = createDaemonControlApp({ getChildren: () => [], machineId: selected.controller.machineId,
+            controlToken: 'native-test-control', stopSession: async () => false,
+            spawnSession: async () => { throw new Error('No native-control process spawn'); }, requestShutdown: () => {}, onHappySessionWebhook: () => {},
+            externalActionApi: { currentServerId: homeId, currentAccountId: selected.account.id, executor: receiver, resolveTarget,
+                resolveInstallationId: () => selected.controller.installationId,
+                resolvePluginExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: selected.controller.machineId }),
+                verifyPat: async () => { throw new Error('No PAT'); },
+                resolveManagedControlControllerTarget: (actionId, rawInput, signal) => resolveManagedControlControllerTarget({
+                    actionId, rawInput, credentials: accountCredentials, serverHttpBaseUrl: serverUrl, signal }),
+                executeOriginalAccountAction: request => dispatchOriginalAccountAction({ credentials: accountCredentials,
+                    serverHttpBaseUrl: serverUrl, serverIdentityId: homeId, actionId: request.actionId, input: request.input,
+                    requestId: request.actionRequestId!, target: request.target ?? { kind: 'machine', machineId: selected.controller.machineId },
+                    authority: request.authority, signal: request.signal,
+                    invocation: { caller: { kind: 'host' }, surface: request.surface ?? 'cli', authority: request.authority } }) } });
+        const publication = vi.spyOn(daemonPublication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue(null);
+        const invocationContext = () => ({ surface: 'cli' as const,
+            authority: signer === 'account' ? 'present_user' as const : 'account_automation' as const, actionRequestId: crypto.randomUUID(),
+            ...(signer === 'explicit' ? { externalActionTarget: { kind: 'machine' as const, machineId: selected.controller.machineId } } : {}) });
+        const sender = () => createCliActionExecutorFromCredentials({ credentials: signer === 'account' ? accountCredentials : terminalCredentials, serverId: homeId,
+            serverIdentityId: homeId, serverApiUrl: serverUrl, actionsSettingsProvider: policy, happyHomeDir: accountHome });
+        try {
+            const unsigned = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/report-resize',
+                headers: { authorization: `Bearer ${terminalCredentials.token}` },
+                payload: { homeId, managedId: row.id, requestId: crypto.randomUUID(), result: { kind: 'confirmed' } } });
+            expect(unsigned.statusCode, unsigned.body).toBe(403);
+            if (control === 'deferred') {
+                const deferred = await sender().execute(actionId, input, invocationContext());
+                expect(deferred, JSON.stringify({ deferred, phases })).toMatchObject({ ok: true, result: { kind: 'accepted' } });
+                expect(native).toEqual([]);
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
+                    .toMatchObject({ desiredWhen: 'after-idle', intentRevision: 2 });
+                return;
+            }
+            if (signer === 'missing') {
+                const refused = await sender().execute(actionId, input, invocationContext());
+                expect(refused, JSON.stringify({ refused, phases })).toMatchObject({ ok: false, errorCode: 'daemon_unavailable', effectAttempted: false });
+                expect(native).toEqual([]);
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ intentRevision: 1, admittedInput: {} });
+                return;
+            }
+            if (signer === 'signed' || signer === 'unreachable') {
+                await daemon.listen({ host: '127.0.0.1', port: 0 });
+                const address = daemon.server.address();
+                if (!address || typeof address === 'string') throw new Error('Expected loopback daemon listener');
+                publication.mockResolvedValue({ pid: process.pid, httpPort: address.port, accountId: selected.account.id,
+                    machineId: selected.controller.machineId, controlToken: 'native-test-control' });
+                if (signer === 'unreachable') await daemon.close();
+            }
+            const result = await sender().execute(actionId, input, invocationContext());
+            if (signer === 'unreachable') {
+                expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: false, errorCode: 'daemon_unavailable' });
+                expect(native).toEqual([]);
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
+                    .toMatchObject({ intentRevision: 1, admittedInput: {} });
+                return;
+            }
+            expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: true });
+            expect(native).toContain(control);
+            if (signer === 'signed') {
+                expect(rootAuthentications).toEqual(['account']);
+                expect(rootAuthorities).toEqual(['account_automation']);
+            }
+            if (signer === 'explicit') expect(rootAuthentications).toEqual(['terminal']);
+            expect(phases.filter(phase => phase.phase.endsWith(`/report-${control === 'power' ? 'intent' : 'resize'}`)).map(phase => phase.status))
+                .toEqual(control === 'resize' ? [403, 200] : [200]);
+            if (signer === 'signed') {
+                const authorization = dispatchedRoot?.executionAuthorization;
+                if (!authorization || !dispatchedRoot) throw new Error('Expected actual Home-issued native root');
+                const path = managedMachineActionEndpointPathV1('machines.managed.get');
+                for (const managedId of [row.id, crypto.randomUUID()]) {
+                    const body = { homeId, managedId };
+                    const observed = await instance.inject({ method: 'POST', url: path, payload: body,
+                        headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                            target: dispatchedRoot.target, installationId: selected.controller.installationId,
+                            privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                    expect(observed.statusCode, observed.body).toBe(managedId === row.id ? 200 : 401);
+                }
+            }
+        } finally { publication.mockRestore(); nativeVendor.request.mockReset(); restoreHttp(); await sockets.close(); await daemon.close(); await instance.close();
+            await rm(accountHome, { recursive: true, force: true }); }
+    });
 
     it.each(['plain', 'e2ee'] as const)('admits software-only setup currentness through its signed %s Account root', async mode => {
         const selected = await fixture(true, mode);
@@ -205,7 +455,8 @@ describe('composed CLI managed Action origination', () => {
                 payload: { v: 1, machineId: target.machineId, envelope } });
             expect(minted.statusCode, minted.body).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
-            expect(authorization.binding.deploymentPreparationAdmission).toBeUndefined();
+            expect(authorization.binding.deploymentPreparationAdmission).toMatchObject({
+                operation: 'setup', machineTargets: [target.machineId], deployments: [] });
             const path = '/v1/account/encryption/currentness';
             const headers = createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
                 target, installationId: selected.controller.installationId, privateKey: selected.keys.secretKey,
@@ -251,31 +502,34 @@ describe('composed CLI managed Action origination', () => {
         const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
         let effects = 0;
         let childResult: ActionExecuteResult | undefined;
+        let deliveryFailure: unknown;
         const instance = await app(async request => {
-            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
-            expect(admitted.actionId).toBe(actionId);
-            expect(admitted.principal).toMatchObject({ accountId: caller.account.id, authority: 'account_automation',
-                authentication: { kind: 'terminal' } });
-            const authorization = admitted.executionAuthorization;
-            if (!authorization || !('authentication' in authorization.binding)) throw new Error('Missing original terminal admission');
-            expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).not.toBeNull();
-            expect(authorization.binding).toMatchObject({ machineId: guest.id, managedContinuation: {
-                creationRequestId: selected.requestId, controller: selected.controller } });
-            const binding = authorization.binding;
-            const encryptionBinding = { serverIdentityId: homeId, accountId: caller.account.id, authentication: binding.authentication,
-                actionId, requestId: selected.requestId, target: admitted.envelope.target! } satisfies ExternalActionEncryptionBindingV2;
-            const input = admitted.envelope.v === 1 ? admitted.envelope.input
-                : openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, envelope: admitted.envelope, material })?.input;
-            expect(input).toEqual(childInput);
-            // Substitute only delivery to the native guest; Home auth, retained
-            // creation admission, CLI provenance and encrypted transport are real.
-            effects++;
-            const execution = { ok: true as const, result: { kind: 'accepted', operationId: 'isolation', metadataVersion: 1,
-                status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } };
-            const prepared = admitted.envelope.v === 1 ? prepareExternalActionResponseEnvelopeV1({ v: 1,
-                actionId, requestId: selected.requestId, execution }) : prepareExternalActionResponseV2({ binding: encryptionBinding,
-                    executedMachineId: guest.id, request: admitted.envelope, execution, material, randomBytes: tweetnacl.randomBytes });
-            return { ok: true, result: createExternalActionDaemonDispatchResponse(prepared) };
+            try {
+                const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+                expect(admitted.actionId).toBe(actionId);
+                expect(admitted.principal).toMatchObject({ accountId: caller.account.id, authority: 'account_automation',
+                    authentication: { kind: 'terminal' } });
+                const authorization = admitted.executionAuthorization;
+                if (!authorization || !('authentication' in authorization.binding)) throw new Error('Missing original terminal admission');
+                expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).not.toBeNull();
+                expect(authorization.binding).toMatchObject({ machineId: guest.id, managedContinuation: {
+                    creationRequestId: selected.requestId, controller: selected.controller } });
+                const binding = authorization.binding;
+                const encryptionBinding = { serverIdentityId: homeId, accountId: caller.account.id, authentication: binding.authentication,
+                    actionId, requestId: selected.requestId, target: admitted.envelope.target! } satisfies ExternalActionEncryptionBindingV2;
+                const input = admitted.envelope.v === 1 ? admitted.envelope.input
+                    : openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: encryptionBinding, envelope: admitted.envelope, material })?.input;
+                expect(input).toEqual(childInput);
+                // Substitute only delivery to the native guest; Home auth, retained
+                // creation admission, CLI provenance and encrypted transport are real.
+                effects++;
+                const execution = { ok: true as const, result: { kind: 'accepted', operationId: 'isolation', metadataVersion: 1,
+                    status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } } };
+                const prepared = admitted.envelope.v === 1 ? prepareExternalActionResponseEnvelopeV1({ v: 1,
+                    actionId, requestId: selected.requestId, execution }) : prepareExternalActionResponseV2({ binding: encryptionBinding,
+                        executedMachineId: guest.id, request: admitted.envelope, execution, material, randomBytes: tweetnacl.randomBytes });
+                return { ok: true, result: createExternalActionDaemonDispatchResponse(prepared) };
+            } catch (error) { deliveryFailure = error; throw error; }
         }, http => { http.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 })); }, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: 'http://managed-seam.test' });
         try {
@@ -300,6 +554,7 @@ describe('composed CLI managed Action origination', () => {
                 presentUserConfirmation: { actionId: 'machines.managed.acquire', accountId: caller.account.id, serverId: homeId,
                     requestId: selected.requestId, target: { kind: 'machine', machineId: selected.controller.machineId },
                     inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', parentInput) } });
+            if (deliveryFailure) throw deliveryFailure;
             expect(childResult, JSON.stringify(result)).toBeDefined();
             if (scenario === 'declared') {
                 expect(childResult, childResult?.ok === false ? childResult.errorCode : 'local isolation outcome')
@@ -432,7 +687,7 @@ describe('composed CLI managed Action origination', () => {
         const selected = await fixture(true, 'plain', policy === 'qb56');
         const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
         const storedSettings = { actionsSettingsV1: { v: 1, actions: {
-            'machines.managed.acquire': { approvalRequiredSurfaces: ['ui'] },
+            'machines.managed.acquire': { approvalRequiredSurfaces: ['cli'] },
         } } };
         setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
             rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
@@ -442,23 +697,28 @@ describe('composed CLI managed Action origination', () => {
         let effects = 0;
         const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
             serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'http://managed-seam.test',
+            runtimeActionMachineId: selected.controller.machineId,
             externalActionMachineRequestPrivateKey: selected.keys.secretKey,
             externalActionMachineInstallationId: selected.controller.installationId,
             managedMachineAction: async () => { effects++; throw new Error('Create must ask before native execution'); },
         });
+        let deliveryFailure: unknown;
         const instance = await app(async request => {
-            const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
-            const result = await executeExternalAction({ ...admitted, executor: receiver,
-                currentMachineId: selected.controller.machineId, currentInstallationId: selected.controller.installationId,
-                currentServerId: homeId, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
-                // Socket delivery is substituted; its current Home proof is verified by the real HTTP port.
-                verifyExecutionAuthorization: async ({ authorization }) => {
-                    return await verifyCurrentExternalActionPrincipal(authorization.binding) !== null;
-                },
-                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
-            });
-            if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind}`);
-            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
+            try {
+                const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+                const result = await executeExternalAction({ ...admitted, executor: receiver,
+                    currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
+                    currentInstallationId: selected.controller.installationId,
+                    currentServerId: homeId, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                    // Socket delivery is substituted; its current Home proof is verified by the real HTTP port.
+                    verifyExecutionAuthorization: async ({ authorization }) => {
+                        return await verifyCurrentExternalActionPrincipal(authorization.binding) !== null;
+                    },
+                    resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                });
+                if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind} (${result.errorCode})`);
+                return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
+            } catch (error) { deliveryFailure = error; throw error; }
         }, http => {
             http.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings },
@@ -493,6 +753,7 @@ describe('composed CLI managed Action origination', () => {
                 createExecutorFn: options => createCliActionExecutorFromCredentials({ ...options,
                     serverId: homeId, serverIdentityId: homeId, serverApiUrl: 'http://managed-seam.test' }),
             });
+            if (deliveryFailure) throw deliveryFailure;
             phases.push({ phase: 'cli-create-to-ask', elapsedMs: performance.now() - began });
             expect(JSON.parse(output)).toMatchObject(policy === 'invalid'
                 ? { ok: false, kind: 'actions_invoke', error: { code: 'ACCOUNT_SETTINGS_CONTENT_INVALID' } }
@@ -850,6 +1111,201 @@ describe('composed CLI managed Action origination', () => {
             if (!manage) expect(access).toBeNull();
             else expect(access).toMatchObject({ role: 'manage' });
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
+    });
+
+    it('releases the delegated preset slot when a member deletes canceled uncertain Devcontainer creation through native reconciliation', async () => {
+        const selected = await fixture(true);
+        const requester = await fixture(true);
+        const manifest = normalizePluginManifestV2(DEVCONTAINER_PLUGIN.manifest);
+        const declaration = createReleaseLessDeclarationV1(PluginManifestV2Schema.parse(manifest));
+        await db.accountPluginIntent.create({ data: { accountId: selected.account.id, pluginId: manifest.id,
+            enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: selected.account.id, serverIdentityId: homeId,
+            machineId: selected.controller.machineId, materializationId: crypto.randomUUID(), pluginId: manifest.id,
+            version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
+            archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true,
+            trustState: 'trusted', observedAt: new Date() } });
+        const team = await db.team.create({ data: { name: 'Uncertain creation recovery' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const presetId = crypto.randomUUID();
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, name: 'One container at a time', owner: { kind: 'team', teamId: team.id },
+                launch: { provider: { pluginId: manifest.id, localId: 'devcontainer' }, schemaVersion: 1, name: 'Recovery container',
+                    choices: { runtime: 'docker', configuration: { kind: 'image', image: 'ubuntu:24.04' } } },
+                controller: selected.controller, teamAcquireDelegated: true, simultaneousLimit: { maximum: 1 },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        const acquireInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: selected.input.enrollmentIdentity,
+            selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const acquire = (requestId: string) => admitManagedAcquire({ custodianAccountId: selected.account.id,
+            requesterAccountId: requester.account.id, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({
+                v: 1, requestId, target: { kind: 'machine', machineId: selected.controller.machineId }, input: acquireInput }),
+            input: { input: acquireInput, requestId, continuationPresent: false } });
+        const admitted = await acquire(crypto.randomUUID());
+        // The reported failure retains no native identity after uncertain acquisition/cancel.
+        await db.managedMachine.update({ where: { id: admitted.machine.id }, data: {
+            creationState: 'canceled', allocation: 'may-exist', desired: 'delete', desiredWhen: 'now',
+        } });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
+            .toMatchObject({ creationState: 'canceled', allocation: 'may-exist', resource: null, nativeOperationRef: null });
+        await expect(acquire(crypto.randomUUID())).rejects.toMatchObject({ code: 'preset_limit_reached' });
+        expect(await resolveMachineAccess({ actorAccountId: requester.account.id,
+            machineId: selected.controller.machineId })).toBeNull();
+
+        const activation = await activateContributionModule({ pluginId: manifest.id, manifest,
+            occurrenceId: createPluginRuntimeOccurrenceId(manifest.id), moduleNamespace: { activate: DEVCONTAINER_PLUGIN.activate },
+            isOccurrenceCurrent: () => true });
+        expect(activation.status, JSON.stringify(activation.diagnostics)).toBe('active');
+        const actionHandlers = new Map<string, ActionHandler>();
+        for (const registration of activation.registrations) {
+            // The registration host deliberately erases author callback inputs at capture.
+            if (registration.family === 'actions') actionHandlers.set(registration.localId, registration.value as ActionHandler);
+        }
+        for (const action of manifest.contributes.actions) if (!actionHandlers.has(action.id)) {
+            actionHandlers.set(action.id, async () => { throw new Error('Client-only Action must not run on the controller'); });
+        }
+        const nativeRequests: string[][] = [];
+        const unavailableManaged = createUnavailableManagedServices();
+        const managedServices = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({}),
+            resolveScope: seed => seed, dependencies: { ...unavailableManaged.dependencies, status: async id => ({
+                state: 'ready', id, version: '1.0.0', sourceId: 'system',
+                executable: { kind: 'managedDependency', id: { pluginId: manifest.id, localId: id } },
+            }) } });
+        const invocationServices = createPluginInvocationServicesFactory({ loggerSink: { write() {} }, managedServices });
+        const native = nativeCustodyFixture({ fixtureManifest: manifest, actionHandlers,
+            resolveHostBinding: createTargetActionHostBindingResolver({
+                createServiceBinding: (occurrence, id) => createPluginInvocationServiceBinding(occurrence, id),
+            }),
+            createServices: (seed, binding) => {
+                const services = invocationServices(seed, binding);
+                // Only installed-tool discovery and process IO cross the native boundary.
+                return { ...services, exec: { ...services.exec, run: async request => {
+                    nativeRequests.push([...(request.args ?? [])]);
+                    expect(request.args).toEqual(['ps', '--all', '--no-trunc', '--filter',
+                        `label=happier.managed-machine=${admitted.machine.id}`, '--format', '{{.ID}}']);
+                    return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                        stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+                } } };
+            },
+        });
+        const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
+        const serverHttpBaseUrl = 'https://managed-seam.test';
+        const operations = createHostActionOperationRuntime({ machineId: selected.controller.machineId,
+            custodyBinding: { serverId: homeId, installationId: selected.controller.installationId },
+            resolveAccountId: async () => selected.account.id });
+        const priorSettings = await readSettings();
+        await updateSettings(current => ({ ...current, servers: { ...current.servers,
+            [configuration.activeServerId]: { id: configuration.activeServerId, name: 'Composed controller',
+                serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+                homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverHttpBaseUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] } },
+        } }));
+        let cleanupAdmission: Parameters<typeof operations.handlers.getV2>[1];
+        const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials,
+            machineId: selected.controller.machineId, serverBaseUrl: serverHttpBaseUrl, serverId: homeId,
+            managedProviderOperationAuthority: createEnrollmentJourneyProviderAuthority('/tmp/member-delete-no-provider-credentials'),
+            installationIdentity: { installationId: selected.controller.installationId, privateKey: selected.keys.secretKey },
+            resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: selected.controller.machineId, serverIdentityId: homeId }),
+            acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry,
+                source: 'active', durableRevision: 1, release: async () => {} }),
+            observeActionExecution: request => operations.observeExecution({ ...request, rpcContext: cleanupAdmission }),
+        });
+        const storedSettings = { actionsSettingsV1: { v: 1,
+            actions: { 'machines.managed.delete': { approvalRequiredSurfaces: ['cli'] } } } };
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
+            rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+            serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, runtimeActionMachineId: selected.controller.machineId,
+            externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+            externalActionMachineInstallationId: selected.controller.installationId,
+            runActionOperation: operations.runActionOperation, managedMachineAction,
+        });
+        let artifactWrites = 0;
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(dispatch.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
+                custodianAccountId: selected.account.id });
+            const target = { id: 'controller-socket', data: { clientType: 'machine-scoped', userId: selected.account.id,
+                machineId: selected.controller.machineId,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: selected.controller.installationId },
+                timeout: () => ({ emitWithAck: async () => { throw new Error('Socket delivery is the substituted boundary'); } }),
+            };
+            expect(await request.targetGuard?.filterTargets([target])).toEqual([target]);
+            cleanupAdmission = { machineAdmission: await request.createMachineAdmission?.({ target }) ?? undefined };
+            expect(cleanupAdmission.machineAdmission).toMatchObject({ actorAccountId: requester.account.id,
+                custodianAccountId: selected.account.id, machineId: selected.controller.machineId });
+            const result = await executeExternalAction({ ...dispatch, executor: receiver,
+                currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
+                currentInstallationId: selected.controller.installationId, currentServerId: homeId,
+                currentServerHttpBaseUrl: serverHttpBaseUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                machineAdmission: cleanupAdmission.machineAdmission,
+                verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+                prepareRequesterAccountContext: async () => { throw new Error('Delete must not acquire member credentials'); },
+            });
+            if (result.kind !== 'response') throw new Error(`Daemon rejected cleanup: ${result.kind}`);
+            return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
+        }, http => {
+            registerAccountProfileRoute(http); registerAccountEncryptionRoutes(http); artifactsRoutes(http);
+            http.addHook('onRequest', async request => { if (request.method === 'POST' && request.url === '/v1/artifacts') artifactWrites++; });
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 2 }));
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        try {
+            const input = { homeId, managedId: admitted.machine.id, expectedRevision: admitted.machine.intentRevision,
+                intent: 'delete', when: 'now', reviewedDependencies: true };
+            const execution = await dispatchOriginalAccountAction({ actionId: 'machines.managed.delete', input,
+                requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: selected.controller.machineId },
+                credentials: { token: requester.token, credentialProvenance: 'stored_session', encryption: null },
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl, authority: 'present_user',
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+                onRequesterSessionCredentialDisclosure: async () => { throw new Error('Delete must not disclose member credentials'); },
+            });
+            expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { managedId: admitted.machine.id } });
+            const listed = operations.store.list({ accountId: requester.account.id, machineId: selected.controller.machineId });
+            expect(listed.items, JSON.stringify(execution)).toHaveLength(1);
+            const operationId = listed.items[0]!.operationId;
+            const terminal = await operations.handlers.getV2({ operationId, waitForTerminal: true }, cleanupAdmission);
+            const cleaned = await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } });
+            const next = await acquire(crypto.randomUUID());
+            expect(next.machine.id).not.toBe(admitted.machine.id);
+            expect(next.machine.preset?.id).toBe(presetId);
+            expect(cleaned).toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent', resource: null, nativeOperationRef: null });
+            expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'succeeded', actionId: 'machines.managed.delete',
+                domainRef: { kind: 'managedMachine', id: admitted.machine.id } } });
+            expect(nativeRequests).toHaveLength(1);
+            for (const actionId of ['action.operations.get', 'action.operations.list'] as const) {
+                const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+                const readInput = { serverId: homeId, machineId: target.machineId,
+                    managed: { homeId, managedId: admitted.machine.id },
+                    ...(actionId === 'action.operations.get' ? { operationId } : {}) };
+                const issued = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                    headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1,
+                        machineId: target.machineId, envelope: { v: 1, requestId: crypto.randomUUID(), target, input: readInput } } });
+                expect(issued.statusCode, issued.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                expect(authorization.binding.managedAdmission).toMatchObject({ actionId,
+                    input: { managedId: admitted.machine.id } });
+                const readContext = { ...cleanupAdmission, callerInputAuthorization: authorization };
+                if (actionId === 'action.operations.get') expect(await operations.handlers.getV2({ operationId }, readContext))
+                    .toMatchObject({ kind: 'found', operation: { operationId, state: 'succeeded' } });
+                else expect((await operations.handlers.listV2({}, readContext)).items.map(item => item.operationId)).toEqual([operationId]);
+            }
+            expect(artifactWrites).toBe(0);
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id,
+                machineId: selected.controller.machineId })).toBeNull();
+        } finally {
+            restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
+            await updateSettings(current => ({ ...current, servers: priorSettings.servers }));
+            await native.targetActionInvocations.dispose(); await activation.dispose(); await managedServices.dispose();
+        }
     });
 
     it.each(['machines.managed.cancel', 'machines.managed.setup.skip'] as const)(
