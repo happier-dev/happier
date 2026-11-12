@@ -49,7 +49,7 @@ export function projectMachineVitalsSeriesV1(series: Series, sampledAt: number):
             const observed = byStep.get(at);
             if (observed) covering = observed;
             projected.push(covering && covering.y !== null && at < covering.t + 60_000
-                ? covering : { t: at, y: null });
+                ? { t: at, y: covering.y } : { t: at, y: null });
         }
         return projected;
     };
