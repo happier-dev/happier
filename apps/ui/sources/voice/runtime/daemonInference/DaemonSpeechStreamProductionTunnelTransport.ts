@@ -352,22 +352,17 @@ function createSelection(input: Readonly<{
   machineId: string;
   compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport;
   cleanup?: () => Promise<void> | void;
+  callSignal?: AbortSignal;
 }>): DaemonVoiceInferenceStreamingSttTransportSelection {
   const receipt = daemonSpeechStreamDiagnostics.beginBinaryTunnelReceipt({
     routeKind: input.routeKind,
     frameEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     carrierKind: 'binary_tunnel_frame_v2',
   });
-  const tunnelTransport = createDaemonSpeechStreamTunnelTransport({
-    tunnelId: input.tunnelId,
-    maxFrameBytes: input.maxFrameBytes,
-    stream: input.stream,
-    controlTransport: input.compatibilityTransport,
-    onRelayAuthenticatedEvidence: receipt.recordRelayEvidence,
-    onRelayEncryptionFailure: receipt.recordRelayEncryptionFailure,
-  });
   let localTransportClosePromise: Promise<void> | null = null;
+  const closeCall = () => { void recordLocalTransportClose().catch(() => undefined); };
   const recordLocalTransportClose = (): Promise<void> => {
+    input.callSignal?.removeEventListener('abort', closeCall);
     localTransportClosePromise ??= Promise.resolve()
       .then(async () => {
         if (input.cleanup) {
@@ -387,12 +382,16 @@ function createSelection(input: Readonly<{
       );
     return localTransportClosePromise;
   };
-  return {
-    carrierAdapter: createDaemonSpeechStreamCarrierAdapter({
-      routeKind: input.routeKind,
-      binaryCapable: true,
-    }),
-    transport: {
+  const createStreamTransport = (controlTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport): DaemonSpeechStreamTransport => {
+    const tunnelTransport = createDaemonSpeechStreamTunnelTransport({
+      tunnelId: input.tunnelId,
+      maxFrameBytes: input.maxFrameBytes,
+      stream: input.stream,
+      controlTransport,
+      onRelayAuthenticatedEvidence: receipt.recordRelayEvidence,
+      onRelayEncryptionFailure: receipt.recordRelayEncryptionFailure,
+    });
+    return {
       maxPcm16ChunkBytes: tunnelTransport.maxPcm16ChunkBytes,
       measureInFlightChunkBytes: tunnelTransport.measureInFlightChunkBytes,
       start: async (payload) => {
@@ -418,7 +417,16 @@ function createSelection(input: Readonly<{
         });
         return response;
       },
-      chunk: tunnelTransport.chunk,
+      chunk: async (payload) => {
+        try {
+          const response = await tunnelTransport.chunk(payload);
+          if (!response.ok) await recordLocalTransportClose();
+          return response;
+        } catch (error) {
+          await recordLocalTransportClose().catch(() => undefined);
+          throw error;
+        }
+      },
       finish: async (payload) => {
         let result: 'ok' | 'error' = 'error';
         try {
@@ -427,7 +435,7 @@ function createSelection(input: Readonly<{
           return response;
         } finally {
           receipt.recordOperationResult('finish', result);
-          await recordLocalTransportClose();
+          if (!input.callSignal || result === 'error') await recordLocalTransportClose();
         }
       },
       cancel: async (payload) => {
@@ -438,10 +446,22 @@ function createSelection(input: Readonly<{
           return response;
         } finally {
           receipt.recordOperationResult('cancel', result);
-          await recordLocalTransportClose();
+          if (!input.callSignal || result === 'error') await recordLocalTransportClose();
         }
       },
-    },
+    };
+  };
+  if (input.callSignal?.aborted) closeCall();
+  else input.callSignal?.addEventListener('abort', closeCall, { once: true });
+  return {
+    carrierAdapter: createDaemonSpeechStreamCarrierAdapter({
+      routeKind: input.routeKind,
+      binaryCapable: true,
+    }),
+    transport: createStreamTransport(input.compatibilityTransport),
+    createStreamTransport,
+    close: recordLocalTransportClose,
+    get closed() { return localTransportClosePromise !== null; },
   };
 }
 
@@ -774,5 +794,6 @@ export async function createProductionDaemonSpeechStreamingSttTransport(
     machineId: opened.machineId,
     compatibilityTransport: input.compatibilityTransport,
     cleanup: opened.close,
+    ...(input.callSignal ? { callSignal: input.callSignal } : {}),
   });
 }

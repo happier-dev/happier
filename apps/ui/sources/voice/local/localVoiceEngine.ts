@@ -188,6 +188,7 @@ function releaseCaptureAdmission(controlSessionId?: string): void {
   admission.accountLifetimeRetirementRegistration?.dispose();
   admission.accountLifetimeRetirementRegistration = undefined;
   captureAdmission = null;
+  admission.captureAbortController.abort();
   admission.lease.release();
 }
 
@@ -383,6 +384,7 @@ async function startCaptureForAdmission(
       : {}),
     settings: captureAttempt.settings,
     signal,
+    callSignal: admission.captureAbortController.signal,
   });
 }
 

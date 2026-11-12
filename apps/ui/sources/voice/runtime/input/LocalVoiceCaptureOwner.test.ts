@@ -647,6 +647,82 @@ describe('createLocalVoiceCaptureOwner', () => {
         expect(nativeAudio.capture.getSnapshot().subscriberCount).toBe(0);
     });
 
+    it('shares one daemon admission across call utterances and keeps cancellation local to each turn', async () => {
+        const { boundary, getSettings } = await installDaemonCaptureBoundary();
+        const onCaptureError = vi.fn();
+        const owner = createLocalVoiceCaptureOwner({ getSettings, onCaptureStarted() {}, onCaptureError });
+        const call = new AbortController();
+        const startTurn = () => owner.startCapture({
+            handsFree: true, provider: 'local_neural', localNeuralExecution: 'daemon',
+            sessionId: 'call-session', callSignal: call.signal,
+        });
+        const stopTurn = () => owner.stopCapture({ provider: 'local_neural', sessionId: 'call-session' });
+        const startRequests = () => network.requests.filter(request => request.method === 'daemon.voiceInference.stt.stream.start');
+        try {
+            boundary.finalText = 'first utterance';
+            await startTurn(); nativeAudio.emit(); await nativeAudio.capture.waitForDrain();
+            await expect(stopTurn()).resolves.toMatchObject({ text: 'first utterance' });
+            await startTurn();
+            // Muting before any PCM cancels this utterance without ending the call.
+            await owner.setMuted({ sessionId: 'call-session', muted: true });
+            await stopTurn();
+            await owner.setMuted({ sessionId: 'call-session', muted: false });
+            // Native assistant readout releases the microphone within the same call.
+            await owner.stopSession('call-session');
+            boundary.finalText = 'next utterance';
+            await startTurn(); nativeAudio.emit(); await nativeAudio.capture.waitForDrain();
+            await expect(stopTurn()).resolves.toMatchObject({ text: 'next utterance' });
+            const requestIds = startRequests().map(request => DaemonVoiceInferenceSttStreamStartRequestSchema.parse(request.payload).requestId);
+            expect(requestIds).toHaveLength(3);
+            expect(new Set(requestIds).size).toBe(1);
+            expect(boundary.cancel).toHaveBeenCalledOnce();
+            expect(onCaptureError).not.toHaveBeenCalled();
+            call.abort();
+            const nextCall = new AbortController();
+            try {
+                await owner.startCapture({ handsFree: false, provider: 'local_neural', localNeuralExecution: 'daemon',
+                    sessionId: 'next-call', callSignal: nextCall.signal });
+                expect(DaemonVoiceInferenceSttStreamStartRequestSchema.parse(startRequests()[3]?.payload).requestId).not.toBe(requestIds[0]);
+                nextCall.abort();
+                await owner.stopCapture({ provider: 'local_neural', sessionId: 'next-call' });
+                expect(boundary.cancel).toHaveBeenCalledTimes(2);
+            } finally { nextCall.abort(); }
+        } finally { call.abort(); await owner.stopSession(); }
+        expect(nativeAudio.capture.getSnapshot().subscriberCount).toBe(0);
+    });
+
+    it('rearms the same call after readout abandons an unresponsive old stop', async () => {
+        const { boundary, getSettings } = await installDaemonCaptureBoundary();
+        let releaseCancel!: () => void;
+        // The daemon has accepted cancellation; its RPC response is held by the network.
+        boundary.cancel.mockImplementationOnce(() => new Promise<void>(resolve => { releaseCancel = resolve; }));
+        const onCaptureStarted = vi.fn();
+        const owner = createLocalVoiceCaptureOwner({ getSettings, onCaptureStarted, onCaptureError() {} });
+        const call = new AbortController();
+        const startTurn = () => owner.startCapture({ handsFree: true, provider: 'local_neural',
+            localNeuralExecution: 'daemon', sessionId: 'readout-call', callSignal: call.signal });
+        let rearm: Promise<void> | undefined;
+        try {
+            await startTurn();
+            vi.useFakeTimers();
+            const readout = owner.stopSession('readout-call');
+            await vi.advanceTimersByTimeAsync(1_000); // Existing terminal abandonment boundary.
+            await readout;
+            rearm = startTurn();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(onCaptureStarted).toHaveBeenCalledTimes(2);
+            await rearm;
+            const requestIds = network.requests.filter(request => request.method === 'daemon.voiceInference.stt.stream.start')
+                .map(request => DaemonVoiceInferenceSttStreamStartRequestSchema.parse(request.payload).requestId);
+            expect(new Set(requestIds).size).toBe(1);
+        } finally {
+            call.abort(); releaseCancel?.();
+            await rearm;
+            vi.useRealTimers();
+            await owner.stopSession();
+        }
+    });
+
     it('retains a private daemon finish cause through endpoint capture failure', async () => {
         const { boundary, getSettings } = await installDaemonCaptureBoundary();
         const finishFailure = new Error('private daemon finish detail');

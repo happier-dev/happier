@@ -35,6 +35,8 @@ export type SttStartParams = Readonly<{
     sink: SttSink;
     /** Aborts in-flight capture/transcription work. */
     signal?: AbortSignal;
+    /** Call admission lifetime; utterance cancellation does not retire its tunnel. */
+    callSignal?: AbortSignal;
     /** Product capture purpose used by the aggregate native audio-session owner. */
     capturePurpose?: 'dictation' | 'conversation';
 }>;

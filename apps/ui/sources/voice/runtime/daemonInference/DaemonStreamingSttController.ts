@@ -61,17 +61,18 @@ const DAEMON_STT_START_ERROR_REASONS = new Set([
     'internal_error',
 ]);
 
-function createDefaultDaemonVoiceInferenceClient(): DaemonStreamingSttClient {
+export function createDefaultDaemonVoiceInferenceClient(): DaemonStreamingSttClient {
     // Keep the controller's hot import graph small; the client pulls in transfer
     // readers/encryption and is only needed for the default runtime path. The deferral
     // is a dynamic import rather than a bundler-only `require`: every host that executes
     // this module resolves the target through its own module graph, so the client stays
     // one module instance under Metro and under the Vitest/Vite graph alike. A `require`
     // here reaches Node's CommonJS loader in tests and loads a second, unaliased copy.
+    let client: Promise<DaemonVoiceInferenceClient> | null = null;
     return {
         createStreamingSttSender: async (options) => {
-            const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
-            return new DaemonVoiceInferenceClient().createStreamingSttSender(options);
+            client ??= import('./DaemonVoiceInferenceClient').then(({ DaemonVoiceInferenceClient }) => new DaemonVoiceInferenceClient());
+            return (await client).createStreamingSttSender(options);
         },
     };
 }
@@ -145,7 +146,7 @@ export function createDaemonStreamingSttController(
     let stopping: Promise<SttStopResult> | null = null;
     let paused: Readonly<{ params: SttStartParams; result: Promise<SttStopResult> }> | null = null;
     const getSettings = deps.getSettings ?? (() => ({}));
-    const createClient = deps.createClient ?? createDefaultDaemonVoiceInferenceClient;
+    const client = (deps.createClient ?? createDefaultDaemonVoiceInferenceClient)();
     const createPcmCapture = deps.createPcmCapture ?? createDaemonSpeechPcmCapture;
     const endpointController = deps.endpointController;
     const recordStartFailure = deps.recordStartFailure ?? daemonSpeechStreamDiagnostics.recordStartFailure;
@@ -229,14 +230,15 @@ export function createDaemonStreamingSttController(
     };
 
     const start = async (params: SttStartParams, prefixText = '') => {
-        const { sessionId, micSession, sink, signal, capturePurpose } = params;
+        const { sessionId, micSession, sink, signal, callSignal, capturePurpose } = params;
+        const isAborted = () => signal?.aborted || callSignal?.aborted;
         paused = null;
-        if (signal?.aborted) {
+        if (isAborted()) {
             return;
         }
         if (stopping) {
             await stopping;
-            if (signal?.aborted) {
+            if (isAborted()) {
                 return;
             }
         }
@@ -246,7 +248,7 @@ export function createDaemonStreamingSttController(
             if (active === previous) {
                 active = null;
             }
-            if (signal?.aborted) {
+            if (isAborted()) {
                 return;
             }
         }
@@ -266,14 +268,14 @@ export function createDaemonStreamingSttController(
         let handle: ActiveDaemonStreamingStt | null = null;
         let startStep: DaemonSpeechStreamStartStep = 'create_sender';
         try {
-            const sender = await createClient().createStreamingSttSender({ sessionId, packId, language, signal });
-            if (signal?.aborted) {
+            const sender = await client.createStreamingSttSender({ sessionId, packId, language, signal, callSignal });
+            if (isAborted()) {
                 await sender.cancel().catch(() => {});
                 return;
             }
             startStep = 'sender_start';
             await sender.start();
-            if (signal?.aborted) {
+            if (isAborted()) {
                 await sender.cancel().catch(() => {});
                 return;
             }
@@ -346,18 +348,20 @@ export function createDaemonStreamingSttController(
             if (handle.sessionId) {
                 endpointController?.startSession(handle.sessionId);
             }
-            if (signal) {
+            if (signal || callSignal) {
                 const abort = () => {
                     if (active === handle) {
                         void cancelActive(handle);
                     }
                 };
-                signal.addEventListener('abort', abort, { once: true });
+                signal?.addEventListener('abort', abort, { once: true });
+                callSignal?.addEventListener('abort', abort, { once: true });
                 handle.unlinkAbort = () => {
-                    signal.removeEventListener('abort', abort);
+                    signal?.removeEventListener('abort', abort);
+                    callSignal?.removeEventListener('abort', abort);
                 };
             }
-            if (signal?.aborted) {
+            if (isAborted()) {
                 await cancelActive(handle);
                 if (active === handle) {
                     active = null;
@@ -365,7 +369,7 @@ export function createDaemonStreamingSttController(
                 return;
             }
             await capture.start();
-            if (signal?.aborted) {
+            if (isAborted()) {
                 await cancelActive(handle);
                 if (active === handle) {
                     active = null;
@@ -376,7 +380,7 @@ export function createDaemonStreamingSttController(
             if (active === handle) {
                 active = null;
             }
-            if (signal?.aborted) {
+            if (isAborted()) {
                 return;
             }
             recordStartFailure(error, { step: startStep });

@@ -20,6 +20,7 @@ import type {
 } from '@/voice/input/SherpaStreamingSttController';
 import {
     createDaemonStreamingSttController,
+    createDefaultDaemonVoiceInferenceClient,
     type DaemonStreamingSttController,
 } from '@/voice/runtime/daemonInference/DaemonStreamingSttController';
 import type { MicSession, MicSessionFailure } from '@/voice/runtime/mic/MicSession';
@@ -93,6 +94,7 @@ export type LocalVoiceCaptureOwner = Readonly<{
         localNeuralExecution?: LocalNeuralCaptureExecution;
         settings?: any;
         signal?: AbortSignal;
+        callSignal?: AbortSignal;
     }>) => Promise<void>;
     stopCapture: (args: Readonly<{
         sessionId: string;
@@ -585,6 +587,10 @@ export function createLocalVoiceCaptureOwner(
     };
     let sherpaSttController: SherpaStreamingSttController | null = null;
     let daemonStreamingSttController: DaemonStreamingSttController | null = null;
+    let daemonStreamingSttCallClient: Readonly<{
+        signal: AbortSignal;
+        client: ReturnType<typeof createDefaultDaemonVoiceInferenceClient>;
+    }> | null = null;
     let activeLocalNeuralExecution: LocalNeuralCaptureExecution = 'device';
     const getSherpaSttController = (): SherpaStreamingSttController => {
         const sherpaDeps: SherpaStreamingSttControllerDeps = {
@@ -599,6 +605,16 @@ export function createLocalVoiceCaptureOwner(
         const daemonDeps: DaemonStreamingSttControllerDeps = {
             endpointController: createEndpointController(),
             getSettings: getCaptureSettings,
+            createClient: () => ({
+                createStreamingSttSender: (params) => {
+                    const signal = params.callSignal;
+                    if (!signal) return createDefaultDaemonVoiceInferenceClient().createStreamingSttSender(params);
+                    if (daemonStreamingSttCallClient?.signal !== signal) {
+                        daemonStreamingSttCallClient = { signal, client: createDefaultDaemonVoiceInferenceClient() };
+                    }
+                    return daemonStreamingSttCallClient.client.createStreamingSttSender(params);
+                },
+            }),
         };
         daemonStreamingSttController ??= options.createDaemonStreamingSttController?.(daemonDeps)
             ?? createDefaultDaemonStreamingSttController(daemonDeps);
@@ -753,6 +769,7 @@ export function createLocalVoiceCaptureOwner(
             localNeuralExecution,
             settings,
             signal: externalSignal,
+            callSignal,
         }) => {
             const captureGeneration = ++captureLifecycleGeneration;
             let resolveCaptureStart!: () => void;
@@ -868,7 +885,7 @@ export function createLocalVoiceCaptureOwner(
                         await nativeVadController.stopSession().catch(() => {});
                     }
                     try {
-                        await getLocalNeuralSttController(activeLocalNeuralExecution).start({ capturePurpose, sessionId: normalizedSessionId, micSession, sink, signal });
+                        await getLocalNeuralSttController(activeLocalNeuralExecution).start({ capturePurpose, sessionId: normalizedSessionId, micSession, sink, signal, callSignal });
                         if (activeLocalNeuralExecution === 'daemon' && micSession.isMuted()) {
                             await daemonStreamingSttController?.setMuted(true);
                         }
@@ -1074,6 +1091,9 @@ export function createLocalVoiceCaptureOwner(
             deviceSttController = null;
             sherpaSttController = null;
             daemonStreamingSttController = null;
+            // Readout can abandon a slow controller stop while the call's client
+            // remains reusable by a fresh controller. End retires both.
+            if (daemonStreamingSttCallClient?.signal.aborted) daemonStreamingSttCallClient = null;
             activeCaptureStarted = false;
             activeCaptureSessionId = null;
             activeCaptureProvider = null;

@@ -134,6 +134,9 @@ export type DaemonVoiceInferenceClientDeps = Readonly<{
 export type DaemonVoiceInferenceStreamingSttTransportSelection = Readonly<{
     carrierAdapter: DaemonSpeechStreamCarrierAdapter;
     transport: DaemonSpeechStreamTransport;
+    createStreamTransport?: (control: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport) => DaemonSpeechStreamTransport;
+    close?: () => Promise<void>;
+    closed?: boolean;
 }>;
 
 export type DaemonVoiceInferenceStreamingSttTransportFactoryInput = Readonly<{
@@ -141,6 +144,7 @@ export type DaemonVoiceInferenceStreamingSttTransportFactoryInput = Readonly<{
     machineTarget: DaemonVoiceInferenceMachineTarget;
     requestId: string;
     signal: AbortSignal | null;
+    callSignal?: AbortSignal;
     compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport;
 }>;
 
@@ -182,6 +186,11 @@ export const VOICE_MODEL_INSTALL_RPC_TIMEOUT_MS = 30 * 60_000;
 
 export class DaemonVoiceInferenceClient {
     private readonly deps: DaemonVoiceInferenceClientDeps;
+    private streamingSttCall: Readonly<{
+        signal: AbortSignal;
+        machineId: string;
+        admission: ReturnType<DaemonVoiceInferenceClient['prepareStreamingSttTransport']>;
+    }> | null = null;
 
     constructor(deps?: Partial<DaemonVoiceInferenceClientDeps>) {
         this.deps = {
@@ -638,11 +647,35 @@ export class DaemonVoiceInferenceClient {
         packId: string | null;
         language: string | null;
         signal?: AbortSignal | null;
+        /** Capture admission lifetime shared by the utterances of one call. */
+        callSignal?: AbortSignal;
     }>): Promise<DaemonSpeechStreamSender> {
-        const cleanupRpc = this.captureCleanupRpc();
+        const callSignal = params.callSignal;
+        if (callSignal?.aborted) throw createDaemonVoiceInferenceClientError('cancelled');
         const machineTarget = await this.resolveMachineTarget();
-        const requestId = this.deps.createRequestId();
-        const rpcSignal = params.signal ?? null;
+        const compatibilityTransport = this.createStreamingSttControlTransport(machineTarget, params.signal ?? null);
+        const previous = this.streamingSttCall;
+        const reusableCall = callSignal && previous?.signal === callSignal && previous.machineId === machineTarget.machineId
+            ? previous : null;
+        const previousAdmission = reusableCall ? await reusableCall.admission : null;
+        let admission: ReturnType<DaemonVoiceInferenceClient['prepareStreamingSttTransport']>;
+        if (reusableCall && !previousAdmission?.selectedTransport?.closed) {
+            admission = reusableCall.admission;
+        } else {
+            // A changed Machine must not wait for an old grant or cleanup response.
+            // Retire that selection when its admission settles; its call signal
+            // still owns cancellation while the new target admits independently.
+            if (previous) void previous.admission.then(value => value.selectedTransport?.close?.()).catch(() => undefined);
+            admission = this.prepareStreamingSttTransport(params, machineTarget, compatibilityTransport);
+            if (callSignal) {
+                const call = { signal: callSignal, machineId: machineTarget.machineId, admission };
+                this.streamingSttCall = call;
+                void admission.catch(() => {
+                    if (this.streamingSttCall === call) this.streamingSttCall = null;
+                });
+            }
+        }
+        const { requestId, selectedTransport, transport } = await admission;
         const diagnostics = params.sessionId
             ? this.deps.resolveDiagnosticsCaptureContext({
                 sessionId: params.sessionId,
@@ -650,6 +683,20 @@ export class DaemonVoiceInferenceClient {
                 durationMs: null,
             })
             : undefined;
+        return createDaemonSpeechStreamSender({
+            requestId,
+            packId: params.packId,
+            language: params.language,
+            ...(diagnostics ? { diagnostics } : {}),
+            carrierAdapter: selectedTransport?.carrierAdapter ?? createDaemonSpeechStreamRpcCompatibilityCarrierAdapter(),
+            transport: (callSignal ? selectedTransport?.createStreamTransport?.(compatibilityTransport) : undefined)
+                ?? selectedTransport?.transport ?? compatibilityTransport,
+            transportKind: transport,
+        });
+    }
+
+    private createStreamingSttControlTransport(machineTarget: DaemonVoiceInferenceMachineTarget, rpcSignal: AbortSignal | null) {
+        const cleanupRpc = this.captureCleanupRpc();
         const callChunk = createOrderedMachineRpcCaller(this.deps.machineRpcWithServerScope);
         // The start reply carries the stream key; its privacy is the Machine RPC
         // owner's content decision for this exact call, reported with the reply.
@@ -702,11 +749,21 @@ export class DaemonVoiceInferenceClient {
                     : response;
             },
         };
+        return compatibilityTransport;
+    }
+
+    private async prepareStreamingSttTransport(
+        params: Readonly<{ sessionId?: string | null; signal?: AbortSignal | null; callSignal?: AbortSignal }>,
+        machineTarget: DaemonVoiceInferenceMachineTarget,
+        compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport,
+    ) {
+        const requestId = this.deps.createRequestId();
         const selectedTransport = await this.deps.createStreamingSttTransport({
             sessionId: params.sessionId ?? null,
             machineTarget,
             requestId,
-            signal: rpcSignal,
+            signal: params.callSignal ?? params.signal ?? null,
+            ...(params.callSignal ? { callSignal: params.callSignal } : {}),
             compatibilityTransport,
         });
         if (!selectedTransport && !this.deps.allowStreamingSttJsonRpcCompatibility()) {
@@ -726,15 +783,7 @@ export class DaemonVoiceInferenceClient {
             machineId: machineTarget.machineId,
             transport,
         });
-        return createDaemonSpeechStreamSender({
-            requestId,
-            packId: params.packId,
-            language: params.language,
-            ...(diagnostics ? { diagnostics } : {}),
-            carrierAdapter: selectedTransport?.carrierAdapter ?? createDaemonSpeechStreamRpcCompatibilityCarrierAdapter(),
-            transport: selectedTransport?.transport ?? compatibilityTransport,
-            transportKind: transport,
-        });
+        return { requestId, selectedTransport, transport } as const;
     }
 
     private async sendCompatibilityStreamingSttChunk(

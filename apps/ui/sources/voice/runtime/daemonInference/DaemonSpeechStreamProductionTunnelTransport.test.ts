@@ -102,8 +102,8 @@ function publishFeatures() {
   primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId,
     snapshot: { status: 'ready', features: features() } });
 }
-function selectMachine(hasEndpoint = true, httpPort: number | null = PORT) {
-  const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
+function selectMachine(hasEndpoint = true, httpPort: number | null = PORT, machineId = 'machine-1') {
+  const machine = createMachineFixture({ id: machineId, activeAt: Date.now(),
     // A Sync-projected Machine always carries its storage mode; Plain Accounts publish the plain marker.
     ...(accountE2ee ? {} : { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storageMode: 'plain' as const }),
     daemonState: {
@@ -333,6 +333,114 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     storage.setState(originalState);
     resetServerFeaturesClientForTests();
     vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  });
+
+  it.each(['direct', 'relay'] as const)('admits one %s tunnel for a call across finished and cancelled utterances', async route => {
+    direct = route === 'direct';
+    selectMachine(direct); publishFeatures();
+    const call = new AbortController();
+    const client = new DaemonVoiceInferenceClient({ createRequestId: () => 'request-1' });
+    const next = () => client.createStreamingSttSender({
+      sessionId: 'qa-session', packId: 'stt-pack-1', language: 'en', callSignal: call.signal,
+    });
+    try {
+      const first = await next();
+      await first.start();
+      await first.pushChunk(new Uint8Array([1, 0]));
+      await expect(first.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
+      const interrupted = await next();
+      await interrupted.start();
+      await interrupted.cancel();
+      const resumed = await next();
+      await resumed.start();
+      await resumed.pushChunk(new Uint8Array([2, 0]));
+      await expect(resumed.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
+      expect(grants).toHaveLength(1);
+      expect(opens).toHaveLength(direct ? 1 : 0);
+      expect(receivedPcm).toEqual([new Uint8Array([1, 0]), new Uint8Array([2, 0])]);
+      expect(receipt()?.localTransport).not.toBe('closed');
+    } finally {
+      call.abort();
+    }
+    await vi.waitFor(() => expect(receipt()?.localTransport).toBe('closed'));
+  });
+
+  it('readmits the next utterance on a changed Machine and retires the old tunnel', async () => {
+    direct = true; selectMachine(); publishFeatures();
+    const call = new AbortController();
+    let request = 0;
+    const client = new DaemonVoiceInferenceClient({ createRequestId: () => `request-${++request}` });
+    const next = () => client.createStreamingSttSender({ packId: 'stt-pack-1', language: 'en', callSignal: call.signal });
+    try {
+      const first = await next(); await first.start(); await first.finish();
+      const oldSocket = NativeWebSocket.instances[0];
+      selectMachine(true, PORT, 'machine-2');
+      storage.getState().applySettingsLocal({ voice: { ...storage.getState().settings.voice, executionMachine: {
+        ...storage.getState().settings.voice.executionMachine, mode: 'fixed', machineId: 'machine-2',
+      } } });
+      const second = await next(); await second.start();
+      await second.pushChunk(new Uint8Array([3, 0]));
+      await expect(second.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
+      expect(grants).toHaveLength(2); expect(opens).toHaveLength(2);
+      expect(oldSocket.close).toHaveBeenCalledOnce();
+      expect(receivedPcm).toEqual([new Uint8Array([3, 0])]);
+    } finally { call.abort(); }
+    await vi.waitFor(() => expect(receipt()?.localTransport).toBe('closed'));
+  });
+
+  it('admits a changed Machine while the previous Machine grant is still pending', async () => {
+    direct = true; selectMachine(); publishFeatures();
+    const call = new AbortController();
+    let request = 0;
+    let entered!: () => void;
+    const requested = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let nextGrantRequested = false;
+    holdGrantResponse = () => {
+      holdGrantResponse = async () => { nextGrantRequested = true; };
+      entered(); return held;
+    };
+    const client = new DaemonVoiceInferenceClient({ createRequestId: () => `request-${++request}` });
+    const next = () => client.createStreamingSttSender({ packId: 'stt-pack-1', language: 'en', callSignal: call.signal });
+    const oldAdmission = next().catch(() => null);
+    let newAdmission: ReturnType<typeof next> | undefined;
+    try {
+      await requested;
+      selectMachine(true, PORT, 'machine-2');
+      storage.getState().applySettingsLocal({ voice: { ...storage.getState().settings.voice, executionMachine: {
+        ...storage.getState().settings.voice.executionMachine, mode: 'fixed', machineId: 'machine-2',
+      } } });
+      newAdmission = next();
+      await vi.waitFor(() => expect(nextGrantRequested).toBe(true));
+      const stream = await newAdmission; await stream.start(); await stream.finish();
+      expect(grants).toMatchObject([{ machineId: 'machine-1' }, { machineId: 'machine-2' }]);
+      release(); await oldAdmission;
+      await vi.waitFor(() => expect(NativeWebSocket.instances[1]?.close).toHaveBeenCalledOnce());
+    } finally {
+      release(); call.abort();
+      await oldAdmission; await newAdmission?.catch(() => undefined);
+    }
+  });
+
+  it('readmits after a failed utterance retires the retained tunnel', async () => {
+    direct = true; selectMachine(); publishFeatures();
+    const call = new AbortController();
+    let request = 0;
+    const client = new DaemonVoiceInferenceClient({ createRequestId: () => `request-${++request}` });
+    const next = () => client.createStreamingSttSender({ packId: 'stt-pack-1', language: 'en', callSignal: call.signal });
+    try {
+      const failed = await next(); await failed.start();
+      finishFailure = true;
+      await expect(failed.finish()).rejects.toMatchObject({ code: 'runtime_unavailable' });
+      expect(receipt()?.localTransport).toBe('closed');
+      finishFailure = false;
+      const resumed = await next(); await resumed.start();
+      await resumed.pushChunk(new Uint8Array([4, 0]));
+      await expect(resumed.finish()).resolves.toMatchObject({ ok: true, finalText: 'hello' });
+      expect(grants).toHaveLength(2); expect(opens).toHaveLength(2);
+    } finally { call.abort(); }
+    await vi.waitFor(() => expect(receipt()?.localTransport).toBe('closed'));
   });
 
   it('fails closed before native admission when QA requires an unavailable relay', async () => {
