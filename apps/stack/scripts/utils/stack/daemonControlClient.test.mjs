@@ -468,6 +468,28 @@ test('restartDaemonViaControlServer leaves an absent incumbent to the canonical 
   }), null);
 });
 
+test('restartDaemonViaControlServer leaves a dead incumbent without a control port to the start owner', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-dead-incomplete-' });
+  const input = { cliHomeDir: fixture.path('cli'), serverUrl: 'http://127.0.0.1:3009', env: {} };
+  await writeDaemonState({ ...input, state: { pid: process.pid, startedAt: Date.now() } });
+  // The OS signal probe is the boundary; exercise the real control-state and restart owners.
+  const kill = process.kill;
+  t.mock.method(process, 'kill', (pid, signal) => {
+    if (pid === process.pid && signal === 0) throw Object.assign(new Error('process absent'), { code: 'ESRCH' });
+    return kill.call(process, pid, signal);
+  });
+  assert.equal(await restartDaemonViaControlServer(input), null);
+  assert.equal((await readDaemonControlState(input)).reason, 'daemon_not_running');
+});
+
+test('restartDaemonViaControlServer reports a live incumbent without a control port', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-restart-live-incomplete-' });
+  const input = { cliHomeDir: fixture.path('cli'), serverUrl: 'http://127.0.0.1:3009', env: {} };
+  await writeDaemonState({ ...input, state: { pid: process.pid, startedAt: Date.now() } });
+  await assert.rejects(restartDaemonViaControlServer(input), /unavailable \(missing_http_port\)/);
+  assert.equal((await readDaemonControlState(input)).reason, 'missing_http_port');
+});
+
 test('restartDaemonViaControlServer does not treat an inconclusive incumbent probe as absence', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-restart-inconclusive-' });
   const cliHomeDir = fixture.path('cli');

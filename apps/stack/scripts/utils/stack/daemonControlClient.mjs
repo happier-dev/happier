@@ -162,9 +162,6 @@ export async function readDaemonControlState({
   const httpPort = Number(state?.httpPort);
   const pid = Number(state?.pid);
   const controlToken = String(state?.controlToken ?? '').trim();
-  if (!Number.isFinite(httpPort) || httpPort <= 0) {
-    return { ok: false, reason: 'missing_http_port', statePath, recordedStartedAt: state?.startedAt, pid };
-  }
   if (!Number.isFinite(pid) || pid <= 1) {
     return { ok: false, reason: 'missing_pid', statePath };
   }
@@ -177,6 +174,9 @@ export async function readDaemonControlState({
   // Absence or a prior boot settles the record without reading runtime state
   // or asking the process now holding its old control port.
   if (isRecordedStackProcessRetired(pid, retirementEvidence)) return retiredControl;
+  if (!Number.isFinite(httpPort) || httpPort <= 0) {
+    return { ok: false, reason: 'missing_http_port', statePath, recordedStartedAt: state?.startedAt, pid };
+  }
   const ownershipContext = resolveDaemonControlOwnershipContext({ cliHomeDir, stackName, env });
   const processInstanceFingerprint = ownershipContext
     ? await readDaemonProcessInstanceFingerprint({ pid, cliHomeDir, env }) : null;
