@@ -1,5 +1,5 @@
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
-import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed';
+import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
 import { readManagedGuestHomeWarning, resolveManagedGuestHome } from './homeQualification';
@@ -15,13 +15,14 @@ import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1, type ActionExecuteResult, type JsonValue } from '@happier-dev/protocol';
+import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
@@ -34,9 +35,7 @@ import type { ManagedMachineAcquisitionDriverInput, ManagedMachineControllerClie
 import { sshPublicKey } from './bootstrapSshPublicKey';
 import { isRetryableHomeOperationError, type HomeOperationRetry } from '@/api/client/retryHomeOperation';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineRoles, dispatchLocalManagedMachineRoles } from '@/api/externalActionExecutionAuthorization';
-import { MachineRolesMutationResultV1Schema, machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
-import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolation';
+import { initializeManagedMachineEnrollmentPolicies } from './enrollmentPolicy';
 
 export type ManagedMachineReconciliationInput = Readonly<{
     input: ManagedMachineAcquisitionDriverInput;
@@ -49,8 +48,40 @@ export type ManagedMachineReconciliationInput = Readonly<{
     admittedProvisioner?: MachineProvisionerContributionV1;
 }>;
 
+/**
+ * The authority of an already-admitted Session spawn over its own placement
+ * target (P03 container Sessions). It is one more authority source of this
+ * owner, not a second invocation path: it admits only the channel roles the
+ * Session's holder needs (`exec`, `putFile`, `stream`) on a row this
+ * controller controls, and ends with the Session: `lifetime` aborts on Stop,
+ * exit or untrack and aborts every invocation still running under it.
+ * Requester access to the row is decided by the Session spawn admission
+ * before it constructs this authority.
+ */
+export type ManagedSessionTargetAuthority = Readonly<{
+    sessionId: string;
+    /** The tracked Session's lifetime; its abort ends the authority and every running channel. */
+    lifetime: AbortSignal;
+}>;
+const SESSION_TARGET_ROLES: ReadonlySet<string> = new Set(['exec', 'putFile', 'stream']);
+
+/**
+ * The one test that a row is still a Session's target, at admission and before
+ * every call: controlled by this controller and installation, in this Home,
+ * bound to a resource and not being deleted. The guest the Session reaches is
+ * the row's own resource, so a rebuild (new resource) ends the authority too.
+ */
+function sessionTargetRow(row: ManagedMachineV1, input: Readonly<{ homeId: string; controller: Readonly<{ machineId: string; installationId: string }> }>) {
+    const admitted = row.controller?.machineId === input.controller.machineId && row.controller.installationId === input.controller.installationId
+        && row.homeId === input.homeId && row.allocation === 'bound' && row.desired !== 'delete' && row.archivedAt === undefined;
+    return admitted && row.resource ? row.resource.value : undefined;
+}
+
 type ManagedNativeInvocationInput = ManagedMachineReconciliationInput | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
     action: 'deployments.backups.restore';
+}>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
+    action: 'session.spawn_new';
+    sessionTarget: ManagedSessionTargetAuthority;
 }>);
 
 export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, provider: ManagedMachineV1['launch']['provider'], localId: string,
@@ -286,8 +317,11 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     if (target.homeServerIdentityId !== params.input.homeId) throw new ManagedMachineControllerError('admission_unavailable');
     const admittedRestore = params.action === 'deployments.backups.restore'
         && params.options.context?.operationAcceptance?.actionId === params.action;
+    const sessionTarget = params.action === 'session.spawn_new' && 'sessionTarget' in params ? params.sessionTarget : undefined;
+    // A Session's target must be a row this controller controls; the row is never borrowed from another Machine.
+    if (sessionTarget && sessionTargetRow(machine, params.input) === undefined) throw new ManagedMachineControllerError('admission_unavailable');
     if (params.action !== 'machines.managed.inspect' && (!target.descriptor
-        || !params.nativePolicyAdmission && !admittedRestore && !params.options.context?.operationOwnerUpdate)) {
+        || !params.nativePolicyAdmission && !admittedRestore && !sessionTarget && !params.options.context?.operationOwnerUpdate)) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
     async function roleCredentialAuthorization(localId: string, input = params.input) {
@@ -295,25 +329,44 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
             { descriptor: contribution.definition, launch: launch.choices });
     }
-    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'reconcile' | 'cleanup' | 'nativeCredentialApply', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
+    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'stream' | 'reconcile' | 'cleanup' | 'nativeCredentialApply', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; channel?: ManagedNativeChannelIO; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
         let dispatched = false;
         try {
             if (params.action === 'machines.managed.inspect' && role !== 'inspect' && role !== 'reconcile' && role !== 'cleanup'
                 && !(params.includeGuestDiagnostics && role === 'exec')) {
                 throw new ManagedMachineControllerError('native_intent_unsupported');
             }
+            if (sessionTarget) {
+                // Least privilege: the holder's channel roles only, and never a guest daemon start.
+                const startsProcess = role === 'exec' && typeof body === 'object' && body !== null && 'processConfig' in body;
+                if (!SESSION_TARGET_ROLES.has(role) || startsProcess) throw new ManagedMachineControllerError('native_intent_unsupported');
+                if (sessionTarget.lifetime.aborted) throw new ManagedMachineControllerError('intent_changed');
+                // The body names the guest; it must be this row's own resource (every provider resolves the guest from it).
+                const ownResource = sessionTargetRow(readMachine(), params.input);
+                const requested = typeof body === 'object' && body !== null && !Array.isArray(body) && 'resource' in body ? body.resource : undefined;
+                if (ownResource === undefined || requested === undefined || !pluginJsonValuesEqual(requested, ownResource)) {
+                    throw new ManagedMachineControllerError('admission_unavailable');
+                }
+                // Channel roles never power a stopped target on: its power stays with the reconciler's desired state.
+                // (`stream` has no wake input: its providers never wake, e.g. Coder `--disable-autostart`.)
+                if (role === 'exec' || role === 'putFile') body = { ...(body as Record<string, unknown>), allowWake: false };
+            }
             const machine = readMachine();
             const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
             const localId = role === 'nativeCredentialApply' ? contribution.definition.nativeCredentialDelivery?.apply
                 : role === 'reconcile' ? contribution.definition.reconciliation?.action
                 : role === 'cleanup' ? contribution.definition.reconciliation?.cleanup
-                : role === 'exec' || role === 'putFile' ? contribution.definition.bootstrapTransport?.[role] : contribution.definition.actions[role];
+                : role === 'exec' || role === 'putFile' || role === 'stream' ? contribution.definition.bootstrapTransport?.[role] : contribution.definition.actions[role];
             if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
             const input = await resolveManagedRoleRuntime(params.input, contribution.pluginId, localId);
             const occurrenceId = input.runtimeRegistry.readPluginOccurrenceId?.(contribution.pluginId);
             if (!occurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
             const actionId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId });
-            const invocationSignal = io?.signal ?? params.options.signal;
+            const requestedSignal = io?.signal ?? params.options.signal;
+            // A Session-held channel lives no longer than the Session (pushed, not re-checked).
+            const invocationSignal = sessionTarget
+                ? requestedSignal ? AbortSignal.any([requestedSignal, sessionTarget.lifetime]) : sessionTarget.lifetime
+                : requestedSignal;
             if (invocationSignal?.aborted) throw new ManagedMachineControllerError('intent_changed');
             const stdoutDecoder = new TextDecoder();
             // Home admitted this finite operation. Local cancellation owns its
@@ -360,6 +413,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     ...(role === 'exec' && io?.onStdoutChunk ? { onProcessOutput: (output: Parameters<NonNullable<AdmittedManagedProviderOperationExecutionRequest['onProcessOutput']>>[0]) => {
                         if (output.stream === 'stdout') io.onStdoutChunk?.(stdoutDecoder.decode(output.data, { stream: true }));
                     } } : {}),
+                    ...(role === 'stream' && io?.channel ? { onProcessOutput: io.channel.onOutput, bindProcessInput: io.channel.bindInput } : {}),
                     ...(activation.exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId: activation.exactPurposeBindingSubjectId } : {}),
                     ...(activation.executeBrokeredAction ? { executeBrokeredAction: activation.executeBrokeredAction } : {}),
                     isCurrent: () => rowCurrent && !invocationSignal?.aborted && activation.isCurrent(),
@@ -460,83 +514,6 @@ export async function reconcileManagedAcquisitionIdentity(params: ManagedMachine
         home: params.client, provisioner: native.contribution.definition }, machine, native.invoke);
 }
 
-/** One signed creation child on the exact enrolled guest: remote continuation or the original local host path. */
-async function dispatchEnrollmentPolicyChild<TInput extends Readonly<{ machineId: string }>>(input: ManagedMachineAcquisitionDriverInput,
-    machine: ManagedMachineV1, options: ManagedMachineExecutionOptions, request: TInput,
-    dispatch: Readonly<{
-        remote: (params: Omit<Parameters<typeof dispatchManagedMachineAdminAccess>[0], 'input'> & Readonly<{ input: TInput }>) => Promise<ActionExecuteResult>;
-        local: (params: Omit<Parameters<typeof dispatchLocalManagedMachineAdminAccess>[0], 'input'> & Readonly<{ input: TInput }>) => Promise<ActionExecuteResult>;
-    }>): Promise<ActionExecuteResult> {
-    const context = options.context;
-    if (!context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-    const continuation = { managedId: machine.id, creationRequestId: options.requestId, expectedIntentRevision: machine.intentRevision };
-    const authorization = context.externalActionExecutionAuthorization;
-    if (authorization) {
-        if (!input.externalActionMachineRequestPrivateKey || authorization.binding.machineId !== input.controller.machineId
-            || authorization.binding.installationId !== input.controller.installationId
-            || authorization.binding.serverIdentityId !== machine.homeId) throw new ManagedMachineControllerError('admission_unavailable');
-        const requester = readRequesterAccountActionContext(authorization);
-        const encryption = authorization.binding.accountEncryptionMode === 'e2ee'
-            ? await requester?.resolveEncryption(options.signal, authorization) : undefined;
-        if (authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== machine.homeId)
-            throw new ManagedMachineControllerError('admission_unavailable');
-        return dispatch.remote({ input: request, serverId: context.serverId ?? machine.homeId, homeTarget: input.homeTarget,
-            observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
-            context, continuation, authorization, authority: context.authority,
-            installationId: input.controller.installationId, privateKey: input.externalActionMachineRequestPrivateKey,
-            serverHttpBaseUrl: input.serverUrl, ...(encryption ? { material: encryption.material } : {}), signal: options.signal });
-    }
-    return dispatch.local({ input: request, homeId: machine.homeId, context,
-        observeRecordedApprovalExecution: input.observeRecordedApprovalExecution, managedContinuation: continuation,
-        credentials: input.credentials, custodianAccountId: machine.custodianAccountId, serverHttpBaseUrl: input.serverUrl,
-        isCurrent: async () => !options.signal?.aborted });
-}
-
-async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
-    const policy = resolveManagedMachineEnrollmentAdminAccessV1(machine.enrollmentIdentity);
-    if (!policy) return;
-    options.context?.operationProgress?.update({ phase: 'machines.setup.adminAccess.set', label: 'Configuring administrator access' });
-    if (!options.context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-    // The initial field is None; field comparison may rebase unrelated
-    // metadata versions but never replaces an independently changed policy.
-    // The continuation retains the original creation even when the public
-    // retry carrying this first enrollment has a new request identity.
-    const request = { serverId: machine.homeId, machineId: machine.enrolledMachineId, expectedMetadataVersion: 0,
-        expectedAdminAccess: { version: 1 as const, mode: 'none' as const }, adminAccess: policy, comparison: 'field' as const };
-    const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
-        { remote: dispatchManagedMachineAdminAccess, local: dispatchLocalManagedMachineAdminAccess });
-    if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.setup.adminAccess.set');
-    const result = MachineAdminAccessMutationResultV1Schema.safeParse(execution.result);
-    if (!result.success || result.data.status === 'outcomeUnknown') {
-        throw new ManagedMachineControllerError('action_outcome_unknown');
-    }
-    if (!['applied', 'satisfied', 'unchanged'].includes(result.data.status)
-        || !('policy' in result.data) || !MachineAdminAccessFieldV1.equal(result.data.policy, policy)) {
-        throw new ManagedMachineControllerError('administrator_policy_unconfirmed');
-    }
-}
-
-/** Seeds the owner-approved role set for this install type over the missing field (OWNER-RULINGS 2026-11-12). */
-async function recordEnrollmentRoles(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
-    const policy = resolveManagedMachineEnrollmentRolesV1(machine.enrollmentIdentity);
-    if (!policy) return;
-    options.context?.operationProgress?.update({ phase: 'machines.roles.set', label: 'Choosing machine roles' });
-    if (!options.context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-    // Field comparison over the missing field (every core role): a role set the
-    // owner already changed is a conflict and is never replaced.
-    const request = { serverId: machine.homeId, machineId: machine.enrolledMachineId, expectedMetadataVersion: 0,
-        expectedPolicy: machineRolesMetadataFieldV1.defaultValue(), policy };
-    const execution = await dispatchEnrollmentPolicyChild(input, machine, options, request,
-        { remote: dispatchManagedMachineRoles, local: dispatchLocalManagedMachineRoles });
-    if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.roles.set');
-    const result = MachineRolesMutationResultV1Schema.safeParse(execution.result);
-    if (!result.success || result.data.status === 'outcomeUnknown') throw new ManagedMachineControllerError('action_outcome_unknown');
-    if (!['applied', 'satisfied', 'unchanged'].includes(result.data.status)
-        || !('policy' in result.data) || !machineRolesMetadataFieldV1.equal(result.data.policy, policy)) {
-        throw new ManagedMachineControllerError('machine_roles_unconfirmed');
-    }
-}
-
 export async function reconcileManagedMachine(params: ManagedMachineReconciliationInput): Promise<JsonValue | null> {
     params.client.assertConnection(params.machine);
     const retainedProvisioner = params.input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
@@ -577,9 +554,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 // Only creation or the first enrollment initializes administrator
                 // and isolation policies. Enrolled guest recovery preserves stored policy.
                 if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId) {
-                    await recordEnrollmentAdministratorAccess(params.input, row, params.options);
-                    await recordEnrollmentRoles(params.input, row, params.options);
-                    await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options);
+                    await initializeManagedMachineEnrollmentPolicies(params.input, row, params.options);
                 }
             },
         },
