@@ -824,7 +824,7 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         presentActionFailure: async (failure, options) => {
             const payload = PluginUiPresentActionFailureRequestV1Schema.parse(failure);
-            return PluginUiActionFailurePresentationV1Schema.parse(await request('presentActionFailure', payload, options?.signal));
+            return PluginUiActionFailurePresentationV1Schema.parse(await request('presentActionFailure', requireTransportJsonObject(payload, 'Action failure'), options?.signal));
         },
         version: () => initial.version,
         publishCurrentUiContext: (enrichment) => {

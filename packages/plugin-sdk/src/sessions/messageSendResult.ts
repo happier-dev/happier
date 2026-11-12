@@ -6,3 +6,6 @@ export const SessionMessageSendResultV1ProtocolSchema: ProtocolComposableSchema<
     ProtocolSchemaInput<typeof canonicalResult>,
     ProtocolSchemaOutput<typeof canonicalResult>
 > = canonicalResult;
+
+/** Named dependency of the canonical Session send result, for downstream declaration emit. */
+export type { ActionFailureCauseV1 as SessionMessageSendFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';

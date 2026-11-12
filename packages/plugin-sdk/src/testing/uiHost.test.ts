@@ -52,6 +52,31 @@ const initialSurface = createSurfaceContextFixture();
 const firstDigest = `sha256:${'1'.repeat(64)}`;
 const secondDigest = `sha256:${'2'.repeat(64)}`;
 
+
+it('presents Action failures through the installed fixture host and SDK transport', async () => {
+    const failure = { ok: false as const, errorCode: 'unavailable', requestId: 'request-42', details: { retryable: true } };
+    const presentation = { reason: 'Service unavailable', nextStep: 'Try again', technicalDetails: [
+        { key: 'requestId', label: 'Request ID', value: 'request-42' },
+    ] };
+    const received: unknown[] = [];
+    const fixture = await createPluginUiTestkit({ identity,
+        authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, surface: { kind: 'author-surface' },
+        surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { presentActionFailure: async (input: Readonly<{ failure: unknown; signal: AbortSignal }>) => {
+            received.push(input.failure);
+            return presentation;
+        } },
+    });
+    try {
+        expect(fixture.context.hostApi.version().methods).toContain('presentActionFailure');
+        await expect(fixture.context.hostApi.presentActionFailure!(failure)).resolves.toEqual(presentation);
+        expect(received).toEqual([failure]);
+        await expect(fixture.context.hostApi.presentActionFailure!({ ...failure, details: { invalid: () => undefined } }))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(received).toEqual([failure]);
+    } finally { await fixture.dispose(); }
+});
+
 it('returns Connect account references through the real fixture host and SDK client', async () => {
     let result: OpenConnectedAccountsResult = { kind: 'selected', account: {
         service: { pluginId: 'com.acme.source', localId: 'account' }, accountId: 'work',

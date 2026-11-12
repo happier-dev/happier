@@ -1,4 +1,5 @@
 /** @moduleRealm daemon */
+import { PluginUiPresentActionFailureRequestV1Schema, PluginUiActionFailurePresentationV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { z } from 'zod/mini';
 import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiResourceIntentV1Schema } from '@happier-dev/protocol/plugins/ui';
 
@@ -667,6 +668,10 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     ) => string | Promise<string>;
     setUnsavedChanges?: (input: Readonly<{ isDirty: boolean; signal: AbortSignal }>) => void | Promise<void>;
     setPageNavigation?: (input: Readonly<{ navigation: PluginUiPageNavigationV1 | null; signal: AbortSignal }>) => void | Promise<void>;
+    /** Delegate presentation to the captured host presenter. */
+    presentActionFailure?: (input: Readonly<{
+        failure: import('../ui/hostApi.js').PluginUiActionFailureV1; signal: AbortSignal;
+    }>) => import('../ui/hostApi.js').PluginUiActionFailurePresentationV1 | Promise<import('../ui/hostApi.js').PluginUiActionFailurePresentationV1>;
     notify?: (input: Readonly<{ message: string; severity?: InteractionSeverity; signal: AbortSignal }>) => void | Promise<void>;
     confirm?: (input: Readonly<{ message: string; title?: string; action?: import('../identity.js').PluginReference; signal: AbortSignal }>) => boolean | Promise<boolean>;
     diagnostic?: (input: Readonly<{ data: PluginDiagnosticData; signal: AbortSignal }>) => void | Promise<void>;
@@ -684,6 +689,7 @@ type PluginUiTestkitHostMethodPolicy = 'fixture' | keyof PluginUiTestkitHostHand
  */
 const hostMethodPolicies = {
     context: 'fixture',
+    presentActionFailure: 'presentActionFailure',
     publishCurrentUiContext: 'publishCurrentUiContext',
     watchContext: 'fixture',
     executeAction: 'executeAction',
@@ -1674,6 +1680,12 @@ async function createPluginUiTestkitInternal<TSurface>(
                 }
                 const result = await handlers.openConnectedAccounts({ request: payload.data, signal });
                 return result ?? undefined;
+            }
+            case 'presentActionFailure': {
+                if (!handlers.presentActionFailure) throw fixtureError('unsupported_method', 'presentActionFailure is not installed.');
+                const payload = PluginUiPresentActionFailureRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'presentActionFailure payload is invalid.');
+                return PluginUiActionFailurePresentationV1Schema.parse(await handlers.presentActionFailure({ failure: payload.data, signal }));
             }
             case 'notify': {
                 if (!handlers.notify) throw fixtureError('unsupported_method', 'notify is not installed.');

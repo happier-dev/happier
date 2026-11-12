@@ -2815,6 +2815,7 @@
 | `./sessions` | `SessionMessageProvenanceV1` | type | daemon |
 | `./sessions` | `SessionMessageProvenanceV1Schema` | value | daemon |
 | `./sessions` | `SessionMessageRole` | type | daemon |
+| `./sessions` | `SessionMessageSendFailureCauseV1` | type | any |
 | `./sessions` | `SessionMessageSendResultV1ProtocolSchema` | value | any |
 | `./sessions` | `SessionModeCatalog` | type | daemon |
 | `./sessions` | `SessionPage` | type | daemon |

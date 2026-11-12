@@ -3,6 +3,8 @@ export { SessionTargetV1Schema, ActionSessionAddressV1Schema } from './sessionTa
 export type { SessionTargetV1, SessionTargetSelectorV1, ActionSessionTargetDeclarationV1, ActionSessionAddressV1 } from './sessionTargets.js';
 export type { ActionResolvedSessionTargetsV1 } from './sessionTargets.js';
 export { SessionMessageSendResultV1ProtocolSchema } from './messageSendResult.js';
+/** Named dependency of the canonical Session send result, for downstream declaration emit. */
+export type { SessionMessageSendFailureCauseV1 } from './messageSendResult.js';
 export { PluginSessionInputAttachmentsV1ProtocolSchema } from './inputAuthoring.js';
 export { SessionAcceptedWorkspaceV1Schema, SessionStatusActionResultV1Schema } from './status.js';
 export type { SessionAcceptedWorkspaceV1, SessionStatusActionResultV1 } from './status.js';
