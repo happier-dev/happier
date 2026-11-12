@@ -286,7 +286,8 @@ vi.mock("@/app/plugins/installations/publisherProof", async (importOriginal) => 
     const actual = await importOriginal<typeof import("@/app/plugins/installations/publisherProof")>();
     return { ...actual, verifyPluginInstallationPublisherHeader: verifyPublisherDefault };
 });
-installDbModuleMock(() => ({ db: dbMocks.db }));
+// This route fixture has no scheduled Runs; the real set query is covered by the provider integration suite.
+installDbModuleMock(() => ({ db: { ...dbMocks.db, $queryRaw: async () => [] } }));
 
 describe("registerAutomationV3Routes", () => {
     beforeEach(() => {

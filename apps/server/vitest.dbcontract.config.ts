@@ -30,6 +30,7 @@ export default defineConfig({
             "sources/app/auth/providers/accountIdentityChange.sqlite.integration.spec.ts",
             resolve(__dirname, '../../packages/tests/suites/db-contract/**/*.dbcontract.spec.{ts,mjs}'),
             ...(process.env.HAPPIER_DB_PROVIDER === 'postgres' ? [
+                'sources/app/automations/automationScheduleOccurrenceProjection.integration.spec.ts',
                 'sources/app/automations/automationClaimService.integration.spec.ts',
                 'sources/app/automations/automationScheduleTriggerFiring.feat.automations.integration.spec.ts',
                 'sources/app/automations/automationReplyHandoffWorker.integration.spec.ts',

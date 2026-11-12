@@ -402,6 +402,10 @@ export type AutomationDefinitionListItem = z.infer<typeof AutomationDefinitionLi
  */
 export const AutomationDefinitionDetailSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationDefinitionBaseSchema, {
   triggers: z.array(AutomationTriggerDetailSchema),
+  /** Latest due occurrence per current schedule revision; absence means the server has no exact projection. */
+  scheduleOccurrences: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema, triggerRevision: AutomationTriggerRevisionSchema,
+    scheduledFor: TIMESTAMP_SCHEMA, startedAt: z.nullable(TIMESTAMP_SCHEMA), held: z.boolean(),
+  }))),
   /** Predecessor bytes for direct reads and narrow retained-template recovery; ordinary writes use executionRecipe. */
   templateCiphertext: z.optional(z.string().check(z.minLength(1))),
   /** Private-reader current recipe; ordinary summary lists never disclose it. */

@@ -9,6 +9,7 @@ import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protoco
 import { type Fastify } from "../../types";
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
+import { loadAutomationScheduleOccurrences } from '@/app/automations/automationScheduleOccurrenceProjection';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { admitExecutionRunLifecycleAutomationRunsTx } from "@/app/automations/automationRunLifecycleAdmission";
@@ -119,18 +120,19 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const [eventProjections, lifecycleProjections, lastRunAt] = await Promise.all([
+    const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
         loadAutomationEventStatusProjections({ automations: [automation] }),
         loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
         loadAutomationLastRunAtProjections(automation.accountId, [automation.id]),
+        loadAutomationScheduleOccurrences(automation.accountId, [automation.id]),
     ]);
-    return toAutomationDefinitionDetailApiDto(
+    return { ...toAutomationDefinitionDetailApiDto(
         automation,
         accountCurrentness,
         lastRunAt.get(automation.id) ?? null,
         eventProjections,
         lifecycleProjections.get(automation.id),
-    );
+    ), scheduleOccurrences: scheduleOccurrences.get(automation.id) ?? [] };
 }
 
 /** The legacy definition field consumes the same Run summary as Library; it is not persisted. */
@@ -186,17 +188,18 @@ export function registerAutomationV3Routes(
                 ...('details' in query ? { details: true as const } : {}),
             });
             const rows = page.automations;
-            const [eventProjections, lifecycleProjections, lastRunAt] = await Promise.all([
+            const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
                 loadAutomationEventStatusProjections({ automations: rows }),
                 loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
                 loadAutomationLastRunAtProjections(accountId, rows.map(row => row.id)),
+                'details' in query ? loadAutomationScheduleOccurrences(accountId, rows.map(row => row.id)) : undefined,
             ]);
             if ('details' in query) {
                 const accountCurrentness = await getCurrentAutomationAccountCurrentness(accountId);
                 if (!accountCurrentness) return sendStoredContentFailure(reply);
                 return AutomationDefinitionDetailsResponseSchema.parse({
-                    automations: rows.map(row => toAutomationDefinitionDetailApiDto(row, accountCurrentness, lastRunAt.get(row.id) ?? null,
-                        eventProjections, lifecycleProjections.get(row.id))),
+                    automations: rows.map(row => ({ ...toAutomationDefinitionDetailApiDto(row, accountCurrentness, lastRunAt.get(row.id) ?? null,
+                        eventProjections, lifecycleProjections.get(row.id)), scheduleOccurrences: scheduleOccurrences?.get(row.id) ?? [] })),
                     nextCursor: page.nextCursor,
                 });
             }
