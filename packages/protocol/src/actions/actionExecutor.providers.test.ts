@@ -359,19 +359,21 @@ describe('Provider Settings Actions', () => {
     expect(getActionSpec('providers.connections.describe').safety).toBe('safe');
     expect(getActionSpec('providers.models.projection').inputSchema.safeParse({ machineId: 'machine',
       agentTargetKey: 'agent:codex', forceRefresh: true }).success).toBe(false);
-    // Refreshing a model catalog only reads Provider metadata.
+    // Refresh explicitly contacts the Provider; cached catalog reads stay safe.
     const refreshSpec = getActionSpec('providers.models.refresh');
-    expect(refreshSpec.sideEffectClass).toBe('read');
+    expect(refreshSpec.sideEffectClass).toBe('external');
+    expect(refreshSpec.safety).toBe('danger');
     const projection = { status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [] };
     const executor = createActionExecutor({ providerActionExecute: createProviderActionExecuteV1({
       assertCurrent() {}, rpc: async () => projection, setDefault: async () => ({ status: 'unchanged' }),
     }) });
     for (const surface of ['ui', 'cli', 'agent', 'mcp'] as const) {
       expect(resolveActionApprovalRouting({ actionId: refreshSpec.id, spec: refreshSpec,
-        context: { surface, authority: 'account_automation' } })).toMatchObject({ required: false });
+        context: { surface, authority: 'account_automation' } })).toMatchObject({ required: true });
+      const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [refreshSpec.id]: [surface] } });
       expect(await executor.execute(refreshSpec.id, { machineId: 'machine',
         agentTargetKey: projection.agentTargetKey, forceRefresh: true },
-      { surface, authority: 'account_automation' })).toEqual({ ok: true, result: projection });
+      { surface, authority: 'account_automation', actionsSettings })).toEqual({ ok: true, result: projection });
     }
   }, 60_000);
 

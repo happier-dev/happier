@@ -22,7 +22,8 @@ describe('bug report Submit Action admission', () => {
     // A new public intent must be admitted before any answering-client effect.
     const result = await executor.execute('bugreport.submit', input,
       { surface, authority: surface === 'ui' ? 'present_user' : 'account_automation' });
-    expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(result).toMatchObject({ ok: false, errorCode: surface === 'ui'
+      ? 'action_interactive_review_required' : 'approvals_not_supported' });
   });
 
   it('rejects caller-authored authority, destination credentials and extra diagnostic content envelopes', () => {

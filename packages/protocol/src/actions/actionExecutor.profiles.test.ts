@@ -288,6 +288,7 @@ describe('Profile entity Actions', () => {
     const store = catalogStore();
     await store.operations.save({ profile: authored });
     const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      presentUserActionConfirmation: async () => true,
       profileActionExecute: createProfileActionExecuteV1({ operations: store.operations }) });
     const read = await executor.execute('launch_profiles.read', { id: authored.id }, context);
     expect(read).toMatchObject({ ok: true, result: { status: 'present', revision: 0, record: { id: authored.id },

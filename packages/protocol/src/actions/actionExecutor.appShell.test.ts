@@ -135,7 +135,8 @@ describe('app shell Actions', () => {
   });
 
   it('refuses draft deletion when its client owner is unavailable', async () => {
-    const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      presentUserActionConfirmation: async () => true } as unknown as ActionExecutorDeps);
     await expect(executor.execute('session.draft.delete', { draftId: '00000000-0000-4000-8000-000000000001' }, {
       surface: 'ui', authority: 'present_user',
     })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });

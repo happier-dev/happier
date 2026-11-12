@@ -82,8 +82,8 @@ describe('search-backed code Actions', () => {
       expect(await admittedExecutor.execute(id, { ...target, operation: { kind: 'preview' } }, context))
         .toEqual({ ok: true, result: { status: 'loading' } });
       const input = { ...target, operation: { kind: 'apply', files } };
-      expect(await admittedExecutor.execute(id, input, context)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-      expect(approvals.at(-1)).toMatchObject({ actionId: id, actionArgs: input });
+      expect(await admittedExecutor.execute(id, input, context)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'edit-approval', actionId: id } });
+      expect(approvals.at(-1)).toMatchObject({ actionId: id, actionArgs: input, status: 'open' });
     }
     expect(requests).toHaveLength(4);
     expect(approvals).toHaveLength(2);
@@ -118,9 +118,9 @@ describe('search-backed code Actions', () => {
       const executor = createActionExecutor({
         approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'approval' }; },
         isActionApprovalRequired: (id, context, input) => isApprovalRequiredByActionsSettings(id,
-          { v: 1, actions: { [item.id]: { approvalRequiredSurfaces: ['ui'] } } }, context, undefined, undefined, input),
+          { v: 1, actions: { [item.id]: { approvalRequiredSurfaces: ['agent'] } } }, context, undefined, undefined, input),
       });
-      await executor.execute(item.id, item.input, { surface: 'ui', authority: 'present_user', actionRequestId: 'review-request',
+      await executor.execute(item.id, item.input, { surface: 'agent', authority: 'account_automation', actionRequestId: 'review-request',
         serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' } });
       if (!request) throw new Error(`Expected actual approval for ${item.id}`);
       const admission = resolveApprovalRequestApproveAdmission(request);
@@ -142,8 +142,8 @@ describe('search-backed code Actions', () => {
     const input = { machineId: 'machine', rootPath: '/repo', path: 'a.ts', files: [{ path: 'a.ts', expectedHash: 'a'.repeat(64), edits: [] }] };
     expect(await executor.execute('code.rename.apply', input, { surface: 'agent', authority: 'account_automation',
       actionRequestId: 'rename-request', serverId: 'home', runtimeAccountId: 'account', externalActionTarget: { kind: 'machine', machineId: 'machine' },
-    })).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    expect(requests).toMatchObject([{ actionId: 'code.rename.apply', actionArgs: input }]);
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'rename-approval', actionId: 'code.rename.apply' } });
+    expect(requests).toMatchObject([{ actionId: 'code.rename.apply', actionArgs: input, status: 'open' }]);
     expect(applied).toBe(false);
   });
   it('retains the Machine-side durable approval receipt for a semantic edit without parsing it as completed writes', async () => {

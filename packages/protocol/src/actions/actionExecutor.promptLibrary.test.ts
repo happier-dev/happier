@@ -421,8 +421,8 @@ describe('createActionExecutor (prompt library actions)', () => {
         artifacts.set('saved', { id: 'saved', ...input, revision: { headerVersion: 1, bodyVersion: 1 } }); return 'saved';
       } };
     const readSaveSettings = () => ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'artifact.folders.create': { enabled: folderEnabled, approvalRequiredSurfaces: ['ui'] } },
-      approvalWaivedSurfaces: { 'prompt_doc.create': ['ui'] } });
+      actions: { 'artifact.folders.create': { enabled: folderEnabled, approvalRequiredSurfaces: ['agent'] } },
+      approvalWaivedSurfaces: { 'prompt_doc.create': ['agent'] } });
     const executor = createExecutor({ artifactFolders: port,
       isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, readSaveSettings(), { surface: context.surface }),
       isApprovalExecutionOriginCurrent: async () => true,
@@ -432,9 +432,11 @@ describe('createActionExecutor (prompt library actions)', () => {
     });
     const input = { title: 'Saved', markdown: 'Reviewed text', folderId: 'new-folder',
       createFolder: { id: 'new-folder', name: 'New folder', expectedRevision: 3 } };
-    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: 'home',
+      actionCaller: { kind: 'host' as const }, defaultSessionMachineId: 'client',
       serverIdentityId: 'home', runtimeAccountId: 'owner', actionRequestId: 'save',
       get actionsSettings() { return readSaveSettings(); } };
+    const decisionContext = { ...context, surface: 'ui' as const, authority: 'present_user' as const };
     folderEnabled = false;
     expect(await executor.execute('prompt_doc.create', input, context)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
     expect(record.value).toMatchObject({ folders: [] }); expect(artifacts.size).toBe(0);
@@ -448,15 +450,15 @@ describe('createActionExecutor (prompt library actions)', () => {
         input: getActionSpec('artifact.folders.create').inputSchema.parse(input.createFolder) },
     ]) } } });
     expect(record.value).toMatchObject({ folders: [] }); expect(artifacts.size).toBe(0);
-    await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'reject' }, context);
+    await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'reject' }, decisionContext);
     expect(record.value).toMatchObject({ folders: [] }); expect(artifacts.size).toBe(0);
     await executor.execute('prompt_doc.create', input, { ...context, actionRequestId: 'save-again' });
     folderEnabled = false;
-    await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'approve' }, context);
+    await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'approve' }, decisionContext);
     expect(record.value).toMatchObject({ folders: [] }); expect(artifacts.size).toBe(0);
     folderEnabled = true;
     await executor.execute('prompt_doc.create', input, { ...context, actionRequestId: 'save-final' });
-    const decided = await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'approve' }, context);
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'save-approval', decision: 'approve' }, decisionContext);
     expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
     expect(approval, JSON.stringify(approval)).toMatchObject({ status: 'executed' });
     expect(record.value).toMatchObject({ folders: [{ id: 'new-folder', name: 'New folder' }], artifactHeadersById: { saved: { folderId: 'new-folder' } } });

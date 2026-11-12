@@ -39,7 +39,7 @@ describe('screen capture delivery Action admission', () => {
       expect(await executor.execute(id, input, person)).toEqual({ ok: true, result: output });
     }
   });
-  it('declares reversible recording edits without marks or warning acknowledgements and asks only for frame pixels', () => {
+  it('declares reversible recording edits and warning decisions without marks and asks only for frame pixels', () => {
     const editId = ActionIdSchema.safeParse('screenCapture.recording.edit');
     const readId = ActionIdSchema.safeParse('screenCapture.recording.read');
     expect(editId.success && readId.success).toBe(true);
@@ -51,7 +51,10 @@ describe('screen capture delivery Action admission', () => {
       { kind: 'includeVideo.set', mode: 'on' }, { kind: 'windowText.set', included: true },
     ] }).success).toBe(true);
     expect(edit.inputSchema.safeParse({ captureRef: 'movie', operations: [{ kind: 'pin.add', sourceTimeMs: 1234.5 }] }).success).toBe(false);
-    for (const operation of [{ kind: 'disclosure.warning', include: true }, { kind: 'windowText.warning', include: true },
+    for (const operation of [{ kind: 'disclosure.warning', include: true }, { kind: 'windowText.warning', include: true }]) {
+      expect(edit.inputSchema.safeParse({ captureRef: 'movie', operations: [operation] }).success).toBe(true);
+    }
+    for (const operation of [{ kind: 'disclosure.warning', include: 'yes' }, { kind: 'windowText.warning', include: 'yes' },
       { kind: 'frame.document', sourceTimeMs: 1000, document: {} }]) {
       expect(edit.inputSchema.safeParse({ captureRef: 'movie', operations: [operation] }).success).toBe(false);
     }

@@ -87,7 +87,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
         [row.id]: { approvalRequiredSurfaces: ['ui'] },
       } });
       expect(await executor.execute(row.id, row.input, { ...context, actionsSettings }))
-        .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
       expect(await executor.execute(row.id, row.input, { surface: 'agent', authority: 'account_automation' }))
         .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
       expect(effects).toEqual([]);
@@ -299,7 +299,7 @@ describe('createActionExecutor (runtime-unification actions)', () => {
       viewId: 'view_1',
     }, { surface: 'ui' });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: false,
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',

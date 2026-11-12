@@ -25,8 +25,8 @@ describe('Notify me Action', () => {
       notificationsNotifyMe: async () => { delivered = true; return { attemptedChannels: 1, deliveredChannels: 1 }; },
     });
     expect(await executor.execute(actionId, { message: 'Finished' }, context))
-      .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
-    expect(request).toMatchObject({ actionId, status: 'rejected', approval: { flow: 'blocking', result: 'required' } });
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'notify-approval', actionId } });
+    expect(request).toMatchObject({ actionId, status: 'open', approval: { flow: 'deferred', result: 'required' } });
     expect(delivered).toBe(false);
   });
   it('binds a Session caller to its own session and agent surface before notification delivery', async () => {
