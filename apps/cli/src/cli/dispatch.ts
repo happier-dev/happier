@@ -312,6 +312,15 @@ export async function dispatchCli(params: Readonly<{
     return;
   }
 
+  const isPrimaryRunner = readStartedByArg(argvBeforeOptionTerminator(params.args)).value === 'daemon';
+  if (isPrimaryRunner && !isCredentialFreeInvocation(params.args)) {
+    const { runWithRunnerHomeTransport } = await import('@/api/connection/runWithRunnerHomeTransport');
+    return await runWithRunnerHomeTransport(() => dispatchSelectedCli(params), params.signal);
+  }
+  return await dispatchSelectedCli(params);
+}
+
+async function dispatchSelectedCli(params: Parameters<typeof dispatchCli>[0]): Promise<void> {
   let args = [...params.args];
   const globalOptionArgs = argvBeforeOptionTerminator(args);
   const { terminalRuntime, rawArgv } = params;

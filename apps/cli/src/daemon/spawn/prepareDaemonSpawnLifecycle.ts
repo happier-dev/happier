@@ -1,6 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
-import { resolvePublishedServerHttpOrigin } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
 import {
@@ -43,8 +42,9 @@ function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
             String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').trim()
             || configuration.activeServerId,
         HAPPIER_SERVER_URL: configuration.serverUrl,
-        // The child resolves its route from this key; identity stays the canonical URL above.
-        HAPPIER_LOCAL_SERVER_URL: resolvePublishedServerHttpOrigin() ?? configuration.apiServerUrl,
+        // Process-local carrier listeners belong to the daemon. The surviving runner
+        // acquires its own carrier; URL-only Homes keep this configured route.
+        HAPPIER_LOCAL_SERVER_URL: configuration.apiServerUrl,
         HAPPIER_PUBLIC_SERVER_URL: configuration.publicServerUrl,
         HAPPIER_WEBAPP_URL: configuration.webappUrl,
     };

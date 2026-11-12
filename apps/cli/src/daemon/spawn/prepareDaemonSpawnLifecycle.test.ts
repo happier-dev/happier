@@ -68,11 +68,11 @@ describe('prepareDaemonSpawnLifecycle', () => {
       onSpawnResourceCleanupArmed: () => {},
     })).extraEnvForChildWithMessage;
 
-    it('routes the child through the daemon verified origin while keeping the canonical Home identity', async () => {
-      const release = publishServerHttpRuntimeOrigin('http://127.0.0.1:34353', 'https');
+    it('keeps the child independent of the daemon process-local carrier while retaining Home identity', async () => {
+      const release = publishServerHttpRuntimeOrigin('http://127.0.0.1:34353', 'iroh');
       try {
         const env = await prepare();
-        expect(env.HAPPIER_LOCAL_SERVER_URL).toBe('http://127.0.0.1:34353');
+        expect(env.HAPPIER_LOCAL_SERVER_URL).toBe(configuration.apiServerUrl);
         expect(env.HAPPIER_PUBLIC_SERVER_URL).toBe(configuration.publicServerUrl);
         expect(env.HAPPIER_SERVER_URL).toBe(configuration.serverUrl);
       } finally {

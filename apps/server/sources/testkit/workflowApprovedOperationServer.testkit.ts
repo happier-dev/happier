@@ -55,6 +55,10 @@ import { registerAccountPublicProfileRoutes } from '@/app/api/routes/account/reg
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '@/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
 import { registerPluginAvailabilityRoutes } from '@/app/plugins/availability/routes';
 import { registerTeamCredentialResourceRoutes } from '@/app/teams/credentials/registerTeamCredentialResourceRoutes';
+import { homeGovernanceRoutes } from '@/app/api/routes/home/homeGovernanceRoutes';
+import { pluginDataRoutes } from '@/app/api/routes/plugins/data/pluginDataRoutes';
+import { kvRoutes } from '@/app/api/routes/kv/kvRoutes';
+import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 
 type WorkflowApprovedOperationReceiverTransport = Readonly<{
     request: Parameters<ExternalActionForwardRpcCall>[0];
@@ -85,7 +89,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
         env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', HAPPIER_SERVER_IDENTITY_ID: homeIdentityId,
             HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
-    const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+    const app = Fastify({ logger: false, bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 }).withTypeProvider<ZodTypeProvider>();
     // Observe the real HTTP/authentication owners without substituting their decisions.
     let costPhase = 'fixture';
     const requestCosts: Array<{ phase: string; method: string; route: string; admissions: number; status: number | null }> = [];
@@ -139,6 +143,9 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             registerQualifiedConnectedAccountCredentialRoutesV4(app);
             registerPluginAvailabilityRoutes(app);
             registerTeamCredentialResourceRoutes(app);
+            homeGovernanceRoutes(app);
+            pluginDataRoutes(app);
+            kvRoutes(app);
         } else {
             registerWorkflowRunStorageRoutes(app);
             registerAccountEncryptionRoutes(app);

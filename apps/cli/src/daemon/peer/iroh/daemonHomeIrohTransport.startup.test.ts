@@ -10,7 +10,7 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { resolveServerProfileApiUrl } from '@/configuration/serverSelection';
-import { captureServerHttpBaseUrl, resolvePublishedServerHttpOrigin, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
 
 const axiosGet = vi.hoisted(() => vi.fn());
@@ -140,7 +140,7 @@ describe('daemon Home startup verification', () => {
     }
   });
 
-  it.each(['iroh', 'https'] as const)('keeps the child-captured Home origin serving after its upstream listener closes (%s replacement)', async replacement => {
+  it.each(['iroh', 'https'] as const)('keeps the process-captured Home origin serving after its upstream listener closes (%s replacement)', async replacement => {
     const servers: ReturnType<typeof createServer>[] = [];
     const fallback = replacement === 'https' ? await startHomeListener(2) : null;
     let dials = 0;
@@ -173,14 +173,14 @@ describe('daemon Home startup verification', () => {
       ] } };
     const home = await prepareDaemonHomeIrohTransport({ runtime, token: 'fixture-token', profile: tunnelProfile,
       readProfile: async () => tunnelProfile });
-    const childOrigin = resolvePublishedServerHttpOrigin();
+    const retainedOrigin = resolveServerHttpBaseUrl();
     try {
       const readHome = captureServerHttpBaseUrl();
       const initialOrigin = readHome();
-      // Spawn copies this string into HAPPIER_LOCAL_SERVER_URL. The requester
-      // Account boundary also retains a string for later settings requests.
-      if (!childOrigin) throw new Error('Expected published child route');
-      expect(await (await fetch(`${childOrigin}/v1/features`)).json()).toMatchObject({ upstreamAttempt: 1 });
+      // In-process requester Account consumers retain this origin for later
+      // settings requests across verified carrier replacement.
+      if (!retainedOrigin) throw new Error('Expected published process route');
+      expect(await (await fetch(`${retainedOrigin}/v1/features`)).json()).toMatchObject({ upstreamAttempt: 1 });
       await expect(home.reacquire()).resolves.toEqual({ status: 'ready' });
       expect(dials).toBe(1);
       expect(readHome()).toBe(initialOrigin);
@@ -191,12 +191,12 @@ describe('daemon Home startup verification', () => {
       expect(dials).toBe(2);
       expect(home.carrier).toBe(replacement === 'iroh' ? 'iroh' : 'standard');
       expect(readHome()).toBe(initialOrigin);
-      expect(resolvePublishedServerHttpOrigin()).toBe(childOrigin);
-      expect(await (await fetch(`${childOrigin}/v1/features`)).json()).toMatchObject({ upstreamAttempt: 2 });
+      expect(resolveServerHttpBaseUrl()).toBe(retainedOrigin);
+      expect(await (await fetch(`${retainedOrigin}/v1/features`)).json()).toMatchObject({ upstreamAttempt: 2 });
       expect((await fetch(`${initialOrigin}/v2/account/settings`)).status).toBe(200);
       await expect(home.verifyAuthenticated('fixture-token')).resolves.toEqual({ status: 'ready' });
       expect(dials).toBe(replacement === 'https' ? 3 : 2);
-      const socket = new WebSocket(childOrigin);
+      const socket = new WebSocket(retainedOrigin);
       try {
         const [message] = await once(socket, 'message');
         expect(String(message)).toBe('2');
@@ -211,7 +211,7 @@ describe('daemon Home startup verification', () => {
       await runtime.shutdown();
       if (fallback) await new Promise<void>((resolve, reject) => fallback.server.close(error => error ? reject(error) : resolve()));
     }
-    await expect(fetch(`${childOrigin}/v1/features`)).rejects.toThrow();
+    await expect(fetch(`${retainedOrigin}/v1/features`)).rejects.toThrow();
   });
 
   it.each(['transport_closed', 'future_native_closure', 'probe-timeout', 'health-unavailable', 'features-unavailable'] as const)('keeps startup alive on declared HTTPS with one Iroh attempt per acquisition after %s', async code => {
