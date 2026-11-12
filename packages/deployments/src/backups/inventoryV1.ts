@@ -1,6 +1,6 @@
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { isResticSnapshotBoundToManifestV1, isResticSnapshotOwnedV1, readResticRepositoryConfigV1,
-    readResticSnapshotInventoryV1, type BackupManifestV1, type ResticSnapshotV1 } from './manifestV1.js';
+    readResticSnapshotInventoryV1, readResticSourceIdsV1, type BackupManifestV1, type ResticSnapshotV1 } from './manifestV1.js';
 import { backupOperationFailureV1, backupOperationStepV1, executeBackupOperationStepV1,
     type DeploymentBackupReadInputV1 } from './verificationV1.js';
 
@@ -24,14 +24,14 @@ export async function inventoryDeploymentBackupsV1(input: DeploymentBackupInvent
         && manifest.environmentId === input.environmentId).map(manifest => [manifest.snapshot.snapshotId, manifest]));
     const entries = await backupOperationStepV1('inventory', () => rows.map<DeploymentBackupInventoryEntryV1>(row => {
         const { snapshot } = row;
-        const sources = snapshot.tags.filter(tag => tag.startsWith('src:'));
+        const sources = readResticSourceIdsV1(snapshot.tags);
         const kinds = snapshot.tags.filter(tag => tag.startsWith('kind:'));
         const kind = kinds[0] === 'kind:dump' ? 'dump' : kinds[0] === 'kind:volume' ? 'volume' : undefined;
-        if (!isResticSnapshotOwnedV1(snapshot, input.environmentId) || sources.length !== 1 || !sources[0]?.slice(4)
+        if (!isResticSnapshotOwnedV1(snapshot, input.environmentId) || sources.length !== 1 || !sources[0]
             || kinds.length !== 1 || !kind) return backupOperationFailureV1('backup_integrity_failed', 'inventory');
         const receipt = manifests.get(snapshot.snapshotId);
         const manifest = receipt && isResticSnapshotBoundToManifestV1(snapshot, receipt) ? receipt : undefined;
-        return { ...row, sourceId: sources[0].slice(4), kind, verified: manifest !== undefined,
+        return { ...row, sourceId: sources[0], kind, verified: manifest !== undefined,
             ...(row.totalBytesProcessed === undefined && manifest ? { totalBytesProcessed: manifest.totalBytesProcessed } : {}),
             ...(row.totalFilesProcessed === undefined && manifest ? { totalFilesProcessed: manifest.totalFilesProcessed } : {}),
             ...(manifest ? { manifest } : {}) };

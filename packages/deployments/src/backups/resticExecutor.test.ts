@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as owner from './resticExecutor.js';
+import { createDeploymentDumpBackupSourceV1, createDeploymentVolumeBackupSourceIdV1 } from './configurationV1.js';
 import { RESTIC_RUNTIME_V1, type ResticCommandV1 } from './resticExecutor.js';
 const buildResticRequestV1 = (...args: unknown[]) => {
     const implementation = Reflect.get(owner, 'buildResticRequestV1');
@@ -14,6 +15,29 @@ const access = { repository: 's3:https://s3.example.test/bucket/env', passwordFi
 const request = (command: ResticCommandV1) => buildResticRequestV1({ access, environmentId: 'env-one', command });
 
 describe('restic request contract', () => {
+    it('transports canonical dump and volume source identities as one lossless Restic tag', () => {
+        const dump = createDeploymentDumpBackupSourceV1('database-2');
+        const volumeSourceId = createDeploymentVolumeBackupSourceIdV1('database-2', 'data');
+        for (const command of [
+            { kind: 'backupStdin', sourceId: dump.sourceId, filename: 'db.dump' },
+            { kind: 'backupPaths', sourceId: volumeSourceId, paths: ['/source/data'] },
+            { kind: 'backupStdin', sourceId: 'archive\n', filename: 'db.dump' },
+            { kind: 'backupStdin', sourceId: 'archive\u0085', filename: 'db.dump' },
+        ] as const) {
+            const argv = request(command).argv as readonly string[];
+            const tags = argv.flatMap((arg, index) => arg === '--tag' ? argv[index + 1]!.split(',').map(tag => tag.trim()) : []);
+            const sourceTags = tags.filter(tag => tag.startsWith('src-v1:'));
+            expect(sourceTags).toHaveLength(1);
+            expect(decodeURIComponent(sourceTags[0]!.slice(7))).toBe(command.sourceId);
+        }
+    });
+
+    it('retains lossless legacy tags and their native retention groups', () => {
+        for (const sourceId of ['plain', '%5Bdump%5D', ' leading']) {
+            expect(request({ kind: 'backupStdin', sourceId, filename: 'db.dump' }).argv).toContain(`src:${sourceId}`);
+        }
+    });
+
     it('uses the protected SSH config and passes one writable local repository mount through the same request', () => {
         const sftp = buildResticRequestV1({ access: { ...access, s3: undefined,
             repository: 'sftp://archive@receiver/repository', sftp: { configFilePath: '/run/happier/backup/ssh-config' },
@@ -59,7 +83,7 @@ describe('restic request contract', () => {
     it('rejects ambiguous snapshot aliases and ownership delimiters before a native request exists', () => {
         expect(() => request({ kind: 'dump', snapshotId: 'latest', path: '/db.dump' })).toThrow();
         expect(() => buildResticRequestV1({ access, environmentId: 'one,two', command: { kind: 'init' } })).toThrow();
-        expect(() => request({ kind: 'backupStdin', sourceId: 'one,two', filename: 'db.dump' })).toThrow();
+        expect(() => request({ kind: 'backupStdin', sourceId: '', filename: 'db.dump' })).toThrow();
         expect(() => request({ kind: 'forget', retention: { kind: 'keepEverything' }, dryRun: true })).toThrow();
     });
 });

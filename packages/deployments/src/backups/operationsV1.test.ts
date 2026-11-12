@@ -54,6 +54,16 @@ const input = (native: ReturnType<typeof boundary>) => ({ environmentId, operati
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
 describe('selected repository backup operations', () => {
+    it('lists encoded canonical source IDs and legacy percent-containing IDs without conflating them', async () => {
+        const sourceId = JSON.stringify(['dump', 'database-2']);
+        const encoded = { ...rawSnapshot(), tags: ['happier', `env:${environmentId}`, 'kind:dump',
+            `src-v1:${encodeURIComponent(sourceId)}`] };
+        const legacy = { ...rawSnapshot(otherId), tags: ['happier', `env:${environmentId}`, 'kind:dump', 'src:%5Bdump%5D'] };
+        const native = boundary({ inventory: [encoded, legacy] });
+        const result = await owners.inventoryDeploymentBackupsV1(input(native));
+        expect(result.entries.map(entry => entry.sourceId)).toEqual([sourceId, '%5Bdump%5D']);
+    });
+
     it.each(['run', 'verify', 'prune'] as const)('retains completed native failure evidence through the %s catch and closed Details decoder', async mode => {
         const nativeFailure = { exitCode: 1, stderr: 'Fatal: could not find snapshot [REDACTED]', stderrTruncated: true };
         const native = boundary();
@@ -66,7 +76,7 @@ describe('selected repository backup operations', () => {
             return native.execute(request);
         };
         const effect = mode === 'run' ? owners.runDeploymentBackupV1({ ...input(native), execute,
-            data: { engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } } })
+            data: [{ engine: 'postgres', service: 'db', logicalBackup: { adapter: 'postgres-v1', database: 'DATABASE_NAME' } }] })
             : mode === 'verify' ? owners.verifyDeploymentBackupV1({ ...input(native), execute, configRevision: 1, manifest, level: 'manifestReadBack' })
                 : owners.pruneDeploymentBackupsV1({ ...input(native), execute, verification, protectedSnapshotIds: [protectedId] });
         const error = await effect.then(() => { throw new Error('Expected the native failure'); }, error => error);

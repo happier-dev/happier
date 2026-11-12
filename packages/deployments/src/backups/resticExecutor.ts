@@ -1,3 +1,4 @@
+import { buildResticSourceTagV1 } from './manifestV1.js';
 import { buildResticRetentionArgsV1, type BackupRetentionV1 } from './retentionV1.js';
 
 /** Stable snapshot path, independent of a service's mount target or operation. */
@@ -81,9 +82,9 @@ export function buildResticRequestV1(input: Readonly<{
                 '--tag', 'happier-probe', '--stdin', '--stdin-filename', 'destination-probe');
             break;
         case 'backupStdin': case 'backupPaths': {
-            const sourceId = ownershipId(command.sourceId);
+            const sourceTag = buildResticSourceTagV1(command.sourceId);
             argv.push('backup', '--host', host, '--tag', 'happier', '--tag', environmentTag,
-                '--tag', command.kind === 'backupStdin' ? 'kind:dump' : 'kind:volume', '--tag', `src:${sourceId}`);
+                '--tag', command.kind === 'backupStdin' ? 'kind:dump' : 'kind:volume', '--tag', sourceTag);
             if (command.kind === 'backupStdin') argv.push('--stdin', '--stdin-filename', command.filename);
             else {
                 if (!command.paths.length) throw new RangeError('A volume backup requires selected paths');

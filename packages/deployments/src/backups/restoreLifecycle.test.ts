@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as owners from '../index.js';
+import { createDeploymentDumpBackupSourceV1 } from './configurationV1.js';
 import type { DeploymentRestoreConfirmInputV1, DeploymentRestoreNativeRequestV1, DeploymentRestoreNativeResultV1,
     DeploymentRestorePrepareInputV1, DeploymentRestorePrepareReceiptV1 } from '../index.js';
 import type { DeploymentBackupRunInputV1 } from '../actions/backups.js';
@@ -203,6 +204,26 @@ describe('exact PostgreSQL restore semantic owner', () => {
         expect(result.destination).toEqual(copyDestination);
         expect(native.writersRunning).toBe(true);
         expect(native.names).toEqual(streamFails ? ['app', 'restore_stage'] : ['app', 'restore_old']);
+    });
+
+    it('resolves and restores an encoded canonical source capture against its matching configuration', async () => {
+        const selected = createDeploymentDumpBackupSourceV1('db');
+        const source: DeploymentBackupManifestV1 = { ...manifest, sourceId: selected.sourceId,
+            snapshot: { ...manifest.snapshot, tags: ['happier', 'env:source', 'kind:dump',
+                `src-v1:${encodeURIComponent(selected.sourceId)}`] } };
+        const currentDestination = { ...destination, environmentId: 'source' };
+        const resolved = owners.resolveDeploymentRestoreCaptureV1({ environmentId: 'source', restoreBackupId: snapshotId,
+            destination: currentDestination, capture: { source, sourceFormat: 'postgresCustom',
+                target: { service: 'db', adapter: 'postgres-v1', database: 'app' },
+                configuration: { ...safetyBackup().configuration, sources: [selected],
+                    ownership: { environmentId: 'source', prefix: 'source' } },
+                repository: { repository: access.repository } } });
+        expect(resolved.kind).toBe('resolved');
+        if (resolved.kind !== 'resolved') throw new Error('Expected the encoded source capture to remain restorable');
+        const native = boundary({ source });
+        const receipt = await prepare(native, resolved.capture);
+        expect(await confirm(native, receipt, resolved.capture)).toMatchObject({ kind: 'restored', verified: true,
+            source: { sourceId: selected.sourceId, snapshot: { snapshotId } } });
     });
 
     it('restores an exact retained scheduled manifest through the existing safety and confirmation lifecycle', async () => {

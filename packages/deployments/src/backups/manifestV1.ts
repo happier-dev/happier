@@ -5,6 +5,22 @@ export type ResticSnapshotV1 = DeploymentBackupSnapshotV1;
 export type BackupManifestV1 = DeploymentBackupManifestV1;
 export type ResticBackupSummaryV1 = Readonly<{ snapshotId: string; totalBytesProcessed: number; totalFilesProcessed: number }>;
 
+/** Restic 0.19.1 splits --tag on commas without escaping; keep source IDs intact outside transport. */
+export function buildResticSourceTagV1(sourceId: string): string {
+    if (!sourceId) throw new RangeError('A restic source identifier is required');
+    // Keep lossless legacy tags stable: native retention groups snapshots by host and tags.
+    return sourceId.includes(',') || /\p{White_Space}$/u.test(sourceId)
+        ? `src-v1:${encodeURIComponent(sourceId)}` : `src:${sourceId}`;
+}
+
+/** Legacy src: snapshot tags remain literal, including percent-containing source IDs. */
+export function readResticSourceIdsV1(tags: readonly string[]): string[] {
+    return tags.filter(tag => tag.startsWith('src:') || tag.startsWith('src-v1:')).map(tag => {
+        if (tag.startsWith('src:')) return tag.slice(4);
+        try { return decodeURIComponent(tag.slice(7)); } catch { return ''; }
+    });
+}
+
 export function resticEvidenceFailureV1(code: 'backup_failed' | 'outcome_unknown'): never {
     throw Object.assign(new Error(code), { code });
 }
@@ -75,7 +91,7 @@ export function isResticSnapshotBoundToManifestV1(snapshot: ResticSnapshotV1, ma
         && snapshot.hostname === expected.hostname && snapshot.time === expected.time
         && snapshot.paths.length === expected.paths.length && snapshot.paths.every((path, index) => path === expected.paths[index])
         && actualTags.size === expectedTags.size && snapshot.tags.every(tag => expectedTags.has(tag))
-        && snapshot.tags.includes(`src:${manifest.sourceId}`) && snapshot.tags.includes(`kind:${manifest.kind}`);
+        && readResticSourceIdsV1(snapshot.tags).includes(manifest.sourceId) && snapshot.tags.includes(`kind:${manifest.kind}`);
 }
 
 /** Snapshot summaries are optional native facts; absence does not mean a zero-byte backup. */
@@ -104,7 +120,7 @@ export function readResticBackupManifestV1(input: Readonly<{ summary: ResticBack
 } & ({ kind: 'dump'; producerChecksumSha256: string } | { kind: 'volume' })>): BackupManifestV1 {
     const snapshot = input.snapshots.find(snapshot => snapshot.snapshotId === input.summary.snapshotId);
     if (!snapshot || input.snapshots.length !== 1 || !isResticSnapshotOwnedV1(snapshot, input.environmentId)
-        || !snapshot.tags.includes(`kind:${input.kind}`) || !snapshot.tags.includes(`src:${input.sourceId}`)) return resticEvidenceFailureV1('outcome_unknown');
+        || !snapshot.tags.includes(`kind:${input.kind}`) || !readResticSourceIdsV1(snapshot.tags).includes(input.sourceId)) return resticEvidenceFailureV1('outcome_unknown');
     return { schemaVersion: 1, environmentId: input.environmentId, sourceId: input.sourceId, kind: input.kind,
         configRevision: input.configRevision, repositoryId: input.repositoryId, snapshot,
         totalBytesProcessed: input.summary.totalBytesProcessed, totalFilesProcessed: input.summary.totalFilesProcessed,

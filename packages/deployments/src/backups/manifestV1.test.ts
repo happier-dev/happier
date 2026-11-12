@@ -31,6 +31,18 @@ const manifestInput = { backupStdout: [JSON.stringify({ message_type: 'status', 
 const input = manifestInput;
 
 describe('native restic evidence', () => {
+    it('binds encoded canonical source tags while retaining legacy snapshot evidence', () => {
+        const sourceId = JSON.stringify(['dump', 'database-2']);
+        const tags = ['happier', 'env:env-one', 'kind:dump', `src-v1:${encodeURIComponent(sourceId)}`];
+        const result = readResticBackupManifestV1({ ...input, sourceId,
+            snapshotsStdout: JSON.stringify([{ ...nativeSnapshot, tags }]) });
+        expect(result.sourceId).toBe(sourceId);
+        expect(owner.isResticSnapshotBoundToManifestV1(result.snapshot, result)).toBe(true);
+        const invalid = tags.map(tag => tag.startsWith('src-v1:') ? 'src-v1:%ZZ' : tag);
+        expect(() => readResticBackupManifestV1({ ...input, sourceId,
+            snapshotsStdout: JSON.stringify([{ ...nativeSnapshot, tags: invalid }]) })).toThrow();
+    });
+
     it('binds the actual summary to read-back native snapshot/tree/source metadata after both processes succeed', () => {
         expect(readResticBackupManifestV1(input)).toEqual({ schemaVersion: 1, environmentId: 'env-one', sourceId: 'main', kind: 'dump',
             configRevision: 3, repositoryId, snapshot: { snapshotId, treeId, hostname: nativeSnapshot.hostname,

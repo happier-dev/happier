@@ -3,7 +3,7 @@ import { DeploymentBackupManifestV1Schema, DeploymentBackupSnapshotV1Schema, Dep
 import type { DeploymentBackupNativeResultV1, DeploymentBackupRunInputV1 } from '../actions/backups.js';
 import { isResticSnapshotBoundToManifestV1, readResticNativeJsonV1, readResticNativeRecordV1,
     readResticRepositoryConfigV1, readResticSnapshotsV1, type BackupManifestV1 } from './manifestV1.js';
-import { buildResticRequestV1, type ResticCommandV1 } from './resticExecutor.js';
+import { buildResticRequestV1, RESTIC_VOLUME_SOURCE_PATH_V1, type ResticCommandV1 } from './resticExecutor.js';
 
 export type DeploymentBackupReadInputV1 = Pick<DeploymentBackupRunInputV1, 'environmentId' | 'access' | 'signal' | 'execute'>;
 export type DeploymentBackupVerificationV1 = Readonly<{
@@ -51,7 +51,7 @@ export async function executeBackupOperationStepV1(input: DeploymentBackupReadIn
 /** Shared by a just-created backup and exact receipt verification. Repository/snapshot binding precedes this read. */
 export async function readBackDeploymentBackupManifestV1(input: DeploymentBackupReadInputV1 & Readonly<{ manifest: BackupManifestV1 }>): Promise<void> {
     const { manifest } = input;
-    if (manifest.kind !== 'dump') return backupOperationFailureV1('unsupported_action', 'manifest');
+    if (manifest.kind === 'volume') return readBackDeploymentVolumeManifestV1(input);
     const path = manifest.snapshot.paths[0];
     if (manifest.snapshot.paths.length !== 1 || !path || !path.startsWith('/') || path.slice(1).includes('/')
         || manifest.totalFilesProcessed !== 1) return backupOperationFailureV1('backup_integrity_failed', 'manifest');
@@ -99,4 +99,19 @@ export async function verifyDeploymentBackupV1(input: DeploymentBackupVerifyInpu
     if (input.level === 'repositoryCheck') await executeBackupOperationStepV1(input, { kind: 'check' }, 'repositoryCheck');
     if (input.signal.aborted) return backupOperationFailureV1('cancelled', input.level === 'repositoryCheck' ? 'repositoryCheck' : 'payload');
     return { kind: 'verified', level: input.level, manifest };
+}
+
+/** The exact snapshot/tree is bound by the operation receipt. Restic's directory
+ * dump streams an authenticated tar of that subtree and fails on unreadable
+ * content. Consume it through the native raw-byte path, never bounded text or a
+ * host staging directory. Restic remains the file/metadata decoder. */
+async function readBackDeploymentVolumeManifestV1(input: DeploymentBackupReadInputV1 & Readonly<{ manifest: BackupManifestV1 }>): Promise<void> {
+    const { manifest } = input;
+    if (manifest.snapshot.paths.length !== 1 || manifest.snapshot.paths[0] !== RESTIC_VOLUME_SOURCE_PATH_V1) {
+        return backupOperationFailureV1('backup_integrity_failed', 'manifest');
+    }
+    const payload = await executeBackupOperationStepV1(input,
+        { kind: 'dump', snapshotId: manifest.snapshot.snapshotId, path: RESTIC_VOLUME_SOURCE_PATH_V1 }, 'payload');
+    DeploymentBackupManifestV1Schema.shape.totalBytesProcessed.parse(payload.stdoutBytes);
+    DeploymentBackupSnapshotV1Schema.shape.snapshotId.parse(payload.stdoutChecksumSha256);
 }

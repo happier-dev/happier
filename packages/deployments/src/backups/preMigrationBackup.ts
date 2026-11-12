@@ -1,5 +1,5 @@
 import type { DeploymentBackupManifestV1, DeploymentPreMigrationBackupV1, DeploymentBackupRestoreCaptureV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
-import { isResticSnapshotOwnedV1 } from './manifestV1.js';
+import { isResticSnapshotOwnedV1, readResticSourceIdsV1 } from './manifestV1.js';
 import { deploymentBackupDumpFilenameV1 } from '../actions/backups.js';
 import type { DeploymentRestoreDestinationV1 } from './restoreLifecycle.js';
 
@@ -64,7 +64,7 @@ export function resolveDeploymentRestoreCaptureV1(input: Readonly<{
     }
     const kind = target.adapter === 'volume-v1' ? 'volume' : 'dump';
     if (source.kind !== kind || !isResticSnapshotOwnedV1(source.snapshot, sourceEnvironmentId)
-        || !source.snapshot.tags.includes(`src:${source.sourceId}`) || !source.snapshot.tags.includes(`kind:${kind}`)
+        || !readResticSourceIdsV1(source.snapshot.tags).includes(source.sourceId) || !source.snapshot.tags.includes(`kind:${kind}`)
         || !configuration.sources.some(selected => selected.kind === kind && selected.sourceId === source.sourceId && selected.service === target.service
             && (target.adapter !== 'volume-v1' || selected.kind === 'volume' && selected.volume === target.volume))) {
         return { kind: 'refused', code: 'backup_required' };
