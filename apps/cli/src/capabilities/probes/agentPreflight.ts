@@ -44,7 +44,7 @@ import { probeAgentModesBestEffort } from './agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from './agentConfigOptionsProbe';
 import { probeAgentCatalogs } from './agentCatalogsProbe';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
-import { resolveProfileProbeEnvironment } from './resolveProfileProbeEnvironment';
+import { prepareProfileProbeEnvironment, type ProfileProbeEnvironment } from './resolveProfileProbeEnvironment';
 import { resolvePreflightSessionControlsProbeEnvironment, withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
@@ -345,11 +345,29 @@ export async function invokeCliPreflightMethod(
             env: process.env,
         }) };
     }
-    let profileProbeEnvironment: Awaited<ReturnType<typeof resolveProfileProbeEnvironment>> = null;
+    let preparedProfile: Awaited<ReturnType<typeof prepareProfileProbeEnvironment>> = null;
+    let profileProbeEnvironment: ProfileProbeEnvironment | null = null;
+    let profilePreparationFailed = false;
+    const profileFailure = () => ({
+        ok: false, error: {
+            code: 'profile-preflight-failed',
+            message: 'Could not prepare the selected backend profile for this probe.',
+        },
+    } as const);
+    const acquireProfileEnvironment = async (signal?: AbortSignal) => {
+        try {
+            requestContext.signal?.throwIfAborted();
+            profileProbeEnvironment = preparedProfile ? await preparedProfile.materialize(signal) : null;
+            return profileProbeEnvironment;
+        } catch (error) {
+            profilePreparationFailed = true;
+            throw error;
+        }
+    };
     try {
         const secretReferenceOverlay = params?.secretReferenceOverlay == null
             ? undefined : SecretReferenceOverlayV1Schema.parse(params.secretReferenceOverlay);
-        profileProbeEnvironment = await resolveProfileProbeEnvironment({
+        preparedProfile = await prepareProfileProbeEnvironment({
             agentId,
             profileId: params?.profileId,
             secretReferenceOverlay,
@@ -361,14 +379,15 @@ export async function invokeCliPreflightMethod(
             secretSources: dependencies.secretSources,
             signal: requestContext.signal,
         });
+        profileProbeEnvironment = preparedProfile;
+        // Existing native-home and Connected Account preparation consume the complete
+        // Profile environment at their acquisition boundary.
+        if (method === 'probeCatalogs' && dependencies.agentCatalogEntry?.resolveSessionRuntimePreferences
+            || requiresMaterializedAuth) {
+            await acquireProfileEnvironment();
+        }
     } catch {
-        return {
-            ok: false,
-            error: {
-                code: 'profile-preflight-failed',
-                message: 'Could not prepare the selected backend profile for this probe.',
-            },
-        };
+        return profileFailure();
     }
     const nativeLaunchPreferences = method === 'probeCatalogs'
         ? await dependencies.agentCatalogEntry?.resolveSessionRuntimePreferences?.({
@@ -491,6 +510,18 @@ export async function invokeCliPreflightMethod(
         processEnv: preparedLaunchEnvironment ? {} : ambientEnv,
         materializedEnv,
     })).env;
+    const acquireEnvironment = async (signal?: AbortSignal) => {
+        const profile = await acquireProfileEnvironment(signal);
+        const nativeMaterializedEnv = preparedLaunchEnvironment ? materializedEnv : buildScopedProcessEnv({
+            baseEnv: { ...nativeLaunchEnvironment, ...explicitEnvironment, ...(profile?.env ?? {}) },
+            explicitEnv: connectedServiceProbeEnvironment.materializedEnv ?? {},
+            unsetEnvKeys: connectedServiceProbeEnvironment.unsetEnvKeys,
+        });
+        return (await resolvePreflightSessionControlsProbeEnvironment({
+            agentId, modelConfig, registrySnapshot, catalogEntry: dependencies.agentCatalogEntry,
+            processEnv: preparedLaunchEnvironment ? {} : ambientEnv, materializedEnv: nativeMaterializedEnv,
+        })).env;
+    };
     const commonProbeArgs = {
         agentId,
         catalogEntry: dependencies.agentCatalogEntry,
@@ -513,6 +544,7 @@ export async function invokeCliPreflightMethod(
         accountSettings: probeContext.accountSettings,
         credentials: probeContext.credentials,
         env: probeProcessEnv,
+        acquireEnvironment,
         materializedEnv,
         commandArgsSuffix: preparedLaunchEnvironment?.commandArgsSuffix,
         profileCacheKey: profileProbeEnvironment?.cacheKey ?? null,
@@ -520,6 +552,7 @@ export async function invokeCliPreflightMethod(
             connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
     };
 
+      const runProbe = async (): Promise<CapabilitiesInvokeResponse> => {
       requestContext.signal?.throwIfAborted();
       if (method === 'probeCatalogs') {
           return { ok: true, result: await probeAgentCatalogs({ ...commonProbeArgs, bypassCache: params?.bypassCache === true }) };
@@ -532,7 +565,8 @@ export async function invokeCliPreflightMethod(
           catalogEntry: dependencies.agentCatalogEntry,
           processEnv: probeProcessEnv,
           materializedEnv: commonProbeArgs.materializedEnv,
-        }, async ({ env }) => {
+          acquireEnvironment,
+        }, async ({ env, acquireEnvironment }) => {
           if (!preflightAdapter?.probePassiveRealtimeSetupRaw) return { v: 1, status: 'unavailable' } as const;
           const raw = await preflightAdapter.probePassiveRealtimeSetupRaw({
             backendTarget: probeContext.backendTarget,
@@ -544,6 +578,7 @@ export async function invokeCliPreflightMethod(
             timeoutMs,
             accountSettings: probeContext.accountSettings,
             env,
+            acquireEnvironment,
             commandArgsSuffix: preparedLaunchEnvironment?.commandArgsSuffix,
             ...(requestContext.signal ? { signal: requestContext.signal } : {}),
             ...(requestContext.deadlineSignal ? { deadlineSignal: requestContext.deadlineSignal } : {}),
@@ -639,7 +674,7 @@ export async function invokeCliPreflightMethod(
                 const target = defaultEndpointUrl ? await (dependencies.resolveNativeCatalogTarget ?? resolveNativeCatalogTarget)({
                     observation,
                     catalogEntry: nativeContext.catalogEntry,
-                    environment: probeProcessEnv,
+                    environment: await acquireEnvironment(signal),
                     cwd,
                     defaultEndpointUrl,
                     enabledSettingSources,
@@ -696,6 +731,14 @@ export async function invokeCliPreflightMethod(
           return { ok: true, result: await probeAgentModesBestEffort(commonProbeArgs) };
       }
       return { ok: true, result: await probeAgentConfigOptionsBestEffort(commonProbeArgs) };
+      };
+      try {
+          const result = await runProbe();
+          return profilePreparationFailed ? profileFailure() : result;
+      } catch (error) {
+          if (profilePreparationFailed) return profileFailure();
+          throw error;
+      }
     } finally {
       preparationLifetime.abort();
       try { await preparedLaunchEnvironment?.dispose(); }

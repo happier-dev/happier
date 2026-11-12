@@ -1068,7 +1068,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     };
     const createContext = async (
         probeParams: Omit<PreflightSessionControlsProbeParams, 'timeoutMs'> & { timeoutMs?: number },
-    ): Promise<AgentPreflightSessionControlsProbeContextV1> => {
+    ): Promise<AgentPreflightSessionControlsProbeContextV1 & Readonly<{ acquireNativeInput(): Promise<AgentPreflightSessionControlsProbeInputV1> }>> => {
         const signal = createPreflightProbeSignal(probeParams.signal, params.retirementSignal);
         const assertCurrent = (): void => {
             if (!params.isCurrent() || signal.aborted) {
@@ -1086,7 +1086,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             accountSettings: probeParams.accountSettings,
             environment,
         });
-        const exec = createProviderScopedStableExecService({
+        const createExec = (environment: Readonly<Record<string, string>>) => createProviderScopedStableExecService({
             ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
             cwd: probeParams.cwd,
             environment,
@@ -1100,6 +1100,28 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             isOccurrenceCurrent: params.isCurrent,
             additionalAllowedEnvironmentKeys: contribution.managedServiceCommands?.flatMap((command) => command.environmentKeys ?? []),
         });
+        const exec = createExec(environment);
+        let nativeContext: Promise<Readonly<{
+            environment: Readonly<Record<string, string>>;
+            exec: ReturnType<typeof createProviderScopedStableExecService>;
+            input: AgentPreflightSessionControlsProbeInputV1;
+        }>> | undefined;
+        const acquireNativeContext = () => nativeContext ??= (async () => {
+            assertCurrent();
+            const environment = Object.freeze({
+                ...readPreflightProbeEnvironment(probeParams.acquireEnvironment
+                    ? await probeParams.acquireEnvironment(signal) : probeParams.env),
+                ...params.nativeEnvironment,
+            });
+            assertCurrent();
+            const input = readPreflightProbeInput({
+                pluginSettings, runtimeDescriptorV1: probeParams.runtimeDescriptorV1,
+                runtimeKindOverride: probeParams.runtimeKindOverride,
+                accountSettings: probeParams.accountSettings, environment,
+            });
+            const exec = createExec(environment);
+            return { environment, exec, input };
+        })();
         const unavailable = (): AgentPreflightSessionControlsCommandResultV1 => Object.freeze({
             ok: false,
             stdout: '',
@@ -1113,6 +1135,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 try {
                     assertCurrent();
                     if (command.toolId === undefined) return unavailable();
+                    const { environment, exec, input } = await acquireNativeContext();
                     return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
                         assertCurrent();
                         const resolved = await exec.systemTools.resolve({ toolId: command.toolId!, purpose: `Probe ${params.agentId} Session controls`, cwd: probeParams.cwd, signal, ...(preferredPath ? { preferredPath } : {}) });
@@ -1150,6 +1173,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                     throw new Error('Agent preflight JSON-RPC command is not declared');
                 }
                 assertCurrent();
+                const { environment, exec, input } = await acquireNativeContext();
                 return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env, preferredPath) => {
                     assertCurrent();
                     const executable = command.toolId !== undefined
@@ -1215,6 +1239,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             if (!command || !declaredSystemToolIds.has(requested.toolId)) throw new Error('Agent preflight managed service command is not declared');
             if (typeof mode.launch.cwd === 'string' || mode.launch.cwd?.root !== 'workspace' || mode.launch.cwd.relativePath !== '') throw new Error('Agent preflight managed service must use its scoped working directory');
             if (!params.bindManagedServices) throw new Error('Agent preflight managed service owner is unavailable');
+            const { environment, exec, input } = await acquireNativeContext();
             return await withPreparedPreflightCommand(command, { ...input, bypassCache: probeParams.bypassCache, signal }, environment, async (args, env) => {
                 assertCurrent();
                 const services = params.bindManagedServices!({ exec, signal });
@@ -1244,8 +1269,9 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 }
             }, probeParams.cleanupScope, probeParams.commandArgsSuffix);
         };
-        const resolveRequestedAcpAuthentication = (request: PreflightCommandRequest & Readonly<{ authenticationMethodId?: string }>) => {
+        const resolveRequestedAcpAuthentication = async (request: PreflightCommandRequest & Readonly<{ authenticationMethodId?: string }>) => {
             if (request.authenticationMethodId) return { authenticationMethodId: request.authenticationMethodId };
+            const { input } = await acquireNativeContext();
             const catalogs = contribution.catalogs;
             return catalogs && 'kind' in catalogs && catalogs.kind === 'acp' && isExactPreflightCommand(catalogs.command, request)
                 ? declaredAcpAuthentication(catalogs, input) : {};
@@ -1253,7 +1279,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         const probeDeclaredAcpCatalogs: AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpCatalogs'] =
             async (request) => await withDeclaredJsonRpcClient(request, async (client, scopedSignal) => (
                 await probeAcpCatalogs({ client, signal: scopedSignal, cwd: probeParams.cwd,
-                    ...resolveRequestedAcpAuthentication(request),
+                    ...await resolveRequestedAcpAuthentication(request),
                 })
             ));
         const probeDeclaredAcpSessionControls: NonNullable<AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpSessionControls']> =
@@ -1262,7 +1288,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 const controls = await probeAcpSessionControls({ client, signal: scopedSignal, cwd: probeParams.cwd,
                     modelConfigOptionId: request.modelConfigOptionId ?? modelConfigOptionId,
                     configOptionOverrides: request.configOptionOverrides ?? probeParams.configOptionOverrides,
-                    ...resolveRequestedAcpAuthentication(request) });
+                    ...await resolveRequestedAcpAuthentication(request) });
                 const { normalizeAcpModelsSnapshot } = await import('@/capabilities/probes/agentModelsProbe');
                 const { normalizeAcpModesSnapshot } = await import('@/capabilities/probes/agentModesProbe');
                 return {
@@ -1278,6 +1304,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 };
             });
         return Object.freeze({
+            acquireNativeInput: async () => (await acquireNativeContext()).input,
             ...input,
             ...(probeParams.configOptionOverrides ? { configOptionOverrides: probeParams.configOptionOverrides } : {}),
             cwd: probeParams.cwd,
@@ -1304,7 +1331,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         }
     };
     const withDeclaredAcpPreflight = async <T>(
-        context: AgentPreflightSessionControlsProbeContextV1,
+        context: Awaited<ReturnType<typeof createContext>>,
         catalogs: AcpPreflightDeclaration,
         inspect: (params: Parameters<typeof probeAcpCatalogs>[0]) => Promise<T>,
     ): Promise<T> => {
@@ -1324,7 +1351,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 client, signal, cwd: context.cwd,
                 configOptionOverrides: context.configOptionOverrides,
                 ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
-                ...declaredAcpAuthentication(catalogs, context),
+                ...declaredAcpAuthentication(catalogs, await context.acquireNativeInput()),
             }),
         );
     };
@@ -1362,7 +1389,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
         }
     };
     const invoke = <T>(
-        callback: ((context: AgentPreflightSessionControlsProbeContextV1) => Promise<T> | T) | undefined,
+        callback: ((context: Awaited<ReturnType<typeof createContext>>) => Promise<T> | T) | undefined,
         probeParams: PreflightSessionControlsProbeParams,
     ): Promise<T | null> => callback
         ? withProbeLifetime(probeParams, async (scopedParams) => callback(await createContext(scopedParams))).catch(() => null)

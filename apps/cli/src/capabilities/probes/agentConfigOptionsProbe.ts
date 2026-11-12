@@ -1,3 +1,4 @@
+import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
@@ -81,6 +82,7 @@ function normalizeDynamicConfigOptions(raw: unknown): Pick<ProbedAgentConfigOpti
 
 export async function probeAgentConfigOptionsBestEffort(params: {
   agentId: CatalogAgentLookupId;
+  registrySnapshot?: Parameters<typeof withPreflightSessionControlsProbeEnvironment>[0]['registrySnapshot'];
   catalogEntry?: AgentCatalogEntry | null;
   runtimeCacheKey?: string;
   signal?: AbortSignal;
@@ -100,6 +102,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  acquireEnvironment?: PreflightSessionControlsProbeParams['acquireEnvironment'];
   commandArgsSuffix?: readonly string[];
   modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
@@ -146,7 +149,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
       accountSettings: params.accountSettings, credentials: params.credentials,
       acpCatalogSnapshot: params.acpCatalogSnapshot, savedSecretOperationContext: params.savedSecretOperationContext,
       machineAdmission: params.machineAdmission, secretSources: params.secretSources,
-      processEnv: params.env, signal: params.signal, cleanupScope: params.cleanupScope,
+      processEnv: params.env, acquireEnvironment: params.acquireEnvironment, signal: params.signal, cleanupScope: params.cleanupScope,
       onBackend: async (backend) => {
         return normalizeDynamicConfigOptions(await probeAcpSessionControlsFromBackend({ backend,
           timeoutMs: params.timeoutMs ?? 15_000, signal: params.signal, configOptionOverrides: params.configOptionOverrides }));
@@ -182,8 +185,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
           catalogEntry: params.catalogEntry,
           agentId: params.agentId,
           processEnv: params.env ?? process.env,
-          materializedEnv: params.materializedEnv,
-        }, async ({ env }) => await preflightAdapter.probeConfigOptionsRaw!({
+          materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
+        }, async ({ env, acquireEnvironment }) => await preflightAdapter.probeConfigOptionsRaw!({
           backendTarget: params.backendTarget,
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.deadlineSignal ? { deadlineSignal: params.deadlineSignal } : {}),
@@ -198,6 +201,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
           pluginSettings: params.pluginSettings,
           configOptionOverrides: params.configOptionOverrides,
           env,
+          acquireEnvironment,
         })).catch(() => null);
         return normalizeDynamicConfigOptions(configOptionsRaw);
       };

@@ -34,6 +34,7 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
   processEnv?: NodeJS.ProcessEnv;
+  acquireEnvironment?: (signal?: AbortSignal) => Promise<NodeJS.ProcessEnv>;
   signal?: AbortSignal;
 }>): Promise<AcpProbeBackend | null> {
   if (!isConfiguredAcpProbeTarget(params)) return null;
@@ -110,11 +111,13 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   }
   accountSnapshot = await assertCurrent();
   if (accountSnapshot.acpCatalog !== catalog) throw new AcpCatalogUnavailableError('catalog-stale');
+  const processEnv = params.acquireEnvironment ? await params.acquireEnvironment(params.signal) : params.processEnv;
+  params.signal?.throwIfAborted();
   const launchEnv = materializeConfiguredAcpEnvironment({
     backend,
     accountSettings: accountSnapshot.settings,
     credentials,
-    processEnv: params.processEnv,
+    processEnv,
     savedSecretResources: accountSnapshot.savedSecretResources,
     savedSecretMaterializer: await acquireSavedSecretMaterializerForOperation({ snapshot: accountSnapshot, references, operationContext,
       secretSources: params.secretSources, machineAdmission: params.machineAdmission, signal: params.signal }),
@@ -123,7 +126,7 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   return createConfiguredAcpBackend({
     accountId: credentials ? readAccountIdFromToken(credentials.token) ?? undefined : undefined,
     cwd: params.cwd,
-    env: params.processEnv,
+    env: processEnv,
     backend,
     launchEnv,
     mcpServers: {},

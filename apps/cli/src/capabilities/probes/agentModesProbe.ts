@@ -1,3 +1,4 @@
+import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -168,6 +169,7 @@ export async function probeModesFromAcpBackend(params: {
 
 export async function probeAgentModesBestEffort(params: {
   agentId: CatalogAgentLookupId;
+  registrySnapshot?: Parameters<typeof withPreflightSessionControlsProbeEnvironment>[0]['registrySnapshot'];
   catalogEntry?: AgentCatalogEntry | null;
   runtimeCacheKey?: string;
   signal?: AbortSignal;
@@ -187,6 +189,7 @@ export async function probeAgentModesBestEffort(params: {
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  acquireEnvironment?: PreflightSessionControlsProbeParams['acquireEnvironment'];
   commandArgsSuffix?: readonly string[];
   modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
@@ -244,8 +247,8 @@ export async function probeAgentModesBestEffort(params: {
           catalogEntry: params.catalogEntry,
           agentId: params.agentId,
           processEnv: params.env ?? process.env,
-          materializedEnv: params.materializedEnv,
-        }, async ({ env }) => await preflightAdapter.probeModesRaw!({
+          materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
+        }, async ({ env, acquireEnvironment }) => await preflightAdapter.probeModesRaw!({
           backendTarget: params.backendTarget,
           ...(params.signal ? { signal: params.signal } : {}),
           ...(params.deadlineSignal ? { deadlineSignal: params.deadlineSignal } : {}),
@@ -259,6 +262,7 @@ export async function probeAgentModesBestEffort(params: {
           accountSettings: params.accountSettings ?? null,
           pluginSettings: params.pluginSettings,
           env,
+          acquireEnvironment,
         })).catch(() => null);
         return normalizeDynamicModes(modesRaw);
       };
@@ -292,7 +296,7 @@ export async function probeAgentModesBestEffort(params: {
         savedSecretOperationContext: params.savedSecretOperationContext,
         machineAdmission: params.machineAdmission,
         secretSources: params.secretSources,
-        processEnv: params.env,
+        processEnv: params.env, acquireEnvironment: params.acquireEnvironment,
         signal: params.signal,
         cleanupScope: params.cleanupScope,
         onBackend: async (backend) => await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null),

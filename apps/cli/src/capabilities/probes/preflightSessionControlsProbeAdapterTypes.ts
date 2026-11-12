@@ -19,6 +19,8 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   configOptionOverrides?: Readonly<Record<string, ProbedCatalogOptionValue>>;
   env?: NodeJS.ProcessEnv;
+  /** Host-only materialization, requested by native acquisition rather than static callbacks. */
+  acquireEnvironment?: (signal?: AbortSignal) => Promise<NodeJS.ProcessEnv>;
   commandArgsSuffix?: readonly string[];
   signal?: AbortSignal;
   /** The containing preflight operation owns this deadline; direct callers retain the local budget. */
@@ -35,7 +37,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
 export type PreflightSessionControlsProbeAdapter = Readonly<{
   /** Borrow the containing operation's cancellation and the existing declared process owner. */
   withNativeInspection?<T>(
-    params: Pick<PreflightSessionControlsProbeParams, 'cwd' | 'env' | 'signal' | 'runtimeDescriptorV1'>,
+    params: Pick<PreflightSessionControlsProbeParams, 'cwd' | 'env' | 'acquireEnvironment' | 'signal' | 'runtimeDescriptorV1'>,
     inspect: (context: Pick<AgentPreflightSessionControlsProbeContextV1, 'withDeclaredJsonRpcClient'>) => Promise<T>,
   ): Promise<T>;
   failureCacheStrategy?: PreflightSessionControlsProbeFailureCacheStrategy;

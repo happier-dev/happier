@@ -1,3 +1,4 @@
+import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import type { AgentModelConfig } from '@happier-dev/agents';
 
@@ -19,6 +20,7 @@ type ResolvePreflightSessionControlsProbeEnvironmentParams = Readonly<{
   modelConfig?: Pick<AgentModelConfig, 'nativeCatalogObservation'> | null;
   processEnv?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  acquireEnvironment?: PreflightSessionControlsProbeParams['acquireEnvironment'];
 }>;
 
 const COLD_PROBE_PROCESS_ENV_KEYS = [
@@ -100,8 +102,17 @@ export async function resolvePreflightSessionControlsProbeEnvironment(
 
 export async function withPreflightSessionControlsProbeEnvironment<T>(
   params: ResolvePreflightSessionControlsProbeEnvironmentParams,
-  run: (environment: Readonly<{ env: NodeJS.ProcessEnv }>) => Promise<T>,
+  run: (environment: Readonly<{ env: NodeJS.ProcessEnv }> & Pick<PreflightSessionControlsProbeParams, 'acquireEnvironment'>) => Promise<T>,
 ): Promise<T> {
   const environment = await resolvePreflightSessionControlsProbeEnvironment(params);
-  return await run({ env: environment.env });
+  let requestedAcquisition: Promise<NodeJS.ProcessEnv> | undefined;
+  const acquire = params.acquireEnvironment;
+  const acquireEnvironment = acquire
+    ? (signal?: AbortSignal) => requestedAcquisition = acquire(signal)
+    : undefined;
+  const result = await run({ env: environment.env, acquireEnvironment });
+  // A plugin may recover from a native unavailable result. Requested Profile
+  // preparation must settle before this can become a successful cache entry.
+  if (requestedAcquisition) await requestedAcquisition;
+  return result;
 }

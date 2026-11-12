@@ -32,7 +32,8 @@ export async function probeAgentCatalogs(params: AgentCatalogsProbeParams): Prom
     ? await withPreflightSessionControlsProbeEnvironment({
       registrySnapshot: params.registrySnapshot ?? readCurrentContributionRegistry(), catalogEntry: entry,
       agentId: params.agentId, processEnv: params.env, materializedEnv: params.materializedEnv,
-    }, ({ env }) => adapter.probeCatalogsRaw!({ ...params, probeKind: 'catalogs', env }))
+      acquireEnvironment: params.acquireEnvironment,
+    }, ({ env, acquireEnvironment }) => adapter.probeCatalogsRaw!({ ...params, acquireEnvironment, probeKind: 'catalogs', env }))
     : { commands: null, skills: null });
   const diagnostic = raw.diagnostic === undefined ? {} : { diagnostic: raw.diagnostic };
   return PreflightSessionCatalogsV1Schema.parse({

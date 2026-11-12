@@ -25,6 +25,7 @@ export async function probeConfiguredAcpBackend<T>(params: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   secretSources?: import('@/plugins/runtime/lifecycle/contributions/targetSecretSources').TargetSecretSourcesV1;
   processEnv?: NodeJS.ProcessEnv;
+  acquireEnvironment?: (signal?: AbortSignal) => Promise<NodeJS.ProcessEnv>;
   signal?: AbortSignal;
   cleanupScope?: PreflightCatalogCleanupScope;
   onBackend: (backend: AcpProbeBackend) => Promise<T>;
@@ -41,6 +42,7 @@ export async function probeConfiguredAcpBackend<T>(params: Readonly<{
     machineAdmission: params.machineAdmission,
     secretSources: params.secretSources,
     processEnv: params.processEnv,
+    acquireEnvironment: params.acquireEnvironment,
     signal: params.signal,
   });
   if (!backend) return { kind: 'missing' };

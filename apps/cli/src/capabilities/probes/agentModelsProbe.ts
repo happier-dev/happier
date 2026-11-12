@@ -1,3 +1,4 @@
+import type { PreflightSessionControlsProbeParams } from './preflightSessionControlsProbeAdapterTypes';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -447,6 +448,7 @@ async function probeAgentModels(params: {
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
   materializedEnv?: Readonly<Record<string, string>>;
+  acquireEnvironment?: PreflightSessionControlsProbeParams['acquireEnvironment'];
   commandArgsSuffix?: readonly string[];
   modelId?: string;
   connectedServiceSelectionCacheKey?: string | null;
@@ -539,7 +541,7 @@ async function probeAgentModels(params: {
         savedSecretOperationContext: params.savedSecretOperationContext,
         machineAdmission: params.machineAdmission,
         secretSources: params.secretSources,
-        processEnv: params.env,
+        processEnv: params.env, acquireEnvironment: params.acquireEnvironment,
         signal: params.signal,
         cleanupScope: params.cleanupScope,
         onBackend: async (backend) => {
@@ -575,8 +577,8 @@ async function probeAgentModels(params: {
             catalogEntry: params.catalogEntry,
             agentId: params.agentId,
             processEnv: params.env ?? process.env,
-            materializedEnv: params.materializedEnv,
-          }, async ({ env }) => await probeModelsRaw({
+            materializedEnv: params.materializedEnv, acquireEnvironment: params.acquireEnvironment,
+          }, async ({ env, acquireEnvironment }) => await probeModelsRaw({
             backendTarget: params.backendTarget,
             ...(params.signal ? { signal: params.signal } : {}),
             ...(params.deadlineSignal ? { deadlineSignal: params.deadlineSignal } : {}),
@@ -592,6 +594,7 @@ async function probeAgentModels(params: {
             configOptionOverrides: params.configOptionOverrides,
             commandArgsSuffix: params.commandArgsSuffix,
             env,
+            acquireEnvironment,
           })).catch(observeFailure);
           const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);
           if (envelope.success) {
