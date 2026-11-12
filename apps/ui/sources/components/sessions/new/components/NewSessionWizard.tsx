@@ -27,6 +27,7 @@ import { AdaptiveSelectionSection } from '@/components/ui/selection/AdaptiveSele
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { isProfileCompatibleWithAgent, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -797,6 +798,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         agentPickerProbe={props.agent.agentPickerProbe}
                                         permissionMode={permissionMode}
                                         onPermissionModeChange={permissionModeLock ? undefined : handlePermissionModeChange}
+                                        permissionModeAttribution={describeInheritedDefaultSource(permissionModeSource)}
                                         onPermissionClick={handleAgentInputPermissionClick}
                                         modelMode={modelMode}
                                         modelPickerPresentation={props.agent.modelPickerPresentation}
@@ -1227,9 +1229,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     <ItemGroup
                                         title={t('newSession.wizardSection.permission')}
                                         description={[t('newSession.selectPermissionModeDescription'),
-                                            permissionModeSource === 'team' ? t('teams.settings.memberDefaults.teamDefault')
-                                                : permissionModeSource === 'group' ? t('teams.settings.memberDefaults.groupDefault') : null,
-                                        ].filter(Boolean).join(' · ')}
+                                            describeInheritedDefaultSource(permissionModeSource)].filter(Boolean).join(' · ')}
                                     >
                                         {permissionModeLock ? <Item
                                             testID="new-session-managed-permission"

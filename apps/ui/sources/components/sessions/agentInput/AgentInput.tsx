@@ -497,6 +497,8 @@ interface AgentInputProps {
     /** An embed's allowed permission modes; the mode picker offers only these. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
     onPermissionModeChange?: (mode: PermissionMode) => void;
+    /** Where the current permission mode comes from (a Team or Group default); the picker names it on that option. */
+    permissionModeAttribution?: string | null;
     onPermissionClick?: () => void;
     onAcpSessionModeChange?: (modeId: string) => void;
     retainKeyboardLift?: () => () => void;
@@ -4044,6 +4046,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         );
     };
 
+    const permissionModeAttribution = props.permissionModeAttribution ?? null;
+    const attributedPermissionModeOptions = React.useMemo(() => permissionModeAttribution === null ? permissionModeOptions
+        : permissionModeOptions.map((option) => option.value !== props.permissionMode ? option : {
+            ...option,
+            description: [option.description, permissionModeAttribution].filter(Boolean).join(' · '),
+        }), [permissionModeAttribution, permissionModeOptions, props.permissionMode]);
+
     const overlayLayer = (
         <AgentInputOverlayLayer
             overlayAnchorRef={overlayAnchorRef}
@@ -4054,7 +4063,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             onPermissionPopoverRequestClose={closePermissionPopover}
             onPermissionSelect={handlePermissionSelect}
             agentId={armedComposerTarget?.agentId ?? sessionAgentId}
-            permissionModeOptions={permissionModeOptions}
+            permissionModeOptions={attributedPermissionModeOptions}
             effectivePermissionMode={effectivePermissionPolicy.effectiveMode}
             effectivePermissionLabel={effectivePermissionLabel}
             effectivePermissionPolicy={effectivePermissionPolicy}

@@ -12,6 +12,7 @@ import { projectAgentInputAttachmentRowItems } from '@/components/sessions/agent
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import { t } from '@/text';
+import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 import { useNewSessionAttachmentsController } from '@/components/sessions/new/attachments/useNewSessionAttachmentsController';
 import {
     resolveAvailablePanelHeight,
@@ -182,12 +183,11 @@ export function NewSessionComposerCard(input: Readonly<{
                         {props.composerTopContent ? (
                             <View ref={embeddedHost?.composerTopContentRef} collapsable={false}>{props.composerTopContent}</View>
                         ) : null}
-                        {props.permissionModeLock || props.permissionModeSource === 'team' || props.permissionModeSource === 'group' ? <Item
+                        {/* Only a policy lock earns a line of its own; an inherited Team or Group default is named in the permission picker. */}
+                        {props.permissionModeLock ? <Item
                             testID="new-session-managed-permission"
                             title={getPermissionModeLabelForAgentType(props.agentType ?? '', props.permissionMode ?? 'default')}
-                            subtitle={props.permissionModeLock ? <OrganizationPolicyManagedLine lock={props.permissionModeLock} />
-                                : t(props.permissionModeSource === 'team'
-                                    ? 'teams.settings.memberDefaults.teamDefault' : 'teams.settings.memberDefaults.groupDefault')}
+                            subtitle={<OrganizationPolicyManagedLine lock={props.permissionModeLock} />}
                             showChevron={false}
                         /> : null}
                         {/* The atmosphere's band and hero follow the composer itself. A docked host seats its own
@@ -248,6 +248,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         permissionMode={props.permissionMode}
                         allowedPermissionModes={props.allowedPermissionModes}
                         onPermissionModeChange={props.permissionModeLock ? undefined : props.handlePermissionModeChange}
+                        permissionModeAttribution={describeInheritedDefaultSource(props.permissionModeSource)}
                         modelMode={props.modelMode}
                         modelPickerPresentation={props.modelPickerPresentation}
                         onModelModeChange={props.setModelMode}

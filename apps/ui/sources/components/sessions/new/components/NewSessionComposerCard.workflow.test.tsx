@@ -356,6 +356,25 @@ describe('New workflow entry', () => {
         expect(screen.getTextContent()).toContain('Loading model');
         expect(screen.getTextContent()).not.toContain(ref.modelId);
     });
+    it('names an inherited Team permission default in the permission picker, not as a row above the composer', async () => {
+        await withPopoverWebGlobals(async () => {
+            const props = { ...panelProps(), permissionModeSource: 'team' as const, handlePermissionModeChange: () => {} };
+            const screen = await renderScreen(<NewSessionComposerCard panelProps={props} layout="screen" attachments={false} />,
+                workflowPopoverOptions);
+            try {
+                expect(screen.findByTestId('new-session-managed-permission')).toBeNull();
+                expect(screen.getTextContent()).not.toContain('teams.settings.memberDefaults.teamDefault');
+                await screen.pressByTestIdAsync('agent-input-permission-chip');
+                await act(async () => { reportPopoverContentLayout(screen.tree, { width: 420, height: 400 }); });
+                expect(screen.findByTestId('permission-mode-default')).not.toBeNull();
+                expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.teamDefault');
+                // A policy lock is the one reason the composer carries its own permission line.
+                await screen.update(<NewSessionComposerCard panelProps={{ ...props, permissionModeLock: { organization: 'Acme' } }}
+                    layout="screen" attachments={false} />);
+                expect(screen.findByTestId('new-session-managed-permission')).not.toBeNull();
+            } finally { await screen.unmount(); }
+        });
+    });
     it('allows an ordinary session to submit without an optional composer document', async () => {
         const props = panelProps();
         const screen = await renderScreen(<NewSessionComposerCard panelProps={props} layout="screen" attachments={false} />);

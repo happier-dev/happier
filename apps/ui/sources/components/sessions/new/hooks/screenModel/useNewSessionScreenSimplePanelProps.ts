@@ -8,6 +8,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
 import { t } from '@/text';
+import { describeInheritedDefaultSource } from '@/components/settings/teams/defaults/inheritedDefaultSourceLabel';
 
 type ModelOptionsProbe = NonNullable<NewSessionSimplePanelProps['modelOptionsProbe']>;
 type AcpSessionModeProbe = NonNullable<NewSessionSimplePanelProps['acpSessionModeProbe']>;
@@ -168,10 +169,8 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         ?? (managedPlacementPreset ? managedPlacementPresetName || t('managedMachines.picker.newMachine') : undefined);
     const destinationParts = machineName ? [machineName] : [];
     // A preset the member did not pick says which default placed it; picking anything else replaces both parts.
-    if (managedPlacementPreset && (managedPlacementSource === 'team' || managedPlacementSource === 'group')) {
-        destinationParts.unshift(t(managedPlacementSource === 'team'
-            ? 'teams.settings.memberDefaults.teamDefault' : 'teams.settings.memberDefaults.groupDefault'));
-    }
+    const placementSourceLabel = managedPlacementPreset ? describeInheritedDefaultSource(managedPlacementSource) : null;
+    if (placementSourceLabel) destinationParts.unshift(placementSourceLabel);
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a
     // Temporary computer has neither, so it keeps its own single-part label.
