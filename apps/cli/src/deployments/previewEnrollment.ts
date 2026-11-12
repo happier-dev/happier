@@ -1,7 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
-import { DeploymentEnvironmentUpdateResultV1Schema, type DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentUpdateResultV1Schema, type DeploymentEnvironmentUpdateInputV1, type DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
@@ -14,7 +14,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import type { z } from 'zod/mini';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 
-type UpdateInput = Readonly<{ environmentId: string; patch?: Readonly<{ previewTemplate?: DeploymentPreviewTemplateV1 | null }> }>;
+type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'mode' | 'patch'>;
 type UpdateSuccess = Extract<z.infer<typeof DeploymentEnvironmentUpdateResultV1Schema>, { ok: true }>;
 const preparedEdit = Symbol('previewEnrollmentEdit');
 type PreparedContext = ActionExecutorContext & { [preparedEdit]?: Readonly<{
@@ -50,6 +50,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
     }
     return {
         async prepare(input: UpdateInput, context: ActionExecutorContext) {
+            if (input.mode === 'preview') return null;
             const policy = input.patch?.previewTemplate;
             if (policy === undefined) return null;
             const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
@@ -58,10 +59,11 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 && (!policy || !previous || sameScmHostingRepositoryIdentity(policy.repository, previous.repository))) return null;
             // The existing prepared-context continuation retains the accepted private edit
             // when Artifact preparation removes it from the later storage operand.
-            const prepareExecutionContext = async (context: ActionExecutorContext): Promise<PreparedContext> => ({
-                ...context, [preparedEdit]: { environmentId: input.environmentId, policy,
-                    controllerMachineId: environment.environment.controllerMachineId },
-            });
+            const prepareExecutionContext = async (context: ActionExecutorContext): Promise<ActionExecutorContext> => {
+                const prepared: PreparedContext = { ...context, [preparedEdit]: { environmentId: input.environmentId, policy,
+                    controllerMachineId: environment.environment.controllerMachineId } };
+                return prepared;
+            };
             const children = [
                 { action: 'workflow.trigger.list' as const, role: TRIGGER_ROLE },
                 { action: 'workflow.trigger.update' as const, role: TRIGGER_ROLE },
@@ -197,7 +199,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 return { ...updated, previewEnrollment: enrollment };
             } catch (error) {
                 const failure = normalizeActionExecutorThrownError(error, 'environment_update.preview_enrollment');
-                return { ...updated, previewEnrollment: refused(failure) };
+                return { ...updated, previewEnrollment: refused({ ...failure, ok: false }) };
             }
         },
     };

@@ -135,6 +135,16 @@ async function fixture(setupRefused = false, statusJourney = false) {
     return { app, calls, responses, saved, environment, enrollment, save, setupCredential };
 }
 
+it('leaves a read-only fork eligibility preview without future enrollment effects', async () => {
+    const f = await fixture();
+    try {
+        await expect(f.enrollment.prepare({ mode: 'preview', environmentId: f.environment.environment.id,
+            patch: { previewTemplate: f.environment.content.previewTemplate! } }, {})).resolves.toBeNull();
+        expect(f.saved).toEqual([]);
+        expect(f.calls).toEqual([]);
+    } finally { await f.app.close(); }
+});
+
 it('enrolls from the saved template, reuses its exact trigger, and retains PR-close cleanup when disabled', async () => {
     const f = await fixture();
     try {
@@ -272,7 +282,8 @@ it('reaches enrollment from the public Environment update after private patch pr
         contentHeaderVersion: 1, contentBodyVersion: 1, patch: { previewTemplate: { v: 1, enabled: true, forkPreviews: 'off',
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
             runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] } } }, {
-        authority: 'present_user', surface: 'ui', actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
+        authority: 'present_user', surface: 'ui', serverId: 'home', serverIdentityId: 'home',
+        actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
         signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller', installationId: 'installation',
             role: 'manage', encryptionMode: 'plain' },
