@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { DeploymentPrepareInputV1Schema, type DeploymentPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -35,6 +37,24 @@ export type DeploymentPreparationContext = Readonly<{
     environmentId?: string;
 }>;
 type PreparationMode = 'prepare' | 'import';
+
+/** What the agent is asked to propose (Plan 60 §3.6 brief goal); the pull request itself is the agent's. */
+const PREPARATION_PROPOSAL: readonly Readonly<{ id: string; icon: IconName; title: string | null; detail: 'addsDockerfile' | 'addsCompose' | 'addsHealthDetail' | 'addsVariablesDetail' }>[] = [
+    { id: 'dockerfile', icon: 'package', title: 'Dockerfile', detail: 'addsDockerfile' },
+    { id: 'compose', icon: 'package', title: 'compose.yaml', detail: 'addsCompose' },
+    { id: 'health', icon: 'pulse', title: null, detail: 'addsHealthDetail' },
+    { id: 'variables', icon: 'key', title: null, detail: 'addsVariablesDetail' },
+];
+
+function PreparationProposal() {
+    const { theme } = useUnistyles();
+    return <ItemGroup testID="project-deployments.prepare.adds" title={t('projects.deployments.preparation.adds')}>
+        {PREPARATION_PROPOSAL.map(row => <Item key={row.id} testID={`project-deployments.prepare.adds.${row.id}`}
+            title={row.title ?? t(row.id === 'health' ? 'projects.deployments.preparation.addsHealth' : 'projects.deployments.preparation.addsVariables')}
+            subtitle={t(`projects.deployments.preparation.${row.detail}`)} showChevron={false}
+            icon={<Icon name={row.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />} />)}
+    </ItemGroup>;
+}
 
 /** Prepare and Import share the registered Action; neither depends on an investigation record. */
 export function DeploymentPreparationEntry(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode }>) {
@@ -117,7 +137,8 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     };
     const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy,
         testID: 'project-deployments.prepare.cancel' }}>
-        <RoundButton testID="project-deployments.prepare.confirm" title={title} loading={busy}
+        <RoundButton testID="project-deployments.prepare.confirm"
+            title={props.mode === 'prepare' ? t('projects.deployments.preparation.askAgent') : title} loading={busy}
             disabled={busy || !chosen || !repository || (props.mode === 'import' && (!tool.trim() || configurationPaths.length === 0))}
             onPress={() => { void confirm(); }} />
     </ModalCardFooterActions>;
@@ -127,7 +148,8 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     return <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.prepare.sheet" style={deploymentSheetStyles.body}>
             <Text style={deploymentSheetStyles.lead}>{t(props.mode === 'import'
-                ? 'projects.deployments.preparation.importLead' : 'projects.deployments.preparation.lead')}</Text>
+                ? 'projects.deployments.preparation.importLead' : 'projects.deployments.preparation.needsSetupLead')}</Text>
+            {props.mode === 'prepare' && repository ? <PreparationProposal /> : null}
             {!source && (sourceRead.status === 'initial' || sourceRead.status === 'loading') ?
                 <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : !source ?
                 <SurfaceStateCard size="line" kind="error" title={t('projects.deployments.unavailableTitle')}
