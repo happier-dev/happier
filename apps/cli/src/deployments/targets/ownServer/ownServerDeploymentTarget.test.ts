@@ -3826,6 +3826,11 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 expect(sourceProgress).toEqual([{ phase: 'sync', label: expect.any(String) }, { phase: 'sync', label: expect.any(String) }]);
                 if (captured.kind !== 'page') throw new Error('Expected admitted stage page');
                 expect(captured.page.text.startsWith(sourceProgress.map(value => `${value.label}\n`).join(''))).toBe(true);
+                const progressLines = captured.page.text.split(/\r?\n/u).map(line => line.trim());
+                for (const resource of ['Network', 'Volume']) for (const transition of ['Creating', 'Created']) {
+                    expect(progressLines.filter(line => line.startsWith(`${resource} `) && line.endsWith(` ${transition}`)),
+                        `the persisted deploy log contains each ${resource} ${transition} event once`).toHaveLength(1);
+                }
                 expect(JSON.stringify(captured)).toContain('PORT=3000');
                 expect(JSON.stringify(captured)).not.toContain('review-secret-value-sentinel');
                 expect(JSON.stringify(captured)).not.toContain('PRIVATE_INPUT');

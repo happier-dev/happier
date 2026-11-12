@@ -46,6 +46,7 @@ import { admitNativeResticCommand, type NativeResticCommandInput } from './nativ
 import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
 import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
 import { readNativeComposePublishedPorts } from './nativeComposePorts';
+import { createNativeComposeProgressOutput } from './nativeComposeProgress';
 import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
 export type { NativeResticCommandInput } from './nativeResticCommand';
 import { activateNativeComposeStartFirst, assertNativeComposeStartFirstConfiguration, type NativeComposeRoutingGeneration, type NativeComposeStartFirstInput,
@@ -894,14 +895,20 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         if (!launch.cwd) return nativeRefusal('native_compose_cwd_unavailable');
         await launch.recheckInputs?.();
         const tuple = authorizedPrefixes.get(launch) ?? nativeRefusal('native_service_admission_required');
+        const stageOutput = authority ? input.stageOutput : undefined;
+        const progress = stageOutput && launch.args[tuple.prefix.length] === 'compose'
+            ? createNativeComposeProgressOutput(stageOutput.appendRedacted) : undefined;
         let output: Awaited<ReturnType<ProjectNativeToolchainIo['run']>>;
         try { output = await input.io.run({ command: launch.command, args: launch.args, cwd: launch.cwd,
             env: tuple.env, ...(launch.stdin ? { stdin: launch.stdin } : {}), ...(signal ? { signal } : {}),
-            ...(authority && input.stageOutput ? { output: {
+            ...(stageOutput ? { output: {
                 redaction: launch.secretRedactionLease ?? nativeRefusal('secret_redaction_unavailable'),
-                onChunk: input.stageOutput.appendRedacted,
+                onChunk: progress?.onChunk ?? stageOutput.appendRedacted,
             } } : {}) }); }
-        finally { await launch.retireDeploymentRuntimeFiles?.(); }
+        finally {
+            try { progress?.finish(); }
+            finally { await launch.retireDeploymentRuntimeFiles?.(); }
+        }
         if (authority && input.stageOutput) input.stageOutput.assertWritten();
         assertOpen(signal);
         if (checkExit && output.exitCode !== 0) {

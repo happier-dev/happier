@@ -1863,7 +1863,10 @@ stored and build source custody use the same manifest provenance; builder custod
 is published before native build effects. Stage-log descriptors retain the Machine,
 installation and pinned `.happier/deploy.log` path; local cursor identity detects
 rotation without persisting an inode witness in the receipt. Writers create the log
-exclusively and never recreate a missing retained log. Cleanup removes only unchanged
+exclusively and never recreate a missing retained log. The native Compose adapter
+records repeated Volume/Network progress notifications once per resource transition
+and command; ordinary diagnostics, application bytes and separate build/runtime
+source progress remain unchanged. Cleanup removes only unchanged
 manifest leaves and that pinned log under the source-root and native storage deletion
 fence, preserving mounted paths, modified application files, shared data and other runtime bytes.
 The latest attempt's operation log remains available for investigation even when

@@ -514,6 +514,14 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         release();
     }
     if (state.stageOutputEnvironmentKey) {
+        // Reproduce Compose 5.6.0's repeated resource progress on stderr,
+        // observed directly on nl3 without Happier's writer in the path.
+        for (const resource of ['Network '+project+'_default', 'Volume '+project+'_data']) {
+            for (const transition of ['Creating', 'Created']) {
+                process.stderr.write(' '+resource+' '+transition+' \n');
+                process.stderr.write(' '+resource+' '+transition+' \n');
+            }
+        }
         const value = Object.values(model.services).map(service => service.environment?.[state.stageOutputEnvironmentKey])
             .find(value => typeof value === 'string' && value.length > 0);
         if (!value) throw new Error('fixture_stage_environment_missing');
