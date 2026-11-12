@@ -21,7 +21,6 @@ import {
   type UsageResetCelebrationWindow,
 } from './UsageResetCelebration';
 import {
-  UsageShowAllRows,
   useUsagePluginTheme,
   usageUnreadAccountsLabel,
   type UsageBodyProps,
@@ -60,15 +59,10 @@ const CELL_MIN_WIDTH_PX = 92;
 const POOLED_SEGMENT_MIN_WIDTH_PX = 64;
 /**
  * Under the pooled bar each account's label takes its segment's column. Below this much width per account (a
- * phone with four accounts) a column cannot hold a name, its figure and a note, so the bar stays one bar and
- * the accounts are listed one row each beneath it.
+ * phone with four accounts, seven accounts beside Daily) a column cannot hold a name, its figure and a note, so
+ * Limits says the tightest account's figure and meter and the rest in one line, as it does for the next account.
  */
 const POOLED_COLUMN_LABEL_MIN_WIDTH_PX = 120;
-/**
- * Listed beneath the pooled bar, Capacity beside other widgets stays compact (lab `d2top-A`): the accounts with
- * the least left lead and the rest fold behind Show all, so the column never outgrows the chart beside it.
- */
-const POOLED_LIST_LEADING_ROWS = 3;
 /**
  * Beside other widgets (Overview, Settings › Overview, a Home tile) Capacity is one pooled bar with each
  * account's figure under its segment (lab `d2top-A`, `wgusage-CD`); at full width (Plans) each account
@@ -248,6 +242,11 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // pick, else the only account, else the selector's first eligible one. Without any of these the tightest account
   // stands in, said as the tightest. At full width every plan's cell still follows it for comparison.
   const next = readNextLimitsAccount(selections, drawn);
+  // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
+  // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
+  // grew the column ~240 px past the Daily chart beside it (R6 N12); their figures are Plans' to compare.
+  const compact = pooled && (next !== null
+    || width !== null && width / Math.max(1, drawn.length) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX);
   // The caption says what the headline is: the next session's account, or the tightest of every plan standing in.
   useWidgetFrameBodyCaption(t(next !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   const nextWindow = next?.headline ?? null;
@@ -257,8 +256,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // The next account answered without a figure for its window: the headline says "not reported", never 0%.
   const nextUnreported = next !== null && tightest === null;
   // Every other account in one line ("6 more · 2 used up"); their figures are Plans' to compare.
-  const othersLine = next === null || !pooled ? null : (() => {
-    const others = projection.accounts.filter((account) => account.key !== next.key);
+  const lead = next ?? projection.tightest?.account ?? null;
+  const othersLine = !compact || lead === null ? null : (() => {
+    const others = projection.accounts.filter((account) => account.key !== lead.key);
     if (others.length === 0) return null;
     const usedUp = others.filter((account) => account.headline?.remainingFraction != null && account.headline.remainingFraction <= 0).length;
     return t('usage.board.plans.limitsOthers', { count: others.length, usedUp });
@@ -352,7 +352,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
                 : null,
               provisionalReading
                 ? t('usage.board.plans.capacityReading', { count: pendingAccounts })
-                : tightest.provisional || lone || (pooled && next !== null) ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
+                : tightest.provisional || lone || compact ? null : t('usage.board.plans.capacityAccounts', { count: projection.readAccountCount }),
               oldestReadMs !== null ? t('usage.board.plans.cellStale', { time: formatPlanMoment(oldestReadMs, nowMs) }) : null,
             ]
               .filter(Boolean)
@@ -375,14 +375,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
           </Text>
         </View>
       ) : null}
-      {pooled && next !== null ? (
+      {compact ? (
         tightest !== null ? <View style={styles.nextMeter} testID={`${props.testID}.nextMeter`}>
           <MeterBar height={8} tone={tightest.window.tone !== 'success' ? tightest.window.tone : 'neutral'}
-            fillFraction={tightest.window.remainingFraction ?? 0} {...(next.stale ? { fillOpacity: 0.45 } : {})} />
+            fillFraction={tightest.window.remainingFraction ?? 0} {...(tightest.account.stale ? { fillOpacity: 0.45 } : {})} />
         </View> : null
       ) : pooled && runs.length > 0 ? (
-        <CapacityPooledBar runs={runs} nameOf={nameOf} nowMs={nowMs} staleSaidOnce={everyStale} lone={lone} testID={props.testID}
-          listed={width !== null && width / Math.max(1, cellCount) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX} />
+        <CapacityPooledBar runs={runs} nameOf={nameOf} nowMs={nowMs} staleSaidOnce={everyStale} lone={lone} testID={props.testID} />
       ) : runs.length > 0 ? (
       <View style={listed ? styles.list : styles.bar} accessibilityRole="list" testID={listed ? `${props.testID}.accounts` : undefined}>
         {runs.map((run) => (
@@ -408,7 +407,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {othersLine !== null ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.others`}>{othersLine}</Text>
       ) : null}
-      {unreadNames.length > 0 && !(pooled && next !== null) ? (
+      {unreadNames.length > 0 && !compact ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.unread`}>
           {usageUnreadAccountsLabel(unreadNames)}
         </Text>
@@ -484,51 +483,32 @@ function CapacityPooledBar(props: Readonly<{
   staleSaidOnce: boolean; testID: string;
   /** The only account: the headline says its figure and reset (see {@link CapacityCell}). */
   lone: boolean;
-  /** Too narrow for a label under each segment: the accounts are listed beneath the one bar, a row each. */
-  listed: boolean;
 }>) {
-  const [expanded, setExpanded] = React.useState(false);
-  const listedCells = React.useMemo(() => {
-    if (!props.listed) return [];
-    const left = (cell: Cell) => cell.account.headline?.remainingFraction ?? Number.POSITIVE_INFINITY;
-    return props.runs.flatMap((run) => run.cells.map((cell) => ({ run, cell })))
-      .sort((a, b) => left(a.cell) - left(b.cell));
-  }, [props.listed, props.runs]);
-  const hidden = expanded ? 0 : Math.max(0, listedCells.length - POOLED_LIST_LEADING_ROWS);
-  const label = (run: Run, cell: Cell, listed: boolean) => (
+  const label = (run: Run, cell: Cell) => (
     <CapacityCell key={`${runKey(run)}:${cell.account.key}`} cell={cell} name={props.nameOf(cell.account)} nowMs={props.nowMs}
-      pooled staleSaidOnce={props.staleSaidOnce} lone={props.lone} {...(listed ? { listed } : {})} testID={`${props.testID}.cell.${cell.account.accountId}`} />
+      pooled staleSaidOnce={props.staleSaidOnce} lone={props.lone} testID={`${props.testID}.cell.${cell.account.accountId}`} />
   );
   return (
-    <>
-      <View style={styles.pooledBar} accessibilityRole="list" testID={`${props.testID}.pooled`}>
-        {props.runs.map((run) => (
-          <View key={runKey(run)}
-            testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
-            style={[styles.pooledRun, { flexGrow: run.cells.length, minWidth: run.cells.length * POOLED_SEGMENT_MIN_WIDTH_PX }]}>
-            <View style={[styles.pooledTrack, isFramedRun(run) ? styles.pooledTrackPool : null]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-              {run.cells.map((cell) => {
-                const window = cell.account.headline;
-                return (
-                  <View key={cell.account.key} style={styles.pooledSegment}>
-                    <MeterBar height={8} tone={window && window.tone !== 'success' ? window.tone : 'neutral'}
-                      fillFraction={window?.remainingFraction ?? 0} {...(cell.account.stale ? { fillOpacity: 0.45 } : {})} />
-                  </View>
-                );
-              })}
-            </View>
-            {props.listed ? null : <View style={styles.pooledLabels}>{run.cells.map((cell) => label(run, cell, false))}</View>}
+    <View style={styles.pooledBar} accessibilityRole="list" testID={`${props.testID}.pooled`}>
+      {props.runs.map((run) => (
+        <View key={runKey(run)}
+          testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
+          style={[styles.pooledRun, { flexGrow: run.cells.length, minWidth: run.cells.length * POOLED_SEGMENT_MIN_WIDTH_PX }]}>
+          <View style={[styles.pooledTrack, isFramedRun(run) ? styles.pooledTrackPool : null]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            {run.cells.map((cell) => {
+              const window = cell.account.headline;
+              return (
+                <View key={cell.account.key} style={styles.pooledSegment}>
+                  <MeterBar height={8} tone={window && window.tone !== 'success' ? window.tone : 'neutral'}
+                    fillFraction={window?.remainingFraction ?? 0} {...(cell.account.stale ? { fillOpacity: 0.45 } : {})} />
+                </View>
+              );
+            })}
           </View>
-        ))}
-      </View>
-      {props.listed ? (
-        <View style={styles.list} accessibilityRole="list" testID={`${props.testID}.accounts`}>
-          {(hidden > 0 ? listedCells.slice(0, POOLED_LIST_LEADING_ROWS) : listedCells).map(({ run, cell }) => label(run, cell, true))}
+          <View style={styles.pooledLabels}>{run.cells.map((cell) => label(run, cell))}</View>
         </View>
-      ) : null}
-      {props.listed ? <UsageShowAllRows label={t('usage.widgets.usage_capacity')} total={listedCells.length} hidden={hidden}
-        expanded={expanded} onToggle={() => setExpanded(value => !value)} testID={`${props.testID}.accounts.more`} /> : null}
-    </>
+      ))}
+    </View>
   );
 }
 

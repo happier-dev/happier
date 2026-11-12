@@ -388,7 +388,10 @@ export function SidebarUsagePopoverView(props: Readonly<{
                 </View>
             </View>
             {refreshError ? (
-                <SurfaceFreshnessLine testID="sidebar-usage-refresh-error" reason={refreshError} tone="warning" />
+                // The line has no inset of its own: it sits on the content edge, never on the popover's (F13).
+                <View style={styles.inset}>
+                    <SurfaceFreshnessLine testID="sidebar-usage-refresh-error" reason={refreshError} tone="warning" />
+                </View>
             ) : null}
             {scoped && session?.scopeLine ? (
                 <Text testID="usage-popover-session-scope" style={styles.scopeLine} numberOfLines={2}>{session.scopeLine}</Text>
@@ -632,6 +635,9 @@ const styles = StyleSheet.create((theme) => ({
     },
     groups: {
         paddingBottom: theme.space.s4,
+    },
+    inset: {
+        paddingHorizontal: CONTENT_INSET_PX,
     },
     group: {
         paddingHorizontal: CONTENT_INSET_PX,

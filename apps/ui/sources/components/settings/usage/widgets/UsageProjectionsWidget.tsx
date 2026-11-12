@@ -33,6 +33,7 @@ import { usageSignatureAccent } from '../usageAccent';
 import {
   leadingUsageRows,
   UsageBodyInsufficient,
+  UsageBodyReading,
   UsageShowAllRows,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -58,7 +59,7 @@ import {
   UsagePlanLegend,
   UsagePlanAccountStates,
   UsagePlansNothingRead,
-  readPendingPlanAccountCount,
+  isUsagePlanAccountFirstReading,
   usePlanText,
 } from './plans/UsagePlanParts';
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
@@ -158,16 +159,20 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const list = presentation?.size === 'medium' || presentation?.size === 'wide';
   const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   useWidgetFrameBodyCaption(t('usage.board.plans.projectionsCaption'));
-  const settled = projection.accounts.length > 0 && readPendingPlanAccountCount(projection.accounts) === 0;
+  // Settled once every first read has answered; a re-read keeps the last reading (and its pace) in place, so a refresh
+  // never swaps a drawn chart for "no pace yet" and back (R6 #4: 534 → 184 → 590 on a cold Overview).
+  const settled = projection.accounts.length > 0 && !projection.accounts.some(isUsagePlanAccountFirstReading);
   const paced = React.useMemo(() => settled ? [...selectUsagePacedWindows(projection.accounts)]
     .sort((left, right) => left.window.key.localeCompare(right.window.key)) : [], [projection.accounts, settled]);
   // The viewer's pick, kept by window identity; a window that stops having a pace falls back to the default.
   const [pickedKey, setPickedKey] = React.useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
+  // No focus until every first read has answered: charting whichever paced account answered first moved the chart
+  // from window to window as the others landed.
   const focus = React.useMemo(
-    () => paced.find((entry) => entry.window.key === pickedKey) ?? pickDefaultFocus(paced, projection.tightest),
-    [paced, pickedKey, projection.tightest],
+    () => settled ? paced.find((entry) => entry.window.key === pickedKey) ?? pickDefaultFocus(paced, projection.tightest) : null,
+    [settled, paced, pickedKey, projection.tightest],
   );
   const accent = usageSignatureAccent(theme);
   const rangeColor = theme.colors.text.tertiary;
@@ -418,6 +423,10 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             </Text>
           ) : null}
         </View>
+      ) : !settled ? (
+        // Which window leads is not known until every first read answers: the chart's room, not a "no pace" claim.
+        <UsageBodyReading testID={`${props.testID}.reading`} shape={{ kind: 'chart', plotPx: stacked ? 120 : 150 }}
+          waitingOn={{ slice: props.slice, sources: ['quota'] }} />
       ) : (
         <UsageBodyInsufficient
           testID={`${props.testID}.noPace`}

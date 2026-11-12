@@ -125,6 +125,14 @@ export function isUsagePlanAccountDrawn(account: UsagePlanAccount): boolean {
   return account.observedAtMs !== null;
 }
 
+/**
+ * An account with no reading yet whose first read is in flight: neither drawn nor settled unread. A re-read of an
+ * account that has a reading is not one; its last reading stands while it refreshes.
+ */
+export function isUsagePlanAccountFirstReading(account: UsagePlanAccount): boolean {
+  return account.observedAtMs === null && account.state.status === 'pending';
+}
+
 export function UsagePlanAccountStates(props: Readonly<{
   accounts: readonly UsagePlanAccount[];
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
@@ -312,9 +320,10 @@ export function UsagePlanIdentity(
           <ConnectedAccountIdentityText
             value={split.identity}
             style={[styles.identityQualifier, text.detail]}
-            // One line: a cell keeps its rows level across the bar. A long address loses its domain tail, never the
-            // local part that tells same-name accounts apart; the cell's accessibility label keeps it whole.
-            numberOfLines={1}
+            // Two lines, broken once between the name and the domain: a one-line cell cut every address to
+            // "codex3@…" at 1440 (R6 #12). A longer local part still loses its domain tail, never the part that
+            // tells same-name accounts apart; the cell's accessibility label keeps it whole.
+            numberOfLines={2}
           />
         ) : null}
         {qualifier && !props.compact ? (

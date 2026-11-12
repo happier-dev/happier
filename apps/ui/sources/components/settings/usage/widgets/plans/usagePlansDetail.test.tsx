@@ -425,9 +425,59 @@ it('draws a plan row only for an account with a reading; a first read in flight 
   const slice = { ...props.slice, sources: [...props.slice.sources, { source: `quota:${createCanonicalJsonSigningInput({
     bindingKind: 'account', ref: { service, accountId: 'spare' } })}`, status: 'pending' as const }] };
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  // The rows are revealed together once every first read has answered: one at a time, a first visit stepped the body
+  // down the page ten times (R6 #7: 116 → 567 over 11 s). Until then the body holds one reading placeholder.
   const screen = await renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
-  expect(screen.findByTestId('fit.plan.work')).toBeTruthy();
+  expect(screen.findByTestId('fit.plan.work')).toBeFalsy();
   expect(screen.findByTestId('fit.plan.spare')).toBeFalsy();
+  expect(screen.findByTestId('fit.reading')).toBeTruthy();
+  await screen.unmount();
+  // A re-read of an account that already has a reading is not a first read: its row stays.
+  const rereading = { ...props.slice, sources: [...props.slice.sources, { source: `quota:${createCanonicalJsonSigningInput({
+    bindingKind: 'account', ref: { service, accountId: 'work' } })}`, status: 'pending' as const }] };
+  const settled = await renderScreen(wrap(<UsagePlanFitWidget {...props} slice={rereading} id="usage_plan_fit" testID="fit" />));
+  expect(settled.findByTestId('fit.plan.work')).toBeTruthy();
+  expect(settled.findByTestId('fit.reading')).toBeFalsy();
+});
+
+it('says an empty pace range as one value and one earlier window in the singular (F20)', () => {
+  const range = t('usage.board.plans.rangeAtReset', { min: '60%', max: '60%', count: 7 });
+  expect(range.split('60%').length - 1).toBe(1);
+  expect(t('usage.board.plans.rangeAtReset', { min: '60%', max: '90%', count: 7 })).toContain('90%');
+  // The count is pluralised by the locale's helper, not by substituting the number into the plural phrase.
+  expect(t('usage.board.plans.earlierShown', { count: 1 })).not.toBe(t('usage.board.plans.earlierShown', { count: 2 }).replace('2', '1'));
+});
+
+it('says "no pace yet" only once every first read has answered, and keeps a drawn chart through a re-read (R6 #4)', async () => {
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const now = Date.now();
+  // The tightest account has no pace yet; another account's window has one.
+  const props = bodyProps([quotaRead('tight', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 90,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], { pace: [] }), quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly',
+    usedPct: 40, resetAtMs: now + DAY, windowDurationMs: 7 * DAY }])]);
+  const pendingSource = (accountId: string) => ({ source: `quota:${createCanonicalJsonSigningInput({
+    bindingKind: 'account', ref: { service, accountId } })}`, status: 'pending' as const });
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  // Another account's first read is in flight: no pace is chosen yet, and the body says it is reading, not that no
+  // window has a pace (the false line drew 150 px, then the chart landed at 578: −424/+406 on a cold Overview).
+  const firstRead = await renderScreen(wrap(<UsageProjectionsWidget {...props} id="usage_projections" testID="proj"
+    slice={{ ...props.slice, sources: [...props.slice.sources, pendingSource('spare')] }} />));
+  expect(firstRead.findByTestId('proj.noPace')).toBeFalsy();
+  expect(firstRead.findByTestId('proj.reading')).toBeTruthy();
+  await firstRead.unmount();
+  // Nor does it chart whichever paced account answered first: the chart moved from window to window as accounts landed.
+  const pacedOnly = bodyProps([quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 40,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }])]);
+  const provisional = await renderScreen(wrap(<UsageProjectionsWidget {...pacedOnly} id="usage_projections" testID="proj"
+    slice={{ ...pacedOnly.slice, sources: [...pacedOnly.slice.sources, pendingSource('spare')] }} />));
+  expect(provisional.findByTestId('proj.burnUp')).toBeFalsy();
+  expect(provisional.findByTestId('proj.reading')).toBeTruthy();
+  await provisional.unmount();
+  // An account that has a reading is being read again: its last reading still stands, so the paced chart stays.
+  const reread = await renderScreen(wrap(<UsageProjectionsWidget {...props} id="usage_projections" testID="proj"
+    slice={{ ...props.slice, sources: [...props.slice.sources, pendingSource('tight')] }} />));
+  expect(reread.findByTestId('proj.burnUp')).toBeTruthy();
+  expect(reread.findByTestId('proj.noPace')).toBeFalsy();
 });
 
 it('shows the entered monthly amount without inventing a provider billing period', async () => {

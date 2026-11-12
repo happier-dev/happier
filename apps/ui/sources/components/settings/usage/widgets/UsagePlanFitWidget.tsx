@@ -15,7 +15,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 import type { UsagePlanInsights } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
+import { UsageBodyReading, usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
 import { summarizeUsagePlanFit, type UsagePlanAccount } from './plans/usagePlansModel';
 import { readUsagePersonalPaceTarget } from './plans/usagePacingTarget';
 import { UsageBillingButton, UsageSubscriptionPriceEditor } from './plans/UsagePlanActions';
@@ -30,6 +30,7 @@ import {
   UsagePlanIdentity,
   UsagePlanAccountStates,
   isUsagePlanAccountDrawn,
+  isUsagePlanAccountFirstReading,
   isUsagePlanAccountSettledUnread,
   UsagePlanSectionHead,
   UsagePlansNothingRead,
@@ -67,6 +68,15 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
           ? <RecordedWeek value={props.slice.planInsights.recordedWeek} compact={tile} testID={`${props.testID}.recordedWeek`} /> : null}
       </View>
     );
+  }
+  // The rows are revealed together once every first read has answered: added one at a time, a first visit stepped the
+  // page down ten times (R6 #7: 116 → 567 over 11 s). Until then the body is one reading placeholder; a re-read of a
+  // drawn account is not a first read, so its row stays.
+  if (projection.accounts.some(isUsagePlanAccountFirstReading)) {
+    return <View style={styles.body}>
+      <UsageBodyReading testID={`${props.testID}.reading`} shape={{ kind: 'meters', rows: projection.accounts.length }}
+        waitingOn={{ slice: props.slice, sources: ['quota'] }} />
+    </View>;
   }
   const insightsOf = (account: UsagePlanAccount) => props.slice.planInsights?.accounts.find(entry => entry.source.ref.accountId === account.accountId
     && entry.source.ref.service.pluginId === account.service.pluginId && entry.source.ref.service.localId === account.service.localId);

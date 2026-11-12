@@ -2,7 +2,6 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
-import { HappierListOverflowFooter } from '@happier-dev/plugin-ui/presentation';
 import * as pageAggregation from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import * as usageCost from '@happier-dev/protocol/usage/usageCost';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -464,7 +463,7 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
   }
 });
 
-it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', false, 520, false], ['medium', true, 180, true], ['full', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid at full width, and one row per account under a bar too narrow for labels or a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
+it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', false, 520, false], ['full', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid at full width, and one row per account in a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const quota = [['work', 'loaded_data', 40], ['personal', 'loaded_data', 75], ['spare', 'not_loaded', null]].map(([accountId, state, usedPct]) => {
@@ -498,11 +497,11 @@ it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', fals
   expect(screen.getTextContent()).toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
   expect(screen.getTextContent()).toContain(t('usage.board.plans.capacityAccounts', { count: 2 }));
   expect(screen.findHostByTestId('capacity.pooled') !== null).toBe(pooled);
-  // A bar too narrow for a label under each segment stays one bar; its accounts are listed beneath it instead.
+  // A grid too narrow for its cells lists its accounts a row each.
   expect(screen.findHostByTestId('capacity.accounts') !== null).toBe(listed);
 });
 
-it('lists only the tightest accounts under a narrow pooled bar and folds the rest behind Show all · N (sweep 1110 item 15)', async () => {
+it('says Limits beside other widgets too narrow for a label per segment as the tightest account and one line, never a list beside the chart (R6 N12)', async () => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const used = [10, 95, 20, 80, 30, 90, 40, 50];
@@ -530,13 +529,15 @@ it('lists only the tightest accounts under a narrow pooled bar and folds the res
       <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
     </WidgetPresentationProvider>
   </InjectedAuthProvider>);
-  const listedCells = () => used.map((_, index) => `acct${index}`).filter(id => screen.findHostByTestId(`capacity.cell.${id}`) !== null);
-  expect(screen.findHostByTestId('capacity.accounts')).not.toBeNull();
-  // The accounts with the least left lead; the roomy rest wait behind the one show-all footer.
-  expect(listedCells().sort()).toEqual(['acct1', 'acct3', 'acct5']);
-  // The rest are one Show all · 8 away (the toggle's command dispatch is the mounted-command owner's contract).
-  const footer = screen.findAllByType(HappierListOverflowFooter).find(node => node.props.testID === 'capacity.accounts.more');
-  expect(footer?.props).toMatchObject({ total: 8, hidden: 5, expanded: false });
+  // No selector pick: the tightest stands in with the anatomy the next account has (owner 11-11): its figure and meter,
+  // the rest in one line. A three-row list with Show all made the right column ~240 px taller than Daily beside it.
+  const text = screen.getTextContent();
+  expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();
+  expect(screen.findHostByTestId('capacity.nextMeter')).not.toBeNull();
+  expect(text).toContain(t('usage.board.plans.limitsOthers', { count: 7, usedUp: 0 }));
+  expect(screen.findHostByTestId('capacity.pooled')).toBeNull();
+  expect(screen.findHostByTestId('capacity.accounts')).toBeNull();
+  expect(used.map((_, index) => `acct${index}`).filter(id => screen.findHostByTestId(`capacity.cell.${id}`) !== null)).toEqual([]);
 });
 
 it.each(['pending', 'not_loaded'] as const)('shows an observed headline with first-read progress (%s) and replaces it when a tighter account answers', async status => {
