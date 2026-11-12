@@ -352,13 +352,13 @@ describe('public roots through real reviewed-child packet producers', () => {
         try {
             const root = await f.root('deployments.deploy', f.deployInput);
             const path = (id: string) => `/v1/deployments/environments/${id}?serverId=${f.serverId}`;
-            for (const [id, status] of [[f.environment.id, 200], [foreign.environment.id, 404]] as const) {
+            for (const [id, status] of [[f.environment.id, 200], [foreign.environment.id, 401]] as const) {
                 // createDaemonDeploymentActionDeps.readEnvironmentMetadata calls storage with this read effect.
                 const request = { effectActionId: 'deployments.environments.get', method: 'GET', path: path(id) };
                 const response = await f.resourceApp.inject({ method: 'GET', url: request.path, headers: await f.headers(root, request) });
                 expect(response.statusCode, response.body).toBe(status);
                 expect(response.json()).toMatchObject(status === 200
-                    ? { ok: true, environment: { id: f.environment.id } } : { ok: false, error: 'deployment_unavailable' });
+                    ? { ok: true, environment: { id: f.environment.id } } : { error: 'invalid_token' });
             }
             expect(f.currentnessRequests).toEqual(expect.arrayContaining([
                 { method: 'POST', path: bindExternalActionExecutionAuthorizationVerifyHttpPathV1('deployments.deploy'), status: 200 },
@@ -410,7 +410,7 @@ describe('public roots through real reviewed-child packet producers', () => {
             }
             const observer = await f.root('deployments.receipts.observe', { serverId: f.serverId,
                 environmentId: f.environment.id, deploymentId: receipt.id });
-            for (const [id, status] of [[f.environment.id, 200], [crypto.randomUUID(), 404]] as const) {
+            for (const [id, status] of [[f.environment.id, 200], [crypto.randomUUID(), 401]] as const) {
                 const read = { effectActionId: 'deployments.environments.get', method: 'GET',
                     path: `/v1/deployments/environments/${id}?serverId=${f.serverId}` };
                 const response = await f.resourceApp.inject({ method: 'GET', url: read.path, headers: await f.headers(observer, read) });
@@ -461,7 +461,8 @@ describe('public roots through real reviewed-child packet producers', () => {
                 expect(response.statusCode, response.body).toBe(status);
             }
             const restore = await f.withAccountProjection(await f.root('deployments.backups.restore', {
-                ...placement, mode: 'prepare', expectedRevision: environment.revision, restoreBackupId: 'pre-migration' }));
+                ...placement, mode: 'prepare', expectedRevision: environment.revision,
+                source: { kind: 'repository', snapshotId: 'pre-migration' } }));
             const restoreHttp = installAxiosFastifyAdapter({ app: f.resourceApp, origin: f.origin });
             const identity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
                 createdAt: 1, installationId: f.machine.installationId!, publicKey: Buffer.from(f.keyPair.publicKey).toString('base64url'),
@@ -627,7 +628,7 @@ describe('public roots through real reviewed-child packet producers', () => {
                     expect(prepared.bindingPreparation).toBeDefined();
                     expect(prepared.grants).toEqual([]);
                     prepared.release();
-                    await expect(read(crypto.randomUUID())).rejects.toMatchObject({ code: 'deployment_unavailable' });
+                    await expect(read(crypto.randomUUID())).rejects.toMatchObject({ code: 'action_forbidden' });
                 } finally { identity.mockRestore(); restoreHttp(); }
             } finally { await f.close(); }
         });
