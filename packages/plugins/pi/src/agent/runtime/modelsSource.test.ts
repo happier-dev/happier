@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createPiSessionModelsSource } from './modelsSource.js';
+import { parsePiModelDiscoveryRecord } from '../models/discoveryExtension.js';
 
 describe('createPiSessionModelsSource', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -115,7 +116,12 @@ describe('createPiSessionModelsSource', () => {
     });
     expect(observed).toHaveLength(3);
 
-    source.observeCatalog({ error: 'refresh-failed' });
+    const failedCatalog = parsePiModelDiscoveryRecord({ type: 'happier-pi-model-catalog', error: 'refresh-failed',
+      refreshErrorMessage: 'authentication/native_catalog_denied: Copilot catalog rejected; Authorization: Bearer private-runtime-catalog-token' });
+    if (!failedCatalog) throw new Error('Missing native failure marker');
+    source.observeCatalog(failedCatalog);
+    expect(onError).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringContaining('native_catalog_denied') }));
+    expect(onError).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.not.stringContaining('private-runtime-catalog-token') }));
     expect(source.read().observedAt).toBe(observedAt);
     readState.mockRejectedValueOnce(new Error('Pi unavailable'));
     await expect(source.refresh()).resolves.toBeUndefined();

@@ -4,13 +4,14 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildPiRuntimeModelsSnapshot } from '../models/catalog.js';
+import type { parsePiModelDiscoveryRecord } from '../models/discoveryExtension.js';
 
 export function createPiSessionModelsSource(params: Readonly<{
   providerModelId?: string;
   readState(): Promise<unknown>;
   onError(error: unknown): void;
 }>): AgentSessionModelsSource & Readonly<{
-  observeCatalog(result: Readonly<{ models: unknown[] }> | Readonly<{ error: string }>): void;
+  observeCatalog(result: NonNullable<ReturnType<typeof parsePiModelDiscoveryRecord>>): void;
   refresh(): Promise<void>;
   dispose(): void;
 }> {
@@ -40,7 +41,7 @@ export function createPiSessionModelsSource(params: Readonly<{
     observeCatalog(result) {
       if (disposed) return;
       if ('error' in result) {
-        params.onError(new Error(`Pi model discovery failed: ${result.error}`));
+        params.onError(new Error(`Pi model discovery failed: ${result.refreshErrorMessage ?? result.error}`));
         return;
       }
       publish(buildPiRuntimeModelsSnapshot({ providerModelId: params.providerModelId, state, availableModels: result, previous: snapshot, observedAt: Date.now() }));

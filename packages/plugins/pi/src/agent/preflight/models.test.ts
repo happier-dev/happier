@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { runInNewContext } from 'node:vm';
+import { buildPiModelDiscoveryExtensionSource } from '../models/discoveryExtension.js';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +13,41 @@ import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV, resolvePiRequestAuthExtensionPath 
 const observation = (models: unknown[]) => JSON.stringify({ type: 'happier-pi-model-catalog', models });
 
 describe('Pi structured preflight model discovery', () => {
+  it.each(['refresh-result', 'list-call', 'registry-error', 'refresh-unsupported', 'offline'] as const)(
+    'retains the native failure through preflight refresh diagnostics (%s)', async failureAt => {
+      const nativeFailure = Object.assign(new Error('Copilot catalog rejected; Authorization: Bearer private-catalog-token'),
+        { phase: 'authentication', code: 'native_catalog_denied' });
+      const registry = {
+        getAll: () => [{ provider: 'example' }],
+        hasConfiguredAuth: () => true,
+        refresh: async () => failureAt === 'refresh-unsupported' ? undefined : ({ aborted: false, errors: failureAt === 'refresh-result'
+          ? new Map([['example', nativeFailure]]) : new Map() }),
+        getError: () => failureAt === 'registry-error' ? nativeFailure.message : undefined,
+        getAvailable: () => { if (failureAt === 'list-call') throw nativeFailure; return []; },
+      };
+      const lines: string[] = [];
+      let start: ((_event: unknown, context: { modelRegistry: typeof registry }) => Promise<void>) | undefined;
+      // Pi's extension host and registry are the external process boundary.
+      const install = runInNewContext(
+        buildPiModelDiscoveryExtensionSource({ bypassCache: true }).replace('export default ', '') + '; happierModelDiscovery',
+        { Map, Set, process: { env: failureAt === 'offline' ? { PI_OFFLINE: '1' } : {}, stderr: { write: (line: string) => { lines.push(line); } } } },
+      );
+      install({ on(_event: string, handler: NonNullable<typeof start>) { start = handler; } });
+      await start!(undefined, { modelRegistry: registry });
+      const result = PI_PREFLIGHT_SESSION_CONTROLS.models.parseOutput?.({
+        ok: true, exitCode: 0, stdout: '', stderr: lines.join(''),
+      });
+      expect(result).toMatchObject({ availableModels: [], source: failureAt === 'refresh-unsupported' ? 'static' : 'unavailable', refreshError: true,
+        refreshErrorMessage: expect.stringContaining(failureAt === 'refresh-unsupported'
+          ? 'refresh-unsupported' : failureAt === 'offline' ? 'offline' : 'Copilot catalog rejected') });
+      if (failureAt === 'refresh-result' || failureAt === 'list-call') {
+        expect(JSON.stringify(result)).toContain('authentication');
+        expect(JSON.stringify(result)).toContain('native_catalog_denied');
+      }
+      expect(JSON.stringify(result)).not.toContain('private-catalog-token');
+    },
+  );
+
   it('leaves managed Muse source credentials to its Provider catalog owner', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pi-preflight-managed-'));
     const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };

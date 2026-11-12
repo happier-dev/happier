@@ -14,8 +14,9 @@ const PI_COMMAND_CATALOG_ARGS = ['--mode', 'json', '--no-session'] as const;
 
 type PiPreflightModelObservation = Readonly<{
   availableModels: readonly PiPreflightModel[];
-  source: 'static';
+  source: 'static' | 'unavailable';
   refreshError?: true;
+  refreshErrorMessage?: string;
 }> | null;
 
 function parsePiPreflightModelObservation(stderr: string): PiPreflightModelObservation {
@@ -24,11 +25,17 @@ function parsePiPreflightModelObservation(stderr: string): PiPreflightModelObser
     const observation = parsePiModelDiscoveryLine(line);
     if (!observation) continue;
     const localFallback = 'error' in observation && observation.error === 'refresh-unsupported';
-    if (('error' in observation && !localFallback) || !Array.isArray(observation.models)) { result = null; continue; }
+    if (('error' in observation && !localFallback) || !Array.isArray(observation.models)) {
+      result = 'error' in observation && observation.refreshErrorMessage
+        ? { availableModels: [], source: 'unavailable', refreshError: true, refreshErrorMessage: observation.refreshErrorMessage }
+        : null;
+      continue;
+    }
     const models = buildPiRuntimeModelsSnapshot({ state: {}, availableModels: { models: observation.models } })?.models;
     // Registry refresh establishes candidates; it does not verify account entitlement.
     result = !models ? null : { availableModels: models, source: 'static',
-      ...(localFallback ? { refreshError: true } : {}) };
+      ...(localFallback ? { refreshError: true, ...('refreshErrorMessage' in observation
+        ? { refreshErrorMessage: observation.refreshErrorMessage } : {}) } : {}) };
   }
   return result;
 }
