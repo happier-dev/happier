@@ -13,6 +13,7 @@ type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntim
 export type AccountExecutionRuntimeInput = Readonly<{
     accountExecution: NonNullable<RegistryInput['accountExecution']>;
     externalActionHomeBinding?: RegistryInput['externalActionHomeBinding'];
+    executeTeamCredentialBrokerAction?: Parameters<typeof createRequesterConnectedAccountPurposeBindingRuntime>[0]['executeTeamCredentialBrokerAction'];
     happyHomeDir?: string;
     signal?: AbortSignal;
     /** A containing Machine operation holds this registry until Account execution ends. */
@@ -30,6 +31,9 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
         const readCredentialRegistry = () => input.credentialRuntimeRegistry ?? registry;
         const borrowCredentialRegistry = (): PluginRuntimeRegistryLease => ({
             registry: readCredentialRegistry(), source: 'ephemeral', durableRevision: -1, release: async () => {},
+        });
+        const borrowAccountRegistry = (): PluginRuntimeRegistryLease => ({
+            registry, source: 'ephemeral', durableRevision: -1, release: async () => {},
         });
         // Purpose services use the containing operation's held registry, or their
         // Account registry when no Machine is involved. Neither owns publication.
@@ -60,19 +64,25 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
                 getAccountEncryptionMode: options => runWithServerHttpBaseUrl(authority.serverUrl,
                     () => credentialApi.getAccountEncryptionMode(options)),
                 resolveQualifiedConnectedAccountV4Support: resolveQualifiedSupport,
+                executeTeamCredentialBrokerAction: input.executeTeamCredentialBrokerAction,
             });
         })() : null;
         registry = await resolveExecutablePluginRuntimeRegistry({
             ...(input.externalActionHomeBinding ? { externalActionHomeBinding: input.externalActionHomeBinding } : {}),
             ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
-            ...(purposeRuntime ? { connectedAccounts: purposeRuntime.purposes.owner, actionFormConnectedAccounts: {
-                resolveBindingIntent: purposeRuntime.purposes.resolveBindingIntent,
-                resolveBindingIntentSelection: purposeRuntime.purposes.resolveBindingIntentSelection,
-                activatePurposeBindings: purposeRuntime.purposes.activatePurposeBindings,
-            } } : {}),
+            ...(purposeRuntime ? { connectedAccounts: purposeRuntime.purposes.owner,
+                actionFormConnectedAccounts: purposeRuntime.purposes } : {}),
             accountExecution: authority,
-            runtimeRegistryController: credentialRegistryAccess,
+            connectedAccountRuntimeRegistry: credentialRegistryAccess,
+            // Nested Account Actions and Resource reads belong to this admitted
+            // Account registry, independently of the held credential source.
+            runtimeRegistryController: {
+                acquireRuntimeRegistry: async () => borrowAccountRegistry(),
+                tryAcquireRuntimeRegistry: borrowAccountRegistry,
+                isRuntimeRegistryCurrent: candidate => candidate === registry,
+                subscribe: pluginReloadController.subscribe,
+            },
         });
         return { registry, purposeRuntime };
     });

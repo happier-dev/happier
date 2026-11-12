@@ -32,6 +32,31 @@ afterEach(async () => {
 });
 
 describe('managed Provider operation authority', () => {
+  it('retains finite Account exact absence without a process request-auth host', async () => {
+    const authority = createManagedProviderOperationAuthority({ purposeBindingOwner: createPurposeBindingFixture() });
+    const activation = await authority.activate({ identity: { pluginId: 'acme.compute', localId: 'power' },
+      operationId: 'managed-1/power', purposes: [], purposeBindings: { v: 1, bindings: [] }, requestAuthUses: [],
+      managedOperation: { role: 'power', isCurrent: () => true }, isCurrent: () => true });
+    expect(activation.exactPurposeBindingSubjectId).toEqual(expect.any(String));
+    expect(activation.requestAuth).toBeNull();
+    expect(activation.isCurrent()).toBe(true);
+    await activation.cleanup();
+    expect(activation.isCurrent()).toBe(false);
+  });
+
+  it('refuses process request-auth without its host and releases the admitted purpose lease', async () => {
+    let disposed = false;
+    const purpose = { consumer: { pluginId: 'acme.compute', localId: 'power' }, purpose: 'upstream' };
+    const authority = createManagedProviderOperationAuthority({
+      purposeBindingOwner: createPurposeBindingFixture(() => { disposed = true; }),
+    });
+    await expect(authority.activate({ identity: purpose.consumer, operationId: 'managed-1/power', purposes: [purpose],
+      purposeBindings: { v: 1, bindings: [] }, isCurrent: () => true,
+      requestAuthUses: [{ purpose, materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }],
+    })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_unavailable' });
+    expect(disposed).toBe(true);
+  });
+
   it('performs one explicit admission during activation, retaining later credential checks', async () => {
     const source = await readFile(new URL('./managedProviderOperationAuthority.ts', import.meta.url), 'utf8');
     // Count activation's explicit refusals, excluding callbacks retained for

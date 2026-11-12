@@ -1,3 +1,4 @@
+import { createActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
 import { describe, expect, it } from 'vitest';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,8 +32,10 @@ function executeContributedAction(request: Parameters<typeof dispatchContributed
 }
 
 describe('managed native-role custody at contributed dispatch', () => {
-    it.each(['selected', 'foreign', 'absent'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
+    it.each(['selected', 'foreign', 'absent', 'team', 'team-brokered', 'team-brokered-foreign'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
+        const team = scenario.startsWith('team');
+        const brokered = scenario.startsWith('team-brokered');
         const disclosed: string[] = [];
         const owner = createConnectedAccountPurposeBindingOwner({
             store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
@@ -51,19 +54,44 @@ describe('managed native-role custody at contributed dispatch', () => {
             contributes: { connectedAccountDescriptors: [{ id: service.localId, title: 'Cloud', authentication: { defaultModeId: 'token', modes: [{
                 id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
             }] } }] } });
+        let teamEffects = 0;
         const f = fixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
+            ...(team ? { actionHandlers: new Map(manifest.contributes.actions.map(action => [action.id, async () => {
+                if (action.id === 'power') teamEffects++;
+                return roleResult(action.id);
+            }])) } : {}),
             nativeRoleResults: { inspect: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' } } });
         const provider = { pluginId, localId: 'vm' };
-        const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
-            purpose: { consumer: { pluginId, localId: 'power' }, purpose: 'upstream' }, account: { service, accountId: 'selected-account' },
+        const teamSelection = brokered ? { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const }
+            : { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'direct' as const,
+                disclosedMember: { service, accountId: 'sharer-private' } };
+        const launch: ManagedMachineV1['launch'] = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
+            purpose: { consumer: provider, purpose: 'upstream' },
+            ...(team ? { teamId: 'team-a', selection: teamSelection } : { account: { service, accountId: 'selected-account' } }),
         }] };
         const machine: ManagedMachineV1 = { id: 'managed-1', homeId: 'home-1', custodianAccountId: 'owner', launch,
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
             resource: { contributionRef: provider, schemaVersion: 1, value: {} }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
         const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', actionRequestId: 'original',
             operationAcceptance: { operationId: 'original-operation', accept() {} } };
+        let directOpens = 0;
+        let brokerEffects = 0;
+        const admitActionPurposeBindings = createActionPurposeBindingAdmission({ activatePurposeBindings: owner.activatePurposeBindings,
+            // The remote Action transport is the boundary; local custody and routing remain real.
+            executeTeamCredentialBrokerAction: async () => { brokerEffects++; return { ok: true, result: roleResult('power') }; },
+            openTeamDirect: async () => { directOpens++; return { ok: true, payload: { v: 1,
+                domain: 'happier.team-credential-direct-material', homeServerIdentityId: 'home-1', teamId: 'team-a',
+                resourceId: 'shared-cloud', resourceRevision: 1, recipientAccountId: 'recipient',
+                sourceMember: { kind: 'connected_account', service, connectedAccountId: 'sharer-private' }, sourceVersion: 'source-v1',
+                material: { kind: 'qualified_connected_account', credential: { v: 1, values: { token: 'shared-token' } },
+                    configuration: null, authenticationModeId: 'token' },
+            } }; },
+        });
         const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: f.runtimeRegistry,
-            source: 'ephemeral', durableRevision: -1, release: async () => {} }), connectedAccountPurposeBindingOwner: owner });
+            source: 'ephemeral', durableRevision: -1, release: async () => {} }), managedProviderOperationAuthority: createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(),
+        purposeBindingOwner: { ...owner, admitActionPurposeBindings }, requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
+        resolveRequestAuthHttpPort: () => 43123, createRedactionLease: () => ({ add() {}, close() {} }),
+      }) });
         const port = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: { homeId: machine.homeId, managedId: machine.id,
             expectedRevision: 2, intent: 'start', when: 'now' }, context, reviewAdmitted: true,
             plan: { children: ['power', 'inspect'].map(role => ({ action: { pluginId, localId: role }, role })) },
@@ -75,15 +103,20 @@ describe('managed native-role custody at contributed dispatch', () => {
         const identity = { pluginId, localId: 'power' };
         const purpose = { consumer: identity, purpose: 'upstream' };
         const binding = { identity, operationId: 'original-operation', purposes: [purpose],
-            purposeBindings: { v: 1 as const, bindings: [{ purpose, target: { kind: 'account' as const,
-                account: { service, accountId: scenario === 'foreign' ? 'foreign-account' : 'selected-account' } } }] },
+            purposeBindings: { v: 1 as const, bindings: team ? [] : [{ purpose, target: { kind: 'account' as const,
+                account: { service, accountId: scenario === 'foreign' ? 'foreign-account' : 'selected-account' } } }],
+                ...(team ? { teamResourceSelections: [{ purpose, teamId: 'team-a', selection: scenario === 'team-brokered-foreign'
+                    ? { ...teamSelection, resourceId: 'foreign-cloud' } : teamSelection }] } : {}) },
             isCurrent: () => true, managedOperation: { role: 'power' as const, isCurrent: () => true } };
         const result = await port.invoke({ action: identity, role: 'power', input: { resource: {}, intent: 'start' },
             invocationServices: { managedMachine: machine, ...(scenario === 'absent' ? {} : { connectedAccountPurposeBinding: binding }) } });
-        expect(result).toMatchObject(scenario === 'selected' ? { ok: true, result: { kind: 'confirmed' } }
+        expect(result, JSON.stringify(result)).toMatchObject(scenario === 'selected' || scenario === 'team' || scenario === 'team-brokered' ? { ok: true, result: { kind: 'confirmed' } }
             : { ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid' });
         expect(disclosed).toEqual(scenario === 'selected' ? ['selected-account'] : []);
         expect(f.effects()).toBe(scenario === 'selected' ? 1 : 0);
+        expect(teamEffects).toBe(scenario === 'team' ? 1 : 0);
+        expect(directOpens).toBe(scenario === 'team' ? 1 : 0);
+        expect(brokerEffects).toBe(scenario === 'team-brokered' ? 1 : 0);
     });
     it('delivers only the admitted acquire guest-host key through real dispatch and redacts its log echoes', async () => {
         const guestKey = 'invocation-private-generated-guest-host-key';

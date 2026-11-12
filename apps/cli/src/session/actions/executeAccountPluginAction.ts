@@ -2,7 +2,7 @@ import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDe
 import type { ActionId } from '@happier-dev/protocol';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { resolveAccountExecutionRuntime, type AccountExecutionRuntime, type RetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
+import { resolveAccountExecutionRuntime, type AccountExecutionRuntime, type AccountExecutionRuntimeInput, type RetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { readPluginActionExecutionReference, type CurrentProcessPluginActionExecutionAttempt } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker,
   createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
@@ -17,13 +17,15 @@ import { readResolvedActionContribution } from '@/plugins/projection/registry/ac
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 
 /** Selects Account custody for the incumbent runtime and invocation owners. */
 export async function executeAccountPluginAction(params: Readonly<{
   host: Pick<Parameters<typeof createCliActionExecutorHarness>[0], 'credentials' | 'serverHttpBaseUrl'
     | 'savedSecretOperationContext' | 'isCredentialCurrent' | 'happyHomeDir' | 'resolveServerFeaturesSnapshot'
     | 'runtimeActionMachineId' | 'serverId' | 'serverIdentityId' | 'onApprovalRequested'
-    | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>;
+    | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'>
+      & Pick<AccountExecutionRuntimeInput, 'executeTeamCredentialBrokerAction'>;
   deps: ActionExecutorDeps;
   actionId: string;
   input: unknown;
@@ -118,6 +120,7 @@ export async function executeAccountPluginAction(params: Readonly<{
       ?? params.context?.executionRunTargetMachineId;
     const machineId = explicitMachineId ?? params.context?.defaultSessionMachineId;
     const runtime = await resolveAccountExecutionRuntime({
+      executeTeamCredentialBrokerAction: params.host.executeTeamCredentialBrokerAction,
       externalActionHomeBinding: {
         ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
         ...(params.host.serverIdentityId ? { serverIdentityId: params.host.serverIdentityId } : {}),
@@ -173,10 +176,12 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
     invokeContributedAction: createCommittedContributedActionInvoker({
       ...(params.inheritedInvocation ? { inheritedInvocation: params.inheritedInvocation } : {}),
       acquireRuntimeRegistryLease: async () => lease,
+      ...(purposeRuntime ? { managedProviderOperationAuthority: createManagedProviderOperationAuthority({
+        purposeBindingOwner: purposeRuntime.purposes,
+      }) } : {}),
       requestCurrentIntent: createCredentialedTargetActionCurrentIntent(credentials, {
         onApprovalRequested: params.host.onApprovalRequested,
       }),
-      ...(purposeRuntime ? { connectedAccountPurposeBindingOwner: purposeRuntime.purposes } : {}),
     }),
   });
   // Generic Action tools pass qualified plugin ids; the shared executor

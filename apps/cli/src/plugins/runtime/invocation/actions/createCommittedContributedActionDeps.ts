@@ -1,3 +1,4 @@
+import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { admitAccountActionInvokeConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
@@ -10,7 +11,8 @@ import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/act
 import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
-import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
@@ -26,7 +28,7 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { logExternalActionCurrentIntentMismatch } from '@/daemon/externalActions/externalActionPhase';
 import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import type { ConnectedAccountPurposeBindingOwner, ConnectedAccountPurposeBindingLease } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import type { ManagedProviderOperationAuthority, ManagedProviderOperationAuthorityActivation } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import type { AdmittedManagedProviderOperationExecutionRequest } from './managedProviderCustody';
 import { projectContributedActionFailure } from './contributedActionFailure';
 
@@ -119,7 +121,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       /** Existing originating request identity, diagnostic only. */
       operationRequestId?: string;
     }>;
-  connectedAccountPurposeBindingOwner?: Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings'>;
+  managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
   observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
   requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
@@ -131,7 +133,9 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
     const approvalContext = { ...context };
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
     const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1;
-    const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
+    const requestedSignal = signal ?? context.signal ?? new AbortController().signal;
+    const observation = context.machineServiceLogsResource?.observation;
+    const invocationSignal = observation ? AbortSignal.any([requestedSignal, observation.signal]) : requestedSignal;
     invocationSignal.throwIfAborted();
     const surface = readSurface(context.surface) ?? input.defaultInvocationSurface;
     if (!surface) return { ok: false, errorCode: 'contributed_action_unavailable', error: 'contributed_action_unavailable' };
@@ -168,7 +172,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       });
     }
     const lease = await acquire();
-    let purposeLease: ConnectedAccountPurposeBindingLease | undefined;
+    let purposeActivation: ManagedProviderOperationAuthorityActivation | undefined;
     try {
       const { executeContributedAction } = await import('./executeContributedAction');
       invocationSignal.throwIfAborted();
@@ -178,19 +182,26 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         candidate.identity.pluginId === machine.launch.provider.pluginId && candidate.identity.localId === machine.launch.provider.localId);
       const role = contribution && readMachineProvisionerActionRolesV1(contribution.definition).find(candidate => candidate.action === action.localId)?.role;
       let admittedManagedProviderOperation: AdmittedManagedProviderOperationExecutionRequest | undefined;
-      if (machine && role && contribution) {
-        const binding = seed ? captureConnectedAccountInvocationPurposeBinding(seed) : undefined;
-        if (binding && input.connectedAccountPurposeBindingOwner) purposeLease = input.connectedAccountPurposeBindingOwner.activatePurposeBindings({
-          subject: { kind: 'managed_provider_operation', operationId: binding.operationId, pluginId: binding.identity.pluginId,
-            providerLocalId: binding.identity.localId, credentialConfigurations: binding.managedOperation?.credentialConfigurations,
-            isCurrent: binding.isCurrent }, purposes: binding.purposes, bindings: binding.purposeBindings.bindings,
+      const binding = seed ? captureConnectedAccountInvocationPurposeBinding(seed, action) : undefined;
+      if (binding) {
+        const authority = input.managedProviderOperationAuthority;
+        if (!authority) return { ok: false, errorCode: 'plugin_connected_account_binding_unavailable', error: 'plugin_connected_account_binding_unavailable' };
+        const declaration = readResolvedActionContribution(lease.registry.contributes, action);
+        const admittedBinding = { ...binding, ...(declaration?.pluginVersion ? { actionOperation: {
+          pluginVersion: declaration.pluginVersion, signal: invocationSignal,
+          resolveRequestHeaders: createExternalActionRequesterServerRequestHeaders(context),
+        } } : {}) };
+        purposeActivation = await authority.activate({ ...admittedBinding, requestAuthUses: [],
           ...(context.recordOperationCredentialUse ? { recordOperationCredentialUse: context.recordOperationCredentialUse } : {}),
         });
+      }
+      if (machine && role && contribution) {
         admittedManagedProviderOperation = { managedId: machine.id, homeId: machine.homeId, intentRevision: machine.intentRevision,
           accountMachine: machine, ...(binding ? { purposeBinding: binding } : {}), role,
           contribution: { ...contribution.identity, occurrenceId: lease.registry.readPluginOccurrenceId?.(action.pluginId) ?? '' },
-          ...(purposeLease ? { exactPurposeBindingSubjectId: purposeLease.subjectId } : {}),
-          isCurrent: () => !invocationSignal.aborted && (!binding || binding.isCurrent()) && (!purposeLease || purposeLease.isCurrent()),
+          ...(purposeActivation?.exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId: purposeActivation.exactPurposeBindingSubjectId } : {}),
+          ...(purposeActivation?.executeBrokeredAction ? { executeBrokeredAction: purposeActivation.executeBrokeredAction } : {}),
+          isCurrent: () => !invocationSignal.aborted && (!binding || binding.isCurrent()) && (!purposeActivation || purposeActivation.isCurrent()),
         };
       }
       const attempt = await executeContributedAction({
@@ -198,6 +209,12 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...input.inheritedInvocation,
         actionId: buildQualifiedPluginContributionKey(action),
         input: actionInput,
+        ...(observation ? { readObservation: {
+          invalidate() { observation.retire(new PluginError({ code: 'plugin_action_read_observation_unavailable' })); },
+          emit: async (value: unknown) => { await observation.emit(ManagedServiceNativeLogResultV1Schema.parse(value), 'pages'); },
+          retire: (error?: import('@happier-dev/protocol/plugins/errors').PluginErrorContract) => observation.retire(error),
+          accept: (subscription: import('@happier-dev/plugin-sdk').Disposable) => observation.accept(subscription),
+        } } : {}),
         ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
         ...(clientId === undefined ? {} : { clientId }),
         ...(messageActionReference ? { messageActionReference } : {}),
@@ -213,6 +230,11 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         } : {}),
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
+        ...(!admittedManagedProviderOperation && purposeActivation && (purposeActivation.exactPurposeBindingSubjectId || purposeActivation.executeBrokeredAction) ? { admittedConnectedAccountPurposeBinding: {
+          ...(purposeActivation.exactPurposeBindingSubjectId ? { exactPurposeBindingSubjectId: purposeActivation.exactPurposeBindingSubjectId } : {}),
+          ...(purposeActivation.executeBrokeredAction ? { executeBrokeredAction: purposeActivation.executeBrokeredAction } : {}),
+          isCurrent: () => !invocationSignal.aborted && purposeActivation!.isCurrent(),
+        } } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
         ...(input.daemonHoldsApprovalWaiter ? { daemonHoldsApprovalWaiter: true as const } : {}),
         ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
@@ -247,7 +269,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
       if (attempt.result.details !== undefined) return attempt.result;
       return projectContributedActionFailure(attempt.result);
     } finally {
-      purposeLease?.dispose();
+      await purposeActivation?.cleanup();
       await lease.release();
     }
   };
