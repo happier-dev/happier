@@ -179,6 +179,23 @@ describe('account request ownership', () => {
     expect(transport).toHaveBeenCalledTimes(10);
   });
 
+  it.each<{ headers: Readonly<Record<string, string>>; deadline: number }>([
+    { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }, deadline: 1_900_000_000_000 },
+    { headers: { 'retry-after': '120' }, deadline: 1_899_999_120_123 },
+  ])('keeps the exact parked deadline across later reads ($headers)', async ({ headers, deadline }) => {
+    let now = 1_899_999_000_123;
+    const requestOwner = owner(() => now);
+    const transport = vi.fn(async () => ({ ...ok, status: 429, headers }));
+    await requestOwner.request(input, { transport });
+    for (const elapsed of [95, 456]) {
+      now += elapsed;
+      const parked = await requestOwner.request(input, { transport });
+      const classifiedAt = now + 37;
+      expect(classifiedAt + readGithubRateLimitRetryAfterMs(readGithubApiResponseFacts(parked), classifiedAt)!).toBe(deadline);
+    }
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
   it('retains the maximum backoff despite an older success, sends zero HTTP while parked, and resumes only on demand', async () => {
     let now = 1_000;
     const requestOwner = owner(() => now);
@@ -225,7 +242,7 @@ describe('account request ownership', () => {
     const next = resourceInput(resource, '/another-endpoint');
     const parked = await requestOwner.request(next, { transport });
     expect(parked.status).toBe(429);
-    expect(parked.headers['retry-after']).toBe('60');
+    expect(now + readGithubRateLimitRetryAfterMs(readGithubApiResponseFacts(parked), now)!).toBe(61_000);
     expect(transport).toHaveBeenCalledTimes(1);
     for (const other of ['core', 'search', 'graphql'].filter((kind) => kind !== resource)) {
       await expect(requestOwner.request(resourceInput(other), { transport: peerTransport })).resolves.toBe(ok);

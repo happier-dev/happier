@@ -162,7 +162,9 @@ export function getGithubAccountRequestOwnerV1(scope: Readonly<{
         await options.disposeTransport?.();
         return Object.freeze({
           status: 429,
-          headers: Object.freeze({ 'retry-after': String(Math.ceil((parkedUntilMs - checkedAtMs) / 1_000)) }),
+          // This synthetic response stays inside the client; the shared timing parser
+          // accepts an absolute timestamp, preserving the owner's exact deadline.
+          headers: Object.freeze({ 'retry-after': new Date(parkedUntilMs).toISOString() }),
           body: new TextEncoder().encode('{"message":"GitHub account requests are rate limited."}'),
         });
       }
