@@ -11,6 +11,25 @@ const config = {
 
 describe('installed S3 destination Actions', () => {
   it.each([
+    ['cloudflare-r2', 'https://<account-id>.r2.cloudflarestorage.com', 'auto', 'path'],
+    ['backblaze-b2', 'https://s3.us-east-005.backblazeb2.com', 'us-east-005', 'path'],
+    ['wasabi', 'https://s3.wasabisys.com', 'us-east-1', 'path'],
+    ['hetzner', 'https://fsn1.your-objectstorage.com', 'fsn1', 'dns'],
+  ])('opens the %s preset through the existing S3 Action with its declared defaults', async (id, endpoint, region, addressing) => {
+    const descriptor = destinations.manifest.contributes?.backupDestinations?.find(item => item.id === id);
+    expect(descriptor).toBeDefined();
+    if (!descriptor) throw new Error('Missing destination');
+    const seeded = Object.fromEntries((descriptor.fieldHints?.fields ?? [])
+      .filter(field => field.defaultValue !== undefined).map(field => [field.path, field.defaultValue]));
+    expect(seeded).toMatchObject({ endpoint, region, addressing });
+    const fixture = await createPluginTestkit({ manifest: destinations.manifest, module: destinations });
+    try {
+      expect(await fixture.invokeAction(descriptor.actions.open.localId, { config: { ...seeded,
+        endpoint: endpoint.replace('<account-id>', 'example-account'), bucket: 'recovery', prefix: 'backups' } }))
+        .toMatchObject({ repository: 's3:' + endpoint.replace('<account-id>', 'example-account') + '/recovery/backups', s3: { region, addressing } });
+    } finally { await fixture.dispose(); }
+  });
+  it.each([
     { id: 's3', config: { endpoint: 'https://objects.example.test', bucket: 'recovery', prefix: 'authored/base' },
       base: { repository: 's3:https://objects.example.test/recovery/authored/base' },
       scoped: { repository: 's3:https://objects.example.test/recovery/authored/base/previews/environment-staging' } },
@@ -43,7 +62,7 @@ describe('installed S3 destination Actions', () => {
     const fixture = await createPluginTestkit({ manifest: destinations.manifest, module: destinations });
     try {
       const all = destinations.manifest.contributes?.backupDestinations ?? [];
-      expect(all.map(item => item.id).sort()).toEqual(['local', 's3', 'sftp']);
+      expect(all.map(item => item.id).sort()).toEqual(['backblaze-b2', 'cloudflare-r2', 'hetzner', 'local', 's3', 'sftp', 'wasabi']);
       for (const [id, config, repository, roles] of [
         ['local', { path: '/srv/recovery' }, '/run/happier/backup/repository', ['repositoryPassword']],
         ['sftp', { host: '2001:db8::1', port: 2222, username: 'archive', path: '/repository/é folder',
