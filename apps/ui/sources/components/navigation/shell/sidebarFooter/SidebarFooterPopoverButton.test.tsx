@@ -8,7 +8,9 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 // The portal is a platform boundary; the control and its open/close owner remain real.
-vi.mock('@/components/ui/popover', () => ({ Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
+vi.mock('@/components/ui/popover', async () => ({
+    ...await import('@/components/ui/popover/modalAwareFloatingPopoverPortalOptions'),
+    Popover: (props: { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) =>
     <>{props.children({ maxHeight: 600, maxWidth: 400 })}</> }));
 
 afterEach(standardCleanup);

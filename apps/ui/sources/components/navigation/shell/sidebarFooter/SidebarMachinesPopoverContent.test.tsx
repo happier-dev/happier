@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
-import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 import type { ActiveSelectionMachineGroup } from '@/components/settings/machines/hooks/useActiveSelectionMachineGroups';
@@ -123,10 +124,10 @@ async function renderPopover(options?: Parameters<typeof renderScreen>[1]) {
     // The inventory fixture feeds both its group projection and the canonical
     // Machine owner. Attention reads current rows there, not retained mock rows.
     for (const group of state.groups) {
-        storage.getState().applyMachines([...group.machines], true, {
-            sourceServerId: group.serverId,
-            ...(group.accountScope ? { sourceAccountId: group.accountScope.accountId } : {}),
-        });
+        if (group.accountScope) await publishMachineInventoryForTest(group.accountScope, group.machines);
+        // The view-model boundary retains these original rows separately from
+        // storage's hydrated projections, so admit their same live arrival too.
+        publishMachineActivityForTest(group.machines);
     }
     const { SidebarMachinesPopoverContent } = await import('./SidebarMachinesPopoverContent');
     return renderScreen(<SidebarMachinesPopoverContent close={() => {}} maxHeight={520} />, options);
@@ -179,12 +180,19 @@ async function labels(screen: Awaited<ReturnType<typeof renderPopover>>) {
 }
 
 describe('SidebarMachinesPopoverContent', () => {
-    beforeEach(() => {
+    let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    beforeEach(async () => {
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://popover-content.test', serverIdentityId: HOME });
         routerPush.mockClear();
         state.groups = [{ serverId: HOME, serverName: 'Home A', accountScope: SCOPE, status: 'idle', machines: fleet() }];
         state.managed = { [HOME]: [pending] };
         state.pools = [pool];
         state.source = source([workingOn('s1', 'mine'), workingOn('s2', 'mine'), workingOn('s3', 'shared')]);
+    });
+    afterEach(async () => {
+        standardCleanup();
+        machineResourceStore.reset(); resourceRpc.mockReset();
+        await connection.dispose();
     });
 
     it('lists the machine collection groups the list column shows, then pools', async () => {
@@ -222,8 +230,6 @@ describe('SidebarMachinesPopoverContent', () => {
 
     it('names the instruments only while a listed machine is online to show them', async () => {
         const { MachineSummaryCaption } = await import('@/components/machines/summary/MachineSummaryCaption');
-        // Reachability needs the signed-in Account the Home's machines are reached through.
-        const connection = await restoreServerAccountForTest({ serverUrl: 'https://popover-caption.test', serverIdentityId: HOME });
         resourceRpc.mockImplementation(() => new Promise(() => {}));
         try {
             const online = await renderPopover();
@@ -237,7 +243,7 @@ describe('SidebarMachinesPopoverContent', () => {
             expect(offline.findAllByTestId('sidebar-machines-row.' + HOME + '.edge').length).toBeGreaterThan(0);
             expect(offline.findAllByType(MachineSummaryCaption)).toHaveLength(0);
         } finally {
-            machineResourceStore.reset(); resourceRpc.mockReset(); await connection.dispose();
+            machineResourceStore.reset(); resourceRpc.mockReset();
         }
     });
 
