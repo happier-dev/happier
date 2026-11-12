@@ -12,6 +12,7 @@ import {
   SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH,
   SessionRuntimeFailureCauseV1Schema,
   sanitizeSessionRuntimeIssueV1,
+  readSessionRuntimeFailureCause,
   readAgentStartupFailureCode,
   readAgentStartupFailureDetails,
   readSessionPreparationFailureCode,
@@ -243,8 +244,7 @@ function readRetainedFailureCause(error: unknown): CodexFailureCause | null {
   const candidate =
     readRecord(readRecord(error)?.details)?.failureCause ??
     readRecord(readRecord(error)?.runtimeIssueV1)?.failureCause;
-  const retained = SessionRuntimeFailureCauseV1Schema.safeParse(candidate);
-  return retained.success ? retained.data : null;
+  return readSessionRuntimeFailureCause({ failureCause: candidate }) ?? null;
 }
 
 function readRedactedProviderErrorMessage(error: unknown, nativeStartup = false, nativeProviderMessage?: string | null): string | undefined {

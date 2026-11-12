@@ -426,6 +426,21 @@ A refused turn joins its existing quota-evidence
 settlement before admission releases that buffer or the host disposes the
 runtime. The host turn invariant remains the admission authority.
 
+In 0.3 development source, Claude accepts an SDK prompt from the exact native
+`command_lifecycle` started receipt for its submitted UUID. For a brokered Team
+credential, the host exposes `activeInput.awaitTurnPublication` from the admitted
+credential delivery mode. Both Claude SDK and Unified Terminal await that port
+at native `UserPromptSubmit`, before generation. The existing durable outbox
+supplies the exact Home acknowledgement: an applied begin releases the effect;
+a settled refusal or failed publication explicitly stops that input. Local
+journal custody still releases ordinary lifecycle work. Direct credentials do
+not install this broker publication barrier.
+
+Claude's failure projection retains an existing typed `failureCause` through the
+Protocol runtime-issue reader, shared with host and Codex consumers. Public
+runtime diagnostics retain closed cause fields and omit provider error prose;
+the existing diagnostic sanitizer remains responsible for sensitive previews.
+
 Codex's native failure reader recognizes an upstream JSON `model_not_found`
 code even when app-server flattens the envelope into its error message. The
 existing `provider_model_not_found` diagnostic asks the person to choose another
@@ -1151,6 +1166,12 @@ its chat, isolated commit, and provisionally opening chat replacement; retiremen
 releases each through the same runtime disposer. A late cancellation cannot
 acquire a replacement after that instance has retired. This is development
 source behavior, not a change to retention or the existing idle-lifetime policy.
+
+In 0.3 development source, Voice chat, isolated commit, and replacement runtimes
+use the selected ordinary permission intent without a Voice-only native tool
+ceiling. Canonical Action effect approval remains owned by the Action executor;
+an explicitly selected read-only intent still applies. Existing daemons need a
+reload to consume this change.
 
 The Voice settings schema owns the idle lifetime default for both clients and
 the CLI. A confirmed primary Run Stop remains successful if the optional sweep
@@ -1984,6 +2005,16 @@ instant-exit bare Exec with no observed native subtree settles its lease as
 descendant exists. A detached daemon-tagged child whose spawner's end is unproven
 remains Proven Happier's, not Left behind. Captured subtrees and explicit Run or
 service custody retain their existing confirmed-settlement requirements.
+
+In development source, long-lived Agent processes run under the per-Session
+holder ([CLI architecture](cli-architecture.md#per-session-agent-holder-03-development-source)).
+A runner crash therefore leaves the Agent and its in-flight turn running; the
+holder keeps unacknowledged output for the next runner that attaches. Stop is
+unchanged: the supervisor ends the Agent's process group through the canonical
+tree terminator, and the holder reports the exit and leaves once that exit is
+acknowledged. The daemon's runner-exit path (`onChildExited` → `endOwnerRemainder`)
+still ends a dead runner's remaining Session members, including a held Agent, until
+respawn adopts holders.
 
 ### Project finite worker execution (0.3 development)
 
@@ -4475,6 +4506,12 @@ Provider binding; the existing connected-service materialization owner still
 resolves the selected credentials against the daemon's applied runtime.
 These placement paths share the existing Provider authorization and materialization
 policy; the local adapter is not a fallback for a Session runner's missing service.
+Each runtime authorizes its exact inherited or explicit Provider choice once at
+launch. There is no separate inherited-choice or reasoning-effort preflight.
+Unsupported choices settle the existing Run as failed before endpoint or Agent
+creation. The older host-private `execution_run.provider.admit_v1` request remains
+an acknowledgement for surviving Session runners; it performs no authorization
+or catalog hydration. Their later launch still uses the one preparation owner.
 
 Voice Runs use the same controller-occurrence registry during native MCP
 provisioning. The Voice manager supplies custody only after an actual nested

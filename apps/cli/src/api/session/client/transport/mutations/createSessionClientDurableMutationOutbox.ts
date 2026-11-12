@@ -93,7 +93,7 @@ type TranscriptMessageCommittedObserver = (
 
 type GenericSessionClientDurableMutationOutbox = Readonly<{
     enqueueAgentStateRequestSettlement(mutation: AgentStateRequestSettlementMutationV1, onPersisted?: () => void): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-    enqueueSessionTurnMutation(mutation: SessionTurnMutationV1): Promise<void>;
+    enqueueSessionTurnMutation(mutation: SessionTurnMutationV1, options?: Readonly<{ awaitDelivery?: boolean; onPersisted?: () => void }>): Promise<void>;
     enqueueSessionEnd(mutation: SessionEndMutationV1): Promise<void>;
     enqueueTranscriptMessage(
         mutation: TranscriptMessageAppendMutationV1,
@@ -465,6 +465,7 @@ function logUnsupportedSessionTurnMutationDiagnostic(diagnostic: UnsupportedSess
 
 type DurableMutationDeliveryOutcome = Readonly<{
     delivered: boolean;
+    beginApplied?: boolean;
     committedSequence?: number;
     ignoredLossy?: boolean;
     unsupportedCapability?: boolean;
@@ -810,7 +811,11 @@ function createGenericSessionClientDurableMutationOutbox(
                 await (await resolveReopened())?.enqueueAgentStateRequestSettlement(mutation, onPersisted)
                 ?? { persisted: false, delivered: false }
             ),
-            enqueueSessionTurnMutation: async (mutation) => { await (await resolveReopened())?.enqueueSessionTurnMutation(mutation); },
+            enqueueSessionTurnMutation: async (mutation, options) => {
+                const reopenedOutbox = await resolveReopened();
+                if (!reopenedOutbox && options?.awaitDelivery) throw new Error('Accepted Turn publication is unavailable');
+                await reopenedOutbox?.enqueueSessionTurnMutation(mutation, options);
+            },
             enqueueSessionEnd: async (mutation) => { await (await resolveReopened())?.enqueueSessionEnd(mutation); },
             enqueueTranscriptMessage: async (mutation, opts) => (
                 await (await resolveReopened())?.enqueueTranscriptMessage(mutation, opts)
@@ -974,9 +979,12 @@ function createGenericSessionClientDurableMutationOutbox(
             if (handleClosed) return { persisted: false, delivered: false };
             return await sharedEntry.outbox.enqueueAgentStateRequestSettlement(mutation, onPersisted);
         },
-        enqueueSessionTurnMutation: async (mutation) => {
-            if (handleClosed) return;
-            await sharedEntry.outbox.enqueueSessionTurnMutation(mutation);
+        enqueueSessionTurnMutation: async (mutation, options) => {
+            if (handleClosed) {
+                if (options?.awaitDelivery) throw new Error('Accepted Turn publication is unavailable');
+                return;
+            }
+            await sharedEntry.outbox.enqueueSessionTurnMutation(mutation, options);
         },
         enqueueSessionEnd: async (mutation) => {
             if (handleClosed) return;
@@ -1032,7 +1040,7 @@ export type RuntimeSessionTurnMutationV1 = Exclude<SessionTurnMutationV1, Readon
 
 export type RuntimeSessionClientDurableMutationOutbox = Readonly<{
     enqueueAgentStateRequestSettlement(mutation: AgentStateRequestSettlementMutationV1, onPersisted?: () => void): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
-    enqueueSessionTurnMutation(mutation: RuntimeSessionTurnMutationV1): Promise<void>;
+    enqueueSessionTurnMutation(mutation: RuntimeSessionTurnMutationV1, options?: Readonly<{ awaitDelivery?: boolean; onPersisted?: () => void }>): Promise<void>;
     enqueueSessionEnd(mutation: SessionEndMutationV1): Promise<void>;
     enqueueTranscriptMessage(
         mutation: TranscriptMessageAppendMutationV1,
@@ -1117,13 +1125,13 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
             assertRuntimeCustodyMutation(queued);
             return await journal.enqueueAgentStateRequestSettlement(mutation, onPersisted);
         },
-        async enqueueSessionTurnMutation(mutation) {
+        async enqueueSessionTurnMutation(mutation, options) {
             const queued = createQueuedSessionTurnMutation(mutation as SessionTurnMutationV1);
             if (queued.payload.action === 'end_session') {
                 throw new Error('Runtime mutation custody accepts only a normal turn for the expected session');
             }
             assertRuntimeCustodyMutation(queued);
-            await journal.enqueueSessionTurnMutation(mutation as SessionTurnMutationV1);
+            await journal.enqueueSessionTurnMutation(mutation as SessionTurnMutationV1, options);
         },
         async enqueueSessionEnd(mutation) {
             const queued = createQueuedSessionEndMutation(mutation);
@@ -1345,7 +1353,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
     let nextRegisteredFieldAdmissionOrder: number | null = 1;
     const registeredFieldSettlements = new Map<string, RegisteredFieldSettlementGroup>();
     const awaitedDeliveryMutationCounts = new Map<string, number>();
-    const acknowledgedAwaitedDeliveryMutations = new Map<string, number | undefined>();
+    const acknowledgedAwaitedDeliveryMutations = new Map<string, Readonly<{ committedSequence?: number; beginApplied?: boolean }>>();
     const awaitedDeliveryListeners = new Map<string, Set<(error?: Error) => void>>();
 
     function releaseAwaitedDelivery(mutationId: string): void {
@@ -1946,7 +1954,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     terminalFailureDiagnostic: result.diagnostic,
                 };
             }
-            return { delivered: result.delivered };
+            return { delivered: result.delivered, ...(result.delivered && result.beginApplied !== undefined ? { beginApplied: result.beginApplied } : {}) };
         }
         if (mutation.kind === 'transcript_message_append') {
             params.onTranscriptMessageDeliveryAttempt?.(mutation.payload);
@@ -2328,7 +2336,10 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         }));
                     if (outcome.delivered) {
                         if (awaitedDeliveryMutationCounts.has(mutation.mutationId)) {
-                            acknowledgedAwaitedDeliveryMutations.set(mutation.mutationId, outcome.committedSequence);
+                            acknowledgedAwaitedDeliveryMutations.set(mutation.mutationId, {
+                                ...(outcome.committedSequence === undefined ? {} : { committedSequence: outcome.committedSequence }),
+                                ...(outcome.beginApplied === undefined ? {} : { beginApplied: outcome.beginApplied }),
+                            });
                             notifyAwaitedDelivery(mutation.mutationId);
                         }
                         mutationsPendingDurableRemoval.push(mutation);
@@ -2579,7 +2590,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             registeredFieldSettlementGroup?: RegisteredFieldSettlementGroup;
             rejectRegisteredFieldAdmission?: (error: unknown) => void;
         }> = {},
-    ): Promise<Readonly<{ delivered: boolean; persisted: boolean; committedSequence?: number;
+    ): Promise<Readonly<{ delivered: boolean; persisted: boolean; committedSequence?: number; beginApplied?: boolean;
         whenCommitted?: Promise<Readonly<{ committedSequence: number }> | null> }>> {
         await ready;
         assertCommittedTranscriptAdmission(opts.admission);
@@ -2706,7 +2717,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         const whenCommitted = opts.observeCommitSignal
             ? waitForAcknowledgedDelivery(deliveryMutationId, { signal: opts.observeCommitSignal })
                 .then(() => {
-                    const seq = acknowledgedAwaitedDeliveryMutations.get(deliveryMutationId);
+                    const seq = acknowledgedAwaitedDeliveryMutations.get(deliveryMutationId)?.committedSequence;
                     return typeof seq === 'number' ? { committedSequence: seq } : null;
                 })
                 .catch(() => null)
@@ -2718,7 +2729,8 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         // A publication owns its exact ACK, not the tail of a shared flush that
         // may still be delivering unrelated later mutations. The flush remains
         // the fallback when this attempt cannot confirm delivery.
-        const flushObservation = opts.awaitFlush === true && !requiredDelivery && isTranscriptDeliveryMutation(admittedMutation)
+        const flushObservation = opts.awaitFlush === true && !requiredDelivery && (isTranscriptDeliveryMutation(admittedMutation)
+            || (admittedMutation.kind === 'session_turn_mutation' && admittedMutation.payload.action === 'begin'))
             ? new AbortController() : null;
         const acknowledgedDelivery = flushObservation
             ? waitForAcknowledgedDelivery(deliveryMutationId, { signal: flushObservation.signal })
@@ -2742,10 +2754,12 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     : flushPromise);
             }
             const delivered = acknowledgedAwaitedDeliveryMutations.has(deliveryMutationId);
-            const committedSequence = acknowledgedAwaitedDeliveryMutations.get(deliveryMutationId);
+            const committedSequence = acknowledgedAwaitedDeliveryMutations.get(deliveryMutationId)?.committedSequence;
+            const beginApplied = acknowledgedAwaitedDeliveryMutations.get(deliveryMutationId)?.beginApplied;
             return {
                 delivered,
                 persisted: true,
+                ...(beginApplied === undefined ? {} : { beginApplied }),
                 ...(committedSequence === undefined ? {} : { committedSequence }),
                 ...(whenCommitted ? { whenCommitted } : {}),
             };
@@ -2772,8 +2786,14 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             return await enqueue({ kind: 'agent_state_request_settlement', mutationId: mutation.mutationId,
                 payload: mutation, createdAt: Date.now(), attempts: 0, nextAttemptAt: 0 }, { awaitFlush: true, onPersisted });
         },
-        async enqueueSessionTurnMutation(mutation) {
-            await enqueue(createQueuedSessionTurnMutation(mutation));
+        async enqueueSessionTurnMutation(mutation, options) {
+            const result = await enqueue(createQueuedSessionTurnMutation(mutation), {
+                awaitFlush: options?.awaitDelivery,
+                onPersisted: options?.onPersisted,
+            });
+            if (options?.awaitDelivery && (!result.delivered || (mutation.action === 'begin' && result.beginApplied !== true))) {
+                throw new Error('Accepted Turn has not been acknowledged by Home');
+            }
         },
         async enqueueSessionEnd(mutation) {
             await enqueue(createQueuedSessionEndMutation(mutation));

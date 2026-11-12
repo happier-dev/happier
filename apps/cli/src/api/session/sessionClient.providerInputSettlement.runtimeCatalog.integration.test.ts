@@ -142,6 +142,36 @@ const native = await loader.import(`${pluginRoot}/nativeRuntime.ts`) as {
 };
 
 describe('ApiSessionClient provider-input settlement', () => {
+  it('releases a brokered effect only after the accepted Turn receives its Home acknowledgement', async () => {
+    let acknowledge!: () => void;
+    let offered!: () => void;
+    const acknowledgement = new Promise<void>(resolve => { acknowledge = resolve; });
+    const offeredToHome = new Promise<void>(resolve => { offered = resolve; });
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
+      if (event !== 'session-turn-mutation') return resolveApiSessionSocketDefaultAck(event, payload);
+      const mutation = payload as Readonly<{ action: string; turnId: string }>;
+      if (mutation.action === 'begin' && mutation.turnId === 'brokered-turn') {
+        offered();
+        await acknowledgement;
+      }
+      return { ok: true, receipt: { ...(payload as object), decision: 'applied', appliedAt: 21 } };
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const controller = new AbortController();
+    let effectReleased = false;
+    try {
+      const barrier = client.awaitTurnPublication('brokered-turn', controller.signal).then(() => { effectReleased = true; });
+      await client.enqueueSessionTurnMutation({ v: 1, sessionId: 's1', mutationId: 'brokered-begin', action: 'begin',
+        turnId: 'brokered-turn', agentId: 'claude', observedAt: 20 });
+      await offeredToHome;
+      await new Promise(resolve => setImmediate(resolve));
+      expect(effectReleased).toBe(false);
+      acknowledge();
+      await barrier;
+      expect(effectReleased).toBe(true);
+    } finally { acknowledge(); controller.abort(); await client.close(); }
+  });
   beforeEach(() => {
     // HTTP is the real rejoin boundary: these fixtures start with no persisted copy of their input.
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {

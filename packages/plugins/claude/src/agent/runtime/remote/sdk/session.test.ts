@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { isRuntimeConfigUpdateOutcomeApplied } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   AgentSessionModelsSource,
@@ -56,6 +57,57 @@ type SessionParamsWithCredentials =
   }>;
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
+  it('holds UserPromptSubmit until the accepted host Turn has been published', async () => {
+    const exec = createSdkExecFixture();
+    const publication = createDeferred<void>();
+    const awaitTurnPublication = vi.fn(async (_turnId: string, _signal?: AbortSignal) => { await publication.promise; });
+    const fixture = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+    const ctx = { ...fixture, agentRuntime: { ...fixture.agentRuntime, awaitTurnPublication } };
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {},
+      happierSessionId: 'sdk-home-publication', permissionMode: 'default' });
+    let hookCompleted = false;
+    try {
+      operations.beginProviderTurn('accepted-host-turn');
+      await expect(operations.sendProviderTurnPrompt('hello')).resolves.toEqual({ kind: 'accepted' });
+      const hook = exec.emitSessionHook('native-accepted', { hook_event_name: 'UserPromptSubmit' }).then(() => { hookCompleted = true; });
+      await vi.waitFor(() => expect(awaitTurnPublication).toHaveBeenCalledWith('accepted-host-turn', expect.any(AbortSignal)));
+      expect(hookCompleted).toBe(false);
+      publication.resolve();
+      await hook;
+      expect(hookCompleted).toBe(true);
+    } finally { publication.resolve(); await operations.disposeProviderSession(); }
+  });
+
+  it('retains a classified native failure cause through the public Claude diagnostic without private evidence', async () => {
+    const exec = createSdkExecFixture();
+    const failureCause = { code: 'provider_endpoint_unauthorized', phase: 'client_start',
+      failureReason: 'permission_denied', httpStatus: 403, providerErrorMessage: 'fixture-private-provider-detail' } as const;
+    const failure = new PluginError({ code: 'provider_endpoint_unauthorized', message: 'fixture-private-provider-detail',
+      details: { failureCause } });
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+      exec: { ...exec.service, async spawnClient() { throw failure; } },
+    });
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {},
+      happierSessionId: 'sdk-typed-cause', permissionMode: 'default' });
+    const context = { session: { services: {
+      activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+    } } } as unknown as AgentSessionRuntimeContext;
+    const runtime = createClaudeNativeSessionRuntimeFromOperations(operations,
+      { kind: 'create', sessionId: 'sdk-typed-cause', cwd: '/tmp/claude-project' }, context);
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = runtime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    const unregister = registerSensitiveDiagnosticValues(['fixture-private-provider-detail']);
+    try {
+      operations.beginProviderTurn('typed-cause-turn');
+      await operations.sendProviderTurnPrompt('hello');
+      await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-failed',
+        diagnostic: expect.objectContaining({ details: expect.objectContaining({ failureCause: {
+          code: failureCause.code, phase: failureCause.phase, failureReason: failureCause.failureReason, httpStatus: 403,
+        } }) }),
+      })));
+      expect(JSON.stringify(events)).not.toContain('fixture-private-provider-detail');
+    } finally { unregister.close(); subscription.dispose(); await operations.disposeProviderSession(); }
+  });
   it('reserves SDK host prompts before native transcript replay can publish them as user facts', async () => {
     const exec = createSdkExecFixture();
     let releaseReservation!: () => void;

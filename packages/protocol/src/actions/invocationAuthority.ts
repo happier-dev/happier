@@ -1,6 +1,7 @@
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
 import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import { AUTH_TOKEN_KIND_AUTHORITIES, type AuthTokenAuthority, type AuthTokenKind } from '../auth/authToken.js';
 
 export const AUTHORITY_CEILING_HEADER_V1 =
   'x-happier-authority-ceiling' as const;
@@ -106,4 +107,38 @@ export function pluginActionInvokeConfirmationMismatchV1(context: Pick<ActionExe
     || context.presentUserConfirmation?.actionId !== ACTION_INVOKE_ACTION_ID_V1) return 'child_proof';
   if (context.authority !== 'account_automation') return 'binding';
   return context.surface === 'ui' || context.surface === 'voice' || context.surface === 'plugin' ? null : 'surface';
+}
+
+/**
+ * The signed floor stays unchanged. A terminal (CLI login) is the person's own tool,
+ * so its RPC invocations are person-class; every other kind keeps its minted authority.
+ */
+export function resolveEffectiveCredentialAuthority(input: Readonly<{
+  credentialKind: AuthTokenKind;
+  mintedAuthority: AuthTokenAuthority;
+}>): AuthTokenAuthority {
+  if (input.credentialKind !== 'terminal') return input.mintedAuthority;
+  return resolveInvocationAuthority({ credential: 'terminal', surface: 'rpc' });
+}
+
+/** A caller can lower verified authority; no caller-supplied value can raise it. */
+export function narrowCredentialAuthority(authority: ActionRequiredAuthority, ceiling: unknown): ActionRequiredAuthority;
+export function narrowCredentialAuthority(authority: AuthTokenAuthority, ceiling: unknown): AuthTokenAuthority;
+export function narrowCredentialAuthority(authority: AuthTokenAuthority, ceiling: unknown): AuthTokenAuthority {
+  return authority === 'present_user' && ceiling === 'account_automation' ? 'account_automation' : authority;
+}
+
+/**
+ * The Session RPC caller authority a relay stamps for one credential kind and caller ceiling:
+ * person-class only for a present-user credential that was not lowered, otherwise automation.
+ * An unknown or unreadable credential is automation.
+ */
+export function resolveSocketRpcCallerAuthority(input: Readonly<{
+  credentialKind: AuthTokenKind | null;
+  authorityCeiling?: unknown;
+}>): 'present_user' | 'account_automation' {
+  if (!input.credentialKind) return 'account_automation';
+  const effective = resolveEffectiveCredentialAuthority({ credentialKind: input.credentialKind,
+    mintedAuthority: AUTH_TOKEN_KIND_AUTHORITIES[input.credentialKind] });
+  return narrowCredentialAuthority(effective, input.authorityCeiling) === 'present_user' ? 'present_user' : 'account_automation';
 }

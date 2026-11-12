@@ -318,6 +318,14 @@ describe('deliverSessionTurnMutation exact end', () => {
         },
     );
 
+    it.each(['applied', 'missing-turn'] as const)('classifies a matching HTTP begin receipt as %s before brokered effects', async decision => {
+        const begin = ordinaryMutations[0];
+        vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { success: true,
+            receipt: ordinaryReceipt(begin, { decision }) } } as never);
+        await expect(deliverSessionTurnMutation({ token: 'token', socket: null, mutation: begin }))
+            .resolves.toEqual({ delivered: true, path: 'http', beginApplied: decision === 'applied' });
+    });
+
     it('does not treat generic socket or HTTP success as exact delivery', async () => {
         const socket = {
             connected: true,
@@ -371,7 +379,7 @@ describe('deliverSessionTurnMutation exact end', () => {
             token: 'token',
             socket,
             mutation: ordinaryMutation,
-        })).resolves.toEqual({ delivered: true, path: 'socket' });
+        })).resolves.toEqual({ delivered: true, path: 'socket', ...(ordinaryMutation.action === 'begin' ? { beginApplied: true } : {}) });
         expect(axios.post).not.toHaveBeenCalled();
     });
 
@@ -441,7 +449,7 @@ describe('deliverSessionTurnMutation exact end', () => {
             token: 'token',
             socket,
             mutation: ordinaryMutation,
-        })).resolves.toEqual({ delivered: true, path: 'socket' });
+        })).resolves.toEqual({ delivered: true, path: 'socket', beginApplied: false });
         expect(axios.post).not.toHaveBeenCalled();
     });
 

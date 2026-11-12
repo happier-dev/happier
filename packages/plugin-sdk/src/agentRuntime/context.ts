@@ -570,6 +570,12 @@ export type AgentSessionActiveInputStatus = Readonly<{
 export type AgentSessionActiveInputService = Readonly<{
   bind(binding: AgentSessionActiveInputBinding): Disposable;
   publishStatus(status: AgentSessionActiveInputStatus): void;
+  /** Await this accepted input's Home publication before a brokered provider effect.
+   * Present only when admitted input requires a Home witness before provider effects. */
+  awaitTurnPublication?(
+    request: Readonly<{ turnId: string }>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<void>;
 }>;
 
 export type AgentSessionWorkflowActivityService = Readonly<{

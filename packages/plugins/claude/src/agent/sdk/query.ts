@@ -815,6 +815,22 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
         const controller = new AbortController();
         this.controlControllers.set(record.request_id, controller);
         try {
+            if (record.request.subtype === 'hook_callback'
+                && record.request.callback_id === CLAUDE_SDK_SESSION_HOOK_CALLBACK_ID && isRecord(record.request.input)
+                && record.request.input.hook_event_name === 'UserPromptSubmit') {
+                try { await this.config.options?.beforePromptGeneration?.({ signal: controller.signal }); }
+                catch (error) {
+                    if (controller.signal.aborted) return;
+                    // Ordinary hook control errors are non-blocking in Claude. Stop the
+                    // accepted input explicitly before generation if its Home publication fails.
+                    await this.writeRecordOrThrow(handle.client, { type: 'control_response', response: {
+                        subtype: 'success', request_id: record.request_id,
+                        response: { continue: false, stopReason: 'Happier could not publish the accepted Turn.' },
+                    } });
+                    this.messages.fail(error instanceof Error ? error : new Error('Accepted Turn publication failed'));
+                    return;
+                }
+            }
             const response = await this.processControlRequest(record, controller.signal);
             // Native cancellation has abandoned this callback; it expects no late reply.
             if (controller.signal.aborted && record.request.subtype === 'hook_callback') return;

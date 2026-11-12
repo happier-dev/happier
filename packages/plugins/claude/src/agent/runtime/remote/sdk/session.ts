@@ -32,6 +32,7 @@ import {
     readClaudePendingLocalId,
 } from '../../providerOperations.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
+import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -181,6 +182,7 @@ type ClaudeAgentSdkContextBase = Readonly<{
 
 export type ClaudeAgentSdkSessionContext = ClaudeAgentSdkContextBase & Readonly<{
     agentRuntime: ClaudeAgentSdkContextBase['agentRuntime'] & Readonly<{
+        awaitTurnPublication?: (turnId: string, signal?: AbortSignal) => Promise<void>;
         modes?: ClaudeUnifiedTerminalContext['agentRuntime']['modes'];
         sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
         transcripts: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts'];
@@ -1410,7 +1412,7 @@ export function createClaudeAgentSdkTurnOperations(
     }
 
     const sdkRequestClocks = new WeakMap<SDKMessage, number>();
-    function createOwnedQuery(config: Parameters<typeof queryWithContext>[1]): ClaudeSdkQuery {
+    function createOwnedQuery(config: Parameters<typeof queryWithContext>[1], readTurnId?: () => string | null): ClaudeSdkQuery {
         if (runtimeDisposed) throw new Error('Claude Agent SDK runtime is disposed.');
         let inference: { id: string; sessionId: string | null; startedAtMs: number } | null = null;
         const turnQuery = queryWithContext(params.queryContext ?? params.ctx.agentRuntime.exec, {
@@ -1419,6 +1421,10 @@ export function createClaudeAgentSdkTurnOperations(
             options: {
                 ...config.options,
                 ...noToolsLaunchOptions,
+                beforePromptGeneration: async ({ signal }) => {
+                    const turnId = readTurnId?.();
+                    if (turnId) await sessionContext?.agentRuntime.awaitTurnPublication?.(turnId, signal);
+                },
                 onSessionHook: async payload => {
                     const nativeSessionId = readClaudeProviderIdentityValue(payload.session_id);
                     if (!nativeSessionId) return;
@@ -1862,6 +1868,7 @@ export function createClaudeAgentSdkTurnOperations(
                     occurredAt: Date.now(),
                     agentId: 'claude',
                     sanitizedPreview: sanitizeProviderErrorPreview(error.message),
+                    failureCause: readSessionRuntimeFailureCause(error),
                 }),
             }));
         };
@@ -2617,7 +2624,7 @@ export function createClaudeAgentSdkTurnOperations(
                             ...(primaryFailure?.usageLimit ? { policyDisposition: 'evidence_only' } as const : {}),
                         });
                     },
-                });
+                }, () => currentTurnId);
                 activeCompletion = completion;
                 activeQuery = turnQuery;
                 if (pendingSubmission === submission) pendingSubmission = null;

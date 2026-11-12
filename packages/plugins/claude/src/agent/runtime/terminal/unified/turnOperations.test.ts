@@ -98,6 +98,38 @@ const RESUME_CHOICE_QUESTION = 'How should Claude resume this session?';
 const SAFEGUARD_CHOICE_QUESTION = 'How should Claude continue?';
 
 describe('createClaudeUnifiedTerminalTurnOperations', () => {
+  it.each([false, true])('holds brokered UserPromptSubmit for Home publication and explicitly stops a failed publication (%s)', async fails => {
+    const terminalHost = createTerminalHostFixture();
+    const hooks = createSessionHooksFixture();
+    let release!: () => void;
+    const publication = new Promise<void>(resolve => { release = resolve; });
+    const awaitTurnPublication = vi.fn(async (_turnId: string, _signal?: AbortSignal) => {
+      await publication;
+      if (fails) throw new Error('fixture-private-publication-failure');
+    });
+    const fixture = createPluginContextFixture(terminalHost.service, createEventsFixture().service, { sessionHooks: hooks.service });
+    const ctx = { ...fixture, agentRuntime: { ...fixture.agentRuntime, awaitTurnPublication } };
+    const operations = createClaudeUnifiedTerminalProviderOperations({ ctx, directory: '/tmp/claude-project',
+      happierSessionId: 'terminal-home-publication', hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default' });
+    let completed = false;
+    try {
+      await operations.startProviderSession();
+      const server = hooks.service.startServer.mock.calls[0]?.[0];
+      if (!server?.onSessionHook || !server.onPermissionHook) throw new Error('native prompt hook was not registered');
+      await server.onSessionHook('native-terminal', { hook_event_name: 'SessionStart', session_id: 'native-terminal', source: 'startup' });
+      const response = server.onPermissionHook({ hook_event_name: 'UserPromptSubmit', session_id: 'native-terminal', prompt: 'brokered prompt' },
+        { signal: new AbortController().signal }).then((value: unknown) => { completed = true; return value; });
+      await vi.waitFor(() => expect(awaitTurnPublication).toHaveBeenCalledWith(expect.any(String), expect.any(AbortSignal)));
+      expect(completed).toBe(false);
+      const pluginFiles = hooks.service.createPluginDir.mock.calls[0]?.[0].files;
+      const hookFile = pluginFiles.find((entry: { path: string }) => entry.path === 'hooks/hooks.json');
+      expect(hookFile.json.hooks.UserPromptSubmit[0].hooks[0].command).toContain('/app/permission_hook_forwarder.cjs');
+      release();
+      await expect(response).resolves.toMatchObject({ continue: !fails });
+      expect(JSON.stringify(await response)).not.toContain('fixture-private-publication-failure');
+    } finally { release(); await operations.disposeProviderSession(); }
+  });
+
   it('admits manual compact through the native command owner and preserves instructions and request identity', async () => {
     const terminalHost = createTerminalHostFixture();
     const transcripts = createManualTranscriptFollowFixture();

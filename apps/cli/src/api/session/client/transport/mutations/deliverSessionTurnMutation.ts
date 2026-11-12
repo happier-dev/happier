@@ -47,14 +47,14 @@ type UnsupportedSessionTurnHttpEvidence = Readonly<{
 }>;
 
 type SessionTurnMutationSocketResult =
-    | Readonly<{ status: 'delivered' }>
+    | Readonly<{ status: 'delivered'; beginApplied?: boolean }>
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnSocketEvidence }>
     | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'receipt_mismatch' }>
     | Readonly<{ status: 'failed' }>;
 
 type SessionTurnMutationHttpResult =
-    | Readonly<{ status: 'delivered' }>
+    | Readonly<{ status: 'delivered'; beginApplied?: boolean }>
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnHttpEvidence }>
     | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'receipt_mismatch' }>
@@ -85,7 +85,7 @@ export type UnsupportedSessionTurnMutationDiagnostic = Readonly<{
 }>;
 
 export type SessionTurnMutationDeliveryResult =
-    | Readonly<{ delivered: true; path: 'socket' | 'http' }>
+    | Readonly<{ delivered: true; path: 'socket' | 'http'; beginApplied?: boolean }>
     | Readonly<{
         delivered: false;
         reason: 'unsupported_capability';
@@ -104,10 +104,10 @@ export type SessionTurnMutationDeliveryResult =
     }>
     | Readonly<{ delivered: false; reason: string }>;
 
-function doesReceiptIdentityMatch(
+function readMatchingReceipt(
     mutation: SessionTurnMutationV1,
     receiptValue: unknown,
-): boolean {
+) {
     const receipt = SessionTurnMutationReceiptV1Schema.safeParse(receiptValue);
     return receipt.success
         && receipt.data.v === mutation.v
@@ -115,7 +115,19 @@ function doesReceiptIdentityMatch(
         && receipt.data.mutationId === mutation.mutationId
         && receipt.data.action === mutation.action
         && (!('turnId' in mutation) || mutation.turnId === undefined || receipt.data.turnId === mutation.turnId)
-        && receipt.data.observedAt === mutation.observedAt;
+        && receipt.data.observedAt === mutation.observedAt ? receipt.data : null;
+}
+
+function doesReceiptIdentityMatch(mutation: SessionTurnMutationV1, receiptValue: unknown): boolean {
+    return readMatchingReceipt(mutation, receiptValue) !== null;
+}
+
+function classifyOrdinaryReceipt(mutation: SessionTurnMutationV1, receiptValue: unknown): Extract<SessionTurnMutationSocketResult, { status: 'delivered' | 'receipt_mismatch' }> {
+    const receipt = readMatchingReceipt(mutation, receiptValue);
+    if (!receipt) return { status: 'receipt_mismatch' };
+    // A deterministic refusal releases ordinary journal custody, but cannot authorize
+    // a brokered effect. Replayed receipts retain the original applied decision.
+    return { status: 'delivered', ...(mutation.action === 'begin' ? { beginApplied: receipt.decision === 'applied' } : {}) };
 }
 
 function classifyExactReceipt(
@@ -205,9 +217,7 @@ async function trySocketSessionTurnMutation(params: Readonly<{
                 : { status: 'exact_non_delivery', diagnostic: classified.diagnostic };
         }
         if (isSuccessAck(ack)) {
-            return doesReceiptIdentityMatch(params.mutation, record?.receipt)
-                ? { status: 'delivered' }
-                : { status: 'receipt_mismatch' };
+            return classifyOrdinaryReceipt(params.mutation, record?.receipt);
         }
         return { status: 'failed' };
     } catch (error) {
@@ -248,9 +258,7 @@ async function tryHttpSessionTurnMutation(params: Readonly<{
                 : { status: 'exact_non_delivery', diagnostic: classified.diagnostic };
         }
         if (data && (data.ok === false || data.result === 'error')) return { status: 'failed' };
-        return doesReceiptIdentityMatch(params.mutation, data?.receipt)
-            ? { status: 'delivered' }
-            : { status: 'receipt_mismatch' };
+        return classifyOrdinaryReceipt(params.mutation, data?.receipt);
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
         const status = readHttpErrorStatus(error);
@@ -298,7 +306,7 @@ export async function deliverSessionTurnMutation(params: Readonly<{
     const socketResult = params.socket?.connected === true
         ? await trySocketSessionTurnMutation({ socket: params.socket, mutation, exactMutation, signal: params.signal })
         : { status: 'failed' as const };
-    if (socketResult.status === 'delivered') return { delivered: true, path: 'socket' };
+    if (socketResult.status === 'delivered') return { delivered: true, path: 'socket', ...(socketResult.beginApplied === undefined ? {} : { beginApplied: socketResult.beginApplied }) };
 
     if (params.signal?.aborted) return { delivered: false, reason: 'session_turn_mutation_transport_unavailable' };
 
@@ -309,7 +317,7 @@ export async function deliverSessionTurnMutation(params: Readonly<{
         exactMutation,
         ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     });
-    if (httpResult.status === 'delivered') return { delivered: true, path: 'http' };
+    if (httpResult.status === 'delivered') return { delivered: true, path: 'http', ...(httpResult.beginApplied === undefined ? {} : { beginApplied: httpResult.beginApplied }) };
     if (socketResult.status === 'unsupported' && httpResult.status === 'unsupported') {
         return {
             delivered: false,

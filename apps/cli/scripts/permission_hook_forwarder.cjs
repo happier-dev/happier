@@ -4,7 +4,7 @@ const fs = require('fs');
 
 const port = Number.parseInt(process.argv[2], 10);
 const rawThirdArg = typeof process.argv[3] === 'string' ? process.argv[3] : '';
-const knownHookEvents = new Set(['PermissionRequest', 'PreToolUse']);
+const knownHookEvents = new Set(['PermissionRequest', 'PreToolUse', 'UserPromptSubmit']);
 const hookEventName = knownHookEvents.has(rawThirdArg) ? rawThirdArg : '';
 
 function readSecret(args) {
@@ -23,6 +23,9 @@ const secret = readSecret(options);
 const denyOnUnavailable = options.includes('--deny-on-unavailable');
 
 function buildFallback() {
+    if (hookEventName === 'UserPromptSubmit' && denyOnUnavailable) {
+        return JSON.stringify({ continue: false, stopReason: 'Happier could not publish the accepted Turn.' });
+    }
     return JSON.stringify({
         continue: true,
         suppressOutput: true,
@@ -103,7 +106,8 @@ process.stdin.on('end', () => {
                         const output = parsed?.hookSpecificOutput;
                         const decision = hookEventName === 'PreToolUse'
                             ? output?.permissionDecision : output?.decision?.behavior;
-                        if (decision !== 'allow' && decision !== 'deny') {
+                        if (hookEventName === 'UserPromptSubmit' ? typeof parsed?.continue !== 'boolean'
+                            : decision !== 'allow' && decision !== 'deny') {
                             writeResponse(buildFallback());
                             return;
                         }

@@ -258,6 +258,7 @@ export type ClaudeUnifiedTerminalContext = ClaudePermissionContext & Readonly<{
     accountUsage: ClaudeRuntimeAccountUsageService;
     nativeHome?: AgentSessionHostServices['nativeHome'];
     toolExecution: AgentSessionHostServices['toolExecution'];
+    awaitTurnPublication?: (turnId: string, signal?: AbortSignal) => Promise<void>;
     modes?: AgentSessionHostServices['modes'];
   }>;
   sessions: Readonly<{
@@ -2077,12 +2078,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           if (observation) await nativeRuntime.observeTerminalLifecycle(observation);
         },
       });
-      sessionHookServer = await params.ctx.agentRuntime.sessionHooks.startServer({
-        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-        sessionId: params.happierSessionId,
-        lifecycle: { kind: 'session', sessionId: params.happierSessionId },
-        sessionHookSecret: hookSecret,
-        onSessionHook: async (providerSessionId, payload) => {
+      const onSessionHook: NonNullable<Parameters<ClaudeUnifiedSessionHooksService['startServer']>[0]['onSessionHook']> = async (providerSessionId, payload) => {
           const observedAt = Date.now();
           const lifecycle = readClaudeTaskLifecycleEnvelope(payload);
           const bufferedNativeStart = lifecycle?.knownOnly === true && lifecycle.resumed === true
@@ -2227,7 +2223,13 @@ export function createClaudeUnifiedTerminalTurnOperations(
             }
             ensureReadinessWake();
           }
-        },
+      };
+      sessionHookServer = await params.ctx.agentRuntime.sessionHooks.startServer({
+        providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+        sessionId: params.happierSessionId,
+        lifecycle: { kind: 'session', sessionId: params.happierSessionId },
+        sessionHookSecret: hookSecret,
+        onSessionHook,
         onStatuslineUpdate: async (payload) => {
           const parsed = parseClaudeStatuslinePayload(payload);
           if (!parsed) return;
@@ -2276,7 +2278,24 @@ export function createClaudeUnifiedTerminalTurnOperations(
             ensureReadinessWake();
           }
         },
-        onPermissionHook: handlePermissionHook,
+        onPermissionHook: async (data, options) => {
+          if (data.hook_event_name !== 'UserPromptSubmit') return await handlePermissionHook(data, options);
+          try {
+            await onSessionHook(readNonEmptyString(data.session_id) ?? '', data);
+            if (!isSidechainSessionHook(data) && state.activeTurnId) {
+              await params.ctx.agentRuntime.awaitTurnPublication?.(state.activeTurnId, options?.signal);
+            }
+            return { continue: true };
+          } catch (error) {
+            state.lastTurnFailure = recordClaudeUnifiedTurnFailure({ evidence: error,
+              fallbackMessage: 'Happier could not publish the accepted Turn.', handlers, logger: params.ctx.logger,
+              publishedFailureTurnIds, sessionId: params.happierSessionId, turnId: state.activeTurnId });
+            arbiter.observePendingProviderAcceptanceTerminalFailure();
+            state.turnCompleted = true;
+            settleTurnCompletionWaiters();
+            return { continue: false, stopReason: 'Happier could not publish the accepted Turn.' };
+          }
+        },
         defaultPermissionHookResponse: data => buildDefaultPermissionHookResponse(data, params.unlistedTools),
         permissionHookSecret: hookSecret,
         // Host response ceiling aligned with the installed Claude permission-hook `timeout`
@@ -2319,6 +2338,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       sessionForwarderScript: assets.sessionForwarderScript,
       permissionForwarderScript: assets.permissionForwarderScript,
       enableLocalPermissionBridge: true,
+      awaitTurnPublication: params.ctx.agentRuntime.awaitTurnPublication !== undefined,
       observeNativeToolPrompts: true,
       unlistedTools: params.unlistedTools,
       ...(sessionHookServer.sessionHookSecretFile ? { sessionHookSecretFile: sessionHookServer.sessionHookSecretFile } : {}),

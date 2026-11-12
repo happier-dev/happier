@@ -337,6 +337,9 @@ function mapEvent(event: ClaudeProviderEvent, runtimeAuthServiceId: string | nul
           details: {
             v: 1,
             source: event.issue.source,
+            ...(event.issue.failureCause ? { failureCause: jsonValue(
+              (({ providerErrorMessage: _privateMessage, ...safe }) => safe)(event.issue.failureCause),
+            ) } : {}),
             ...(runtimeAuthClassification ? { runtimeAuthClassification: jsonValue(runtimeAuthClassification) } : {}),
             ...(event.issue.usageLimit ? { usageLimit: jsonValue(event.issue.usageLimit) } : {}),
             ...(event.issue.temporaryThrottle ? { temporaryThrottle: jsonValue(event.issue.temporaryThrottle) } : {}),

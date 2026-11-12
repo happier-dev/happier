@@ -62,6 +62,8 @@ export type BuildClaudeHookPluginHooksParams = Readonly<{
     sessionHookSecretFile?: string;
     permissionForwarderScript?: string;
     enableLocalPermissionBridge?: boolean;
+    /** The admitted host requires a Home witness before the accepted prompt generates. */
+    awaitTurnPublication?: boolean;
     /** Observe exact native tool-use identities through the authenticated session endpoint. */
     observeNativeToolPrompts?: boolean;
     unlistedTools?: 'ask' | 'deny';
@@ -136,6 +138,16 @@ export function buildClaudeHookPluginHooks(params: BuildClaudeHookPluginHooksPar
             }),
             matcher: '',
         })];
+    }
+
+    if (params.awaitTurnPublication === true) {
+        if (!params.permissionForwarderScript) throw new TypeError('permissionForwarderScript is required for accepted Turn publication');
+        hooks.UserPromptSubmit = [buildCommandHook({ matcher: '', timeout: permissionHookTimeoutSeconds, command: buildForwarderCommand({
+            platform: params.platform, nodeExecutable: params.nodeExecutable,
+            scriptPath: params.permissionForwarderScript, port: params.port,
+            hookEventName: 'UserPromptSubmit', secretFile: params.permissionHookSecretFile,
+            denyOnUnavailable: true,
+        }) })];
     }
 
     if (params.enableLocalPermissionBridge === true) {

@@ -190,6 +190,11 @@ export function createClaudeNativeAgentSdkContext(
           await services.sessionHooks.publishProviderTranscript(request);
         },
       },
+      ...(services.activeInput?.awaitTurnPublication ? {
+        async awaitTurnPublication(turnId: string, signal?: AbortSignal) {
+          await services.activeInput!.awaitTurnPublication!({ turnId }, { signal });
+        },
+      } : {}),
       transcripts: services.transcripts,
       accountUsage: {
         async resolveSourceContext(input, options) {

@@ -219,6 +219,41 @@ function createStorageExhaustedError(): NodeJS.ErrnoException {
 }
 
 describe('createRuntimeSessionClientDurableMutationOutbox', () => {
+    it('holds accepted Turn publication until the matching Home acknowledgement', async () => {
+        const started = createDeferred();
+        const release = createDeferred();
+        const socket = { connected: true, emit: () => undefined, async emitWithAck(_event: string, payload: unknown) {
+            started.resolve();
+            await release.promise;
+            return { ok: true, receipt: { ...(payload as object), decision: 'applied', appliedAt: 101 } };
+        } };
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
+            flushOnReady: false, getSocket: () => socket, requestReconnect: () => undefined });
+        let published = false;
+        try {
+            await outbox.awaitReady();
+            const publication = outbox.enqueueSessionTurnMutation({ v: 1, sessionId: 'session-1', mutationId: 'accepted-begin',
+                action: 'begin', turnId: 'turn-1', observedAt: 100 }, { awaitDelivery: true }).then(() => { published = true; });
+            await started.promise;
+            await drainAsyncWork();
+            expect(published).toBe(false);
+            release.resolve();
+            await publication;
+            expect(published).toBe(true);
+        } finally { release.resolve(); await outbox.close(); }
+    });
+    it.each(['missing-turn', 'stale-in-progress', 'duplicate-mutation'] as const)('refuses a brokered effect after Home settles begin as %s', async decision => {
+        const socket = { connected: true, emit: () => undefined, async emitWithAck(_event: string, payload: unknown) {
+            return { ok: true, receipt: { ...(payload as object), decision, appliedAt: 101 } };
+        } };
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId: 'session-1',
+            flushOnReady: false, getSocket: () => socket, requestReconnect: () => undefined });
+        try {
+            await outbox.awaitReady();
+            await expect(outbox.enqueueSessionTurnMutation({ v: 1, sessionId: 'session-1', mutationId: 'rejected-begin',
+                action: 'begin', turnId: 'turn-1', observedAt: 100 }, { awaitDelivery: true })).rejects.toThrow();
+        } finally { await outbox.close(); }
+    });
     it('shares flush preparation across concurrent transcript posts and preserves ordered exact acknowledgements', async () => {
         const firstStarted = createDeferred();
         const releaseFirst = createDeferred();

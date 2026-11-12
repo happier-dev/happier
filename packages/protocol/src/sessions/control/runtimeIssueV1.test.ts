@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SessionRuntimeIssueV1Schema,
+  readSessionRuntimeFailureCause,
   SessionRuntimeTemporaryThrottleDetailsV1Schema,
   SessionRuntimeUsageLimitDetailsV1Schema,
   sanitizeSessionRuntimeIssueV1,
@@ -11,6 +12,18 @@ import {
 } from './runtimeIssueV1.js';
 
 describe('runtime authentication recovery', () => {
+  it('reads an existing public runtime issue cause without evaluating foreign Error accessors', () => {
+    const failureCause = { code: 'provider_endpoint_unauthorized', phase: 'client_start', failureReason: 'permission_denied', httpStatus: 403 };
+    const issue = SessionRuntimeIssueV1Schema.parse({ v: 1, scope: 'primary_session', status: 'failed',
+      code: 'agent_session_error', source: 'agent_session_error', occurredAt: 1, failureCause });
+    expect(readSessionRuntimeFailureCause(issue)).toEqual(failureCause);
+    let reads = 0;
+    const error = Object.defineProperty(new Error('foreign'), 'details', { get() { reads += 1; return { failureCause }; } });
+    expect(readSessionRuntimeFailureCause(error)).toBeUndefined();
+    const hostileCause = Object.defineProperty({}, 'phase', { enumerable: true, get() { reads += 1; return 'client_start'; } });
+    expect(readSessionRuntimeFailureCause({ failureCause: hostileCause })).toBeUndefined();
+    expect(reads).toBe(0);
+  });
   it('keeps a missing explicit model distinct from a rejected selected model', () => {
     const code = 'agent_startup_model_reconciliation_failed';
     const failureCause = { code, phase: 'client_start', failureReason: 'model_selection_required', retryable: false };

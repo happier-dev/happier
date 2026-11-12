@@ -701,6 +701,10 @@ const SESSION_RPC_DECLARED_AUTHORITIES = Object.freeze({
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_OPEN_V1]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_NEXT_V1]: 'readTranscript',
   [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICE_ENDPOINT_READ_CANCEL_V1]: 'readTranscript',
+  // Owner-only, exactly what its former unclassified same-Account room forwarding allowed. Not
+  // `startsAgentWork`: that server check never applied to custody and would refuse startup custody
+  // before the Session has committed input.
+  [SESSION_RPC_METHODS.SESSION_MANAGED_SERVICES_CUSTODY_V1]: 'sessionOwner',
   [RPC_METHODS.SESSION_LOG_TAIL]: { authority: 'readTranscript', routeToSessionOwnerDaemon: true },
   [CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
   [CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD]: { authority: 'sessionOwner', routeToSessionOwnerDaemon: true, serverMintedContext: 'session.presentation.origin' },
@@ -852,6 +856,36 @@ export function resolveSocketRpcSessionAuthorization(
 ): SocketRpcSessionWriteClassificationV1 | null {
   const normalized = resolveUnscopedSocketRpcMethod(String(method ?? '').trim());
   return SOCKET_RPC_SESSION_WRITE_AUTHORIZATION.get(normalized) ?? null;
+}
+
+/**
+ * Session context for a caller that holds the Session's own Account on the Session's host machine
+ * (the same-OS-user local channel). Only rows whose context the server mints from the Session id
+ * alone qualify. Rows needing a server-proven actor or connection (permission decisions, current
+ * presentation), a fresh Machine-access check (`startsAgentWork`) or a second Session's access
+ * (`sessionIdParam`, optional Session scope) stay on the server path and return null.
+ */
+export function resolveSocketRpcSameAccountSessionAuthorizationV1(
+  method: string,
+  sessionId: string,
+): SocketRpcSessionReadAuthorizationContext | SocketRpcSessionWriteAuthorizationContext | null {
+  const rule = resolveSocketRpcSessionAuthorization(method);
+  if (!rule || !sessionId || rule.startsAgentWork || rule.optionalSessionScope || rule.sessionIdParam) return null;
+  if (rule.serverMintedContext === 'session.read') return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ, sessionId };
+  if (rule.serverMintedContext !== undefined) return null;
+  return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId };
+}
+
+/** The relay's caller acknowledgement for one target response (envelope v1 or a bare result). */
+export function projectSocketRpcTargetAcknowledgementV1(response: unknown): Readonly<{
+  ok: true; result: unknown; transportAcknowledgement?: SocketRpcTransportAcknowledgementV1;
+}> {
+  const envelope = SocketRpcTransportResponseEnvelopeV1Schema.safeParse(response);
+  return {
+    ok: true,
+    result: envelope.success ? envelope.data.result : response,
+    ...(envelope.success && envelope.data.acknowledgement ? { transportAcknowledgement: envelope.data.acknowledgement } : {}),
+  };
 }
 
 /** Namespaces whose Session-scoped registration is closed by the map above. */

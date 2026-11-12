@@ -126,6 +126,8 @@ export interface QueryOptions extends ClaudeRemoteAdvancedOptions {
     settingSources?: readonly ClaudeSettingSourceV2[];
     canCallTool?: CanCallToolCallback;
     getOAuthToken?: GetOAuthTokenCallback;
+    /** Await the admitted host Turn witness at native UserPromptSubmit, before generation. */
+    beforePromptGeneration?: (options: Readonly<{ signal: AbortSignal }>) => Promise<void>;
     /** Native lifecycle observation on the owned child's stdio control channel. */
     onSessionHook?: (input: Readonly<Record<string, unknown>>, options: Readonly<{ signal: AbortSignal }>) => Promise<void>;
     settingsPath?: string;

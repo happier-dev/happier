@@ -1,4 +1,5 @@
 import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { materializeDiscussionInputAttachments, DiscussionAttachmentPreparationError,
@@ -167,6 +168,8 @@ import { getSessionCommittedTranscriptLocalIds } from './client/transcript/commi
 import { readSidechainId } from './outbound/shared';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
 import {
     mergeLocallyConsumedUserMessageSeqsV1,
@@ -616,6 +619,7 @@ export class ApiSessionClient extends EventEmitter {
     private presenceTimer: ReturnType<typeof setTimeout> | null = null;
     private presenceStopped = false;
     private closed = false;
+    private localSessionRpcRetirement: Promise<(() => Promise<void>) | null> | null = null;
     private pendingWakeSeq = 0;
     private accountSettingsSyncBarrier: Promise<boolean> | null = null;
     private accountSettingsEventRevision = 0;
@@ -1780,7 +1784,7 @@ export class ApiSessionClient extends EventEmitter {
                 : {}),
             readOwnerAccountCredentials: () => this.readCurrentOwnerCredentials(),
             ...(options.actionsSettingsProvider ? { actionsSettingsProvider: options.actionsSettingsProvider } : {}),
-            metadataPath: this.metadata?.path ?? process.cwd(),
+            metadataPath: this.metadata?.path ?? sessionWorkingDirectory(),
             metadata: this.metadata,
             localMachineId: options.localMachineId,
             sessionId: this.sessionId,
@@ -1831,6 +1835,20 @@ export class ApiSessionClient extends EventEmitter {
                 this.socket.emit('execution-run-updated', { sid: this.sessionId, run } as never);
             },
         });
+        // Same-machine callers (the daemon) reach these handlers on the owner-only local channel.
+        this.localSessionRpcRetirement = options.localMachineId ? registerLocalSessionRpcTarget({
+            sessionId: this.sessionId,
+            credentialToken: this.token,
+            handleRequest: async request => this.closed
+                ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
+                : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel')),
+            cancelRequest: requestId => this.rpcHandlerManager.cancelTransportRequest(requestId),
+        }).catch((error: unknown) => {
+            logger.warn('[API] Local Session RPC channel unavailable; same-machine calls use the server', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+        }) : null;
 
         this.interactionApi = createSessionClientInteractionApi({
             serverId: this.serverBinding.serverId,
@@ -4224,7 +4242,17 @@ export class ApiSessionClient extends EventEmitter {
 
     enqueueSessionTurnMutation(mutation: RuntimeSessionTurnMutationV1): Promise<void> {
         const observed = this.observeSessionTurnMutationForCachedTurnStatus(mutation);
-        const persistedUpdate = this.durableMutationOutbox.enqueueSessionTurnMutation(mutation);
+        let publication: Promise<void> | undefined;
+        const persistedUpdate = mutation.action === 'begin'
+            ? new Promise<void>((resolve, reject) => {
+                // Local custody still releases the lifecycle. Only consumers that require
+                // Home's active Turn witness await the existing exact publication promise.
+                publication = this.durableMutationOutbox.enqueueSessionTurnMutation(mutation, {
+                    awaitDelivery: true, onPersisted: resolve,
+                });
+                void publication.catch(reject);
+            })
+            : this.durableMutationOutbox.enqueueSessionTurnMutation(mutation);
         const update = observed.isTerminal
             ? persistedUpdate.then(async () => {
                 await this.durableMutationOutbox.flush('flush');
@@ -4246,7 +4274,7 @@ export class ApiSessionClient extends EventEmitter {
             });
         this.trackPendingUpdate(this.pendingSessionTurnMutationUpdates, update);
         if (mutation.action === 'begin') {
-            this.ownTurnBeginUpdates.set(mutation.turnId, update.catch(() => undefined));
+            this.ownTurnBeginUpdates.set(mutation.turnId, publication!);
             for (const wake of this.ownTurnBeginWaiters.get(mutation.turnId) ?? []) wake();
             this.ownTurnBeginWaiters.delete(mutation.turnId);
         }
@@ -4254,11 +4282,24 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     /**
-     * Resolves once this runner's begin for the Turn has been queued, persisted and offered
-     * to the Home. Provider acceptance can settle while the accepted lifecycle still holds
+     * Wait for this runner's accepted begin. Brokered effects require Home's applied
+     * acknowledgement; Pending settlement retains its best-effort flush. Acceptance can settle while lifecycle still holds
      * that begin, so an absent begin is awaited as an event rather than polled.
      */
-    private async waitForOwnTurnBeginPublication(turnId: string | undefined, signal: AbortSignal): Promise<void> {
+    async awaitTurnPublication(turnId: string, signal: AbortSignal): Promise<void> {
+        signal.throwIfAborted();
+        let onAbort!: () => void;
+        const aborted = new Promise<never>((_resolve, reject) => {
+            onAbort = () => reject(signal.reason);
+            signal.addEventListener('abort', onAbort, { once: true });
+        });
+        try { await Promise.race([this.waitForOwnTurnBeginPublication(turnId, signal, true), aborted]); }
+        finally { signal.removeEventListener('abort', onAbort); }
+        signal.throwIfAborted();
+    }
+
+    private async waitForOwnTurnBeginPublication(turnId: string | undefined, signal: AbortSignal, requireDelivery = false): Promise<void> {
+        if (requireDelivery) signal.throwIfAborted();
         if (signal.aborted) return;
         if (turnId !== undefined && !this.ownTurnBeginUpdates.has(turnId)) {
             await new Promise<void>((resolve) => {
@@ -4275,8 +4316,15 @@ export class ApiSessionClient extends EventEmitter {
             });
             if (signal.aborted) return;
         }
+        if (requireDelivery) signal.throwIfAborted();
         const begin = turnId === undefined ? undefined : this.ownTurnBeginUpdates.get(turnId);
-        await (begin ?? Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined))));
+        if (requireDelivery) {
+            if (!begin) throw new Error('Accepted Turn publication is unavailable');
+            await begin;
+            signal.throwIfAborted();
+            return;
+        }
+        await (begin?.catch(() => undefined) ?? Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined))));
         await this.durableMutationOutbox.flush('flush').catch(() => undefined);
     }
 
@@ -4882,6 +4930,9 @@ export class ApiSessionClient extends EventEmitter {
         const closingSocket = this.socket;
         this.prepareForClose();
         try {
+            const retireLocalSessionRpc = await this.localSessionRpcRetirement;
+            this.localSessionRpcRetirement = null;
+            await retireLocalSessionRpc?.();
             await this.sessionHandlersRegistration.dispose();
             const disposeSessionFollowWakeReceiver = this.disposeSessionFollowWakeReceiver;
             this.disposeSessionFollowWakeReceiver = null;

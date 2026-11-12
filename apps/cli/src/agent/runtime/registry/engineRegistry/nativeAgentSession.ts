@@ -1,4 +1,5 @@
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isSessionModeSelectionUnavailable } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/events/runtimeTranscriptScope';
@@ -633,7 +634,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
     auth?: AgentSessionHostServices['auth'];
     followSource?: AgentSessionHostServices['transcripts']['followSource'];
     nativeHome?: NonNullable<AgentSessionHostServices['nativeHome']>;
-    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot'>> & Readonly<{
+    session: Pick<ApiSessionClient, 'updateMetadata' | 'enqueueAgentMessageCommitted'> & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot' | 'awaitTurnPublication'>> & Readonly<{
         sessionId: string;
     }>;
     transcriptIdentity?: Readonly<{
@@ -641,6 +642,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
         readProviderSessionId: () => string | null;
         readCodec: () => NonNullable<AgentRuntime['sessions']>['transcriptIdentity'] | null;
     }>;
+    requireTurnPublication?: boolean;
     publications: NativeAgentSessionPublications['services'];
     readToolExecutionCapability: () => NonNullable<AgentRuntime['toolExecution']>['capability'] | null;
     beforeToolExecution?: (toolName: string) => void | Promise<void>;
@@ -1005,7 +1007,17 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
         ...(terminalHost ? { terminalHost } : {}),
         models: params.publications.models,
         modes: params.publications.modes,
-        activeInput: params.publications.activeInput,
+        activeInput: Object.freeze({
+            ...params.publications.activeInput,
+            ...(params.requireTurnPublication ? { async awaitTurnPublication(request: Readonly<{ turnId: string }>, options?: Readonly<{ signal?: AbortSignal }>) {
+                assertSessionScopeAvailable('active-input');
+                if (!params.session.awaitTurnPublication) {
+                    throw new PluginError({ code: 'plugin_host_service_unavailable', message: 'Accepted Turn publication is unavailable' });
+                }
+                await params.session.awaitTurnPublication(request.turnId,
+                    combineSessionOperationSignal(params.signal, options?.signal));
+            } } : {}),
+        } satisfies AgentSessionHostServices['activeInput']),
         ...(params.publications.publishWorkStatus ? { publishWorkStatus: params.publications.publishWorkStatus } : {}),
         sessionHooks,
         transcripts: Object.freeze({
@@ -5480,8 +5492,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 agent: params.agent,
                 sourceEnvironment: openInputs.launchEnvironment.values,
             });
+            // The Session's own Agent: the one a respawned runner adopts after a crash.
             const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec,
-                () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial);
+                () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial, undefined, 'primary');
             let beforeToolExecution: ((toolName: string) => Promise<void>) | null = null;
             const nativeHostSessionServices = Object.freeze({ ...createNativeAgentSessionHostServices({
                     owners: sessionHostServices,
@@ -5492,6 +5505,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     signal,
                     isCurrent: identity.isCurrent,
                     session: hostRuntimeParams.session,
+                    requireTurnPublication: liveTeamCredentialOpen?.deliveryMode === 'brokered',
                     transcriptIdentity: {
                         session: hostRuntimeParams.session,
                         readProviderSessionId: () => operations ? operations.readSessionIdentity().sessionId : resumeId,
@@ -6341,7 +6355,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     if (plan.opts.startedBy === 'daemon' && plan.opts.existingSessionId
         && plan.opts.terminalRuntime?.mode === 'plain') {
         const selected = await resolveStartupPresentation({
-            cwd: plan.opts.directory ?? process.cwd(),
+            cwd: plan.opts.directory ?? sessionWorkingDirectory(),
             runtimeDescriptorV1: plan.opts.runtimeDescriptorV1,
             launchEnvironment: { values: params.sessionInput.bootstrap.environmentVariables ?? {},
                 unset: params.sessionInput.bootstrap.unsetEnvironmentVariables ?? [] },

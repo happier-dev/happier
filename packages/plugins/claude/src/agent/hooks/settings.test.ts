@@ -186,11 +186,13 @@ describe('Claude hook settings leaf', () => {
             sessionForwarderScript: '/app/session_hook_forwarder.cjs',
             permissionForwarderScript: '/app/permission_hook_forwarder.cjs',
             enableLocalPermissionBridge: true,
+            awaitTurnPublication: true,
             permissionHookTimeoutSeconds: 120,
         });
 
         expect(hooksJson.hooks.PermissionRequest?.[0]?.hooks[0]?.timeout).toBe(120);
         expect(hooksJson.hooks.PreToolUse?.[0]?.hooks[0]?.timeout).toBe(120);
+        expect(hooksJson.hooks.UserPromptSubmit?.[0]?.hooks[0]?.timeout).toBe(120);
     });
 
     it('quotes shell-sensitive POSIX argv without command substitution or token splitting', () => {

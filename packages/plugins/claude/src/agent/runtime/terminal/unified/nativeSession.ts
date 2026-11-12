@@ -81,6 +81,7 @@ function createClaudeNativeUnifiedTerminalContext(
     agentRuntime: {
       terminalHost,
       sessionHooks: sdkContext.agentRuntime.sessionHooks,
+      ...(sdkContext.agentRuntime.awaitTurnPublication ? { awaitTurnPublication: sdkContext.agentRuntime.awaitTurnPublication } : {}),
       transcripts: sdkContext.agentRuntime.transcripts,
       accountUsage: sdkContext.agentRuntime.accountUsage,
       ...(sdkContext.agentRuntime.nativeHome ? { nativeHome: sdkContext.agentRuntime.nativeHome } : {}),

@@ -97,6 +97,55 @@ async function* prompt() {
 }
 
 describe('Claude plugin SDK query', () => {
+    it('accepts the exact native started receipt before generation or a replayed user message', async () => {
+        const { ctx, stream } = createContextFixture();
+        const running = query(ctx, { prompt: prompt() });
+        let settled = false;
+        void running.promptTransportOutcome.then(() => { settled = true; });
+        try {
+            await vi.waitFor(() => expect(stream.written).toContainEqual(expect.objectContaining({ type: 'user' })));
+            const submitted = stream.written.find((record): record is { type: 'user'; uuid: string } =>
+                !!record && typeof record === 'object' && 'type' in record && record.type === 'user' && 'uuid' in record && typeof record.uuid === 'string');
+            expect(submitted).toBeDefined();
+            const receipt = { type: 'command_lifecycle', command_uuid: submitted!.uuid, session_id: 'native-1' };
+            await stream.emit({ ...receipt, state: 'queued' });
+            await stream.emit({ ...receipt, state: 'started', command_uuid: 'another-input' });
+            await stream.emit({ ...receipt, state: 'started', isSynthetic: true });
+            await stream.emit({ ...receipt, state: 'started', parent_tool_use_id: 'child-tool' });
+            expect(settled).toBe(false);
+            await stream.emit({ ...receipt, state: 'started' });
+            await vi.waitFor(() => expect(settled).toBe(true));
+            await expect(running.promptTransportOutcome).resolves.toEqual({ kind: 'accepted' });
+            const followUpUuid = 'follow-up-input';
+            let followUpSettled = false;
+            const followUp = running.sendUserMessage('follow up', followUpUuid);
+            void followUp.then(() => { followUpSettled = true; });
+            await vi.waitFor(() => expect(stream.written).toContainEqual(expect.objectContaining({ type: 'user', uuid: followUpUuid })));
+            await stream.emit({ ...receipt, state: 'started' });
+            await stream.emit({ ...receipt, state: 'queued', command_uuid: followUpUuid });
+            expect(followUpSettled).toBe(false);
+            await stream.emit({ ...receipt, state: 'started', command_uuid: followUpUuid });
+            await expect(followUp).resolves.toEqual({ kind: 'accepted' });
+        } finally { await running.dispose(); }
+    });
+
+    it('blocks native generation and fails the query when pre-generation publication fails', async () => {
+        const { ctx, stream } = createContextFixture();
+        const failure = Object.assign(new Error('private Home endpoint and credential fixture'), { code: 'provider_operation_not_current' });
+        const running = query(ctx, { prompt: prompt(), options: { onSessionHook: async () => {}, beforePromptGeneration: async () => { throw failure; } } });
+        try {
+            await vi.waitFor(() => expect(stream.written[0]).toMatchObject({ type: 'control_request' }));
+            const initialization = stream.written[0] as { request_id: string };
+            await stream.emit({ type: 'control_response', response: { subtype: 'success', request_id: initialization.request_id, response: {} } });
+            await stream.emit({ type: 'control_request', request_id: 'pre-generation', request: { subtype: 'hook_callback', callback_id: 'happier-session-hook', input: { hook_event_name: 'UserPromptSubmit', session_id: 'native' } } });
+            await vi.waitFor(() => expect(stream.written).toContainEqual({ type: 'control_response', response: {
+                subtype: 'success', request_id: 'pre-generation', response: { continue: false, stopReason: 'Happier could not publish the accepted Turn.' },
+            } }));
+            expect(JSON.stringify(stream.written)).not.toContain('private Home');
+            await expect(running.next()).rejects.toBe(failure);
+        } finally { await running.dispose(); }
+    });
+
     it('initializes hooks before input and delivers callbacks', async () => {
         const { ctx, stream, spawnClient } = createContextFixture();
         const observed: unknown[] = [];

@@ -59,7 +59,12 @@ export function createClaudePromptSettlementTracker() {
         },
         observeMessage(message: SDKMessage): void {
             if (message.isSynthetic === true || message.parent_tool_use_id != null) return;
-            if (message.type === 'user' && typeof message.uuid === 'string') {
+            // Native replayed user rows can arrive only after generation. The exact
+            // started receipt admits the command before UserPromptSubmit and HTTP.
+            if (message.type === 'command_lifecycle' && message.state === 'started'
+                && typeof message.command_uuid === 'string') {
+                settleSubmission(message.command_uuid, { kind: 'accepted' });
+            } else if (message.type === 'user' && typeof message.uuid === 'string') {
                 settleSubmission(message.uuid, { kind: 'accepted' });
             } else {
                 for (const uuid of readResultUserMessageUuids(message)) settleSubmission(uuid, { kind: 'accepted' });

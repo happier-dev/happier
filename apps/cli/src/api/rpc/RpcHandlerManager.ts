@@ -73,6 +73,9 @@ import { readCapabilityRefusalDetails } from '@/capabilities/errors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
+/** Admitting ingress: the authenticated Home socket, or the same-OS-user local Session channel. */
+export type RpcRequestSource = 'authenticated_home_socket' | 'local_session_channel';
+
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
     previousMethods: ReadonlySet<string>;
@@ -349,7 +352,7 @@ export class RpcHandlerManager {
     async handleRequest(
         request: RpcRequest,
         callback?: (response: unknown) => void,
-        source?: 'authenticated_home_socket',
+        source?: RpcRequestSource,
     ): Promise<any> {
         const requestStartedAtMs = Date.now();
         // Diagnostic correlation never supplies cancellation or admission authority.
@@ -461,14 +464,16 @@ export class RpcHandlerManager {
             phaseDurationsMs: { ...diagnostic.failure?.phaseDurationsMs, ...operation.phaseDurationsMs } };
     }
 
-    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: 'authenticated_home_socket'): Promise<unknown> {
+    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: RpcRequestSource): Promise<unknown> {
         // Admission captures its reply codec; later key adoption only affects new requests.
         const admittedContent = this.rpcContent;
         if (!admittedContent) {
             diagnostic.outcomeCode = RPC_ERROR_CODES.UPDATE_REQUIRED;
             return { error: 'RPC encryption material is unavailable', errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED };
         }
-        let rpcContent: SocketRpcContent = admittedContent;
+        // The same-OS-user local channel carries the packet in the plain codec: both ends already hold
+        // the Session key and the hop never leaves the machine. Handlers keep the Session's content mode.
+        let rpcContent: SocketRpcContent = source === 'local_session_channel' ? { mode: 'plain' } : admittedContent;
         const privateMethod = this.readUnprefixedMethod(request.method);
         const confidential = privateMethod === RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE
             || privateMethod === RPC_METHODS.DAEMON_SECRET_SOURCE_INVOKE
@@ -988,7 +993,7 @@ export class RpcHandlerManager {
                 nextPhase('authorize_request');
                 diagnostic.callerClass = 'unadmitted';
                 diagnostic.admissionPredicate = 'authorize_request';
-                const authorization = await timeWebLatencyPhase('machineRpc.authorize', () => this.authorizeRequest!(authorizationRequest, source));
+                const authorization = await timeWebLatencyPhase('machineRpc.authorize', () => this.authorizeRequest!(authorizationRequest, source === 'authenticated_home_socket' ? source : undefined));
                 // Home verification can settle false because this request was cancelled.
                 // Preserve that lifecycle result before interpreting an access refusal.
                 controller.signal.throwIfAborted();
@@ -1211,7 +1216,7 @@ export class RpcHandlerManager {
                 ...(workspaceSyncPrivateExecution ? { workspaceSyncPrivateExecution } : {}),
                 // The same codec choice as encodeResponse for this call, fixed at admission.
                 contentMode: this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request)
-                    ? 'plain' : rpcContent.mode,
+                    ? 'plain' : source === 'local_session_channel' ? admittedContent.mode : rpcContent.mode,
                 ...(sessionBrowserContent ? { sessionBrowserContent } : {}),
                 signal: controller.signal,
                 reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
@@ -1507,15 +1512,20 @@ export class RpcHandlerManager {
                 if (!parsed.success) {
                     return;
                 }
-                this.activeTransportRequestControllersByRequestId
-                    .get(parsed.data.requestId)
-                    ?.abort(new Error('RPC request cancelled by caller'));
+                this.cancelTransportRequest(parsed.data.requestId);
             });
         }
         for (const [prefixedMethod] of this.handlers) {
             if (this.permanentlyRejectedRegistrationMethods.has(prefixedMethod)) continue;
             this.publishHandlerRegistration(prefixedMethod);
         }
+    }
+
+    /** Caller cancellation for one in-flight transport request, from any ingress that admitted it. */
+    cancelTransportRequest(requestId: string): void {
+        this.activeTransportRequestControllersByRequestId
+            .get(requestId)
+            ?.abort(new Error('RPC request cancelled by caller'));
     }
 
     onSocketDisconnect(): void {

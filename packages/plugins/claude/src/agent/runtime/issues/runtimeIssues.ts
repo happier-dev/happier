@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { SessionRuntimeFailureCauseV1Schema, readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { ClaudeSessionRuntimeUsageLimitDetailsSchema, ClaudeSessionRuntimeTemporaryThrottleDetailsSchema } from './providerFailureDetails.js';
 import { mapClaudeProviderFailureToUsageDetails as mapProviderFailure } from '../../auth/services/runtime/usage.js';
 
@@ -27,6 +28,7 @@ export const ClaudeSessionRuntimeIssueSchema = z.readonly(z.object({
   agentId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
   agentTurnId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   sanitizedPreview: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(2_000))),
+  failureCause: z.optional(SessionRuntimeFailureCauseV1Schema),
   usageLimit: z.optional(ClaudeSessionRuntimeUsageLimitDetailsSchema),
   temporaryThrottle: z.optional(ClaudeSessionRuntimeTemporaryThrottleDetailsSchema),
   agentProcessExitAfterSwitch: z.optional(z.strictObject({
@@ -57,6 +59,7 @@ export type ClaudeSessionRuntimeIssueInput = Readonly<{
   agentId?: string | null;
   agentTurnId?: string | null;
   sanitizedPreview?: string | null;
+  failureCause?: ClaudeSessionRuntimeIssue['failureCause'] | null;
   usageLimit?: ClaudeSessionRuntimeUsageLimitDetails | null;
   temporaryThrottle?: ClaudeSessionRuntimeTemporaryThrottleDetails | null;
   agentProcessExitAfterSwitch?: ClaudeSessionRuntimeIssue['agentProcessExitAfterSwitch'] | null;
@@ -95,6 +98,7 @@ export function buildClaudeSessionRuntimeIssue(
     ...(agentId === null ? {} : { agentId }),
     ...(agentTurnId === null ? {} : { agentTurnId }),
     ...(sanitizedPreview === null ? {} : { sanitizedPreview }),
+    ...(input.failureCause ? { failureCause: input.failureCause } : {}),
     ...(input.usageLimit ? { usageLimit: input.usageLimit } : {}),
     ...(input.temporaryThrottle ? { temporaryThrottle: input.temporaryThrottle } : {}),
     ...(input.agentProcessExitAfterSwitch
@@ -148,6 +152,7 @@ function buildClaudeIssue(
 ): ClaudeSessionRuntimeIssue {
   return buildClaudeSessionRuntimeIssue({
     ...issue,
+    failureCause: issue.failureCause ?? readSessionRuntimeFailureCause(evidence),
     sanitizedPreview: readPreview(evidence, fallbackMessage),
   });
 }
