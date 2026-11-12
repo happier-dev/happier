@@ -23,7 +23,13 @@ export function SavedHealthCheckControls(props: Readonly<{ subject: HealthCheckS
     const check = props.checks.find(item => item.checkId === checkId) ?? props.checks[0]!;
     const result = settled?.checkId === check.checkId ? settled.result : null;
     const status = result?.status;
-    const statusText = status === 'up' ? t(`${K}.up`, 'Up') : status === 'down' ? t(`${K}.down`, 'Down')
+    const heartbeat = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 && check.kind.localId === 'heartbeat';
+    // The finite heartbeat owner decides age and first-ping state. Present its
+    // status without another clock, receipt read or liveness classifier here.
+    const statusText = heartbeat && status === 'unknown' ? t(`${K}.heartbeat.waiting`, 'Waiting for first ping')
+        : heartbeat && status === 'down' ? t(`${K}.heartbeat.late`, 'Heartbeat late')
+        : heartbeat && status === 'up' ? t(`${K}.heartbeat.current`, 'Receiving pings')
+        : status === 'up' ? t(`${K}.up`, 'Up') : status === 'down' ? t(`${K}.down`, 'Down')
         : status === 'degraded' ? t(`${K}.degraded`, 'Degraded') : t(`${K}.unknown`, 'Unknown');
     return h(Stack, { gap: 'small', testID: 'health-saved-checks' },
         h(Field, { label: t(`${K}.check`, 'Saved check') }, h(Select, { label: t(`${K}.check`, 'Saved check'),
