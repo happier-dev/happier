@@ -867,8 +867,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       providerUserMessageId = providerUserMessageResolution.providerUserMessageId;
     }
 
+    const currentTurnAssistantMessages: unknown[] = [];
     const candidatesByMessageId = new Map<string, Readonly<{
-      message: unknown;
       providerErrorFingerprint: string | null;
       text: string;
     }>>();
@@ -878,6 +878,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (projection.kind !== 'assistant_transcript' || !messageId) continue;
       if (readNonBlankOpaqueIdentifier(projection.info?.sessionID) !== providerSessionId) continue;
       if (readNonBlankOpaqueIdentifier(projection.info?.parentID) !== providerUserMessageId) continue;
+      currentTurnAssistantMessages.push(message);
       if (classifyOpenCodeAssistantCompletion(message).kind !== 'terminal_success') continue;
 
       const text = readProjectedTranscriptText(message);
@@ -900,7 +901,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       ) {
         return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
       }
-      candidatesByMessageId.set(messageId, { message, providerErrorFingerprint, text });
+      candidatesByMessageId.set(messageId, { providerErrorFingerprint, text });
     }
     if (candidatesByMessageId.size !== 1) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
 
@@ -911,7 +912,9 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
     }
     observeCurrentTurnMessageId(messageId);
-    return await publishObservedAssistantMessagesFromHistory([candidate.message], hostTurnId);
+    // Terminal evidence settles the turn, but earlier assistant rows own its tools.
+    // The shared projector preserves inventory order and dedupes live observations.
+    return await publishObservedAssistantMessagesFromHistory(currentTurnAssistantMessages, hostTurnId);
   };
 
   const markPromptResponseMessagesAsCurrentTurnEvidence = (

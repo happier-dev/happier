@@ -19,7 +19,8 @@ import type { OpenCodeRuntimeEvent } from './runtimeEvents.js';
 import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
 import { createOpenCodeExecutionRunConversation } from './executionRunRuntime.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
-import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import { createOpenCodeServerClient, type OpenCodeServerClient } from './openCodeServerClient.js';
+import recordedNativeHistory from './opencode119.httpHistory.fixture.json';
 import { normalizeOpenCodeV2Event } from './openCodeV2EventAdapter.js';
 import { normalizeOpenCodeV2Messages } from './openCodeV2Wire.js';
 import { OpenCodeSseHttpError } from './openCodeSse.js';
@@ -2943,48 +2944,29 @@ describe('createOpenCodeServerRuntime', () => {
     }));
   });
 
-  it('backfills current-turn OpenCode tool events from completed history before assistant commit', async () => {
+  it.each([false, true])('backfills current-turn OpenCode tool events from completed history before assistant commit (live overlap=%s)', async (liveOverlap) => {
     const { ctx, harness, runtimeEvents } = createContextFixture();
     const client = createClientFixture();
-    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async (input) => {
-      client.setMessages([
-        {
-          info: {
-            id: input.messageId,
-            role: 'user',
-            sessionID: 'ses-1',
-            time: { created: Date.now() + 1 },
-          },
-          parts: [
-            { id: 'part-history-user', type: 'text', text: 'run pwd' },
-          ],
-        },
-        {
-          info: {
-            id: 'msg-history-assistant',
-            role: 'assistant',
-            sessionID: 'ses-1',
-            parentID: input.messageId,
-            time: { created: Date.now() + 2, completed: Date.now() + 3 },
-          },
-          parts: [
-            {
-              id: 'part-history-tool',
-              type: 'tool',
-              sessionID: 'ses-1',
-              messageID: 'msg-history-assistant',
-              callID: 'call-history-tool',
-              tool: 'bash',
-              state: {
-                status: 'completed',
-                input: { command: 'pwd' },
-                output: 'repo\n',
-              },
-            },
-            { id: 'part-history-text', type: 'text', text: 'The repo path is /repo.' },
-          ],
-        },
-      ]);
+    // Real OpenCode 1.19.0 HTTP history from the authorized r1112u capture.
+    // Only identities change to bind the recording to this host admission.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(recordedNativeHistory.history.body[0]!.info.time.created - 1);
+    let history: unknown[] = [];
+    const recordedUserId = recordedNativeHistory.history.body[0]!.info.id;
+    const nativeClient = createOpenCodeServerClient({ dialect: 'v1', transport: {
+      fetch: async () => { throw new Error('SSE is outside this recorded-history keeper'); },
+      request: async request => {
+        expect(new URL(request.url, 'http://recorded-opencode').pathname).toBe('/session/ses-1/message');
+        return { ok: true, status: 200, headers: {},
+          text: async () => JSON.stringify(history), json: async () => history,
+          arrayBuffer: async () => new TextEncoder().encode(JSON.stringify(history)).buffer };
+      },
+    } });
+    Object.assign(client, { sessionMessages: nativeClient.sessionMessages });
+    vi.mocked(client.sessionPromptImplementation).mockImplementationOnce(async input => {
+      history = JSON.parse(JSON.stringify(recordedNativeHistory.history.body)
+        .replaceAll(recordedNativeHistory.provenance.nativeSessionId, 'ses-1')
+        .replaceAll(recordedUserId, input.messageId!));
     });
     const runtime = await createStartedRuntime({ ctx, client, harness });
     const native = createNativeSessionRuntimeForTest(runtime);
@@ -2992,7 +2974,15 @@ describe('createOpenCodeServerRuntime', () => {
     const subscription = native.watch(event => nativeEvents.push(AgentSessionRuntimeEventSchema.parse(event)));
 
     beginTestHostTurn(runtime);
-    await runtime.sendTurnPrompt('run pwd');
+    await runtime.sendTurnPrompt('Call the shell tool once to run printf QA_OPENCODE_FRAME_CAPTURE. Then reply QA_CAPTURED. Do not read or modify any files.');
+    if (liveOverlap) {
+      const toolPart = recordedNativeHistory.history.body[1]!.parts.find(part => part.type === 'tool');
+      expect(toolPart).toBeDefined();
+      await runtime.handleProviderEvent({ payload: {
+        type: 'message.part.updated',
+        properties: { part: { ...toolPart, sessionID: 'ses-1' } },
+      } });
+    }
     await runtime.handleProviderEvent({
       payload: {
         type: 'session.idle',
@@ -3017,30 +3007,37 @@ describe('createOpenCodeServerRuntime', () => {
       kind: 'tool-call',
       sessionId: 'happy-session-1',
       turnId,
-      toolCallId: 'call-history-tool',
+      toolCallId: 'call_01a1d1e45a6d75ae91388c40c499f813',
       toolName: 'bash',
-      toolInput: { command: 'pwd' },
+      toolInput: { command: 'printf QA_OPENCODE_FRAME_CAPTURE' },
     }));
     expect(runtimeEvents[toolResultIndex]).toEqual(expect.objectContaining({
       kind: 'tool-result',
       sessionId: 'happy-session-1',
       turnId,
-      toolCallId: 'call-history-tool',
-      output: 'repo\n',
+      toolCallId: 'call_01a1d1e45a6d75ae91388c40c499f813',
+      output: expect.objectContaining({ output: 'QA_OPENCODE_FRAME_CAPTURE' }),
     }));
     expect(runtimeEvents[assistantCommitIndex]).toEqual(expect.objectContaining({
       kind: 'transcript-agent-message-committed',
       turnId,
-      localId: 'opencode:ses-1:msg-history-assistant',
+      localId: 'opencode:ses-1:msg_1d1e43635001g86sUN85uXUTeR',
       body: {
         type: 'message',
-        message: 'The repo path is /repo.',
+        message: 'Calling shell capture as requested.',
       },
     }));
     expect(nativeEvents).toContainEqual(expect.objectContaining({
       kind: 'transcript-message-committed', turnId,
-      messageId: 'opencode:ses-1:msg-history-assistant', text: 'The repo path is /repo.',
+      messageId: 'opencode:ses-1:msg_1d1e43635001g86sUN85uXUTeR', text: 'Calling shell capture as requested.',
     }));
+    expect(runtimeEvents.filter(event => event.kind === 'tool-call')).toHaveLength(1);
+    expect(runtimeEvents.filter(event => event.kind === 'tool-result')).toHaveLength(1);
+    expect(runtimeEvents.filter(event => event.kind === 'transcript-agent-message-committed')
+      .map(event => event.body)).toEqual([
+      { type: 'message', message: 'Calling shell capture as requested.' },
+      { type: 'message', message: 'QA_CAPTURED' },
+    ]);
     subscription.dispose();
     await native.dispose();
   });
