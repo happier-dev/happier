@@ -1,6 +1,7 @@
 import * as React from 'react';
+import { ActionFailureDetails } from '../../ui/ActionFailureDetails.js';
 import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
-import { ErrorState, Stack, TechnicalDetailsDisclosure, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ErrorState, Stack, usePluginTranslation } from '@happier-dev/plugin-ui';
 
 import type { TriageSessionPullRequestProjectionSnapshotV1 } from '../sessionPullRequestStatus.js';
 
@@ -44,12 +45,7 @@ export function PullRequestFailureDetails(props: Readonly<{
   requestId?: string;
   title?: string;
 }>): React.ReactElement | null {
-  const text = usePluginTranslation();
   const details = [...new Set(props.codes.filter(code => code !== undefined))].join('\n');
-  return !details ? null : <TechnicalDetailsDisclosure
-    title={props.title ?? text('plugins.triage.surface.detail.tab.details', 'Details')}
-    lines={[{ key: 'pr-read-failure', label: text('plugins.triage.sourceFailure.code', 'Code'), value: details },
-      ...(props.requestId === undefined ? [] : [{ key: 'pr-request-id',
-        label: text('plugins.triage.sourceFailure.requestId', 'Request ID'), value: props.requestId }])]}
-  />;
+  return !details ? null : <ActionFailureDetails code={details} requestId={props.requestId}
+    title={props.title} showReason={false} />;
 }

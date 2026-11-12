@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 
@@ -19,7 +20,6 @@ import {
   Stack,
   Status,
   TargetedSurface,
-  TechnicalDetailsDisclosure,
   Text,
   useSessionStates,
   usePluginHostApi,
@@ -1031,14 +1031,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       {readFailure !== undefined ? (
         <Stack gap="small">
           {readRefusal === null ? null : <ErrorState title={readRefusal} />}
-          <TechnicalDetailsDisclosure
-            title={text('plugins.triage.surface.detail.tab.details', 'Details')}
-            lines={[
-              { key: 'entry-read-code', label: text('plugins.triage.sourceFailure.code', 'Code'), value: readFailure.code },
-              ...(readFailure.detail === undefined ? [] : [{ key: 'entry-read-detail',
-                label: text('plugins.triage.sourceFailure.reason', 'Reason'), value: readFailure.detail }]),
-            ]}
-          />
+          <ActionFailureDetails code={readFailure.code} requestId={readFailure.requestId}
+            detail={readFailure.detail} showReason={false} />
         </Stack>
       ) : observation === null ? (
         header.presence === 'absent' ? null : <EmptyState

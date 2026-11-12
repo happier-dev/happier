@@ -3163,6 +3163,21 @@ describe('opening a row into the source detail', () => {
         releaseOther();
     });
 
+    it('discloses the READY180 Sentry exact-read request through shared failure details', async () => {
+        const entryRef = { source: SOURCE, kindId: 'dependabot-alert', collisionScope: 'example/repository', entryId: '4' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        const failure = { class: 'transient' as const, code: 'sentry-upstream-unavailable',
+            requestId: '25bc3cf6-b2b6-49b3-a01e-2b6927276834' };
+        const shell = await mountShell({ subPath, securityAlert: true, activeSurface: true,
+            deferLinkedEntry: true, exactReadFailure: failure });
+        await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        await expect(shell.getByText(failure.code)).resolves.toBeDefined();
+        await expect(shell.getByText('Request ID')).resolves.toBeDefined();
+        await expect(shell.getByText(failure.requestId)).resolves.toBeDefined();
+        expect(currentHarness?.exactReads).toHaveLength(1);
+    });
+
     it.each([
         [404, 'github_not_found', false],
         [410, 'github_gone', true],
