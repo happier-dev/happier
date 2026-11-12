@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AccountSettingsSchema, ProviderBoundModelRefSchema, ProviderConnectionIdSchema,
@@ -16,17 +16,20 @@ import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/provide
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
 import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
-import { createRunnerExecutionRunProviderLaunchServices } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
+import { createRunnerExecutionRunProviderLaunchServices, projectRunnerExecutionRunProviderLaunch } from '@/daemon/agentRuntime/runnerExecutionRunProviderLaunch';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { ExecutionRunHostBridge } from '../ExecutionRunHostBridge';
 import { prepareExecutionRunProviderLaunch, type ExecutionRunProviderLaunchRequest } from './providerLaunch';
 import { createExecutionRunRuntime } from './create';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import * as controlClient from '@/daemon/controlClient';
+import * as persistence from '@/persistence';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
-async function createRecoveryFixture() {
+async function createRecoveryFixture(publishCatalog = false) {
     const nativeRequests: AgentSessionOpenRequest[] = [];
     const open = async (request: AgentSessionOpenRequest): Promise<AgentSessionRuntime> => {
         nativeRequests.push(request);
@@ -45,7 +48,7 @@ async function createRecoveryFixture() {
                     sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: sequence });
                 emit?.({ kind: 'turn-start', turnId, startedBy: 'host',
                     sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: sequence });
-                if (request.kind === 'create') {
+                if (request.kind === 'create' && !publishCatalog) {
                     emit?.({ kind: 'turn-failed', turnId, diagnostic: { code: 'fixture_provider_failed', severity: 'error' },
                         sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: sequence });
                 } else {
@@ -67,13 +70,15 @@ async function createRecoveryFixture() {
     const plugin = definePlugin({ id: 'test.provider-recovery', version: '0.0.0', displayName: 'Provider recovery boundary',
         entrypoints: { daemon: './daemon.mjs' }, agents: { agent: {
             declaration: { title: 'Boundary Agent', runtime: { kind: 'custom' }, primary: 'sessions',
-                capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } }, providerRequirements: support },
+                capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
+                connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } }],
+                providerRequirements: support },
             factory: () => ({ sessions: { open } }),
             sessionRunnerFactory: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
         } } });
     // Only the native process boundary is substituted. Committed plugin admission,
     // Provider consent, materialization, runtime creation and Run recovery stay real.
-    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: plugin.manifest, files: {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ ...(publishCatalog ? { controller: pluginReloadController } : {}), plugins: [{ manifest: plugin.manifest, files: {
         'runtime.mjs': `let open; export function configure(value) { open = value; }
             export function createRuntime() { return { sessions: { open: request => open(request) } }; }`,
         'daemon.mjs': `import * as runtime from './runtime.mjs';
@@ -135,6 +140,12 @@ async function createRecoveryFixture() {
             return { machineId: 'machine', featureEnabled: true, happyHomeDir: fixture.happyHomeDir,
                 accountSettingsSnapshot: snapshot, readAccountSettingsSnapshot: () => snapshot, isCurrent: () => true };
         } });
+    const providerLaunch = { ...services, prepareLaunch: async (...args: Parameters<typeof services.prepareLaunch>) => {
+        const prepared = await services.prepareLaunch(...args);
+        AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true,
+            result: { kind: 'execution_run.provider.prepared', ...projectRunnerExecutionRunProviderLaunch(prepared) } });
+        return prepared;
+    } };
     const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.registry });
     const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
         resolveAgentIdentity: () => ({ pluginId: plugin.manifest.id, localId: 'agent' }) });
@@ -146,11 +157,12 @@ async function createRecoveryFixture() {
     let hasPinnedService = true;
     const bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir, happyHomeDir: fixture.happyHomeDir,
         machineId: 'machine', sendAcp: async () => {}, resolveProvidersFeatureEnabled: () => true,
-        sessionInteractionHost: { session, machineId: 'machine', permissionHandler },
+        sessionInteractionHost: { session, machineId: 'machine', permissionHandler,
+            prepareRunTeamCredentialProviderBinding: async () => null },
         resolveRunReportPolicy: async () => ({ preset: 'important' }),
         resolveAccountSettingsSnapshot: async () => snapshot,
         resolveExecutionRunProfileCatalog: async () => ({ engineRegistry, profileCatalog,
-            ...(hasPinnedService ? { providerLaunch: services } : {}) }) });
+            ...(hasPinnedService ? { providerLaunch } : {}) }) });
     const input = { selection, backendTarget, agentId, runId: 'exact-recovery-run', machineId: 'machine',
         featureEnabled: true, happyHomeDir: fixture.happyHomeDir, accountSettingsSnapshot: snapshot };
     return { fixture, bridge, input, nativeRequests, requests, services, engineRegistry,
@@ -159,6 +171,35 @@ async function createRecoveryFixture() {
 }
 
 describe('real custom Provider Run recovery', () => {
+    it.each([false, true])('starts a native-model connected Run through the pinned daemon preparation (structured selection: %s)', async structured => {
+        const test = await createRecoveryFixture(true);
+        const bindings = { v: 2 as const, bindingsByServiceId: {
+            'happier.agent.claude/claude-subscription': { source: 'connected' as const, selection: 'profile' as const, profileId: 'synthetic-profile' },
+        } };
+        const credentialRead = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token: 'synthetic-token', encryption: null });
+        const sourceCustody = test.fixture.registry.readPluginSourceCustody?.('test.provider-recovery');
+        if (!sourceCustody) throw new Error('Expected admitted source custody');
+        const materialize = vi.spyOn(controlClient, 'requestExecutionRunConnectedServicesMaterialization').mockImplementation(async request => ({
+            ok: true, result: { activationId: 'synthetic-activation', env: {}, connectedServicesBindings: bindings,
+                registration: { v: 1, activationId: 'synthetic-activation', runKey: request.runId, agentId: test.input.agentId,
+                    agentContribution: { pluginId: 'test.provider-recovery', localId: 'agent', sourceCustody },
+                    materializationKey: request.runId, connectedServicesBindings: bindings, connectedServiceSelectionsEnv: {},
+                    sessionDirectory: test.fixture.happyHomeDir, materializedRoot: test.fixture.happyHomeDir } },
+        }));
+        const release = vi.spyOn(controlClient, 'releaseExecutionRunConnectedServices').mockResolvedValue({ ok: true, released: true });
+        try {
+            const started = await test.bridge.start({ sessionId: 'parent', intent: 'agent', backendTarget: test.input.backendTarget,
+                modelId: 'native-model', connectedServices: bindings, instructions: 'Use the selected subscription.',
+                ...(structured ? { modelSelection: { ...test.input.selection, providerConnectionId: null, modelId: 'native-model' } } : {}),
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response' });
+            await test.bridge.waitForTerminal(started.runId);
+            expect(test.bridge.getPublic(started.runId)?.error?.code).not.toBe('PLUGIN_DAEMON_RUNTIME_UNAVAILABLE');
+            expect(test.requests, JSON.stringify(test.bridge.getLatestToolResult(started.runId))).toContainEqual(expect.objectContaining({ runId: started.runId, connectedServices: bindings }));
+            expect(materialize).toHaveBeenCalled();
+            expect(test.bridge.getPublic(started.runId)).toMatchObject({ status: 'succeeded' });
+            expect(test.nativeRequests).toHaveLength(1);
+        } finally { await test.cleanup(); release.mockRestore(); materialize.mockRestore(); credentialRead.mockRestore(); }
+    });
     it.each([
         ['session_owned', 'execution_run_contribution_snapshot_unavailable'],
         ['detached', 'team_credential_provider_selection_not_current'],

@@ -290,6 +290,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             let providerLaunch: PreparedExecutionRunProviderLaunch | null = null;
             if (effectiveBackendTarget && (
                 opts.modelSelection || opts.teamCredentialModel || opts.sessionInteractionHost?.prepareRunTeamCredentialProviderBinding
+                || (connectedServicesSelection && hasConnectedExecutionRunBinding(connectedServicesSelection.bindings))
             )) {
                 providerLaunch = await prepareExecutionRunRuntimeProviderLaunch({
                     signal,

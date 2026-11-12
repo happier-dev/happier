@@ -52,7 +52,8 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
     return Object.freeze({
         async admitInheritedSelection(request, signal) {
             const preparation = await resolve(request);
-            await admitExecutionRunInheritedProviderSelection({ ...request, ...preparation,
+            if (request.selection) await admitExecutionRunInheritedProviderSelection({ ...request, ...preparation,
+                selection: request.selection,
                 signal: signal ?? preparation.signal,
                 runtimeRegistryLease: input.runtimeRegistryLease });
             if (!isSourceCurrent(request) || !await preparation.isCurrent()) throw changed();
@@ -72,7 +73,7 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
                     }
                     await prepared.cleanupOnExit?.();
                     return { ok: false as const, error: createProviderErrorV1('provider_authorization_changed', {
-                        connectionId: request.selection.providerConnectionId ?? undefined,
+                        connectionId: request.selection?.providerConnectionId ?? undefined,
                         ...(preparation.machineId ? { machineId: preparation.machineId } : {}),
                     }) };
                 },
@@ -82,12 +83,12 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
 }
 
 export function projectRunnerExecutionRunProviderLaunch(prepared: PreparedExecutionRunProviderLaunch) {
-    if (!prepared.providerBinding) throw Object.assign(new Error('provider_incompatible_with_agent'), { code: 'provider_incompatible_with_agent' });
     const environmentOverlay: SessionEnvOverlayV1 = [
         ...Object.entries(prepared.environment).map(([name, value]) => ({ name, value, source: 'provider' as const })),
         ...prepared.unsetEnvKeys.map(name => ({ name, value: null, source: 'provider' as const })),
     ];
-    return { ok: true as const, environmentOverlay, providerBinding: AgentSessionProviderBindingV1Schema.parse(prepared.providerBinding),
+    return { ok: true as const, environmentOverlay,
+        ...(prepared.providerBinding ? { providerBinding: AgentSessionProviderBindingV1Schema.parse(prepared.providerBinding) } : {}),
         ...(prepared.connectedServices !== undefined ? { connectedServices: prepared.connectedServices } : {}),
         additionalRedactionValues: [...prepared.additionalRedactionValues] };
 }

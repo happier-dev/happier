@@ -60,6 +60,7 @@ import {
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
 import { admitExecutionRunInheritedProviderSelection, type ExecutionRunProviderLaunchServices, type ExecutionRunTeamCredentialProviderBindingPreparer } from './runtime/providerLaunch';
+import { hasConnectedExecutionRunBinding } from './runtime/connectedServicesEnv';
 import type { ExecutionRunManagedProviderEndpointPreparer } from './runtime/managedProvider';
 import type { ResolveManagedProviderPurposeBindingIntent } from '@/providers/managed/resolvePurposeBindingSnapshot';
 import type { ProviderRuntimeModelProjectionReader } from '@/providers/spawn/runtimeCatalog';
@@ -2417,7 +2418,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             providerLaunch: resolution.providerLaunch,
           });
           const accountSettingsSnapshot = await accountSnapshotResolver?.() ?? null;
-          if (resolution.providerLaunch && selection.modelSelection.providerConnectionId !== null) {
+          if (resolution.providerLaunch && (selection.modelSelection.providerConnectionId !== null
+            || selection.connectedServices && hasConnectedExecutionRunBinding(selection.connectedServices))) {
             if (!accountSettingsSnapshot?.scopeKey) throw Object.assign(new Error('provider_connection_not_found'), { code: 'provider_connection_not_found' });
             await resolution.providerLaunch.admitInheritedSelection({
               selection: selection.modelSelection, backendTarget: preparedParams.backendTarget,

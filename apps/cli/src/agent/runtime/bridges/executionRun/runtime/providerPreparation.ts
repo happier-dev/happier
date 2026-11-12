@@ -50,15 +50,15 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
     const accountSettingsSnapshot = await trace('account_snapshot', () => resolveAccountSettingsSnapshot?.()) ?? null;
     const selection = input.selection;
     const nativeTeam = input.teamCredentialModel?.deliveryMode === 'vendor-native' ? input.teamCredentialModel : undefined;
-    if (providerLaunch && (selection?.providerConnectionId || nativeTeam || selection && (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
+    if (providerLaunch && (selection?.providerConnectionId || nativeTeam || (input.connectedServices != null && hasConnectedExecutionRunBinding(input.connectedServices)))) {
         const expectedAccountSettingsScopeKey = accountSettingsSnapshot?.scopeKey;
         if (!expectedAccountSettingsScopeKey) {
             if (nativeTeam) throw new SessionTeamCredentialLaunchUnavailableError();
             throw Object.assign(new Error('provider_connection_not_found'), { code: 'provider_connection_not_found' });
         }
         const prepared = await trace('provider_launch', () => providerLaunch.prepareLaunch({
-            selection: nativeTeam ? { agentTargetKey: nativeTeam.agentTargetKey,
-                providerConnectionId: null, modelId: nativeTeam.modelId } : selection!,
+            ...(nativeTeam ? { selection: { agentTargetKey: nativeTeam.agentTargetKey,
+                providerConnectionId: null, modelId: nativeTeam.modelId } } : selection ? { selection } : {}),
             ...(nativeTeam ? { teamCredentialModel: nativeTeam } : {}),
             backendTarget: input.backendTarget,
             sessionConfigOptionOverrides: input.sessionConfigOptionOverrides,

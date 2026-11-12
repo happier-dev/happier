@@ -26,7 +26,7 @@ const StrictBackendTargetRefV2Schema = zMini.pipe(
 );
 
 const ProviderLaunchRequestShape = {
-  selection: asHostProtocolZod(ProviderBoundModelRefSchema),
+  selection: z.optional(asHostProtocolZod(ProviderBoundModelRefSchema)),
   teamCredentialModel: z.optional(asHostProtocolZod(TeamCredentialProviderModelSelectionV1Schema)),
   sessionConfigOptionOverrides: z.optional(asHostProtocolZod(AcpConfigOptionOverridesV1Schema)),
   backendTarget: asHostProtocolZod(StrictBackendTargetRefV2Schema),
@@ -89,7 +89,7 @@ export const RUNNER_EXECUTION_RUN_SNAPSHOT_RESULTS = [
     ok: z.literal(true),
     environmentOverlay: asHostProtocolZod(SessionEnvOverlayV1Schema),
     connectedServices: z.optional(z.nullable(asHostProtocolZod(ConnectedServiceBindingsV2Schema))),
-    providerBinding: asHostProtocolZod(AgentSessionProviderBindingV1Schema),
+    providerBinding: z.optional(asHostProtocolZod(AgentSessionProviderBindingV1Schema)),
     additionalRedactionValues: z.array(z.string().check(z.minLength(1))),
   }),
   z.strictObject({ kind: z.literal('execution_run.provider.prepared'), ...ProviderLaunchRefusalShape }),

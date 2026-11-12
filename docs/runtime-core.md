@@ -1488,6 +1488,15 @@ daemon's existing command owner still enforces the batch's output budget.
 Interactive stdin and early-settling stream consumers are not supported by this
 private checkpoint port; no general plugin process authority is added.
 
+In 0.3 development source, daemon-started Session runners acquire their own
+Home carrier before command startup and retain it until the command ends.
+`runWithRunnerHomeTransport` reuses the Account-client carrier acquisition policy
+and native Home identity verification; it does not register the daemon's persisted
+Machine EndpointId. Spawn passes the configured URL-only route, never the daemon's
+process-local listener. Carrier acquisition failures retain their typed cause.
+Existing runners launched with an older daemon-local route need replacement
+through their normal lifecycle before they consume this correction.
+
 Session runners can survive daemon restart. The incumbent services proxy may
 reprepare an invocation only after a proven pre-effect refusal, and does not
 replay an ambiguous in-flight command across authority replacement. Missing
@@ -4459,6 +4468,11 @@ Account Provider choice in a Session runner. A missing service refuses with
 or attempting a runner-local registry; it is not a request for new experimental
 consent. Daemon-owned detached Runs prepare against their applied local registry,
 while native selections and Team credentials retain their respective owners.
+Native selections with connected Account bindings also prepare through that pinned
+daemon service, including `modelId` inputs without a Provider selection. The
+host-private request preserves that absence, and the native response can omit a
+Provider binding; the existing connected-service materialization owner still
+resolves the selected credentials against the daemon's applied runtime.
 These placement paths share the existing Provider authorization and materialization
 policy; the local adapter is not a fallback for a Session runner's missing service.
 

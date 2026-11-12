@@ -1,4 +1,4 @@
-import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { prepareProviderSettingsForCli } from '@/providers/settings/hydrate';
 import { join } from 'node:path';
 
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -49,7 +49,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
 
 /** Only the caller's exact choice crosses the existing snapshot service seam. */
 export type ExecutionRunProviderLaunchRequest = Readonly<{
-    selection: ProviderBoundModelRef;
+    selection?: ProviderBoundModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     backendTarget: BackendTargetRefV2Input;
@@ -152,11 +152,10 @@ function createExecutionRunProviderPreparation(
         connectedServices: input.connectedServices ?? null,
         featureEnabled: input.featureEnabled,
         managedPurposeContext: { lease, happyHomeDir: input.happyHomeDir, signal: input.signal,
-            readProviderSettings: () => {
-                const snapshot = input.readAccountSettingsSnapshot ? input.readAccountSettingsSnapshot()
-                    : operationContext ? operationContext.readSnapshot() : input.accountSettingsSnapshot;
-                return snapshot ? readProviderSettingsForCli(snapshot).settings : null;
-            },
+            readProviderSettings: () => prepareProviderSettingsForCli({
+                readSnapshot: input.readAccountSettingsSnapshot ?? (() => input.accountSettingsSnapshot ?? null),
+                operationContext, signal: input.signal,
+            }),
             resolveManagedPurposeBindingIntentSelection: input.resolveManagedPurposeBindingIntentSelection,
             accountAuthority: input.managedProviderAccountAuthority },
         resolvePrerequisites: async () => {

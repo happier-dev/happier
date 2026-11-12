@@ -12298,7 +12298,7 @@ export async function startDaemonSessionControlRuntime(
             || accepted.teamId !== team.teamId || accepted.deliveryMode !== team.deliveryMode
             || team.deliveryMode !== 'vendor-native' || !team.nativeDelivery
             || !isDeepStrictEqual(accepted.nativeDelivery, team.nativeDelivery)
-            || request.selection.providerConnectionId !== null
+            || request.selection?.providerConnectionId !== null
             || request.selection.agentTargetKey !== team.agentTargetKey || request.selection.modelId !== team.modelId) {
             throw new SessionTeamCredentialLaunchUnavailableError();
           }
@@ -12316,7 +12316,7 @@ export async function startDaemonSessionControlRuntime(
           if (scope.kind !== 'execution_run' || scope.executionRunId !== request.runId || !request.controllerOccurrenceId
             || !await context.isCurrent() || !await account.isCurrent()) throw unavailable();
           const proof: ManagedRunBindingProof = { executionRunId: request.runId,
-            executionRunOccurrenceId: request.controllerOccurrenceId, agentId: request.agentId, modelId: request.selection.modelId,
+            executionRunOccurrenceId: request.controllerOccurrenceId, agentId: request.agentId, modelId: authorization.binding.selection.model.id,
             runtimeBindingBasis: projectProviderRuntimeBindingBasis(authorization), expectedAccountSettingsScopeKey: request.expectedAccountSettingsScopeKey };
           const opened = await openAttachedManagedRunBinding({ sessionId: context.sessionId, tracked, proof,
             signal: signal ?? context.signal ?? shutdownCancellationDomains.daemonWorkSignal });
