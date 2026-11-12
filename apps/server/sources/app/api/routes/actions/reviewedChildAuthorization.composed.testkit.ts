@@ -1,12 +1,67 @@
 import { expect } from 'vitest';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { invokeHostReviewedChildV1, type ActionExecutorContext, type ActionExecuteResult,
+import { createActionExecutor, readHostAdmittedReviewedParentV1, type ActionExecutorContext, type ActionExecuteResult,
     type HostReviewedChildV1, type HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { createSignedDiscussionHttpFixture } from './discussionExecutionAuthorization.testkit';
 import { projectRequesterAccountActionAuthorization } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
+
+/** Prepare and review through the real executor; child is the admitted execution context carrying its private proof. */
+export async function prepareReviewedChildAuthorization(params: Readonly<{
+    actionId: ActionId;
+    input: unknown;
+    context: ActionExecutorContext;
+    managedId?: string;
+    child: HostReviewedChildV1;
+    deps?: ActionExecutorDeps | ((invokeAdmittedChild: (context: ActionExecutorContext) => Promise<ActionExecuteResult>,
+        executeAdmittedChild: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) => ActionExecutorDeps);
+    execute(context: ActionExecutorContext): Promise<ActionExecuteResult>;
+}>): Promise<Readonly<{ parent: HostReviewedParentV1 | null; child: ActionExecutorContext | undefined;
+    execution: ActionExecuteResult; parentExecution: ActionExecuteResult }>> {
+    let parent: HostReviewedParentV1 | null = null;
+    let childContext: ActionExecutorContext | undefined;
+    let execution: ActionExecuteResult | undefined;
+    const executeChild = (context: ActionExecutorContext) => {
+        childContext = context;
+        return params.execute(context);
+    };
+    const observeParent = async (context: ActionExecutorContext) => {
+        parent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
+        if (!parent) throw new Error('reviewed_child_admitted_parent_required');
+        execution = await context.hostReviewedChild!.invoke(params.child);
+        return execution;
+    };
+    const executor = createActionExecutor({
+        ...(typeof params.deps === 'function' ? params.deps(observeParent, executeChild) : params.deps),
+        // The native person confirmation and child transport are system boundaries.
+        presentUserActionConfirmation: async () => true,
+        managedMachineAction: async request => {
+            const result = await observeParent(request.context);
+            if (!params.managedId) throw new Error('reviewed_child_managed_id_required');
+            return result.ok ? { managedId: params.managedId } : result;
+        },
+        sessionSpawnNew: async request => {
+            const result = await observeParent(request.context ?? {});
+            return result.ok ? { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } : result;
+        },
+        machineAgentIsolationAction: async request => {
+            const result = await executeChild(request.context);
+            return result.ok ? result.result : result;
+        },
+        routeHostChildAction: request => executeChild(request.context),
+    });
+    const parentExecution = await executor.execute(params.actionId, params.input, {
+        ...params.context, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverIdentityId: params.context.externalActionExecutionAuthorization?.binding.serverIdentityId ?? params.context.serverIdentityId,
+        actionRequestId: params.context.externalActionExecutionAuthorization?.binding.requestId ?? params.context.actionRequestId,
+        actionsSettings: params.context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1 }),
+    });
+    return { parent, child: childContext, execution: execution ?? parentExecution, parentExecution };
+}
 
 /** Public Home issuance and the production private child/header/packet issuers; no synthetic binding or proof. */
 export async function createReviewedChildAuthorizationFixture(options?: Parameters<typeof createSignedDiscussionHttpFixture>[4]) {
@@ -23,7 +78,7 @@ export async function createReviewedChildAuthorizationFixture(options?: Paramete
             serverId: issued.binding.serverIdentityId, serverIdentityId: issued.binding.serverIdentityId,
             serverHttpBaseUrl: origin, target: issued.binding.target, installationId: fixture.machine.installationId!,
             privateKey: fixture.keyPair.secretKey });
-        expect(authorization, 'publicly minted root must pass the actual signed Home currentness endpoint').not.toBeNull();
+        expect(authorization, `publicly minted root must pass the actual signed Home currentness endpoint: ${JSON.stringify(currentnessRequests)}`).not.toBeNull();
         if (!authorization) throw new Error('reviewed_child_root_projection_required');
         return authorization;
     }
@@ -61,11 +116,12 @@ export async function createReviewedChildAuthorizationFixture(options?: Paramete
         return result;
     }
 
-    async function child(authorization: ExternalActionExecutionAuthorizationV1, parent: HostReviewedParentV1,
-        selected: HostReviewedChildV1, execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>) {
-        return invokeHostReviewedChildV1({ parent, context: context(authorization), child: selected,
-            admittedReview: { action: selected.action, role: selected.role, surface: 'cli' },
-            execute: async (_input, childContext) => execute(childContext) });
+    async function preparedChild(authorization: ExternalActionExecutionAuthorizationV1, input: unknown,
+        selected: HostReviewedChildV1, execute: (context: ActionExecutorContext) => Promise<ActionExecuteResult>, managedId?: string,
+        deps?: ActionExecutorDeps) {
+        const prepared = await prepareReviewedChildAuthorization({ actionId: authorization.binding.actionId,
+            input, context: context(authorization), child: selected, execute, managedId, deps });
+        return prepared.execution;
     }
 
     function rpc(childContext: ActionExecutorContext, effectActionId: string, method: string, params: JsonValue) {
@@ -76,5 +132,5 @@ export async function createReviewedChildAuthorizationFixture(options?: Paramete
         return { execution, request: { method, requestId, params } };
     }
 
-    return { ...fixture, root, withAccountProjection, context, headers, child, rpc, currentnessRequests, origin };
+    return { ...fixture, root, withAccountProjection, context, headers, preparedChild, rpc, currentnessRequests, origin };
 }

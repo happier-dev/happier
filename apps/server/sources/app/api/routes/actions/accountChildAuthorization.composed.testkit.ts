@@ -111,56 +111,24 @@ export function registerAccountChildAuthorizationComposedTests(): void {
         } finally { await app.close(); await f.app.close(); }
     });
 
-    it('keeps a publicly minted Doc read child inside its Artifact codec and active anchored Discussion list', async () => {
-        const f = await createReviewedChildAuthorizationFixture({ artifactReads: true });
-        try {
-            const doc = await artifact(f);
-            const input = { ref: { kind: 'doc', artifactId: doc.id } };
-            const root = await f.root('doc.read', input);
-            const parent = { actionId: root.binding.actionId, input };
-            expect(await f.child(root, parent, { action: 'artifact.get', role: 'doc-read', input: { artifactId: doc.id } }, async context => {
-                for (const [path, status] of [[`/v1/artifacts/${doc.id}`, 200], ['/v1/artifacts', 401]] as const) {
-                    const response = await f.app.inject({ method: 'GET', url: path,
-                        headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'artifact.get', method: 'GET', path }) });
-                    expect(response.statusCode, response.body).toBe(status);
-                    if (status === 200) expect(response.json()).toMatchObject({ id: doc.id });
-                }
-                return { ok: true, result: null };
-            })).toMatchObject({ ok: true });
-            expect(await f.child(root, parent, { action: 'discussion.list', role: 'doc-counts',
-                input: { state: 'active', anchorDocArtifactId: doc.id } }, async context => {
-                for (const [selection, status] of [[`state=active&anchorDocArtifactId=${doc.id}`, 200], ['state=active', 401]] as const) {
-                    const path = `${DISCUSSION_HTTP_PATHS_V1.collection}?${selection}`;
-                    const response = await f.app.inject({ method: 'GET', url: path,
-                        headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'discussion.list', method: 'GET', path }) });
-                    expect(response.statusCode, response.body).toBe(status);
-                }
-                return { ok: true, result: null };
-            })).toMatchObject({ ok: true });
-        } finally { await f.app.close(); }
-    });
-
-    it('opens a Doc acceptance preparation through a real Discussion read child and refuses its grant roster', async () => {
+    // These native owners reuse the admitted root context for their internal HTTP transports; they declare no reviewed-child role.
+    it('authorizes native Doc acceptance Discussion preparation and refuses its grant roster', async () => {
         const f = await createReviewedChildAuthorizationFixture();
         try {
             const discussionId = await discussion(f);
             const input = { proposalRef: { kind: 'discussion', discussion: { serverId: await getOrCreateServerIdentityId(), discussionId }, messageId: 'proposal' },
                 expectedRevision: { headerVersion: 1, bodyVersion: 1 } };
             const root = await f.root('doc.edit.accept', input);
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'discussion.read', role: 'proposal-read', input: { discussionId } }, async context => {
-                    for (const [template, status] of [[DISCUSSION_HTTP_PATHS_V1.discussion, 200], [DISCUSSION_HTTP_PATHS_V1.recipientCensus, 401]] as const) {
-                        const path = template.replace(':discussionId', discussionId);
-                        const response = await f.app.inject({ method: 'GET', url: path,
-                            headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'discussion.read', method: 'GET', path }) });
-                        expect(response.statusCode, response.body).toBe(status);
-                    }
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            for (const [template, status] of [[DISCUSSION_HTTP_PATHS_V1.discussion, 200], [DISCUSSION_HTTP_PATHS_V1.recipientCensus, 401]] as const) {
+                const path = template.replace(':discussionId', discussionId);
+                const response = await f.app.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: 'discussion.read', method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(status);
+            }
         } finally { await f.app.close(); }
     });
 
-    it('posts a Doc comment through its real Discussion child and rejects a freshly signed roster read', async () => {
+    it('authorizes the native Doc comment Discussion write and refuses its grant roster', async () => {
         const f = await createReviewedChildAuthorizationFixture();
         try {
             const discussionId = await discussion(f);
@@ -175,22 +143,18 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const body = buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: mutation.input.localId,
                 content: { t: 'plain', v: mutation.input.content }, authoredContent: mutation.input.content,
                 replyTarget: mutation.input.replyTarget, mentionedAccountIds: [] });
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'discussion.post', role: 'doc-comment', input: mutation.input }, async context => {
-                    const path = DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', discussionId);
-                    const response = await f.app.inject({ method: 'POST', url: path, payload: body,
-                        headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'discussion.post', method: 'POST', path, body }) });
-                    expect(response.statusCode, response.body).toBe(200);
-                    const refusedPath = DISCUSSION_HTTP_PATHS_V1.recipientCensus.replace(':discussionId', discussionId);
-                    const refused = await f.app.inject({ method: 'GET', url: refusedPath,
-                        headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'discussion.post', method: 'GET', path: refusedPath }) });
-                    expect(refused.statusCode, refused.body).toBe(401);
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            const path = DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', discussionId);
+            const response = await f.app.inject({ method: 'POST', url: path, payload: body,
+                headers: await f.headers(root, { effectActionId: 'discussion.post', method: 'POST', path, body }) });
+            expect(response.statusCode, response.body).toBe(200);
+            const refusedPath = DISCUSSION_HTTP_PATHS_V1.recipientCensus.replace(':discussionId', discussionId);
+            const refused = await f.app.inject({ method: 'GET', url: refusedPath,
+                headers: await f.headers(root, { effectActionId: 'discussion.post', method: 'GET', path: refusedPath }) });
+            expect(refused.statusCode, refused.body).toBe(401);
         } finally { await f.app.close(); }
     });
 
-    it('opens a Second opinion Doc through its actual Artifact child without granting Artifact inventory', async () => {
+    it('authorizes native Second opinion Artifact preparation and refuses Artifact inventory', async () => {
         const f = await createReviewedChildAuthorizationFixture({ artifactReads: true });
         try {
             const doc = await artifact(f);
@@ -199,58 +163,46 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const input = { intent: 'preview', source, title: 'Review', question: 'Check this', reviewers: [],
                 retry: { creationLocalId: crypto.randomUUID(), quoteLocalId: crypto.randomUUID(), questionLocalId: crypto.randomUUID() } };
             const root = await f.root('discussion.second_opinion.start', input);
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'artifact.get', role: 'source-doc', input: { artifactId: doc.id } }, async context => {
-                    for (const [path, status] of [[`/v1/artifacts/${doc.id}`, 200], ['/v1/artifacts', 401]] as const) {
-                        const response = await f.app.inject({ method: 'GET', url: path,
-                            headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'artifact.get', method: 'GET', path }) });
-                        expect(response.statusCode, response.body).toBe(status);
-                    }
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            for (const [path, status] of [[`/v1/artifacts/${doc.id}`, 200], ['/v1/artifacts', 401]] as const) {
+                const response = await f.app.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: 'artifact.get', method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(status);
+            }
         } finally { await f.app.close(); }
     });
 
-    it('reads Memory exposure through the real grants child and refuses recipient key preparation', async () => {
+    it('authorizes native Memory exposure reads and refuses recipient key preparation', async () => {
         const f = await createReviewedChildAuthorizationFixture({ artifactReads: true, publicShares: true });
         try {
             const doc = await artifact(f);
             const input = { ref: { kind: 'doc', artifactId: doc.id }, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, factId: 'fact' };
             const root = await f.root('memory.forget', input);
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'artifact.access.grants.list', role: 'memory-exposure', input: { artifactId: doc.id } }, async context => {
-                    for (const [path, status] of [[`/v1/artifacts/${doc.id}/access/grants`, 200],
-                        [`/v1/public-shares?subjectKind=artifact&subjectId=${doc.id}`, 200],
-                        [`/v1/artifacts/${doc.id}/access/recipients`, 401]] as const) {
-                        const response = await f.app.inject({ method: 'GET', url: path,
-                            headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'artifact.access.grants.list', method: 'GET', path }) });
-                        expect(response.statusCode, response.body).toBe(status);
-                        if (status === 200 && path.includes('/access/grants')) expect(response.json()).toMatchObject({ artifactId: doc.id, ownerAccountId: f.account.id });
-                    }
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            for (const [path, status] of [[`/v1/artifacts/${doc.id}/access/grants`, 200],
+                [`/v1/public-shares?subjectKind=artifact&subjectId=${doc.id}`, 200],
+                [`/v1/artifacts/${doc.id}/access/recipients`, 401]] as const) {
+                const response = await f.app.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: 'artifact.access.grants.list', method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(status);
+                if (status === 200 && path.includes('/access/grants')) expect(response.json()).toMatchObject({ artifactId: doc.id, ownerAccountId: f.account.id });
+            }
         } finally { await f.app.close(); }
     });
 
-    it('reads Usage export encryption preparation through its real query child without feature inventory', async () => {
+    it('authorizes native Usage export encryption preparation and refuses feature inventory', async () => {
         const f = await createReviewedChildAuthorizationFixture();
         try {
             const input = { query: projectNativeJsonValueForTransport(normalizeUsageQuery({})), format: 'json', fields: ['totals'] };
             const root = await f.root('usage.export', input);
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'usage.query', role: 'usage-export-query', input: { queries: [input.query] } }, async context => {
-                    for (const [path, status] of [['/v1/account/encryption/currentness', 200], ['/v1/features/authenticated', 401]] as const) {
-                        const response = await f.app.inject({ method: 'GET', url: path,
-                            headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'usage.query', method: 'GET', path }) });
-                        expect(response.statusCode, response.body).toBe(status);
-                        if (status === 200) expect(response.json()).toMatchObject({ mode: 'plain' });
-                    }
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            for (const [path, status] of [['/v1/account/encryption/currentness', 200], ['/v1/features/authenticated', 401]] as const) {
+                const response = await f.app.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: 'usage.query', method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(status);
+                if (status === 200) expect(response.json()).toMatchObject({ mode: 'plain' });
+            }
         } finally { await f.app.close(); }
     });
 
-    it('reads the public-profile owner through its real preparation child and refuses the published view sibling', async () => {
+    it('authorizes native public-profile owner preparation and refuses the published view sibling', async () => {
         const f = await createReviewedChildAuthorizationFixture();
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         registerAccountPublicProfileRoutes(app);
@@ -259,16 +211,12 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const input = { policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadataSelection: {}, query: projectNativeJsonValueForTransport(normalizeUsageQuery({})),
                 layout: { v: 1, items: [] }, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 };
             const root = await f.root('account.public_profile.preview', input);
-            expect(await f.child(root, { actionId: root.binding.actionId, input },
-                { action: 'account.public_profile.get', role: 'profile-owner', input: {} }, async context => {
-                    for (const [path, status] of [['/v1/account/public-profile', 200], ['/v1/account/public-profile/view', 401]] as const) {
-                        const response = await app.inject({ method: 'GET', url: path,
-                            headers: await f.headers(context.externalActionExecutionAuthorization!, { effectActionId: 'account.public_profile.get', method: 'GET', path }) });
-                        expect(response.statusCode, response.body).toBe(status);
-                        if (status === 200) expect(response.json()).toMatchObject({ kind: 'absent' });
-                    }
-                    return { ok: true, result: null };
-                })).toMatchObject({ ok: true });
+            for (const [path, status] of [['/v1/account/public-profile', 200], ['/v1/account/public-profile/view', 401]] as const) {
+                const response = await app.inject({ method: 'GET', url: path,
+                    headers: await f.headers(root, { effectActionId: 'account.public_profile.get', method: 'GET', path }) });
+                expect(response.statusCode, response.body).toBe(status);
+                if (status === 200) expect(response.json()).toMatchObject({ kind: 'absent' });
+            }
         } finally { await app.close(); await f.app.close(); }
     });
 }

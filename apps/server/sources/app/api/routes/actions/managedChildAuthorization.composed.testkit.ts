@@ -12,6 +12,8 @@ import { ExternalActionDaemonDispatchRequestSchema, ExternalActionExecutionAutho
     ExternalActionRequestEnvelopeV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
     createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { SessionTeamCredentialBindingIntentV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -31,7 +33,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createExternalActionMachineRpcExecution, createExternalActionSourceMachineRpcExecution,
     dispatchManagedMachineAgentIsolation, projectExternalActionRequesterHttpAuthorization } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { createMachineContentCodec } from '../../../../../../cli/src/api/machine/machineStoredContent';
-import { createReviewedChildAuthorizationFixture } from './reviewedChildAuthorization.composed.testkit';
+import { createReviewedChildAuthorizationFixture, prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
 
 /** Register under the caller's real disposable SQLite/Auth harness. */
@@ -90,11 +92,13 @@ export function registerManagedChildAuthorizationCharacterization(): void {
             if (!unauthorized) throw new Error('managed_child_refusal_packet_required');
             expect(await verifyExternalActionMachineRpcExecution(unauthorized, { method: otherMethod, requestId, params: unauthorizedParams })).toBeNull();
             admittedChildren++;
+            const previewExecution = { ok: true as const, result: MachineAgentIsolationPreviewResultV1Schema.parse({
+                kind: 'unavailable', status: { kind: 'unavailable', code: 'unsupported_platform' } }) };
             if (packet.envelope.v === 2) return { ok: true, result: createExternalActionDaemonDispatchResponseV1(
                 prepareExternalActionResponseV2({ request: packet.envelope, binding: encryptionBinding, material,
-                    executedMachineId: guest.id, randomBytes: nacl.randomBytes, execution: { ok: true, result: null } })) };
+                    executedMachineId: guest.id, randomBytes: nacl.randomBytes, execution: previewExecution })) };
             return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({ v: 1,
-                actionId: packet.actionId, requestId: packet.envelope.requestId, execution: { ok: true, result: null } })) };
+                actionId: packet.actionId, requestId: packet.envelope.requestId, execution: previewExecution })) };
         } }) });
         registerManagedMachineRoutes(app);
         const origin = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -146,17 +150,26 @@ export function registerManagedChildAuthorizationCharacterization(): void {
             await db.managedMachine.update({ where: { id: admitted.machine.id }, data: { allocation: 'bound', enrolledMachineId: guest.id,
                 resource: { contributionRef: input.selection.kind === 'one-off' ? input.selection.launch.provider : {},
                     schemaVersion: 1, value: { id: 'native-guest' } } } });
-            const childInput = { serverId, machineId: guest.id, enabled: true };
+            const policy = resolveManagedMachineEnrollmentAgentIsolationV1(input.enrollmentIdentity);
+            if (!policy) throw new Error('managed_enrollment_isolation_policy_required');
+            const childInput = { serverId, machineId: guest.id, ...policy };
+            expect(await f.preparedChild(root, input,
+                { action: 'machines.agentIsolation.preview', role: 'not-reviewed', input: childInput },
+                async () => ({ ok: true, result: null }), admitted.machine.id)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
             const homeTarget = resolveHomeTargetFromDescriptor({ authority: 'current_connection', descriptor: { v: 1,
                 homeServerIdentityId: serverId, canonicalServerUrl: origin, revision: 1, endpoints: [{ kind: 'https', url: origin }] } });
-            const result = await f.child(root, { actionId: 'machines.managed.acquire', input },
-                { action: 'machines.agentIsolation.preview', role: 'machines.agentIsolation.preview', input: childInput }, async context =>
+            const prepared = await prepareReviewedChildAuthorization({ actionId: 'machines.managed.acquire',
+                input, context: f.context(root), managedId: admitted.machine.id,
+                child: { action: 'machines.agentIsolation.preview', role: 'machines.agentIsolation.preview', input: childInput }, execute: async context =>
                     dispatchManagedMachineAgentIsolation({ context, actionId: 'machines.agentIsolation.preview', input: childInput,
                         serverId, authorization: root, installationId: controller.installationId, privateKey: f.keyPair.secretKey,
                         ...(mode === 'e2ee' ? { material } : {}),
                         serverHttpBaseUrl: origin, homeTarget,
-                        continuation: { managedId: admitted.machine.id, creationRequestId: root.binding.requestId, expectedIntentRevision: 0 } }));
-            expect(result).toMatchObject({ ok: true });
+                        continuation: { managedId: admitted.machine.id, creationRequestId: root.binding.requestId, expectedIntentRevision: 0 } }) });
+            expect(prepared.parent).toMatchObject({ actionId: 'machines.managed.acquire' });
+            expect(prepared.child?.externalActionExecutionAuthorization).toBeDefined();
+            const result = prepared.execution;
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
             expect(admittedChildren).toBe(1);
         } finally { await app.close(); await f.app.close(); }
     });
