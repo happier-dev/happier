@@ -38,6 +38,28 @@ function withScanBinding(binding: Readonly<{ path: string; purpose: string }>): 
 }
 
 describe('GitLab plugin manifest', () => {
+  it('makes authenticated push and merged-MR sources reachable through the existing Event setup Actions', () => {
+    expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    for (const event of PLUGIN_MANIFEST.contributes.events) {
+      const resetRef = event.automation?.source?.historyGapResetActionRef;
+      expect(resetRef).toEqual({ pluginId: PLUGIN_MANIFEST.id, localId: 'gitlab/reset-repository-event-history-gap' });
+      expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === resetRef?.localId))
+        .toMatchObject({ surfaces: ['plugin'], dangerLevel: 'safe' });
+    }
+    expect(PLUGIN_MANIFEST.contributes.webhooks).toEqual([expect.objectContaining({
+      id: 'gitlab-events', verifier: { kind: 'gitlab_token_v1', routing: 'accountEndpoint' },
+      handlerAction: { localId: 'gitlab/accept-webhook' },
+    })]);
+    expect(PLUGIN_MANIFEST.contributes.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'automation/repository-pushed-v1', automation: expect.objectContaining({
+        source: expect.objectContaining({ supportedObservationTransports: ['durablePush'],
+          setupActionRef: { pluginId: 'happier.scm.forge.gitlab', localId: 'gitlab/setup-repository-event' } }),
+      }) }),
+      expect.objectContaining({ id: 'automation/pull-request-merged-v1' }),
+    ]));
+    expect(PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'gitlab/setup-repository-event'))
+      .toMatchObject({ surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe' });
+  });
   it.each([GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace, GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace])(
     'keeps workspace source %s observable until its typed result settles', id => {
       const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
@@ -55,6 +77,8 @@ describe('GitLab plugin manifest', () => {
     // the rest of its vocabulary.
     expect(JSON.stringify(contribution?.descriptor)).not.toContain('pull-request');
     expect(contribution?.surfaces.detail.renderer).toBe(GITLAB_TRIAGE_DETAIL_RENDERER_ID);
+    expect(contribution?.descriptor.kinds.find((kind) => kind.id === 'merge-request')?.detailTabs)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'checks', summaryFact: 'gitlab/checks' })]));
     expect(PLUGIN_MANIFEST.contributes.ui.renderers.map(({ id }) => id))
       .toContain(GITLAB_TRIAGE_DETAIL_RENDERER_ID);
   });
@@ -149,13 +173,13 @@ describe('GitLab plugin manifest', () => {
     const action = actions.get(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
 
-    // The source can invoke this only as the contribution's optional role; it is
-    // neither a generic UI/agent tool nor a second SCM dispatch surface.
+    // Review preparation uses the protocol role and its instructions UI; it is
+    // not exposed as an agent tool or a second SCM dispatch surface.
     expect(contribution?.operations?.prepareReviewWorkspace)
       .toBe(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
     expect(action).toMatchObject({
       dangerLevel: 'writesLocal',
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'ui'],
       hostAccess: [
         GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
         GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,

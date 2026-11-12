@@ -1,3 +1,5 @@
+import { GITLAB_HOSTING_OPERATION_ACTIONS_V1 } from './hostingActions.js';
+import { GITLAB_HOSTING_OPERATION_ACTION_IDS_V1 } from './hostingActionIds.js';
 import { gitlabPortableAuthentication } from './auth/connectedAccountRuntime.js';
 import { GITLAB_ACCOUNT_ACTIONS, readGitlabActionDeclaration } from './accountActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -22,6 +24,11 @@ import {
 } from './auth/connectedAccountRuntime.js';
 import { GITLAB_CONNECTED_ACCOUNT_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE, GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID, GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID, GITLAB_TRIAGE_ACTION_IDS, GITLAB_REVIEW_WORKSPACE_EXECUTION, GITLAB_TRIAGE_CONTRIBUTION_DECLARATION, GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID, GITLAB_TRIAGE_DETAIL_ARTIFACT_ID, GITLAB_TRIAGE_DETAIL_RENDERER_ID, GITLAB_PLUGIN_ID, GITLAB_TRIAGE_SETTINGS_ARTIFACT_ID, GITLAB_TRIAGE_SETTINGS_GROUP_ID, GITLAB_TRIAGE_SETTINGS_PAGE_ID, GITLAB_TRIAGE_SETTINGS_RENDERER_ID } from './triage/contribution.js';
 import { GITLAB_PUBLIC_ORIGIN } from './triage/origin.js';
+import { GITLAB_EVENT_ACTION_IDS } from './eventActionIds.js';
+import { receiveGitlabWebhook, setupGitlabRepositoryEvent } from './eventActions.js';
+import { GITLAB_EVENT_CATALOG, GITLAB_WEBHOOK_CONTRIBUTION_ID, GitlabEventSetupInputSchema, GitlabEventSourceConfigSchema } from './events.js';
+import { PluginEventAutomationHistoryGapResetActionInputV1Schema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema, createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { PluginWebhookActionInputSchema, PluginWebhookActionResultSchema } from '@happier-dev/plugin-sdk/webhooks';
 
 
 import { prepareGitlabReviewWorkspaceAction, verifyGitlabReviewWorkspaceAction } from './triage/operations.js';
@@ -101,6 +108,7 @@ export const GITLAB_PLUGIN = definePlugin({
         description: 'GitLab.com and self-managed GitLab repositories.',
         kind: 'gitlab',
         authService: GITLAB_CONNECTED_ACCOUNT_ID,
+        operationActions: GITLAB_HOSTING_OPERATION_ACTION_IDS_V1,
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
       },
       runtime: {
@@ -194,7 +202,37 @@ export const GITLAB_PLUGIN = definePlugin({
     },
   },
   actions: {
+    ...GITLAB_HOSTING_OPERATION_ACTIONS_V1,
     ...GITLAB_ACCOUNT_ACTIONS,
+    [GITLAB_EVENT_ACTION_IDS.setup]: {
+      title: 'Set up GitLab repository Event source',
+      description: 'Verifies the selected repository and exact GitLab Connected Account.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
+      inputSchema: GitlabEventSetupInputSchema.jsonSchema,
+      resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, GitlabEventSourceConfigSchema.jsonSchema),
+      hostAccess: [GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID, GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE }],
+      run: setupGitlabRepositoryEvent,
+    },
+    'gitlab/reset-repository-event-history-gap': {
+      title: 'Check GitLab repository Event baseline',
+      description: 'Durable webhook sources have no checkpointed history gap to replace or replay.',
+      surfaces: ['plugin'], dangerLevel: 'safe',
+      inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+      resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+      run: async (input, context) => {
+        context.signal.throwIfAborted();
+        PluginEventAutomationHistoryGapResetActionInputV1Schema.parse(input);
+        // Only durablePush is supported: webhook delivery recovery belongs to the host.
+        return { kind: 'noHistoryGap' as const };
+      },
+    },
+    [GITLAB_EVENT_ACTION_IDS.webhook]: {
+      title: 'Receive GitLab webhook', description: 'Processes one authenticated GitLab webhook delivery.',
+      surfaces: ['plugin'], dangerLevel: 'safe',
+      inputSchema: PluginWebhookActionInputSchema.jsonSchema, resultSchema: PluginWebhookActionResultSchema.jsonSchema,
+      run: receiveGitlabWebhook,
+    },
     [GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
       execution: GITLAB_REVIEW_WORKSPACE_EXECUTION,
@@ -205,6 +243,24 @@ export const GITLAB_PLUGIN = definePlugin({
       execution: GITLAB_REVIEW_WORKSPACE_EXECUTION,
       run: verifyGitlabReviewWorkspaceAction,
     }
+  },
+  events: Object.fromEntries(GITLAB_EVENT_CATALOG.map(event => [event.localId, { declaration: {
+    kind: 'event', title: event.title, description: event.description, payloadSchema: event.payloadSchema,
+    automation: { v: 1, eligible: true, source: {
+      sourceContractVersion: 1, supportedObservationTransports: ['durablePush'],
+      sourceConfigSchema: GitlabEventSourceConfigSchema.jsonSchema,
+      setupActionRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_EVENT_ACTION_IDS.setup },
+      historyGapResetActionRef: { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab/reset-repository-event-history-gap' },
+      webhookContributionRef: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_WEBHOOK_CONTRIBUTION_ID },
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE }],
+    } },
+  } }])),
+  webhooks: {
+    [GITLAB_WEBHOOK_CONTRIBUTION_ID]: {
+      title: 'GitLab webhook delivery', description: 'Receives authenticated GitLab webhook deliveries.',
+      verifier: { kind: 'gitlab_token_v1', routing: 'accountEndpoint' },
+      handlerAction: { localId: GITLAB_EVENT_ACTION_IDS.webhook },
+    },
   },
   ui: {
       renderers: [{
