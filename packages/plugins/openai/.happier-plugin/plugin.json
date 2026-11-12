@@ -82,6 +82,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -256,9 +257,6 @@
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "stable_ids"
-          },
           "turn": {
             "bargeIn": true,
             "cancelResponse": true,
@@ -720,7 +718,7 @@
   },
   "displayName": "OpenAI Realtime Voice",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],

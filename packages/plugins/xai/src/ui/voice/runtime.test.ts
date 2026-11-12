@@ -517,7 +517,6 @@ describe('xAI Realtime public runtime contribution', () => {
     });
     expect(providerConversation.read).toHaveBeenCalledTimes(1);
     expect(prepared.result.session.config).toMatchObject({ conversationId: 'conv-old' });
-    expect(prepared.result.session.toolResultReplay).toBe('stable_ids');
 
     let driver: VoiceConnectionDriver | null = null;
     const clearOutput = vi.fn();
@@ -586,7 +585,6 @@ describe('xAI Realtime public runtime contribution', () => {
       providerConversation,
     });
     expect(prepared.result.session.config).toMatchObject({ conversationId: null });
-    expect(prepared.result.session.toolResultReplay).toBe('none');
     await runtime.forgetProviderConversation?.();
     expect(providerConversation.read).not.toHaveBeenCalled();
     expect(providerConversation.write).not.toHaveBeenCalled();

@@ -57,12 +57,10 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           cancelResponse: true,
           bargeIn: true,
           clearInput: true,
-          resumption: 'resume',
-          replay: 'stable_ids',
           exactMessage: true,
           interruptionPolicy: 'provider_immediate',
         },
-        tools: { effectCalls: 'stable_ids' },
+
       },
       settings: {
         schemaVersion: 1,

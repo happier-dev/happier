@@ -59,9 +59,7 @@ export type VoiceConversationToolBarrier = Readonly<{
     calls: readonly VoiceRealtimeToolCallV1[];
     signal?: AbortSignal | null;
     turnOrigin?: SpokenActionTurnOrigin;
-  }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'detached' | 'failed' }>>;
-  /** Cancel only the detached provider-delivery leg; preserve attempt execution custody. */
-  detach(responseId: string): void;
+  }>): Promise<Readonly<{ status: 'submitted' | 'cancelled' | 'failed' }>>;
   /** Terminal response/attempt cancellation. */
   cancel(responseId: string): void;
   dispose(): void;
@@ -243,8 +241,6 @@ type Attempt = {
   toolBarrier: VoiceConversationToolBarrier | null;
   activeToolResponseIds: Set<string>;
   toolTasks: Set<Promise<void>>;
-  /** Current prepared carrier's proof that exact tool identities survived. */
-  toolResultReplay: 'none' | 'stable_ids';
   inputCommitRequired: boolean;
   request: VoiceRealtimeJsonValue;
   resourcesPrepared: boolean;
@@ -350,26 +346,12 @@ export function createVoiceConversationController(
     attempt.activeToolResponseIds.clear();
   };
 
-  const detachActiveToolResponses = (attempt: Attempt): void => {
-    const barrier = attempt.toolBarrier;
-    if (!barrier) return;
-    for (const responseId of attempt.activeToolResponseIds) barrier.detach(responseId);
-    attempt.activeToolResponseIds.clear();
-  };
-
   const recordPreparedSessionPolicy = (
     attempt: Attempt,
     preparation: Extract<VoiceRealtimePreparation, Readonly<{ kind: 'prepared' }>>,
   ): void => {
     attempt.inputCommitRequired = preparation.session.inputCommitRequired === true;
-    // Only this concrete prepared carrier owns whether original call identities
-    // can receive retained results after reconnect.
-    attempt.toolResultReplay = preparation.session.toolResultReplay ?? 'none';
   };
-
-  const canRedeliverRetainedToolResult = (attempt: Attempt): boolean => (
-    attempt.toolResultReplay === 'stable_ids'
-  );
 
   const createToolBarrier = (attempt: Attempt): void => {
     attempt.toolBarrier = deps.createToolBarrier?.({
@@ -537,6 +519,9 @@ export function createVoiceConversationController(
   ): Promise<void> => {
     if (!owns(attempt) || attempt.terminalSettled) return Promise.resolve();
     if (attempt.reconnectPromise) return attempt.reconnectPromise;
+    if (attempt.activeToolResponseIds.size > 0) {
+      return settleReconnectFailure(attempt, 'voice_tool_result_delivery_unrecoverable');
+    }
 
     const reconnectPromise = (async () => {
     attempt.reconnecting = true;
@@ -564,10 +549,6 @@ export function createVoiceConversationController(
       }
 
       if (previousConnection) {
-        // A lost carrier interrupts only provider delivery. The barrier keeps
-        // execution and its redacted settlement attempt-owned so a resumed
-        // provider response can receive it without replaying the tool.
-        detachActiveToolResponses(attempt);
         clearInputOrigins(attempt);
         if (attempt.connection === previousConnection) attempt.connection = null;
         await previousConnection.close({ code: 'remote_close' }).catch(() => {});
@@ -613,9 +594,6 @@ export function createVoiceConversationController(
         deps.machine.connecting({ controlSessionId: attempt.controlSessionId, attemptId: attempt.id });
         let preparation: VoiceRealtimePreparation;
         try {
-          // Never carry a previous provider carrier's proof into a new
-          // preparation. Omission remains an explicit fail-closed result.
-          attempt.toolResultReplay = 'none';
           preparation = await deps.adapter.prepare({
             controlSessionId: attempt.controlSessionId,
             attemptId: attempt.id,
@@ -860,36 +838,7 @@ export function createVoiceConversationController(
             const task = runBarrier().then(async (result) => {
               if (!owns(attempt) || result.status === 'cancelled' || result.status === 'submitted') return;
 
-              // Same-call transport custody retains the completed redacted
-              // result after delivery failure. Reconnect, then redeliver that
-              // exact call/result identity; no semantic effect is re-executed.
-              // A tool can settle after the transport pump already completed
-              // reconnect. Reuse that resumed carrier; reconnecting it again
-              // would discard the response identity we are about to validate.
-              if (result.status !== 'detached'
-                || attempt.connection === connection
-                || attempt.connection?.state() !== 'open') {
-                await reconnect(attempt, 'reconnect');
-              }
-              if (
-                !owns(attempt)
-                || attempt.toolBarrier !== barrier
-                || attempt.connection?.state() !== 'open'
-              ) return;
-
-              // A fresh provider response cannot safely receive a retained
-              // result. The reconnect preparation, not the static declaration,
-              // must prove that this concrete carrier retained response/call
-              // identity. Never discard the settlement or rerun its effect/read.
-              if (!canRedeliverRetainedToolResult(attempt)) {
-                await settleReconnectFailure(attempt, 'voice_tool_result_delivery_unrecoverable');
-                return;
-              }
-
-              attempt.activeToolResponseIds.add(responseId);
-              const redelivered = await runBarrier();
-              if (!owns(attempt) || redelivered.status === 'cancelled' || redelivered.status === 'submitted') return;
-              await settleReconnectFailure(attempt, 'voice_tool_submission_failed');
+              await settleReconnectFailure(attempt, 'voice_tool_result_delivery_unrecoverable');
             }).catch(async () => {
               if (owns(attempt)) await settleReconnectFailure(attempt, 'voice_tool_barrier_failed');
             }).finally(() => {
@@ -1001,7 +950,6 @@ export function createVoiceConversationController(
       toolBarrier: null,
       activeToolResponseIds: new Set(),
       toolTasks: new Set(),
-      toolResultReplay: 'none',
       inputCommitRequired: false,
       heldInput: null,
       request: input.request ?? null,

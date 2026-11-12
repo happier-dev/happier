@@ -310,15 +310,6 @@ export type VoiceRealtimePreparation =
              * omission retains host delivery. Later context updates are unchanged.
              */
             initialContextDelivery?: 'prepared';
-            /**
-             * Exact-call replay custody for this prepared provider carrier.
-             *
-             * `stable_ids` is valid only when this concrete session can accept
-             * a previously settled result under its original response and call
-             * identifiers after reconnect. Omission is fail-closed and has the
-             * same meaning as `none`.
-             */
-            toolResultReplay?: 'none' | 'stable_ids';
             /** This admitted carrier requires an explicit input commit rather than automatic VAD. */
             inputCommitRequired?: boolean;
         }>;
@@ -392,7 +383,7 @@ export type VoiceClientToolDefinition = Readonly<{
      * Effectful Action definitions reject here because a direct callback has no
      * stable response/call identity. Providers deliver those through canonical
      * `tool_calls`, where the host barrier owns authorization, settlement,
-     * cancellation, and replay custody.
+     * cancellation, and deduplication under the actual tool-call id.
      */
     execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue>;
 }>;

@@ -98,7 +98,6 @@ describe('public voice executable contribution boundary', () => {
             cancelResponse: true,
             bargeIn: true,
             clearInput: true,
-            resumption: 'resume',
             exactMessage: true,
             interruptionPolicy: 'provider_immediate',
           },
@@ -111,7 +110,6 @@ describe('public voice executable contribution boundary', () => {
       capabilities: expect.objectContaining({
         turn: expect.objectContaining({
           clearInput: true,
-          resumption: 'resume',
           exactMessage: true,
           interruptionPolicy: 'provider_immediate',
         }),

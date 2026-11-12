@@ -881,14 +881,14 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
       id: localId, title: 'Public media factory SDK', kind: 'conversation', platforms: ['web'],
       roles: ['conversation_stt', 'conversation_tts', 'realtime_conversation'],
-      capabilities: { turn: { cancelResponse: false, bargeIn: false, resumption: 'resume' } },
+      capabilities: { turn: { cancelResponse: false, bargeIn: false, } },
       client: { artifactId: 'media-factory-client', exportName: 'activate' },
     }] }).voiceProviders[0]!;
     if (declaration.kind !== 'conversation') throw new Error('Expected conversation declaration');
     const preflightDeclarations = (['client_two_stage', 'provider_immediate'] as const).map(interruptionPolicy => {
       const parsed = PluginContributesV2Schema.parse({ voiceProviders: [{ ...declaration,
         id: interruptionPolicy.replaceAll('_', '-'), roles: [...declaration.roles, 'turn_control'],
-        capabilities: { turn: { cancelResponse: true, bargeIn: true, resumption: 'resume', interruptionPolicy } },
+        capabilities: { turn: { cancelResponse: true, bargeIn: true, interruptionPolicy } },
       }] }).voiceProviders[0]!;
       if (parsed.kind !== 'conversation') throw new Error('Expected conversation policy declaration');
       return parsed;

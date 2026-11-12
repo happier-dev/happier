@@ -336,8 +336,8 @@ describe('voice provider registry', () => {
 
     expect(projectVoiceProviderCredentialReadiness(entry, null, {
       sourceSelection: readyContext.sourceSelection,
-      savedSecret: { status: 'unknown', savedSecret: { resolving: true } },
-    })).toEqual({ status: 'unknown', detailKey: 'settings.updates.checking', resolving: true });
+      savedSecret: { status: 'unknown' },
+    })).toEqual({ status: 'unknown', detailKey: 'voice.readiness.credential_unknown' });
 
     expect(projectVoiceProviderCredentialReadiness(
       entry,

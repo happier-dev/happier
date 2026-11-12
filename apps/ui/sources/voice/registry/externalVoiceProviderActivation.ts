@@ -535,6 +535,7 @@ export function createExternalProtocol(
     signal: AbortSignal,
   ) => VoiceCredentialAccess<'prepare' | 'connection'>['raw'],
   attemptPreparationByAttemptId = new Map<number, StandaloneAttemptPreparation>(),
+  supportsProviderConversation = false,
 ): VoiceRealtimeProtocolAdapter {
   const providerConfigByAttemptId = new Map<number, Readonly<{
     providerConfig: VoiceRealtimeJsonValue;
@@ -545,7 +546,7 @@ export function createExternalProtocol(
     voiceHomeServerId: string | null;
     isCurrent(): boolean;
   }>>();
-  const providerConversationFactory = declaration.capabilities.turn.resumption === 'resume'
+  const providerConversationFactory = supportsProviderConversation
     ? getProviderConversationServiceFactory(host, providerId)
     : null;
   const readProviderConfig = async (request: VoiceRealtimeJsonValue, signal: AbortSignal) => {
@@ -592,7 +593,7 @@ export function createExternalProtocol(
       truncatePlayback: 'unsupported' as const,
       clearInput: declaration.capabilities.turn.clearInput ?? false,
       stopSession: false,
-      resumption: declaration.capabilities.turn.resumption ?? 'none' as const,
+      resumption: supportsProviderConversation ? 'resume' as const : 'none' as const,
       exactMessage: declaration.capabilities.turn.exactMessage ?? false,
     }),
     async preflight(preflightInput) {
@@ -790,10 +791,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
         });
       })()
     : null;
-  const supportsProviderConversationForget = declaration.capabilities.turn.resumption === 'resume';
-  if (supportsProviderConversationForget !== (runtime.forgetProviderConversation !== undefined)) {
-    throw activationError('voice_provider_resumption_registration_mismatch');
-  }
+  const supportsProviderConversationForget = runtime.forgetProviderConversation !== undefined;
   const forgetProviderConversationState = input.host.forgetProviderConversationState;
   if (supportsProviderConversationForget && !forgetProviderConversationState) {
     throw activationError('voice_provider_resumption_forget_host_unavailable');
@@ -809,6 +807,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
     input.createInvocationHostedConversation,
     input.createInvocationRawCredentials,
     attemptPreparationByAttemptId,
+    supportsProviderConversationForget,
   );
   const microphoneConfig = runtime.microphoneMode === 'provider_managed'
     ? {

@@ -192,7 +192,6 @@ function createAdapter(overrides: Partial<VoiceRealtimeProtocolAdapter> = {}): V
       session: {
         config: { session: 'fixture' },
         safeMetadata: null,
-        toolResultReplay: 'stable_ids',
       },
     }),
     ...overrides,
@@ -2337,167 +2336,7 @@ describe('VoiceConversationController', () => {
     }
   });
 
-  it('detaches provider delivery but preserves the attempt tool barrier across reconnect', async () => {
-    const first = createConnectionFixture();
-    const second = createConnectionFixture();
-    const calls = [{
-      v: 1 as const, responseId: 'response-before-reconnect', callId: 'call-before-reconnect',
-      toolName: 'sendSessionMessage', order: 0, arguments: { message: 'retained execution' },
-    }];
-    first.events.push(openAiToolResponse('response-before-reconnect', calls));
-    const execution = deferred<VoiceRealtimeJsonValue>();
-    let executionSignal: AbortSignal | null = null;
-    const executeCall = vi.fn(async (_call: VoiceRealtimeToolCallV1, signal: AbortSignal) => {
-      executionSignal = signal;
-      return await execution.promise;
-    });
-    const submitResults = vi.fn(async () => {});
-    const continueResponse = vi.fn(async () => {});
-    const barrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation',
-      executeCall, redactResult: value => value, submitResults, continueResponse,
-    });
-    let connectionIndex = 0;
-    const controller = createVoiceConversationController({
-      adapter: createAdapter(),
-      machine: createMachineFixture().machine,
-      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
-      isSelectionCurrent: () => true,
-      onCanonicalEvent: async () => {},
-      createToolBarrier: () => barrier,
-      waitBeforeReconnect: async () => {},
-    });
-
-    await controller.start({ controlSessionId: 'tool-reconnect' });
-    await vi.waitFor(() => expect(executeCall).toHaveBeenCalledOnce());
-    first.finishEvents();
-    await vi.waitFor(() => expect(second.connect).toHaveBeenCalledOnce());
-    expect(executionSignal).not.toBeNull();
-    expect(executeCall.mock.calls[0]![1].aborted).toBe(false);
-    expect(submitResults).not.toHaveBeenCalled();
-    execution.resolve({ receipt: 'retained-execution' });
-    await vi.waitFor(() => expect(submitResults).toHaveBeenCalledOnce());
-    expect(submitResults).toHaveBeenCalledWith('response-before-reconnect', [expect.objectContaining({
-      callId: 'call-before-reconnect', output: { receipt: 'retained-execution' },
-    })], expect.any(AbortSignal));
-    expect(executeCall).toHaveBeenCalledOnce();
-    expect(continueResponse).toHaveBeenCalledOnce();
-    await controller.stop();
-    expect(executeCall.mock.calls[0]![1].aborted).toBe(true);
-    await expect(barrier.run({ responseId: 'after-stop', calls })).rejects.toMatchObject({ code: 'disposed' });
-  });
-  it('uses the prepared session replay decision without static replay gates or repeating the effect', async () => {
-    const first = createConnectionFixture();
-    const second = createConnectionFixture();
-    const calls = [{
-      v: 1 as const,
-      responseId: 'response-delivery-retry',
-      callId: 'call-delivery-retry',
-      toolName: 'sendSessionMessage',
-      order: 0,
-      arguments: { message: 'continue once' },
-    }];
-    first.events.push(openAiToolResponse('response-delivery-retry', calls));
-    const executeCall = vi.fn(async () => ({ ok: true }));
-    const submitResults = vi.fn()
-      .mockRejectedValueOnce(new Error('provider connection lost'))
-      .mockResolvedValueOnce(undefined);
-    const continueResponse = vi.fn(async () => {});
-    const toolBarrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation',
-
-      executeCall,
-      redactResult: (value) => value,
-      submitResults,
-      continueResponse,
-    });
-    let connectionIndex = 0;
-    const machine = createMachineFixture();
-    const controller = createVoiceConversationController({
-      adapter: createAdapter({ turnControls: {
-        cancelResponse: 'immediate', truncatePlayback: 'played_ms', clearInput: true,
-        stopSession: true, resumption: 'none', exactMessage: false,
-      } }),
-      machine: machine.machine,
-      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
-      isSelectionCurrent: () => true,
-      onCanonicalEvent: async () => {},
-      createToolBarrier: () => toolBarrier,
-      waitBeforeReconnect: async () => {},
-    });
-
-    await controller.start({ controlSessionId: 'tool-delivery-retry' });
-    await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(submitResults).toHaveBeenCalledTimes(2));
-
-    expect(executeCall).toHaveBeenCalledTimes(1);
-    expect(continueResponse).toHaveBeenCalledTimes(1);
-    expect(machine.transitions).not.toContain('failed');
-
-    await controller.stop();
-  });
-
-  it('redelivers a detached provider response through the retained barrier without repeating its effect', async () => {
-    const first = createConnectionFixture();
-    const second = createConnectionFixture();
-    const calls = [{
-      v: 1 as const,
-      responseId: 'response-transport-detach',
-      callId: 'call-transport-detach',
-      toolName: 'sendSessionMessage',
-      order: 0,
-      arguments: { message: 'deliver once' },
-    }];
-    first.events.push(openAiToolResponse('response-transport-detach', calls));
-    const deliveryStarted = vi.fn();
-    const executeCall = vi.fn(async () => ({ ok: true, receipt: 'transport-detach' }));
-    const submitResults = vi.fn()
-      .mockImplementationOnce(async (
-        _responseId: string,
-        _results: readonly unknown[],
-        signal: AbortSignal,
-      ) => {
-        deliveryStarted();
-        await new Promise<void>((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('transport detached')), { once: true });
-        });
-      })
-      .mockResolvedValueOnce(undefined);
-    const continueResponse = vi.fn(async () => {});
-    const toolBarrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation',
-
-      executeCall,
-      redactResult: (value) => value,
-      submitResults,
-      continueResponse,
-    });
-    let connectionIndex = 0;
-    const machine = createMachineFixture();
-    const controller = createVoiceConversationController({
-      adapter: createAdapter(),
-      machine: machine.machine,
-      createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
-      isSelectionCurrent: () => true,
-      onCanonicalEvent: async () => {},
-      createToolBarrier: () => toolBarrier,
-      waitBeforeReconnect: async () => {},
-    });
-
-    await controller.start({ controlSessionId: 'tool-transport-detach' });
-    await vi.waitFor(() => expect(deliveryStarted).toHaveBeenCalledTimes(1));
-    first.finishEvents();
-    await vi.waitFor(() => expect(second.connect).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(submitResults).toHaveBeenCalledTimes(2));
-
-    expect(executeCall).toHaveBeenCalledTimes(1);
-    expect(continueResponse).toHaveBeenCalledTimes(1);
-    expect(machine.failureCodes).toEqual([]);
-
-    await controller.stop();
-  });
-
-  it('fails the turn when detached settled tool results cannot be correlated to a resumed provider response', async () => {
+  it('settles a dropped pending call as unrecoverable and Retry starts a clean conversation', async () => {
     const first = createConnectionFixture();
     const second = createConnectionFixture();
     const calls = [{
@@ -2522,35 +2361,22 @@ describe('VoiceConversationController', () => {
       });
     });
     const continueResponse = vi.fn(async () => {});
-    const toolBarrier = createRealtimeToolBarrier({
-      classifyCall: () => 'mutation',
-
-      executeCall,
-      redactResult: (value) => value,
-      submitResults,
-      continueResponse,
-    });
     let connectionIndex = 0;
-    let preparationCount = 0;
     const machine = createMachineFixture();
+    const adapter = createAdapter();
     const controller = createVoiceConversationController({
-      adapter: createAdapter({
-        // A declaration may support resumption in general while the next
-        // prepared carrier is a fresh session with no stable call identity.
-        prepare: async () => ({
-          kind: 'prepared' as const,
-          session: {
-            config: {},
-            safeMetadata: null,
-            toolResultReplay: ++preparationCount === 1 ? 'stable_ids' as const : 'none' as const,
-          },
-        }),
-      }),
+      adapter,
       machine: machine.machine,
       createConnection: async () => [first.connection, second.connection][connectionIndex++]!,
       isSelectionCurrent: () => true,
       onCanonicalEvent: async () => {},
-      createToolBarrier: () => toolBarrier,
+      createToolBarrier: () => createRealtimeToolBarrier({
+        classifyCall: () => 'mutation',
+        executeCall,
+        redactResult: (value) => value,
+        submitResults,
+        continueResponse,
+      }),
       waitBeforeReconnect: async () => {},
     });
 
@@ -2564,6 +2390,11 @@ describe('VoiceConversationController', () => {
     expect(executeCall).toHaveBeenCalledTimes(1);
     expect(continueResponse).not.toHaveBeenCalled();
 
+    expect(second.connect).not.toHaveBeenCalled();
+    await controller.start({ controlSessionId: 'tool-retry-clean' });
+    expect(second.connect).toHaveBeenCalledOnce();
+    expect(submitResults).toHaveBeenCalledOnce();
+    expect(executeCall).toHaveBeenCalledOnce();
     await controller.stop();
   });
 

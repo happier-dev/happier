@@ -41,7 +41,6 @@ async function flushPendingActivationWork(): Promise<void> {
 function createPublicEntry(input: Readonly<{
   providerId: string;
   activateError?: Error;
-  resumption?: 'none' | 'resume';
   dispose?: () => Promise<void>;
 }>): BundledConversationRuntimeEntry {
   const localId = input.providerId.replaceAll('_', '-');
@@ -55,7 +54,6 @@ function createPublicEntry(input: Readonly<{
       turn: Object.freeze({
         cancelResponse: false,
         bargeIn: false,
-        ...(input.resumption ? { resumption: input.resumption } : {}),
       }),
 
     }),
@@ -407,62 +405,6 @@ describe('createBundledConversationRuntimes', () => {
         .filter((line) => line.includes('[voiceRuntimeFailure]'));
       expect(records).toHaveLength(1);
       expect(records[0]).toContain('voice_bundled_runtime_duplicate_identity');
-    } finally {
-      await Promise.all(runtimes.map((runtime) => runtime.dispose()));
-      hostLease.revoke();
-    }
-  });
-
-  it('never publishes a leaf whose activation commit rejects after composition returns', async () => {
-    const logSpy = vi.spyOn(log, 'log');
-    const hostLease = createBundledConversationRuntimeHostLease();
-    const healthyDispose = vi.fn(async () => {});
-    const lateDispose = vi.fn(async () => {});
-    const firstEntry = createPublicEntry({
-      providerId: 'first_provider',
-      dispose: healthyDispose,
-    });
-    // A declared resumption capability that its registered runtime does not
-    // implement fails inside commit(), after the composer already owns the
-    // scope, so the failure can only surface through the commit promise.
-    const lateFailingEntry = createPublicEntry({
-      providerId: 'late_provider',
-      resumption: 'resume',
-      dispose: lateDispose,
-    });
-    const thirdEntry = createPublicEntry({ providerId: 'third_provider' });
-
-    const runtimes = (await createBundledConversationRuntimes({
-      bundledEntries: [firstEntry, lateFailingEntry, thirdEntry],
-      host: hostLease.host,
-    }));
-
-    try {
-      expect(runtimes.map((runtime) => runtime.adapter.id)).toEqual([
-        'test.voice/first-provider',
-        'test.voice/third-provider',
-      ]);
-      expect(getExternalVoiceProviderRegistration('test.voice/late-provider')).toBeNull();
-
-      await flushPendingActivationWork();
-
-      // The commit rejection is swallowed by design; it stays safe only while
-      // every published runtime is still the registry's own live registration.
-      // A registration withdrawn after the composer read it would strand a
-      // stale adapter in the assembly this composition returns.
-      expect(getExternalVoiceProviderRegistration('test.voice/late-provider')).toBeNull();
-      for (const runtime of runtimes) {
-        expect(getExternalVoiceProviderRegistration(runtime.adapter.id)?.adapter)
-          .toBe(runtime.adapter);
-      }
-      expect(lateDispose).toHaveBeenCalledTimes(1);
-      expect(healthyDispose).not.toHaveBeenCalled();
-
-      const records = logSpy.mock.calls
-        .map((call) => String(call[0]))
-        .filter((line) => line.includes('[voiceRuntimeFailure]'));
-      expect(records).toHaveLength(1);
-      expect(records[0]).toContain('test.voice/late-provider');
     } finally {
       await Promise.all(runtimes.map((runtime) => runtime.dispose()));
       hostLease.revoke();

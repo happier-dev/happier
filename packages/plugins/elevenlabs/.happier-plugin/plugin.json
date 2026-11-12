@@ -32,6 +32,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -200,9 +201,6 @@
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "none"
-          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false,

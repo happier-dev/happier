@@ -89,7 +89,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       platforms: ['web', 'ios', 'android'],
       capabilities: {
         turn: { cancelResponse: true, bargeIn: true, clearInput: true },
-        tools: { effectCalls: 'stable_ids' },
+
       },
       credentials: {
         slot: {

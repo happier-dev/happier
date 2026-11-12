@@ -320,6 +320,28 @@
           },
           {
             "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "managedProviderEndpoint": {
+              "modelIdPrefix": "meta/",
+              "provider": {
+                "localId": "cliproxyapi",
+                "pluginId": "happier.provider.cliproxyapi"
+              },
+              "purpose": "meta-upstream"
+            },
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "meta-inference",
+            "service": {
+              "localId": "muse-account",
+              "pluginId": "happier.agent.muse"
+            }
+          },
+          {
+            "credentialKinds": [
               "token"
             ],
             "materializationKinds": [
@@ -689,6 +711,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [
       {
@@ -1026,9 +1049,6 @@
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "none"
-          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false
@@ -1098,7 +1118,7 @@
   "description": "OpenAI Codex coding agent.",
   "displayName": "Codex",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],
@@ -1127,6 +1147,8 @@
             "CODEX_HOME",
             "CODEX_SQLITE_HOME",
             "HAPPIER_CODEX_PROVIDER_API_KEY",
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
             "HAPPIER_CODEX_NATIVE_UPSTREAM_CONFIG",
             "KIMI_API_KEY",
             "KIMI_CODE_BASE_URL",
@@ -1199,7 +1221,7 @@
           "module": "./agent/runtime/factory",
           "runtimeApiVersion": 1
         },
-        "normalizedModulePath": ".happier-plugin/agent/runtime/factory.js"
+        "normalizedModulePath": ".happier-plugin-build/agent/runtime/factory.js"
       }
     ],
     "apiVersion": 1

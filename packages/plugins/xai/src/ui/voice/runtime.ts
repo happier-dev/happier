@@ -140,7 +140,6 @@ export function createXaiRealtimeProviderRuntime(options: Readonly<{
           },
           // Only a concrete persisted xAI conversation carries the provider's
           // original response/call identities into this new connection.
-          toolResultReplay: conversationId ? 'stable_ids' : 'none',
         },
       };
     },

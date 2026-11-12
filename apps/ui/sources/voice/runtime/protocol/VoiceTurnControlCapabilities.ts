@@ -14,7 +14,7 @@ export type VoiceTurnControlCapabilities = Readonly<{
 export type { VoiceTurnControlAction };
 
 export type VoiceTurnControlActionAvailability =
-  | Readonly<{ status: 'available'; basis?: 'played_ms' | 'audio_samples'; strategy?: 'resume' | 'stable_ids' }>
+  | Readonly<{ status: 'available'; basis?: 'played_ms' | 'audio_samples'; strategy?: 'resume' }>
   | Readonly<{ status: 'unavailable'; code: 'voice_turn_action_unsupported' }>;
 
 const UNAVAILABLE = Object.freeze({

@@ -1097,59 +1097,6 @@ describe('external Voice provider host composition', () => {
     expect(prepareConfigs.at(-1)).toEqual({ mode: 'default', voice: 'after-throw' });
   });
 
-  it('passes only the leaf-proven prepared carrier replay custody through the external adapter', async () => {
-    const resumableDeclaration = Object.freeze({
-      ...declaration,
-      capabilities: Object.freeze({
-        ...declaration.capabilities,
-        turn: Object.freeze({
-          ...declaration.capabilities.turn,
-          resumption: 'resume' as const,
-        }),
-      }),
-    });
-    const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
-      async prepare(input) {
-        return input.reason === 'initial'
-          ? {
-              kind: 'prepared' as const,
-              session: { config: { carrier: 'resumed' }, safeMetadata: null, toolResultReplay: 'stable_ids' as const },
-            }
-          : {
-              // The same declaration can create a fresh carrier on a later
-              // reconnect. Omission must survive as fail-closed, not be
-              // synthesized from static declaration capabilities.
-              kind: 'prepared' as const,
-              session: { config: { carrier: 'fresh' }, safeMetadata: null },
-            };
-      },
-      decodeControl: () => [],
-      encodeTurnControl: () => null,
-    };
-    const protocol = createExternalProtocol(
-      createHostFixture({ transcriptEvents: [], lifecycleEvents: [] }),
-      providerId,
-      'web',
-      resumableDeclaration,
-      leaf,
-    );
-    const prepareInput = {
-      controlSessionId: 'replay-carrier',
-      attemptId: 1,
-      request: null,
-      signal: new AbortController().signal,
-    } as const;
-
-    await expect(protocol.prepare({ ...prepareInput, reason: 'initial' })).resolves.toEqual({
-      kind: 'prepared',
-      session: { config: { carrier: 'resumed' }, safeMetadata: null, toolResultReplay: 'stable_ids' },
-    });
-    await expect(protocol.prepare({ ...prepareInput, reason: 'reconnect' })).resolves.toEqual({
-      kind: 'prepared',
-      session: { config: { carrier: 'fresh' }, safeMetadata: null },
-    });
-  });
-
   it('binds account operations to protocol preparation without routing through the selected daemon', async () => {
     type PrepareInput = Parameters<RealtimeVoiceProviderRuntime['protocol']['prepare']>[0];
     const lifecycleEvents: string[] = [];
@@ -1617,7 +1564,7 @@ describe('external Voice provider host composition', () => {
     await runtime.dispose();
   });
 
-  it('offers host-owned provider conversation state only to a declared resumable leaf', async () => {
+  it('offers host-owned provider conversation state when the runtime supports it', async () => {
     const readProviderConversationState = vi.fn(async () => ({
       conversationId: 'provider-conversation-1',
       updatedAt: Date.now(),
@@ -1625,16 +1572,6 @@ describe('external Voice provider host composition', () => {
     const writeProviderConversationState = vi.fn(async (
       _input: Parameters<NonNullable<BundledRealtimeProviderRuntimeHost['writeProviderConversationState']>>[0],
     ) => {});
-    const resumableDeclaration = Object.freeze({
-      ...declaration,
-      capabilities: Object.freeze({
-        ...declaration.capabilities,
-        turn: Object.freeze({
-          ...declaration.capabilities.turn,
-          resumption: 'resume' as const,
-        }),
-      }),
-    });
     const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
       async prepare(input) {
         await expect(input.providerConversation?.read()).resolves.toBe('provider-conversation-1');
@@ -1654,8 +1591,9 @@ describe('external Voice provider host composition', () => {
       }),
       providerId,
       'web',
-      resumableDeclaration,
+      declaration,
       leaf,
+      undefined, undefined, undefined, undefined, true,
     );
 
     await protocol.prepare({
@@ -1692,16 +1630,6 @@ describe('external Voice provider host composition', () => {
     const writeProviderConversationState = vi.fn(async (
       _input: Parameters<NonNullable<BundledRealtimeProviderRuntimeHost['writeProviderConversationState']>>[0],
     ) => {});
-    const resumableDeclaration = Object.freeze({
-      ...declaration,
-      capabilities: Object.freeze({
-        ...declaration.capabilities,
-        turn: Object.freeze({
-          ...declaration.capabilities.turn,
-          resumption: 'resume' as const,
-        }),
-      }),
-    });
     const leaf: RealtimeVoiceProviderRuntime['protocol'] = {
       async prepare(input) {
         expect(input.providerConversation).toBeNull();
@@ -1721,8 +1649,9 @@ describe('external Voice provider host composition', () => {
       }),
       providerId,
       'web',
-      resumableDeclaration,
+      declaration,
       leaf,
+      undefined, undefined, undefined, undefined, true,
     );
 
     await protocol.prepare({

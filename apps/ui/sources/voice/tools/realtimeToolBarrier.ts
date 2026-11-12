@@ -32,12 +32,7 @@ export type RealtimeToolValidation =
 export type RealtimeToolEffectClass = 'read_only' | 'mutation' | 'external';
 
 export type RealtimeToolBarrierResult = Readonly<{
-  /**
-   * `detached` is a delivery-only interruption. Completed results stay
-   * attempt-owned so the controller can redeliver them with current redaction
-   * only after the provider has proven that its response/call identity holds.
-   */
-  status: 'submitted' | 'cancelled' | 'detached' | 'failed';
+  status: 'submitted' | 'cancelled' | 'failed';
   results: readonly VoiceRealtimeToolResultV1[];
 }>;
 
@@ -73,16 +68,10 @@ type RealtimeToolBarrierDeps = Readonly<{
 }>;
 
 type ResponseRecord = {
-  fingerprint: string;
+  responseId: string;
   calls: readonly VoiceRealtimeToolCallV1[];
   turnOrigin: SpokenActionTurnOrigin;
-  /** Terminal attempt/call cancellation; never used for a transport detach. */
   controller: AbortController;
-  /** The current provider-delivery leg, independently abortable on detach. */
-  deliveryController: AbortController;
-  detached: boolean;
-  promise: Promise<RetainedBarrierResult>;
-  settled: boolean;
 };
 
 type EffectOutcomeRecord = {
@@ -105,18 +94,6 @@ function stableJson(value: VoiceRealtimeJsonValue): string {
 
 function sortCalls(calls: readonly VoiceRealtimeToolCallV1[]): VoiceRealtimeToolCallV1[] {
   return [...calls].sort((left, right) => left.order - right.order || left.callId.localeCompare(right.callId));
-}
-
-function responseFingerprint(calls: readonly VoiceRealtimeToolCallV1[]): string {
-  const value: readonly VoiceRealtimeJsonValue[] = calls.map((call) => ({
-    v: call.v,
-    responseId: call.responseId,
-    callId: call.callId,
-    toolName: call.toolName,
-    order: call.order,
-    arguments: call.arguments,
-  }));
-  return stableJson(value);
 }
 
 function effectFingerprint(call: VoiceRealtimeToolCallV1): string {
@@ -178,7 +155,7 @@ async function raceWithAbort<T>(startOperation: () => Promise<T>, signal: AbortS
 }
 
 export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
-  const responses = new Map<string, ResponseRecord>();
+  const activeResponses = new Set<ResponseRecord>();
   const effectOutcomes = new Map<string, EffectOutcomeRecord>();
   let disposed = false;
 
@@ -213,18 +190,6 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     }) };
   };
 
-  const resetDeliveryController = (record: ResponseRecord): void => {
-    record.deliveryController.abort();
-    const deliveryController = new AbortController();
-    if (record.controller.signal.aborted) deliveryController.abort();
-    else record.controller.signal.addEventListener(
-      'abort',
-      () => deliveryController.abort(),
-      { once: true },
-    );
-    record.deliveryController = deliveryController;
-  };
-
   const redactCompletedResults = (
     results: readonly RetainedToolResult[],
     calls: readonly VoiceRealtimeToolCallV1[],
@@ -250,28 +215,22 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
     record: ResponseRecord,
   ): Promise<RetainedBarrierResult> => {
     const redactedResults = redactCompletedResults(results, record.calls);
-    const executionSignal = record.controller.signal;
-    const deliverySignal = record.deliveryController.signal;
-    const deliveryDetached = (): boolean => record.detached && !executionSignal.aborted;
-    if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
-    if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+    const signal = record.controller.signal;
+    if (signal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
     try {
       await raceWithAbort(
-        () => deps.submitResults(responseId, redactedResults.map(({ result }) => result), deliverySignal),
-        deliverySignal,
+        () => deps.submitResults(responseId, redactedResults.map(({ result }) => result), signal),
+        signal,
       );
-      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
-      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      if (signal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
       await raceWithAbort(
-        () => deps.continueResponse(responseId, deliverySignal, record.turnOrigin),
-        deliverySignal,
+        () => deps.continueResponse(responseId, signal, record.turnOrigin),
+        signal,
       );
-      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
-      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      if (signal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
       return Object.freeze({ status: 'submitted', results: redactedResults });
     } catch {
-      if (executionSignal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
-      if (deliveryDetached()) return Object.freeze({ status: 'detached', results: redactedResults });
+      if (signal.aborted) return Object.freeze({ status: 'cancelled', results: redactedResults });
       return Object.freeze({ status: 'failed', results: redactedResults });
     }
   };
@@ -415,93 +374,38 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       if (callIds.has(call.callId)) throw new RealtimeToolBarrierError('duplicate_call_id');
       callIds.add(call.callId);
     }
-    const fingerprint = responseFingerprint(calls);
-    const existing = responses.get(responseId);
-    if (existing) {
-      if (existing.fingerprint !== fingerprint) throw new RealtimeToolBarrierError('response_conflict');
-      // Each proven duplicate delivery needs its own result (SDK callbacks
-      // can be concurrent). Serialize delivery, not execution, and reapply
-      // current privacy to the canonical retained result every time.
-      const abort = () => existing.controller.abort();
-      if (input.signal?.aborted) abort();
-      else input.signal?.addEventListener('abort', abort, { once: true });
-      existing.settled = false;
-      const replay = existing.promise.then(async (previous) => {
-        if (previous.status === 'cancelled' || existing.controller.signal.aborted) return previous;
-        existing.detached = false;
-        resetDeliveryController(existing);
-        return await submitCompletedResults(responseId, previous.results, existing);
-      }).then((result) => {
-        if (result.status === 'cancelled' && responses.get(responseId) === existing) {
-          responses.delete(responseId);
-        }
-        return result;
-      }).finally(() => {
-        input.signal?.removeEventListener('abort', abort);
-        if (existing.promise === replay) existing.settled = true;
-      });
-      existing.promise = replay;
-      return publicBarrierResult(await replay);
-    }
-
     const controller = new AbortController();
     const abort = () => controller.abort();
     if (input.signal?.aborted) abort();
     else input.signal?.addEventListener('abort', abort, { once: true });
     const record: ResponseRecord = {
-      fingerprint,
-      calls,
-      turnOrigin: input.turnOrigin ?? 'synthetic',
-      controller,
-      deliveryController: new AbortController(),
-      detached: false,
-      settled: false,
-      promise: Promise.resolve({ status: 'cancelled', results: [] }),
+      responseId, calls, turnOrigin: input.turnOrigin ?? 'synthetic', controller,
     };
-    resetDeliveryController(record);
-    const response = executeResponse(responseId, calls, record)
-      .then((result) => {
-        if (record.promise === response) record.settled = true;
-        if (result.status === 'cancelled' && responses.get(responseId) === record) {
-          responses.delete(responseId);
-        }
-        return result;
-      })
-      .finally(() => {
-        if (record.promise === response) record.settled = true;
-        input.signal?.removeEventListener('abort', abort);
-      });
-    record.promise = response;
-    responses.set(responseId, record);
-    return publicBarrierResult(await record.promise);
+    activeResponses.add(record);
+    try {
+      return publicBarrierResult(await executeResponse(responseId, calls, record));
+    } finally {
+      activeResponses.delete(record);
+      input.signal?.removeEventListener('abort', abort);
+    }
   };
 
   return Object.freeze({
     run,
-    /**
-     * A reconnect loses only this provider delivery leg. It must not abort
-     * execution: completed results remain in this attempt-local response
-     * record until the controller can prove same-call resumption.
-     */
-    detach: (responseId: string): boolean => {
-      const record = responses.get(responseId);
-      if (!record || record.settled) return false;
-      record.detached = true;
-      record.deliveryController.abort();
-      return true;
-    },
-    /** Terminal response cancellation, distinct from a transport detach. */
     cancel: (responseId: string): boolean => {
-      const record = responses.get(responseId);
-      if (!record || record.settled) return false;
-      record.controller.abort();
-      return true;
+      let cancelled = false;
+      for (const record of activeResponses) {
+        if (record.responseId !== responseId) continue;
+        record.controller.abort();
+        cancelled = true;
+      }
+      return cancelled;
     },
     dispose: (): void => {
       if (disposed) return;
       disposed = true;
-      for (const record of responses.values()) record.controller.abort();
-      responses.clear();
+      for (const record of activeResponses) record.controller.abort();
+      activeResponses.clear();
       effectOutcomes.clear();
     },
   });

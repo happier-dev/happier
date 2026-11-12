@@ -1128,12 +1128,12 @@ types from `/voice/speech`. Each binds through
 STT and TTS implementations separate contribution ids. The similarly named UI
 client path is only the hosted-web bootstrap and is not a Voice runtime API.
 
-When a realtime `prepare` result can reconnect to the same provider response,
-it may set `session.toolResultReplay: 'stable_ids'`. Set it only for the exact
-prepared carrier that can accept already-settled tool results under the
-original response and call ids; omit it (or set `'none'`) for a fresh carrier.
-The host treats omission as fail-closed and never reruns a settled effect to
-make a fresh provider session accept it.
+A realtime disconnect with a pending tool result settles as
+`voice_tool_result_delivery_unrecoverable`. The visible Retry starts a new
+conversation; the host does not replay tool results into a replacement carrier.
+Effect deduplication under an actual provider tool-call id remains separate.
+Saved provider conversations and Forget are supported when the runtime registers
+`forgetProviderConversation`; they do not imply tool-result replay.
 
 ## Plugin UI
 

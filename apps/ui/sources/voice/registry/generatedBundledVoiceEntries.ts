@@ -21,9 +21,6 @@ export const CODEX_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestPr
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "none"
-          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false
@@ -97,9 +94,6 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "none"
-          },
           "turn": {
             "bargeIn": false,
             "cancelResponse": false,
@@ -1030,7 +1024,7 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
             "credential": {
               "catalog": "voices",
               "checklist": [
-                "Open API keys in ElevenLabs",
+                "Open [API keys in ElevenLabs]",
                 "Create a key, then paste it below."
               ],
               "credentialPurpose": "voice.client-auth.elevenlabs",
@@ -1524,9 +1518,6 @@ export const OPENAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestP
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "stable_ids"
-          },
           "turn": {
             "bargeIn": true,
             "cancelResponse": true,
@@ -2334,17 +2325,12 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "stable_ids"
-          },
           "turn": {
             "bargeIn": true,
             "cancelResponse": true,
             "clearInput": true,
             "exactMessage": true,
-            "interruptionPolicy": "provider_immediate",
-            "replay": "stable_ids",
-            "resumption": "resume"
+            "interruptionPolicy": "provider_immediate"
           }
         },
         "client": {
@@ -2830,7 +2816,7 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
             "credential": {
               "catalog": "voices",
               "checklist": [
-                "Open API keys in the xAI Console",
+                "Open [API keys in the xAI Console]",
                 "Create a key, then paste it below."
               ],
               "credentialPurpose": "voice.client-auth",

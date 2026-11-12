@@ -85,7 +85,6 @@ const declaration = requireConversationDeclaration(PluginContributesV2Schema.par
         cancelResponse: true,
         bargeIn: false,
         clearInput: true,
-        resumption: 'resume',
         exactMessage: true,
         interruptionPolicy: 'provider_immediate',
       },
@@ -1145,48 +1144,6 @@ describe('external Voice provider activation', () => {
       declarations: [mismatchedDeclaration as typeof credentialDeclaration],
       hostPlatform: 'web',
     })).toThrow(/invalid_external_voice_provider_declaration/u);
-  });
-
-  it('disposes already-constructed providers when a later shared-module provider cannot be constructed', async () => {
-    const incompatibleDeclaration = requireConversationDeclaration(PluginContributesV2Schema.parse({
-      voiceProviders: [{
-        ...declaration,
-        id: 'conversation-b',
-        title: 'Synthetic Conversation B',
-        capabilities: {
-          ...declaration.capabilities,
-          turn: { ...declaration.capabilities.turn, resumption: 'none' },
-        },
-      }],
-    }).voiceProviders[0]!);
-    const firstDispose = vi.fn(async () => {});
-    const secondDispose = vi.fn(async () => {});
-    const hostLease = createBundledConversationRuntimeHostLease();
-    const scope = createExternalVoiceProviderActivationScope({
-      pluginId: identity.pluginId,
-      occurrenceId: 'acme-synthetic-voice-activation-occurrence',
-      declarations: [declaration, incompatibleDeclaration],
-      hostPlatform: 'web',
-    });
-    onTestFinished(async () => {
-      await scope.unwind();
-      hostLease.revoke();
-    });
-
-    scope.api.voiceProviders.register(declaration.id, { ...createProviderLeaf(), dispose: firstDispose });
-    scope.api.voiceProviders.register(incompatibleDeclaration.id, {
-      ...createProviderLeaf(),
-      dispose: secondDispose,
-    });
-
-    await expect(Promise.resolve().then(() => scope.commit()))
-      .rejects.toThrow(/voice_provider_resumption_registration_mismatch/u);
-    await scope.unwind();
-    await scope.unwind();
-    expect(firstDispose).toHaveBeenCalledTimes(1);
-    expect(secondDispose).toHaveBeenCalledTimes(1);
-    expect(listExternalVoiceProviderRegistrations()
-      .some((entry) => entry.pluginId === identity.pluginId)).toBe(false);
   });
 
   it('unwinds a committed contribution when an external registration listener throws', async () => {

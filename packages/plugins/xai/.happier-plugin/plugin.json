@@ -32,6 +32,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -200,17 +201,12 @@
     "voiceProviders": [
       {
         "capabilities": {
-          "tools": {
-            "effectCalls": "stable_ids"
-          },
           "turn": {
             "bargeIn": true,
             "cancelResponse": true,
             "clearInput": true,
             "exactMessage": true,
-            "interruptionPolicy": "provider_immediate",
-            "replay": "stable_ids",
-            "resumption": "resume"
+            "interruptionPolicy": "provider_immediate"
           }
         },
         "client": {
@@ -696,7 +692,7 @@
             "credential": {
               "catalog": "voices",
               "checklist": [
-                "Open API keys in the xAI Console",
+                "Open [API keys in the xAI Console]",
                 "Create a key, then paste it below."
               ],
               "credentialPurpose": "voice.client-auth",

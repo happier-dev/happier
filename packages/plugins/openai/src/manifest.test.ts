@@ -90,7 +90,7 @@ describe('OpenAI Voice plugin manifest', () => {
       kind: 'conversation',
       capabilities: {
         turn: { cancelResponse: true, bargeIn: true },
-        tools: { effectCalls: 'stable_ids' },
+
       },
       credentials: {
         slot: {

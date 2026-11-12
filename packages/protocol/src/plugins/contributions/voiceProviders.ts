@@ -794,34 +794,14 @@ export type VoiceSpeechProviderLimits = z.infer<typeof VoiceSpeechProviderLimits
 /** One public speech-response ceiling shared by provider declarations and daemon transfer/wire admission. */
 export const VOICE_SPEECH_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
 
-/**
- * Provider evidence that effectful Voice tools can be retried/redelivered without
- * executing their semantic effect more than once. `stable_ids` requires a
- * provider-stable tool-call identity and retained result delivery.
- */
-export const VoiceConversationToolEffectCallsSchema = lazyZodSchema(() => z.enum(['none', 'stable_ids']));
-export type VoiceConversationToolEffectCalls = z.infer<
-  typeof VoiceConversationToolEffectCallsSchema
->;
-
-export const VoiceConversationToolCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
-  effectCalls: z._default(VoiceConversationToolEffectCallsSchema, 'none'),
-}));
-export type VoiceConversationToolCapabilities = z.infer<
-  typeof VoiceConversationToolCapabilitiesSchema
->;
-
 export const VoiceConversationCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
   turn: z.strictObject({
     cancelResponse: z.boolean(),
     bargeIn: z.boolean(),
     clearInput: z.optional(z.boolean()),
-    resumption: z.optional(z.enum(['none', 'resume'])),
-    replay: z.optional(z.enum(['none', 'stable_ids'])),
     exactMessage: z.optional(z.boolean()),
     interruptionPolicy: z.optional(z.enum(['disabled', 'client_two_stage', 'provider_immediate'])),
   }),
-  tools: z._default(VoiceConversationToolCapabilitiesSchema, { effectCalls: 'none' }),
 }));
 export type VoiceConversationCapabilities = z.infer<typeof VoiceConversationCapabilitiesSchema>;
 

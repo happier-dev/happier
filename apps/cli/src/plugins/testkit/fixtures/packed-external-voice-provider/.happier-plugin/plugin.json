@@ -86,8 +86,7 @@
         "roles": ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],
         "platforms": ["web", "ios", "android"],
         "capabilities": {
-          "turn": { "cancelResponse": true, "bargeIn": false },
-          "tools": { "effectCalls": "stable_ids" }
+          "turn": { "cancelResponse": true, "bargeIn": false }
         },
         "execution": {
           "kind": "experimental_agent_session_realtime",
