@@ -20,7 +20,7 @@ describe('ACP Registry through the registered host reader', () => {
     if (!('pages' in response)) throw new Error('Missing list');
     const items = response.pages.flatMap(page => page.items).map(item => RegistryItemSummaryV1Schema.parse(item));
     expect(items.find(item => item.itemId === 'goose')).toMatchObject({ agentDistribution: { kind: 'archive', platforms: {
-      'linux-x64': 'archive_type_unsupported', 'win32-x64': 'supported',
+      'linux-x64': 'supported', 'win32-x64': 'supported',
     } } });
     expect(items.find(item => item.itemId === 'junie')).toMatchObject({ agentDistribution: { kind: 'archive', platforms: {
       'linux-x64': 'supported', 'darwin-arm64': 'supported',
