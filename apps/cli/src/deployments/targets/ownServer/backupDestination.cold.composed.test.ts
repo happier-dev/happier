@@ -12,7 +12,7 @@ it('opens a saved path-addressed S3 destination from a cold admitted runtime', a
     // while an enabled destination need not have executed an Action yet.
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
         plugins: [{ manifest: plugin.manifest,
-            files: { '.happier-plugin/daemon.js': 'export function activate() {}', 'package.json': '{"type":"module"}' },
+            files: { [plugin.manifest.entrypoints.daemon]: 'export function activate() {}', 'package.json': '{"type":"module"}' },
             instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
         async resolveContributes(happyHomeDir) {
             return createResolvedContributionRegistry(projectLoadedPluginContributes({
@@ -27,12 +27,12 @@ it('opens a saved path-addressed S3 destination from a cold admitted runtime', a
         expect(runtime.registry.targetActionInvocations.has(plugin.manifest.id, 's3/open')).toBe(false);
         const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
             destinationRef: { pluginId: plugin.manifest.id, localId: 's3' }, occurrenceId,
-            config: { endpoint: 'http://minio.invalid:9000', bucket: 'backups', prefix: 'qa/restore',
+            config: { endpoint: 'http://minio.invalid:9000', bucket: 'backups', prefix: 'qa',
                 region: 'us-east-1', addressing: 'path' },
             credentialBindings: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'].map(role => ({
                 purpose: 'backupDestination', configKey: 'destination', role })),
             sources: [{ kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }],
-            ownership: { environmentId: 'environment', prefix: 'qa/restore' }, retention: { kind: 'keepEverything' },
+            ownership: { environmentId: 'environment', prefix: 'restore' }, retention: { kind: 'keepEverything' },
         });
         const request = { registry: runtime.registry, configuration, context: {}, signal: new AbortController().signal };
         await expect(openDeploymentBackupDestinationForHost(request)).resolves.toEqual({

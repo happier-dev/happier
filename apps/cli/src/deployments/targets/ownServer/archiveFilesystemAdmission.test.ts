@@ -16,6 +16,7 @@ describe('deployment archive admission', () => {
             accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, custodianAccountId: 'owner', serverIdentityId: 'home',
             machineId: 'receiver', installationId: 'installed', actionId: 'deployments.domains.add', requestId: 'request',
             target, requestEnvelopeDigest: 'a'.repeat(43), accountEncryptionMode: 'plain', environmentId: 'environment',
+            deploymentChildRoot: true,
             deploymentNativeAdmission: projectDeploymentNativeAdmissionV1('deployments.domains.add', rootInput),
         } });
         const routing = DeploymentChildRpcV1Schema.parse(kind === 'domain' ? {

@@ -17,6 +17,7 @@ import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nat
 import { executeOwnServerMigration, MIGRATION_PENDING_CHECK_STEP, MIGRATION_STEP } from './migration';
 import type { OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { archive, database, installRestoreBoundary } from './nativeRestore.testkit';
+import { createOwnServerDatabaseUsernameReaderForHost } from './backupDestination';
 
 describe('own-server migration native backup consumer', () => {
     it.each(['backup', 'zero', 'pending', 'pendingWithoutBackup', 'unknown', 'cancel', 'dumpFailure', 'unconfigured'] as const)(
@@ -52,6 +53,7 @@ describe('own-server migration native backup consumer', () => {
                     environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
                     resourceId: role, resourceRevision: 1 }, installationPublicKey: nacl.sign.keyPair.fromSeed(seed).publicKey,
                     content: { kind: 'secret', value: `private-${role}` } }));
+                const data = [{ engine: 'postgres' as const, service: 'worker', logicalBackup: { adapter: 'postgres-v1' as const } }];
                 const configuration: DeploymentBackupConfigurationV1 = { configRevision: 1,
                     destinationRef: { pluginId: 'example.storage', localId: 's3' }, occurrenceId: 'storage', config: { bucket: 'backup' },
                     credentialBindings: roles.map(role => ({ purpose: 'backupDestination', configKey: 'destination', role })),
@@ -94,20 +96,20 @@ describe('own-server migration native backup consumer', () => {
                                 }
                             },
                             ...(mode === 'unconfigured' ? {} : { async prepareBackup() {
+                                const preparation = { environmentId: source.environmentId, machineId: source.machineId,
+                                    installationId: source.installationId, installationPrivateSeed: seed, bindings,
+                                    backupDestinationUses: bindings, grants, backupConfigBaseDir: root, assertCurrent: source.assertCurrent };
                                 const environment = createDeploymentBackupEnvironmentForHost({ repository: 's3:https://fixture.invalid/backup',
-                                    signal: context.operation.signal!, isCurrent: () => true, preparation: {
-                                        environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
-                                        installationPrivateSeed: seed, bindings, backupDestinationUses: bindings, grants,
-                                        backupConfigBaseDir: root, assertCurrent: source.assertCurrent } });
+                                    signal: context.operation.signal!, isCurrent: () => true, preparation });
                                 if (mode === 'cancel') controller.abort();
                                 return { input: { project, render, activation, context, io, ...environment, runtimeImage,
+                                    readDatabaseUsername: createOwnServerDatabaseUsernameReaderForHost({ data, preparation }),
                                     readAccess() { const selected = environment.readAccess(); passwordPath = selected.credentialFiles[0]?.hostPath; return selected; },
                                     onStopPending() {} },
                                     capture: { receipt, destination: { environmentId: source.environmentId, revision: 1, adapter: 'postgres-v1' as const,
                                         service: 'worker', database, stagingDatabase: 'restore-stage', recoveryDatabase: 'restore-old',
                                         databaseExists: true, hasMeaningfulData: true, writerServices: [] }, context: { signal: controller.signal },
-                                        backup: { environmentId: source.environmentId, configuration,
-                                            data: { engine: 'postgres' as const, service: 'worker', logicalBackup: { adapter: 'postgres-v1' as const } } },
+                                        backup: { environmentId: source.environmentId, configuration, data },
                                         async writeTransition(request: Parameters<Parameters<typeof import('./nativeRestore').runOwnServerNativePreMigrationBackup>[1]['writeTransition']>[0]) {
                                             receipt = { ...receipt, content: request.content,
                                                 deployment: { ...receipt.deployment, revision: receipt.deployment.revision + 1 } };
@@ -115,7 +117,8 @@ describe('own-server migration native backup consumer', () => {
                                                 environmentId: source.environmentId, revision: 2, state: request.state };
                                         } }, async dispose() { preparationDisposed = true; } };
                             } }) });
-                        if (mode === 'unknown' || mode === 'dumpFailure') await expect(execute).rejects.toMatchObject({ code: 'outcome_unknown' });
+                        if (mode === 'unknown') await expect(execute).rejects.toMatchObject({ code: 'outcome_unknown' });
+                        else if (mode === 'dumpFailure') await expect(execute).rejects.toMatchObject({ code: 'backup_failed' });
                         else if (mode === 'unconfigured') await expect(execute).rejects.toMatchObject({ code: 'backup_required' });
                         else if (mode === 'cancel') await expect(execute).rejects.toBeDefined();
                         else await execute;
@@ -136,7 +139,7 @@ describe('own-server migration native backup consumer', () => {
                         expect.objectContaining({ id: MIGRATION_STEP, state: 'skipped' })]));
                     if (['zero', 'unknown', 'pendingWithoutBackup', 'unconfigured'].includes(mode)) expect(passwordPath).toBeUndefined();
                     if (mode === 'dumpFailure' && passwordPath) {
-                        await access(passwordPath);
+                        await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
                         await machineNativeEffectAdmission.run({ operation: { operationId: 'migration-backup-reconcile', kind: 'backup' },
                             keys: render.keys, settleNative: project.settleNative }, async () => {});
                     }
