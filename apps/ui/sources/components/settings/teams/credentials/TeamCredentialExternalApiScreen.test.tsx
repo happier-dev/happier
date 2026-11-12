@@ -1,16 +1,10 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-    ApprovalRequestV2Schema,
-    type ApprovalRequestV2,
-} from '@happier-dev/protocol/approvals/approvalRequestV1';
-import {
-    decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
+import { createDeferred } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { accountDisplayProfileFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
@@ -78,6 +72,11 @@ installSettingsViewCommonModuleMocks({
                 alert: modalAlert,
                 show: (config) => {
                     shownModals.push(config as (typeof shownModals)[number]);
+                    if (config.chrome?.testID === 'actions.confirmation-review.modal') {
+                        const props = config.props as { onAnswer(confirmed: boolean): void };
+                        // This spy controls the person's choice for either modal host presentation.
+                        queueMicrotask(() => { void modalConfirm('Action review', '').then(props.onAnswer); });
+                    }
                     return 'modal-id';
                 },
             },
@@ -87,8 +86,7 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
-// Approval continuation must observe the real store. An async importOriginal
-// mock deadlocks when that store's runtime imports return to the mocked module.
+// The composed Action path must observe the real store.
 vi.doUnmock('@/sync/domains/state/storage');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
@@ -122,30 +120,6 @@ function key(keyId: string, resourceId: string, label: string) {
         expiresAt: null,
         authenticationStatus: 'satisfied' as 'satisfied' | 'authentication_required' | 'unavailable',
         canAuthorize: false,
-    };
-}
-
-/**
- * The one approval Artifact the Home persisted, decoded exactly as stored.
- *
- * The request is read from the Home's Artifact rows, not from what the client
- * sent, so a secret that reached durable approval history is observed here.
- */
-function readStoredApproval(serverId: string): Readonly<{
-    id: string;
-    request: ApprovalRequestV2;
-    storedJson: string;
-}> {
-    const rows = harness.artifacts(serverId).list();
-    if (rows.length !== 1) throw new Error(`expected_one_approval_artifact:${rows.length}`);
-    const row = rows[0]!;
-    const body = harness.artifacts(serverId).readPlainBody(row.id);
-    const header = decodePlainArtifactStoredContent(row.header);
-    if (body === null || header === null) throw new Error('approval_artifact_not_plain');
-    return {
-        id: row.id,
-        request: ApprovalRequestV2Schema.parse(JSON.parse(body)),
-        storedJson: JSON.stringify({ header, body }),
     };
 }
 
@@ -472,7 +446,7 @@ describe('TeamCredentialExternalApiScreen', () => {
             .not.toContain(CREATED_TOKEN);
     });
 
-    it('copies an approved bearer through live-only Action custody without retaining it in the approval Artifact', async () => {
+    it('copies a bearer after local Ask confirmation without retaining it in approval history', async () => {
         const serverId = await addManagedHome();
         await harness.requireUiApproval(serverId, 'clipboard.write');
         harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, {
@@ -487,18 +461,18 @@ describe('TeamCredentialExternalApiScreen', () => {
         await screen.pressByTestIdAsync('team-credential-external-create');
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
 
+        const confirmation = createDeferred<boolean>();
+        modalConfirm.mockClear().mockReturnValueOnce(confirmation.promise);
         const copy = screen.pressByTestIdAsync('team-credential-external-value:token');
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        const pending = readStoredApproval(serverId);
-        expect(pending.request).toMatchObject({ actionId: 'clipboard.write', status: 'open' });
-        expect(pending.storedJson).not.toContain(CREATED_TOKEN);
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledOnce());
         expect(clipboardSet).not.toHaveBeenCalled();
-        await expect(decideApprovalAsInbox(serverId, pending.id, 'approve')).resolves.toMatchObject({ ok: true });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        await act(async () => confirmation.resolve(true));
         await copy;
         expect(clipboardSet).toHaveBeenLastCalledWith(CREATED_TOKEN);
-        await waitForHomeGovernance(() => expect(readStoredApproval(serverId).request.status).toBe('executed'));
-        expect(readStoredApproval(serverId).storedJson).not.toContain(CREATED_TOKEN);
-        expect(readStoredApproval(serverId).storedJson).not.toContain('a'.repeat(43));
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        expect(JSON.stringify(harness.requests.filter(request => request.path !== EXTERNAL_KEY_CREATE_PATH)))
+            .not.toContain(CREATED_TOKEN);
         await screen.pressByTestIdAsync('team-credential-external-reveal-done');
         expect(screen.getTextContent()).not.toContain(CREATED_TOKEN);
     });
@@ -657,10 +631,13 @@ describe('TeamCredentialExternalApiScreen', () => {
             `/settings/teams/${serverId}/team-1/credentials/resource-1/external-api`,
         ));
         // The router spy records replacement; render the route it restored.
+        harness.answer(serverId, CREDENTIAL_GET_PATH, {
+            body: teamCredentialResourceFixture({ id: 'resource-1' }),
+        });
         await screen.update(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
     });
 
@@ -755,15 +732,9 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull();
     });
 
-    // Creating a key returns its bearer exactly once, so the create Action keeps
-    // live-only result custody (`specs/teams.ts`): an approval-required create
-    // stays the blocking waiter on this exact mounted invocation and never
-    // becomes a mounted Artifact continuation (protocol
-    // `actionApprovalPolicy.test.ts`, "keeps every show-once bearer creation on
-    // its live invocation"). The decision arrives from Approval Detail through
-    // the shared approval lifecycle; the bearer reaches only this invocation and
-    // never the durable Artifact (lane-10/11 PUBLIC-04).
-    it('shows the bearer once after an approved blocking create and keeps it out of the approval Artifact', async () => {
+    // Own-UI Ask is local confirmation (docs/actions.md); protocol approval-policy
+    // tests retain coverage of live-only custody for non-UI approval requests.
+    it('shows the bearer once after local Ask confirmation without creating an approval Artifact', async () => {
         const serverId = await addManagedHome();
         await harness.requireUiApproval(serverId, 'teams.credentials.externalKeys.create');
         harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, {
@@ -776,19 +747,16 @@ describe('TeamCredentialExternalApiScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
+        const confirmation = createDeferred<boolean>();
+        modalConfirm.mockClear().mockReturnValueOnce(confirmation.promise);
         await screen.pressByTestIdAsync('team-credential-external-create');
 
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        const pending = readStoredApproval(serverId);
-        expect(pending.request).toMatchObject({
-            status: 'open',
-            actionId: 'teams.credentials.externalKeys.create',
-            approval: { flow: 'blocking' },
-        });
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(0);
         expect(screen.findByTestId('team-credential-external-value:token')).toBeNull();
 
-        await expect(decideApprovalAsInbox(serverId, pending.id, 'approve')).resolves.toMatchObject({ ok: true });
+        await act(async () => confirmation.resolve(true));
 
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
@@ -796,14 +764,12 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)[0]?.input).toMatchObject({
             teamMembershipId: 'membership-1', label: 'CI runner',
         });
-        await waitForHomeGovernance(() => expect(readStoredApproval(serverId).request.status).toBe('executed'));
-        const settled = readStoredApproval(serverId);
-        expect(settled.request).toMatchObject({ decision: { kind: 'approve' }, execution: { ok: true } });
-        expect(settled.storedJson).not.toContain(CREATED_TOKEN);
-        expect(settled.storedJson).not.toContain('a'.repeat(43));
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        expect(JSON.stringify(harness.requests.filter(request => request.path !== EXTERNAL_KEY_CREATE_PATH)))
+            .not.toContain(CREATED_TOKEN);
     });
 
-    it('keeps a declined blocking create from reaching the Home or revealing a bearer', async () => {
+    it('keeps a declined local Ask confirmation from reaching the Home or revealing a bearer', async () => {
         const serverId = await addManagedHome();
         await harness.requireUiApproval(serverId, 'teams.credentials.externalKeys.create');
         harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, {
@@ -816,11 +782,9 @@ describe('TeamCredentialExternalApiScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
+        modalConfirm.mockClear().mockResolvedValueOnce(false);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
-        const pending = readStoredApproval(serverId);
-
-        await expect(decideApprovalAsInbox(serverId, pending.id, 'reject')).resolves.toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledOnce());
 
         await waitForHomeGovernance(() => expect(
             screen.findHostByTestId('team-credential-external-create')?.props.disabled,
@@ -828,9 +792,7 @@ describe('TeamCredentialExternalApiScreen', () => {
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(0);
         expect(screen.findByTestId('team-credential-external-value:token')).toBeNull();
         expect(screen.getTextContent()).not.toContain(CREATED_TOKEN);
-        const settled = readStoredApproval(serverId);
-        expect(settled.request).toMatchObject({ status: 'rejected', decision: { kind: 'reject' } });
-        expect(settled.request).not.toHaveProperty('execution');
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it.each([
@@ -850,7 +812,7 @@ describe('TeamCredentialExternalApiScreen', () => {
             pressId: 'team-credential-external-revoke-all',
             mutationPath: EXTERNAL_KEY_REVOKE_ALL_PATH,
         },
-    ])('settles approved revocation of $label from the exact result without redispatching', async (scenario) => {
+    ])('revokes $label after local Ask confirmation without redispatching', async (scenario) => {
         const existing = key(CREATED_KEY_ID, 'resource-1', 'CI runner');
         const serverId = await addManagedHome([existing]);
         await harness.requireUiApproval(serverId, scenario.actionId);
@@ -860,35 +822,23 @@ describe('TeamCredentialExternalApiScreen', () => {
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
         await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull());
-        modalConfirm.mockClear();
+        const confirmation = createDeferred<boolean>();
+        modalConfirm.mockClear().mockReturnValueOnce(confirmation.promise);
         await screen.pressByTestIdAsync(scenario.pressId);
-        await waitForHomeGovernance(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(modalConfirm).toHaveBeenCalledOnce());
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         expect(screen.findHostByTestId(`team-credential-external-revoke:${CREATED_KEY_ID}`)?.props.disabled).toBe(true);
         expect(harness.requestsFor(scenario.mutationPath)).toHaveLength(0);
-        expect(modalConfirm).not.toHaveBeenCalled();
-        const pending = readStoredApproval(serverId);
-        expect(pending.request).toMatchObject({ status: 'open', actionArgs: scenario.expectedInput });
 
-        // Approval Detail replays the deferred mutation through the captured
-        // Home scope. The shared continuation then refreshes projections as
-        // well as applying the exact result, so the genuine list boundary must
-        // describe the committed state rather than reintroduce the revoked key.
+        // The Home list refresh must describe the committed state.
         harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { body: { keys: [] } });
-        await expect(decideApprovalAsInbox(serverId, pending.id, 'approve')).resolves.toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
+        await act(async () => confirmation.resolve(true));
 
         await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).toBeNull());
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).toBeNull());
-        // Exactly the one replayed effect: the mounted continuation consumed the
-        // settled result and dispatched nothing of its own.
         expect(harness.requestsFor(scenario.mutationPath)).toHaveLength(1);
         expect(harness.requestsFor(scenario.mutationPath)[0]?.input).toMatchObject(scenario.expectedInput);
-        expect(readStoredApproval(serverId).request).toMatchObject({
-            status: 'executed',
-            execution: { ok: true, result: scenario.result },
-        });
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
 
     it('settles an initial resource-list failure and retries before reading keys', async () => {
