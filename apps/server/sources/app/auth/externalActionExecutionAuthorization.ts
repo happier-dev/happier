@@ -1253,7 +1253,11 @@ export function refuseExternalActionExecutionRequest(phase: ExternalActionAuthor
     request: Pick<ExternalActionExecutionRequestProof, 'method' | 'path' | 'onRefusal'>
         | Readonly<{ rpc: typeof RPC_METHODS.DAEMON_DEPLOYMENT_CHILD; onRefusal?: ExternalActionExecutionRequestProof['onRefusal'] }>,
     failure?: ActionExecuteFailure,
-    /** Public catalog ids of the signed root and the requested effect, once both are verified. */
+    /**
+     * Public catalog ids for attribution: rootActionId comes from the verified authorization token's binding;
+     * effectActionId is the caller-supplied effect header, only schema-parsed (bounded catalog id shape) and not
+     * yet covered by the machine-signature check. Neither carries tokens, inputs or content.
+     */
     actionIds?: Readonly<{ rootActionId: string; effectActionId: string }>,
 ): null {
     warn({ module: 'external-action-authorization-refusal', phase,
