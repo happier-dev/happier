@@ -754,7 +754,8 @@ describe('own-server installed host acquisition', () => {
                 try {
                     expect(value.env.DATABASE_URL).toBe('postgres://100.64.0.7:25432');
                     expect(value.referenceAddresses).toEqual([{ machineId: 'machine', installationId: 'installation',
-                        phase: 'runtime', name: 'DATABASE_URL', source: binding.source, address: 'postgres://100.64.0.7:25432' }]);
+                        phase: 'runtime', name: 'DATABASE_URL', source: binding.source, address: 'postgres://100.64.0.7:25432',
+                        route: { kind: 'privateNetwork', networkIdentity: 'tailnet-exact' } }]);
                 } finally { value.dispose(); }
                 const readsBeforeDns = machineHttp.mock.calls.length;
                 expect(await acquired.secrets.resolveNonSecret!({ kind: 'reference', environmentId: 'environment',
