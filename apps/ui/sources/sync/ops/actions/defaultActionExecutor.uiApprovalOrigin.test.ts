@@ -298,6 +298,33 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(received).toEqual([actionId, 'approval.request.create']);
     });
 
+    it('opens one review of the exact Install updates plan when the receiving Machine refuses it for review', async () => {
+        const actionId = 'machines.setup.updates.apply' as const;
+        const machineId = 'updates-machine';
+        const homeId = 'srv_updates_review';
+        const serverId = await harness.addHome({ name: 'Updates Home', serverUrl: 'https://updates-review.test', accountId: 'alice',
+            serverIdentityId: homeId, currentAccount: true });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId });
+        const input = getActionSpec(actionId).inputSchema.parse({ homeId, machineId, scope: 'all',
+            plan: { v: 1, basis: { kind: 'updates', machineId, scope: 'all' }, steps: [], nativeFacts: [], planDigest: 'b'.repeat(64) } });
+        const received: string[] = [];
+        // The Machine has no presenter for "Ask each time", so it refuses before any password prompt or effect.
+        harness.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            received.push(actionId);
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' } }) };
+        } });
+        const result = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', serverId });
+        expect(result, JSON.stringify({ result, received })).toMatchObject({ ok: true,
+            result: { kind: 'approval_request_created', actionId } });
+        // One dispatch, no effect, and one open review of exactly the refused plan.
+        expect(received).toEqual([actionId]);
+        const artifactId = (result as { result: { artifactId: string } }).result.artifactId;
+        expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')))
+            .toMatchObject({ status: 'open', actionId, actionArgs: input });
+    });
+
     it('executes the real Project trust mutation once after accepting its Ask confirmation', async () => {
         const actionId = 'projects.trust.revoke' as const;
         const serverId = await harness.addHome({ name: 'Trust Home', serverUrl: 'https://trust-origin.test', accountId: 'alice' });

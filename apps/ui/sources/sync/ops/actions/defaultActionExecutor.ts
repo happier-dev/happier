@@ -5041,7 +5041,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         : { coverage: 'unavailable', addresses: [], error: result.errorCode };
     },
     // A genuine present-user native invocation has one installed Action policy
-    // and approval owner. Do not create a second local Ask before its relay.
+    // and approval owner. Do not create a second local Ask before its relay; a
+    // receiving Machine that refuses for want of a presenter gets the same one review.
     executeNativeManagedAction: async (actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow = false,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>) => {
       if (!accountContext) return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -5051,8 +5052,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (deps.isActionEnabled && !deps.isActionEnabled(actionId, resolvedContext)) {
         return { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
       }
-      return await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
-        context: resolvedContext, confirmInFlow, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) });
+      return await openPresentUserReviewForRefusal(actionId, input, resolvedContext,
+        await executeManagedMachineNativeAction({ account: accountContext, actionId, input,
+          context: resolvedContext, confirmInFlow, retainedMachine, ...(context?.signal ? { signal: context.signal } : {}) }),
+        (requestedActionId, actionInput) => executor.execute(requestedActionId, actionInput, resolvedContext));
     },
     readWidgetInputDescriptor: async request => {
       const port = readWidgetActionSurfacePortV1(widgetInputDeps, request.ref.surface);
