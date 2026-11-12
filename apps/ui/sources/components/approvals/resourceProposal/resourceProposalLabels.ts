@@ -6,6 +6,11 @@ import type { ResourceProposalModel } from './readResourceProposalApproval';
 
 import type { ResourceProposalController } from './useResourceProposalCheck';
 
+export function readResourceProposalTitle(model: ResourceProposalModel): string {
+  return t(model.kind === 'processes' ? 'resourceProposal.title.processes'
+    : model.retry ? 'resourceProposal.title.retry' : 'resourceProposal.title.storage');
+}
+
 /** The card's title and the decision labels the existing approval footers take (lab `ra` A2/A3/A4). */
 export function resolveResourceProposalLabels(
   proposal: ResourceProposalController,
@@ -17,7 +22,7 @@ export function resolveResourceProposalLabels(
   const { model, selectedCount } = proposal;
   if (model.kind === 'processes') {
     return {
-      title: t('resourceProposal.title.processes'),
+      title: readResourceProposalTitle(model),
       approve: model.actionId === 'machines.processes.kill'
         ? t('machineProcesses.kill.confirmTree', { count: selectedCount })
         : model.actionId === 'machines.processes.leftBehind.cleanUp'
@@ -27,9 +32,7 @@ export function resolveResourceProposalLabels(
     };
   }
   return {
-    title: model.retry
-      ? t('resourceProposal.title.retry')
-      : t('resourceProposal.title.storage'),
+    title: readResourceProposalTitle(model),
     approve: model.storageMode === 'delete'
       ? t('machineStorage.review.deleteForGood', { count: selectedCount })
       : model.emptyAfter

@@ -95,8 +95,9 @@ export function initialResourceProposalSelection(
 }
 
 export function readResourceProposalCheckFacts(
-  check: ResourceProposalCheck,
+  check: ResourceProposalCheck | null,
 ): ReadonlyMap<string, ResourceProposalItemFacts> | null {
+  if (!check) return null;
   if (check.kind === 'ready') return check.facts;
   if (check.kind === 'checking') return check.previous;
   return null;
@@ -104,7 +105,7 @@ export function readResourceProposalCheckFacts(
 
 export function describeResourceProposalRows(
   model: ResourceProposalModel,
-  check: ResourceProposalCheck,
+  check: ResourceProposalCheck | null,
   selection: ResourceProposalSelection,
   confirmedKeep: ReadonlySet<string>,
 ): readonly ResourceProposalRow[] {

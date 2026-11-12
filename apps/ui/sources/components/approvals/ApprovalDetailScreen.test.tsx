@@ -928,6 +928,16 @@ function daemonDecisions() {
   return rpcRequests.filter(request => request.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`));
 }
 
+function expectSignedTargetDecision(artifactId: string, decision: 'approve' | 'reject', originServerId: string) {
+  expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([
+    expect.objectContaining({ serverId: account.serverId, input: expect.objectContaining({
+      target: { kind: 'machine', machineId: 'machine-exact' },
+      input: { artifactId, decision, serverIdentityId: 'srv_approval_home_a', originServerId },
+    }) }),
+  ]);
+  expect(daemonDecisions()).toEqual([]);
+}
+
 function expectDaemonDecision(artifactId: string, decision: 'approve' | 'reject', originServerId: string) {
   expect(daemonDecisions()).toEqual([expect.objectContaining({ method: `machine-exact:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`,
     params: { artifactId, decision, serverIdentityId: 'srv_approval_home_a', originServerId } })]);
@@ -936,8 +946,7 @@ function expectDaemonDecision(artifactId: string, decision: 'approve' | 'reject'
 }
 
 function clientExecutionEffects() {
-  return [...rpcRequests.filter(request => !request.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`)),
-    ...homes.requestsFor('/v1/actions/approval.request.decide')];
+  return rpcRequests.filter(request => !request.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`));
 }
 
 function exactApprovalMachine(accountId = 'account-1') {
@@ -1761,7 +1770,7 @@ describe('ApprovalDetailScreen', () => {
     });
     // This retained live-only proposal has no surviving invocation to publish it.
     expect(decodedArtifactWrite(1).body).toMatchObject({ status: 'failed', execution: {
-      ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
       details: { reason: 'live_invocation_unavailable' },
     } });
     expect(readRenderedText(screen)).toContain('approvals.status.failed');
@@ -1930,6 +1939,53 @@ describe('ApprovalDetailScreen', () => {
     });
   });
 
+  it.each(['approve', 'reject'] as const)('sends a guest %s decision as the approving Account to another Account’s Machine', async decision => {
+    currentArtifact = await createApiTargetActionApprovalArtifact();
+    await prepareApprovalFixture();
+    // The Home HTTP boundary mints the guest's decision root and the remote
+    // boundary opens its real requester carrier; neither substitutes owner credentials.
+    let delivered = false;
+    const boundary = await answerExternalActionAccountForHome(homes, account.serverId, {
+      machineId: 'machine-exact', custodian: { accountId: 'machine-owner-account', displayName: 'Owner' },
+      actionId: 'approval.request.decide', tokenEpoch: 0, requesterInvocation: 'credentials',
+      execute: (input, context) => {
+        expect(input).toEqual({ artifactId: currentArtifact.id, decision,
+          serverIdentityId: 'srv_approval_home_a', originServerId: 'srv_approval_home_a' });
+        expect(context.requesterAccountContext.token === homes.findByServerUrl('https://provider-settings-account.test')!.token).toBe(true);
+        delivered = true;
+        commitRemoteArtifact(remoteArtifact);
+        return { status: decision === 'approve' ? 'executed' : 'rejected' };
+      },
+    });
+    await account.publishMachines(account.serverId, [createMachineFixture({ ...boundary.machine,
+      metadata: createMachineFixture().metadata, daemonState: null })]);
+    const request = TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body));
+    const settled = TargetActionApprovalRequestV1Schema.parse({ ...request,
+      status: decision === 'approve' ? 'executed' : 'rejected', updatedAtMs: 3,
+      decision: { kind: decision, decidedAtMs: 2 },
+      ...(decision === 'approve' ? { execution: { executedAtMs: 3, ok: true, result: {} } } : {}),
+    });
+    remoteArtifact = { ...currentArtifact, header: buildTargetActionApprovalArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+
+    await waitForHomeGovernance(() => {
+      expect(screen.findByTestId(`approvals.${decision}`)).not.toBeNull();
+      expect(screen.findByTestId(`approvals.${decision}`)?.props.disabled).toBe(false);
+    });
+
+    await screen.pressByTestIdAsync(`approvals.${decision}`);
+
+    expect(delivered).toBe(true);
+    expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+    expect(daemonDecisions()).toEqual([]);
+    expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody(currentArtifact.id)!)).toMatchObject({
+      status: settled.status, decision: { kind: decision },
+    });
+    expect(screen.findByTestId('approvals.actions')).toBeNull();
+    expect(artifactWrites()).toHaveLength(0);
+  });
+
   it('routes an API target-action approval to its stamped daemon instead of mutating the Artifact locally', async () => {
     currentArtifact = await createApiTargetActionApprovalArtifact();
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
@@ -1939,7 +1995,7 @@ describe('ApprovalDetailScreen', () => {
 
     await screen.pressByTestIdAsync('approvals.approve');
 
-    expectDaemonDecision('target-api-artifact-1', 'approve', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
+    expectSignedTargetDecision('target-api-artifact-1', 'approve', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
     expect(artifactWrites()).toHaveLength(0);
     expect(clientExecutionEffects()).toHaveLength(0);
   });
@@ -1953,7 +2009,7 @@ describe('ApprovalDetailScreen', () => {
 
     await screen.pressByTestIdAsync('approvals.reject');
 
-    expectDaemonDecision('target-api-artifact-1', 'reject', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
+    expectSignedTargetDecision('target-api-artifact-1', 'reject', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
     expect(artifactWrites()).toHaveLength(0);
     expect(clientExecutionEffects()).toHaveLength(0);
   });
@@ -2005,7 +2061,7 @@ describe('ApprovalDetailScreen', () => {
 
     await screen.pressByTestIdAsync('approvals.approve');
 
-    expectDaemonDecision('target-api-artifact-1', 'approve', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
+    expectSignedTargetDecision('target-api-artifact-1', 'approve', TargetActionApprovalRequestV1Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1!.serverId);
     expect(artifactReads('target-api-artifact-1').length).toBeGreaterThan(1);
     expect(readRenderedText(screen)).toContain('approvals.status.approved');
     expect(screen.findByTestId('approvals.actions')).toBeNull();
@@ -2426,7 +2482,7 @@ describe('ApprovalDetailScreen', () => {
     expect(artifactReads('target-artifact-1').length).toBeGreaterThan(1);
     const receipt = storage.getState().artifacts['target-artifact-1'];
     expect(JSON.parse(receipt!.body!)).toMatchObject({ ...JSON.parse(authoritative.body), status: 'failed', updatedAtMs: expect.any(Number),
-      execution: { ok: false, effectAttempted: false, errorCode: 'approval_stale',
+      execution: { ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
         details: { reason: 'live_invocation_unavailable' } } });
     expect(screen.findByTestId('approvals.approve')).toBeNull();
     expect(clientExecutionEffects()).toHaveLength(0);

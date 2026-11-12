@@ -39,6 +39,7 @@ import type {
   ResourceProposalModel,
 } from './readResourceProposalApproval';
 import {
+  describeResourceProposalRows,
   resolveResourceProposalOutcomes,
   resourceProposalChangedCount,
   resourceProposalSelectAllState,
@@ -144,8 +145,8 @@ const ProposalRow = React.memo(function ProposalRow(
     arrive: boolean;
     compact: boolean;
     showDivider: boolean;
-    onToggle: (key: string) => void;
-    onConfirmKeep: (key: string) => void;
+    onToggle?: (key: string) => void;
+    onConfirmKeep?: (key: string) => void;
     /** Settled: invoke the Action again for this skipped item (a new UI invocation, re-checked). */
     onRetry?: ((key: string) => unknown) | null;
     /** Stopped: the process owner's Start again. */
@@ -217,7 +218,7 @@ const ProposalRow = React.memo(function ProposalRow(
       setRevealLoss((value) => !value);
       return;
     }
-    props.onToggle(row.item.key);
+    props.onToggle?.(row.item.key);
   };
   let lead: React.ReactNode = <View style={styles.leadSpace} />;
   if (props.outcome) {
@@ -349,7 +350,7 @@ const ProposalRow = React.memo(function ProposalRow(
                     size="small"
                     display="secondary"
                     title={t('resourceProposal.includeAnyway')}
-                    onPress={() => props.onConfirmKeep(row.item.key)}
+                    onPress={() => props.onConfirmKeep?.(row.item.key)}
                   />
                 </View>
               ) : null}
@@ -522,6 +523,47 @@ function pileNote(controller: ResourceProposalController): string | null {
   return null;
 }
 
+/** The admitted operands, shared with immediate reviews that have no retained selection controller. */
+export function ResourceProposalOperandFacts(props: Readonly<{ model: ResourceProposalModel; testID: string }>) {
+  const layout = useMachineTabCompactLayout();
+  const rows = React.useMemo(() => describeResourceProposalRows(props.model, null, new Set<string>(), new Set<string>()), [props.model]);
+  return <View testID={props.testID} style={styles.body} onLayout={layout.onLayout}>
+    <ResourceProposalItemRows model={props.model} rows={rows} compact={layout.compact} showNotIncluded />
+  </View>;
+}
+
+function ResourceProposalItemRows(props: Readonly<{
+  model: ResourceProposalModel;
+  rows: readonly ResourceProposalRow[];
+  compact: boolean;
+  showNotIncluded: boolean;
+  outcomes?: ReadonlyMap<string, ResourceProposalOutcome> | null;
+  retried?: ReadonlyMap<string, ResourceProposalOutcome>;
+  controls?: Pick<React.ComponentProps<typeof ProposalRow>,
+    'interactive' | 'arrive' | 'onToggle' | 'onConfirmKeep' | 'onRetry' | 'onStartAgain'> & Readonly<{ startedAgain: ReadonlySet<string> }>;
+}>) {
+  const { theme } = useUnistyles();
+  const { model, rows, compact, controls } = props;
+  return <>
+    <View accessibilityRole="list">
+      {rows.map((row, index) => <ProposalRow key={row.item.key} kind={model.kind} actionId={model.actionId}
+        row={row} index={index} outcome={props.retried?.get(row.item.key) ?? props.outcomes?.get(row.item.key) ?? null}
+        interactive={controls?.interactive ?? false} arrive={controls?.arrive ?? false} compact={compact}
+        showDivider={index < rows.length - 1 || props.showNotIncluded && model.notIncluded.length > 0}
+        onToggle={controls?.onToggle} onConfirmKeep={controls?.onConfirmKeep} onRetry={controls?.onRetry}
+        onStartAgain={controls?.onStartAgain} startedAgain={controls?.startedAgain.has(row.item.key)} />)}
+    </View>
+    {props.showNotIncluded && model.notIncluded.length > 0 ? <View>
+      <View style={styles.leftOutHead}>
+        <Icon name="lock" size={13} color={theme.colors.text.secondary} />
+        <Text style={styles.leftOutTitle}>{t('resourceProposal.notIncluded')}</Text>
+      </View>
+      {model.notIncluded.map((item, index) => <NotIncludedRow key={item.itemId} item={item} compact={compact}
+        showDivider={index < model.notIncluded.length - 1} />)}
+    </View> : null}
+  </>;
+}
+
 /**
  * The proposal card's body (plan 60 AGW-6/7/8, lab `ra` A2/A3/A4/A7): the decision itself — items with
  * reason, verdict and the size each actually gives back, the selection, the volume's ghost and the
@@ -690,47 +732,10 @@ export const ResourceProposalBody = React.memo(function ResourceProposalBody(
           {goal}
         </Text>
       ) : null}
-      <View accessibilityRole="list">
-        {visibleRows.map((row, index) => (
-          <ProposalRow
-            key={row.item.key}
-            kind={model.kind}
-            actionId={model.actionId}
-            row={row}
-            index={index}
-            outcome={controller.retried.get(row.item.key) ?? outcomes?.get(row.item.key) ?? null}
-            interactive={interactive}
-            arrive={props.arrive}
-            compact={compact}
-            showDivider={
-              index < visibleRows.length - 1 || model.notIncluded.length > 0
-            }
-            onToggle={controller.toggle}
-            onConfirmKeep={controller.confirmKeep}
-            onRetry={controller.retryItem}
-            onStartAgain={controller.startAgain}
-            startedAgain={controller.startedAgain.has(row.item.key)}
-          />
-        ))}
-      </View>
-      {model.notIncluded.length > 0 && display.kind === 'ask' ? (
-        <View>
-          <View style={styles.leftOutHead}>
-            <Icon name="lock" size={13} color={theme.colors.text.secondary} />
-            <Text style={styles.leftOutTitle}>
-              {t('resourceProposal.notIncluded')}
-            </Text>
-          </View>
-          {model.notIncluded.map((item, index) => (
-            <NotIncludedRow
-              key={item.itemId}
-              item={item}
-              compact={compact}
-              showDivider={index < model.notIncluded.length - 1}
-            />
-          ))}
-        </View>
-      ) : null}
+      <ResourceProposalItemRows model={model} rows={visibleRows} compact={compact}
+        showNotIncluded={display.kind === 'ask'} outcomes={outcomes} retried={controller.retried}
+        controls={{ interactive, arrive: props.arrive, onToggle: controller.toggle, onConfirmKeep: controller.confirmKeep,
+          onRetry: controller.retryItem, onStartAgain: controller.startAgain, startedAgain: controller.startedAgain }} />
       {model.kind === 'processes' && display.kind === 'ask' ? (
         <ResourceProposalProcessesContext machineId={model.machineId} serverId={model.serverId}
           proposedRefs={new Set(model.items.map((item) => item.key))} selectedBytes={controller.selectedBytes} />

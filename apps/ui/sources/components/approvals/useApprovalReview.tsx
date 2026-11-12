@@ -4,9 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
-import { approvalArtifactBodyMatchesHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
-import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ApprovalRequesterConfirmationV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readDiscussionDraftApproval } from './discussionDraftApproval';
 import { WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -15,17 +14,12 @@ import { ApprovalDecisionBar } from './ApprovalDecisionBar';
 import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
-import { sync } from '@/sync/sync';
 import { useApprovalArtifact } from './useApprovalArtifact';
-import { captureActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import {
   storage,
   useServerScopedMachine,
   useServerScopedMachineLabel,
 } from '@/sync/domains/state/storage';
-import {
-  replayApprovalRequestAtExactDaemon,
-} from '@/sync/ops/actions/defaultActionExecutor';
 import { readDisplayMachineIdForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
@@ -39,10 +33,9 @@ import { readApprovalOperationCredentialUses } from './approvalRequesterThreadSt
 import { isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
 import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow } from './BrowserOpenOperationStatus';
 import { ActionApprovalFieldsCard, ApprovalTechnicalDetails } from './ActionApprovalFieldsCard';
-import { DeploymentReviewApprovalFacts, readDeploymentReviewApproval, useDeploymentReviewDecision } from './DeploymentReviewApprovalFacts';
-import { ApprovalIncludedSteps } from './ApprovalIncludedSteps';
+import { ApprovalReviewFacts } from './ApprovalReviewFacts';
+import { readDeploymentReviewApproval, useDeploymentReviewDecision } from './DeploymentReviewApprovalFacts';
 import {
-  ProjectCommandApprovalFacts,
   describeProjectCommandApprovalDecisions,
   readProjectCommandApproval,
   useProjectCommandApprovalTitle,
@@ -51,12 +44,10 @@ import { readApprovalArtifactTitleInput, useApprovalRequestTitle } from './appro
 import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from './approvalStatusLabel';
 import { WorkspaceSyncConflictDetailsView } from '@/components/workspaces/sync/WorkspaceSyncConflictDetailsView';
 import { describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from './approvalFieldValues';
-import { ApprovalPreviewCard } from './ApprovalPreviewCard';
+import { ApprovalPreviewSummary } from './ApprovalPreviewCard';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
-import { ApprovalVisualPreview } from './ApprovalVisualPreview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
-import { ComputerActionApprovalCard, readComputerActLine } from './ComputerActionApprovalCard';
-import { ComputerApprovalCapture } from './ComputerApprovalCapture';
+import { readComputerActLine } from './ComputerActionApprovalCard';
 import { CapabilityEnableDetailsDecisions } from '@/components/sessions/capabilities/CapabilityEnableApproval';
 import { ResourceProposalBody } from './resourceProposal/ResourceProposalBody';
 import { resolveResourceProposalLabels } from './resourceProposal/resourceProposalLabels';
@@ -64,7 +55,6 @@ import { useResourceProposalCheck } from './resourceProposal/useResourceProposal
 import { ConfidentialSecretApproval } from './ConfidentialSecretApproval';
 import { readConfidentialFillSettlement } from './confidentialSecretApprovalModel';
 import { useActionApprovalReview, readApprovalCannotRunReason } from './actionApprovalReview';
-import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
 import { useEnvironmentBindingApprovalChoice } from './useEnvironmentBindingApprovalChoice';
 import { openComputerTargetPickerForSession } from '@/components/computer/openComputerTargetPickerForSession';
@@ -417,64 +407,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       try {
         decisionInFlightRef.current = true;
         setIsDeciding(true);
-        if (parsed.kind === 'target' && parsed.request.requesterConfirmation) {
-          // Requester recipients have View; the existing Action owner carries
-          // their present-person decision to the original Bot Session.
-          if (!await decideActionApproval(decision)) throw new Error('approval_decision_failed');
+        if (parsed.kind === 'target') {
+          // The Action owner carries the deciding Account's signed authority to
+          // the exact executor, including on another Account's Machine.
+          if (!await decideActionApproval(decision)) return;
           setRecordedDecision(decision);
-        } else if (parsed.kind === 'target') {
-          if (parsed.request.replayPlacement !== undefined && decision !== 'cancel') {
-            if (!replayRoute) throw new HappyError('approval_origin_unavailable', false, { code: 'approval_origin_unavailable' });
-            let replay: unknown;
-            let replayError: unknown;
-            try {
-              replay = await replayApprovalRequestAtExactDaemon({
-                artifactId: props.artifactId,
-                decision,
-                executionTarget: { ...replayRoute, machineId: parsed.request.replayPlacement.machineId },
-              });
-            } catch (error) { replayError = error; }
-            // A failed/lost reply can follow a committed decision. Read once
-            // through the existing exact-Home Artifact owner, never replay it.
-            const settledArtifact = await refreshArtifact();
-            const settled = settledArtifact && typeof settledArtifact.body === 'string'
-              ? approvalArtifactBodyMatchesHeaderV1(settledArtifact.header ?? {}, settledArtifact.body) : null;
-            if (settled?.family === 'target_action'
-              && settled.request.qualifiedActionId === parsed.request.qualifiedActionId
-              && settled.request.subjectFingerprint === parsed.request.subjectFingerprint
-              && settled.request.decision?.kind === decision) {
-              if (settled.request.execution) {
-                assertApprovalExecutionSucceeded(settled.request.execution);
-                return;
-              }
-              if (settled.request.status === 'rejected') return;
-            }
-            if (replayError !== undefined) throw replayError;
-            if (replay !== null
-              && typeof replay === 'object'
-              && 'ok' in replay
-              && replay.ok === false) {
-              const errorCode = 'errorCode' in replay && typeof replay.errorCode === 'string'
-                ? replay.errorCode
-                : 'approval_decision_failed';
-              throw new HappyError(errorCode, false, { code: errorCode });
-            }
-            return;
-          }
-          if (decision !== 'cancel') {
-            if (!await decideActionApproval(decision)) throw new Error('approval_decision_failed');
-            setRecordedDecision(decision);
-            return;
-          }
-          const now = Date.now();
-          const nextRequest: TargetActionApprovalRequestV1 = { ...parsed.request, status: 'canceled', updatedAtMs: now };
-          const validated = TargetActionApprovalRequestV1Schema.parse(nextRequest);
-          const header = buildTargetActionApprovalArtifactHeaderV1(validated);
-          if (requestedServerId) {
-            const context = await captureActionAccountContext(requestedServerId);
-            try { await context.updateArtifact(props.artifactId, header, JSON.stringify(validated)); }
-            finally { context.dispose(); }
-          } else { await sync.updateArtifactWithHeader(props.artifactId, header, JSON.stringify(validated)); }
         } else if (parsed.kind === 'host_action') {
           if (!await decideActionApproval(decision)) throw new Error('approval_decision_failed');
           setRecordedDecision(decision);
@@ -504,8 +441,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       } catch (err) {
         const isStaleDecision = isApprovalDecisionStale(err);
         const isVersionConflict = !isStaleDecision && err instanceof Error && err.message.includes('modified by another client');
-        if (isVersionConflict || isStaleDecision || (err instanceof ApprovalExecutionError
-          && (parsed.kind !== 'target' || parsed.request.requesterConfirmation))) {
+        if (parsed.kind === 'target' || isVersionConflict || isStaleDecision || err instanceof ApprovalExecutionError) {
           try {
             await refreshArtifact();
           } catch {
@@ -575,8 +511,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // The one title rule shared with the Inbox row: no raw ids, a disclosure after the first line.
   const actionValue = requestTitle.actionTitle ?? requestTitle.title;
   const previewSummary = parsed.kind === 'built_in' ? readApprovalPreviewSummary(parsed.request.preview, parsed.request) : null;
-  // A Session visual is approved by looking at it, not by reading its arguments.
-  const visualPreview = review?.visualPreview ?? null;
   // The Action row names the Action only when the title has not already said it.
   const showActionRow = actionValue !== requestTitle.title;
 
@@ -593,13 +527,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       {/* A family presenter (deploy, Computer) says what is asked; the Action's generic summary would lead with agent-facing text. */}
       {parsed.kind === 'built_in' && previewSummary && !deploymentDecision && !computerAction ? (
         <SectionContentRow testID="approvals.preview">
-          <ApprovalPreviewCard preview={parsed.request.preview} request={parsed.request} serverId={approvalServerId} />
+          <ApprovalPreviewSummary preview={parsed.request.preview} request={parsed.request} serverId={approvalServerId} />
         </SectionContentRow>
-      ) : null}
-      {/* The summary says what will appear and where; the visual follows it. */}
-      {visualPreview ? (
-        <ApprovalVisualPreview preview={visualPreview} artifactId={props.artifactId}
-          serverId={approvalServerId ?? null} testID="approvals.visual" />
       ) : null}
       {showActionRow ? (
         <Item
@@ -703,60 +632,25 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // What is decided, in the family's own presenter; both chromes show it whole.
   const sections = (
     <>
-        {deploymentReview ? (
-          <DeploymentReviewApprovalFacts approval={deploymentReview} serverId={approvalServerId} testID="approvals.deployment-review"
-            decided={parsed.request.status !== 'open' || answeredWhileOpen !== null} />
-        ) : null}
-
-        {computerAction ? (
-          <ItemGroup title={t('computerUse.approval.sectionTitle')}>
-            <SectionContentRow>
-              <ComputerActionApprovalCard
-                presentation={computerAction}
-                titled
-                serverId={approvalServerId}
-                onChooseTarget={chooseComputerTarget}
-                media={<ComputerApprovalCapture presentation={computerAction} serverId={approvalServerId} testID="approvals.computer-action-crop" />}
-              />
-            </SectionContentRow>
-          </ItemGroup>
-        ) : null}
-
-        {handoffTargetPresentation ? (
-          <ItemGroup title={t('sessionHandoff.targetApproval.title')}>
-            <SectionContentRow>
-              <HandoffTargetConsequencesCard presentation={handoffTargetPresentation} />
-            </SectionContentRow>
-          </ItemGroup>
-        ) : null}
-
-        {proposal && proposalLabels ? (
-          // The docked pile is the sheet's last row: the sheet clips it to its own rounded corners.
-          <ItemGroup title={proposalLabels.title} clipContent>
+        {parsed.kind === 'built_in' ? <ApprovalReviewFacts
+          actionId={parsed.request.actionId} actionArgs={parsed.request.actionArgs} preview={parsed.request.preview}
+          status={parsed.request.status} serverId={approvalServerId} testID="approvals" summaryPlacement="host"
+          artifactId={props.artifactId}
+          decided={parsed.request.status !== 'open' || answeredWhileOpen !== null}
+          computer={computerAction} onChooseComputerTarget={chooseComputerTarget}
+          handoffTarget={handoffTargetPresentation ? <ItemGroup title={t('sessionHandoff.targetApproval.title')}><SectionContentRow>
+            <HandoffTargetConsequencesCard presentation={handoffTargetPresentation} />
+          </SectionContentRow></ItemGroup> : null}
+          resourceProposal={proposal && proposalLabels ? <ItemGroup title={proposalLabels.title} clipContent>
             <ResourceProposalBody controller={proposal} decisionsAvailable={!approvalRouteUnavailable}
-              arrive={false} onApproveKeepingUndo={() => { void decide('approve', { keepUndo: true }); }}
-              testID="approvals.resource-proposal" />
-          </ItemGroup>
-        ) : projectCommand ? (
-          <ItemGroup title={t('approvals.details')}>
-            <SectionContentRow>
-              <ProjectCommandApprovalFacts presentation={projectCommand} testID="approvals.project-command" />
-            </SectionContentRow>
-          </ItemGroup>
-        ) : docEditProposal ? (
-          <ItemGroup title={t('approvals.details')}>
-            <SectionContentRow>
-              <ArtifactEditProposalReview proposal={docEditProposal} testID="approvals.doc-edit-proposal" />
-            </SectionContentRow>
-          </ItemGroup>
-        ) : deploymentReview ? null
-          // A Computer ask's card already says what, where and what it sends, open or settled; its operands are not a second list.
-          : computerAction ? null
-          : shownActionFields && !confidentialAction ? (
-          <ActionApprovalFieldsCard presentation={shownActionFields} request={parsed?.kind === 'built_in' ? parsed.request : undefined} anatomy="page" serverId={approvalServerId}
-            homeIdentity={approvalHomeKnown ? undefined : approvalOriginHomeId || undefined}
-            failureTechnicalDetails={failureCodeInDetails ? failureTechnicalDetails : undefined} />
-        ) : null}
+              arrive={false} onApproveKeepingUndo={() => { void decide('approve', { keepUndo: true }); }} testID="approvals.resource-proposal" />
+          </ItemGroup> : null}
+          fields={shownActionFields && !confidentialAction ? { presentation: shownActionFields, request: parsed.request,
+            anatomy: 'page', serverId: approvalServerId, homeIdentity: approvalHomeKnown ? undefined : approvalOriginHomeId || undefined,
+            failureTechnicalDetails: failureCodeInDetails ? failureTechnicalDetails : undefined } : null}
+        /> : shownActionFields && !confidentialAction ? <ActionApprovalFieldsCard presentation={shownActionFields} anatomy="page"
+          serverId={approvalServerId} homeIdentity={approvalHomeKnown ? undefined : approvalOriginHomeId || undefined}
+          failureTechnicalDetails={failureCodeInDetails ? failureTechnicalDetails : undefined} /> : null}
 
         {parsed.kind === 'host_action' && parsed.request.proposalPreview.length > 0 ? (
           <ItemGroup
@@ -777,10 +671,6 @@ export function useApprovalReview(props: ApprovalReviewInput) {
           </ItemGroup>
         ) : null}
 
-        {/* What else this approval lets run follows the request's own facts, before the decision. */}
-        {parsed.kind === 'built_in' ? (
-          <ApprovalIncludedSteps preview={parsed.request.preview} serverId={approvalServerId} testID="approvals.included-steps" />
-        ) : null}
     </>
   );
   const workspaceSyncReview = approvedWorkspaceSyncResolution ? (

@@ -22,12 +22,25 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 
 export const ApprovalPreviewCard = React.memo(function ApprovalPreviewCard(props: Readonly<{ preview: unknown; request?: ApprovalSummaryInput; serverId?: string | null }>) {
+    return <>
+        <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
+        <ApprovalPreviewSummary {...props} />
+        <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
+    </>;
+});
+
+/** Hosts may place this sentence in their existing Request section while family facts stay in the shared body. */
+export const ApprovalPreviewSummary = React.memo(function ApprovalPreviewSummary(props: Readonly<{ preview: unknown; request?: ApprovalSummaryInput; serverId?: string | null }>) {
     const language = usePreferredLanguage();
     const summary = React.useMemo(() => readApprovalPreviewSummary(props.preview, props.request), [props.preview, props.request, language]);
     if (props.request?.actionId === 'scm.diffSummary.result.clear') return <ClearApprovalPreview {...props} request={props.request} />;
+    return <ApprovalPreviewText summary={summary} />;
+});
+
+/** These family consequences remain visible even when the host already renders the review's sentence. */
+export const ApprovalPreviewFacts = React.memo(function ApprovalPreviewFacts(props: Readonly<{ request?: ApprovalSummaryInput; serverId?: string | null }>) {
     return <>
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
-        <ApprovalPreviewText summary={summary} />
         <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
     </>;
 });

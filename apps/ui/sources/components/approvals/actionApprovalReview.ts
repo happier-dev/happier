@@ -82,6 +82,12 @@ export function useActionApprovalReview(request: ApprovalRequest | null): Action
     return request ? readActionApprovalReview(request, retained) : null;
 }
 
+/** The doc-edit family reads one resolved proposal for retained and immediate review. */
+export function readApprovalDocEditProposal(request: Pick<ApprovalRequest, 'actionId' | 'actionArgs'>): DocEditProposeResolvedInputV1 | null {
+    const parsed = request.actionId === 'doc.edit.propose' ? DocEditProposeResolvedInputV1Schema.safeParse(request.actionArgs) : null;
+    return parsed?.success ? parsed.data : null;
+}
+
 /** Shared presentation only; the approval decision Action still owns execution admission. */
 export function readActionApprovalReview(request: ApprovalRequest, retainedOperation: ActionOperationProjection | null = null): ActionApprovalReview {
     const admission = request.status === 'open' ? resolveReviewApproveAdmission(request, retainedOperation) : null;
@@ -90,8 +96,7 @@ export function readActionApprovalReview(request: ApprovalRequest, retainedOpera
     const confidentialInputs = readConfidentialActionInputsApproval(request);
     const capabilityEnable = readCapabilityEnableApproval(request);
     const promptDocUpdate = readPromptDocUpdateApproval(request);
-    const proposedEdit = request.actionId === 'doc.edit.propose' ? DocEditProposeResolvedInputV1Schema.safeParse(request.actionArgs) : null;
-    const docEditProposal = proposedEdit?.success ? proposedEdit.data : null;
+    const docEditProposal = readApprovalDocEditProposal(request);
     const resourceProposal = readResourceProposalApproval(request);
     const visualPreview = resolveApprovalVisualPreview(request);
     const actionId = ActionIdSchema.safeParse(request.actionId);
