@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createLumeNativeClient } from './nativeClient.js';
 import { resolveLumeBootstrap } from './bootstrap.js';
 
@@ -29,6 +30,22 @@ function execBoundary(run: ExecService['run']): ExecService {
 }
 
 describe('Lume ordinary SSH carrier', () => {
+  it('retains an authored key-probe failure without attempting password setup', async () => {
+    const failure = new PluginError({ code: 'credential_unavailable', message: 'Repair the selected SSH credential.',
+      remediation: { kind: 'retry' }, failureCause: { phase: 'machines.managed.bootstrap.retry', errorClass: 'Error', errorCode: 'EACCES', httpStatus: null } });
+    let passwordAttempts = 0;
+    const exec = execBoundary(async request => {
+      if (request.executable.id.localId === 'ssh-keyscan') return result(`192.168.64.7 ${hostKey}\n`);
+      if (request.args?.at(-1) === 'true') throw failure;
+      passwordAttempts++;
+      return result();
+    });
+    const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async () => Response.json(details) });
+    await expect(resolveLumeBootstrap({ credentials, native, exec, resource, credentialRef,
+      bootstrapPublicKey: 'ssh-ed25519 cHVibGlj' })).rejects.toBe(failure);
+    expect(passwordAttempts).toBe(0);
+  });
+
   it('retains the native macOS capacity cause through bootstrap retry without starting SSH', async () => {
     let effects = 0;
     const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async input => {

@@ -92,7 +92,7 @@ export function createLumeNativeClient(options: { baseUrl: string; fetch?: typeo
             ...(notSent ? { delivery: 'not-sent' as const } : {}),
             ...(route === 'run' ? { nativeCause: { localCause: 'native_route_unavailable' as const } } : {}) };
         };
-      return (init.method ?? 'GET') === 'GET' ? projectMachineProvisionerActionFailure(error, transportFailure) : transportFailure();
+      return projectMachineProvisionerActionFailure(error, transportFailure);
     }
   }
 

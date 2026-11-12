@@ -6,6 +6,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { MachineProvisionersService } from '@happier-dev/plugin-sdk';
 import type { MachineProvisionerBootstrapCarrierV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import type { LumeNativeClient } from './nativeClient.js';
 import { LUME_DEFAULT_LOGIN, LumeResourceV1Schema } from './schemas.js';
@@ -78,7 +79,10 @@ export async function resolveLumeBootstrap(input: Readonly<{
       '-o', 'KbdInteractiveAuthentication=no', '-o', 'IdentitiesOnly=yes', '-i', lease.path, ...target] };
     const proveKey = async () => {
       try { return completed(await input.exec.run({ ...keyRequest, args: [...keyRequest.args, 'true'] }, { signal: input.signal })); }
-      catch { input.signal?.throwIfAborted(); return false; }
+      catch (error) {
+        input.signal?.throwIfAborted();
+        return projectMachineProvisionerActionFailure(error, () => false);
+      }
     };
     if (!await proveKey()) {
       await writeFile(askpass, `#!/bin/sh\nprintf '%s\\n' "$${PASSWORD_ENV}"\n`, { mode: 0o700 });
