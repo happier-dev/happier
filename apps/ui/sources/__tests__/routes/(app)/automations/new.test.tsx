@@ -13,9 +13,11 @@ vi.mock('expo-router', async () => {
     return { ...mock.module, useLocalSearchParams: () => routeParams.current, useGlobalSearchParams: () => routeParams.current };
 });
 
+// Cold transforms of the real route graph belong to fixture collection, before render assertions.
+const { WorkspaceRouteBody } = await import('@/app/(app)/automations/new');
+
 async function redirectFor(params: Record<string, unknown>) {
     routeParams.current = params;
-    const { WorkspaceRouteBody } = await import('@/app/(app)/automations/new');
     const screen = await renderScreen(<WorkspaceRouteBody />);
     return screen.findAll((node) => String(node.type) === 'Redirect')[0]?.props.href;
 }
