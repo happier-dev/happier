@@ -76,4 +76,20 @@ describe('native startup failure cause retention', () => {
       code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
     expect(replay.failureCause).toEqual(issue.failureCause);
   });
+  it.each([
+    ['Authentication required', 'authentication_required'],
+    ['The selected model is unavailable in the native catalog', 'model_selection_required'],
+  ] as const)('refines %s without replacing the native causal evidence', (message, failureReason) => {
+    const failureCause = { phase: 'thread_open' as const, failureReason: 'unclassified_provider_error' as const,
+      providerErrorCode: -32000, providerErrorMessage: 'Native refusal token=synthetic-private-token' };
+    const error = Object.assign(new Error(message), { details: { failureCause } });
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error, occurredAt: 100 });
+    expect(issue.failureCause).toMatchObject({ ...failureCause, failureReason,
+      providerErrorMessage: redactBugReportSensitiveText(failureCause.providerErrorMessage) });
+    expect(JSON.stringify(issue)).not.toContain('synthetic-private-token');
+    const replay = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100, error: {
+      code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause } } });
+    expect(replay.failureCause).toEqual(issue.failureCause);
+  });
+
 });

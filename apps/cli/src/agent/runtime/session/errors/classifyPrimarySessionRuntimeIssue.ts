@@ -55,6 +55,8 @@ export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
   sessionSeq?: number | null;
   cause?: PrimarySessionRuntimeIssueCause | null;
   error?: unknown;
+  /** Protocol failures retain Session provenance when native evidence has no more specific category. */
+  fallbackSource?: 'agent_session_error';
   /** Positive prompt-preparation evidence; runtime startup alone does not establish a dependency failure. */
   preparingPrompt?: boolean;
   /** Known construction or turn phase; native failure evidence takes precedence. */
@@ -655,7 +657,7 @@ export function classifyPrimarySessionRuntimeIssue(
     : input.cause === 'process_exit' && agentProcessExitAfterSwitch
     ? 'agent_process_exit_after_switch'
     : input.cause === 'status_error'
-    ? refineProviderFailureSource(input, causeSourceMap[input.cause])
+    ? refineProviderFailureSource(input, input.fallbackSource ?? causeSourceMap[input.cause])
     : causeSourceMap[input.cause ?? 'unknown'] ?? 'unknown';
   const occurredAt = normalizeNonNegativeInteger(input.occurredAt) ?? Date.now();
   const usageLimit = runtimeAuthUsageLimit ?? (source === 'usage_limit'
@@ -711,8 +713,10 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
     ...(nativeConstructionFailure ? { failureCause: { phase: 'client_start' as const,
       ...(nativeConstructionFailure.failureCauseCode ? { code: nativeConstructionFailure.failureCauseCode } : {}),
+      ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }),
+      ...(failureCause.success ? failureCause.data : {}),
       failureReason: nativeConstructionFailure.failureReason,
-      ...(requestErrorCode === null ? {} : { providerErrorCode: requestErrorCode }) } }
+      ...(nativeFailureMessage === undefined ? {} : { providerErrorMessage: nativeFailureMessage }) } }
       : failureCause.success ? { failureCause: {
       ...(failureCause.data.failureReason === 'unclassified_provider_error' && source === 'agent_session_error'
         && !startupFailureCode ? nativeStartupDetail : {}),
