@@ -1,3 +1,5 @@
+import '@/testkit/async/mockNodeTimers';
+
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, AgentSessionRuntimeEventSchema, buildUsageLimitIssueFingerprint, type AgentSessionRuntimeEvent, type SessionRuntimeIssueV1, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
@@ -41,6 +43,7 @@ describe('native usage-limit recovery composition', () => {
     });
     try {
       await recovery.observeFailure(issue);
+      expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(1_000);
       expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'waiting', nextCheckAtMs: null });
       await vi.advanceTimersByTimeAsync(600_001);
@@ -80,6 +83,7 @@ describe('native usage-limit recovery composition', () => {
     try {
       await recovery.observeFailure(issue);
       expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'waiting', nextCheckAtMs: 2_000 });
+      expect(vi.getTimerCount()).toBe(1);
       await vi.advanceTimersByTimeAsync(1_000);
       expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'paused', nextCheckAtMs: null });
       expect(featureAdmissions).toBe(1);
