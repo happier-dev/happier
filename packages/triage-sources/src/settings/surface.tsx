@@ -56,6 +56,7 @@
  * A source contributes its identity; the page is one.
  */
 
+import { TriageSourceReadFailureDetails } from '../ui/readFailure.js';
 import * as React from 'react';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -516,72 +517,74 @@ export function createTriageSourceSettingsSurface(
               const inline = row.controls.filter((control) => control.id !== 'remove');
               const remove = row.controls.find((control) => control.id === 'remove');
               return (
-                <Item
-                  key={row.key}
-                  title={row.title}
-                  {...(row.status === null ? {} : { subtitle: row.status })}
-                  {...(row.locator === null ? {} : { detail: row.locator })}
-                  tone={row.tone}
-                  expanded={editing}
-                  expandedContent={editing && DraftEditor !== undefined && draftEdit !== null && draftEdit.row.draft !== null ? (
-                    // The row becomes its editor in place: what the user pressed is
-                    // what opens, and Cancel folds it back to the same row.
-                    <DraftEditor
-                      key={JSON.stringify([draftEdit.row.key, draftEdit.row.configuredConfiguration ?? draftEdit.row.draft.configuration])}
-                      draft={draftEdit.row.configuredConfiguration === null
-                        ? draftEdit.row.draft
-                        : { ...draftEdit.row.draft, configuration: draftEdit.row.configuredConfiguration }}
-                      busy={submitting === draftEdit.row.key}
-                      onSubmit={async (draft) => {
-                        await submitDraft(draftEdit, draft);
-                      }}
-                      onCancel={() => {
-                        if (submitting === null) setDraftEdit(null);
-                      }}
-                    />
-                  ) : undefined}
-                  accessoryOutsidePressable
-                  accessory={editing ? undefined : (
-                    <>
-                      {row.keyFollowsProviderName ? (
-                        <Badge tone="neutral" value={text('plugins.triage.sourceSettings.followsProviderName', 'Follows the provider name')} />
-                      ) : null}
-                      {inline.map((control) => (
-                        <Button
-                          key={control.id}
-                          title={control.label}
-                          variant={control.variant}
-                          size="small"
-                          busy={busy}
-                          disabled={submitting !== null}
-                          accessibilityLabel={control.accessibilityLabel}
-                          onPress={() => {
-                            runControl(row, control.id);
-                          }}
-                        />
-                      ))}
-                    </>
-                  )}
-                  {...(remove === undefined ? {
-                    secondaryActions: undefined,
-                    onSecondaryAction: undefined,
-                  } : {
-                    secondaryActions: [{
-                      id: 'remove',
-                      label: remove.accessibilityLabel,
-                      destructive: true,
-                      disabled: submitting !== null,
-                    }],
-                    secondaryActionAccessibilityLabel: text(
-                      'plugins.triage.sourceSettings.control.moreActions',
-                      'More actions for {title}',
-                      { title: row.title },
-                    ),
-                    onSecondaryAction: () => {
-                      runControl(row, 'remove');
-                    },
-                  })}
-                />
+                <React.Fragment key={row.key}>
+                  <Item
+                    title={row.title}
+                    {...(row.status === null ? {} : { subtitle: row.status })}
+                    {...(row.locator === null ? {} : { detail: row.locator })}
+                    tone={row.tone}
+                    expanded={editing}
+                    expandedContent={editing && DraftEditor !== undefined && draftEdit !== null && draftEdit.row.draft !== null ? (
+                      // The row becomes its editor in place: what the user pressed is
+                      // what opens, and Cancel folds it back to the same row.
+                      <DraftEditor
+                        key={JSON.stringify([draftEdit.row.key, draftEdit.row.configuredConfiguration ?? draftEdit.row.draft.configuration])}
+                        draft={draftEdit.row.configuredConfiguration === null
+                          ? draftEdit.row.draft
+                          : { ...draftEdit.row.draft, configuration: draftEdit.row.configuredConfiguration }}
+                        busy={submitting === draftEdit.row.key}
+                        onSubmit={async (draft) => {
+                          await submitDraft(draftEdit, draft);
+                        }}
+                        onCancel={() => {
+                          if (submitting === null) setDraftEdit(null);
+                        }}
+                      />
+                    ) : undefined}
+                    accessoryOutsidePressable
+                    accessory={editing ? undefined : (
+                      <>
+                        {row.keyFollowsProviderName ? (
+                          <Badge tone="neutral" value={text('plugins.triage.sourceSettings.followsProviderName', 'Follows the provider name')} />
+                        ) : null}
+                        {inline.map((control) => (
+                          <Button
+                            key={control.id}
+                            title={control.label}
+                            variant={control.variant}
+                            size="small"
+                            busy={busy}
+                            disabled={submitting !== null}
+                            accessibilityLabel={control.accessibilityLabel}
+                            onPress={() => {
+                              runControl(row, control.id);
+                            }}
+                          />
+                        ))}
+                      </>
+                    )}
+                    {...(remove === undefined ? {
+                      secondaryActions: undefined,
+                      onSecondaryAction: undefined,
+                    } : {
+                      secondaryActions: [{
+                        id: 'remove',
+                        label: remove.accessibilityLabel,
+                        destructive: true,
+                        disabled: submitting !== null,
+                      }],
+                      secondaryActionAccessibilityLabel: text(
+                        'plugins.triage.sourceSettings.control.moreActions',
+                        'More actions for {title}',
+                        { title: row.title },
+                      ),
+                      onSecondaryAction: () => {
+                        runControl(row, 'remove');
+                      },
+                    })}
+                  />
+                  <TriageSourceReadFailureDetails failures={[row.failure]} />
+                </React.Fragment>
               );
             })}
           </ItemGroup>

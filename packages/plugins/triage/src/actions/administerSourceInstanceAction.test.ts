@@ -208,12 +208,12 @@ describe('the source administration Action handler', () => {
         expect(await handler(request, createContext({ collections, surface })))
             .toEqual({ kind: 'active', sourceInstanceId: INSTANCE_ID });
         expect(await handler(request, createContext({ collections, surface, caller: pluginCaller('happier.other') })))
-            .toEqual({ kind: 'invalidCaller' });
+            .toMatchObject({ kind: 'invalidCaller', failure: { class: 'permission' } });
         expect(await handler({ v: 1, kind: 'remove', sourceInstanceId: INSTANCE_ID }, createContext({ collections, surface })))
             .toEqual({ kind: 'removed', sourceInstanceId: INSTANCE_ID });
         expect((await readRows(collections))[0]?.lifecycle).toBe(CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired);
         expect(await handler({ v: 1, kind: 'create', draft: draft() }, createContext({ collections, surface })))
-            .toEqual({ kind: 'invalidCaller' });
+            .toMatchObject({ kind: 'invalidCaller', failure: { class: 'permission' } });
     });
 
     it('configures a source end to end: one row written by the Action, no provider read, one visible entry', async () => {
@@ -275,19 +275,19 @@ describe('the source administration Action handler', () => {
         expect(await handler(
             { v: 1, kind: 'create', draft: draft() },
             createContext({ collections, caller: pluginCaller('happier.other.source') }),
-        )).toEqual({ kind: 'invalidCaller' });
+        )).toMatchObject({ kind: 'invalidCaller', failure: { class: 'permission' } });
 
         // A host or automation caller, which owns no source contribution at all.
         expect(await handler(
             { v: 1, kind: 'create', draft: draft() },
             createContext({ collections }),
-        )).toEqual({ kind: 'invalidCaller' });
+        )).toMatchObject({ kind: 'invalidCaller', failure: { class: 'permission' } });
 
         // A retired source: its contribution is no longer admitted.
         expect(await handler(
             { v: 1, kind: 'create', draft: draft() },
             createContext({ collections, caller: pluginCaller(SOURCE.pluginId), admitted: [] }),
-        )).toEqual({ kind: 'invalidCaller' });
+        )).toMatchObject({ kind: 'invalidCaller', failure: { class: 'permission' } });
 
         expect(await readRows(collections)).toHaveLength(0);
     });

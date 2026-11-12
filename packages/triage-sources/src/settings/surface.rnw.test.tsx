@@ -992,7 +992,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     await expect(page.queryByText('acme/api')).resolves.toBeUndefined();
   });
 
-  it('tells the user a source the host no longer admits cannot be configured', async () => {
+  it('keeps a legacy unclassified refusal neutral about admission', async () => {
     const harness = createHarness({
       discovery: { kind: 'complete', candidates: [candidate('acme/api')], failures: [] },
       administration: [{ kind: 'invalidCaller' }],
@@ -1002,7 +1002,27 @@ describe('the mounted PRs & Issues source settings page', () => {
     await pressControl(page, 'Add acme/api to PRs & Issues');
 
     await expect(page.getByText(
-      `${SOURCE_DISPLAY_NAME} is no longer an admitted PRs & Issues source on this account.`,
+      'The source change was refused. Open Details for the reason.',
     )).resolves.toBeDefined();
+  });
+});
+
+
+describe('source administration refusal disclosure', () => {
+  it.each([
+    ['sourceAdministrationPurposeMismatch', 'The draft purpose does not match the admitted source.'],
+    ['sourceAdministrationInstanceNotOwned', 'This source does not own the configured instance.'],
+  ])('shows %s using the shared Details disclosure', async (code, detail) => {
+    const harness = createHarness({
+      discovery: { kind: 'complete', candidates: [candidate('acme/api')], failures: [] },
+      administration: [{ kind: 'invalidCaller', failure: { class: 'permission', code, detail, requestId: 'request-admin-123' } }],
+    });
+    const page = await mountSettings(harness);
+    await pressControl(page, 'Add acme/api to PRs & Issues');
+    await pressControl(page, 'Details');
+    await expect(page.getByText('Code')).resolves.toBeDefined();
+    await expect(page.getByText(code)).resolves.toBeDefined();
+    await expect(page.getByText('Request ID')).resolves.toBeDefined();
+    await expect(page.getByText('request-admin-123')).resolves.toBeDefined();
   });
 });

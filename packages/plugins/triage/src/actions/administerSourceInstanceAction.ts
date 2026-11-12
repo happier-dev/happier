@@ -68,9 +68,9 @@ export function createTriageAdministerSourceInstanceActionHandler(
             : null;
         const selectedSource = configuredRow?.value.configured.instance.source ?? input.source;
         if (configuredRow && input.source && (input.source.pluginId !== selectedSource?.pluginId
-            || input.source.localId !== selectedSource?.localId)) return { kind: 'invalidCaller' };
+            || input.source.localId !== selectedSource?.localId)) return { kind: 'invalidCaller', failure: { class: 'permission', code: 'sourceAdministrationSourceMismatch', detail: 'The selected source does not match the configured instance.' } };
         const resolution = await resolveTriageCallerSource(context, cancellation, selectedSource);
-        if (resolution.kind === 'invalidCaller') return { kind: 'invalidCaller' };
+        if (resolution.kind === 'invalidCaller') return { kind: 'invalidCaller', failure: { class: 'permission', code: 'sourceAdministrationCallerNotAdmitted', detail: 'The caller could not be resolved to one admitted source with a declared purpose.' } };
         const caller = resolution.caller;
 
         return await administerConfiguredSourceInstance({

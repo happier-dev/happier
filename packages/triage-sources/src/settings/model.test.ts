@@ -266,7 +266,7 @@ describe('the source settings configuration model', () => {
 
   it('keeps the three published failure arms apart', () => {
     expect(readTriageSourceConfiguration({ status: 'success', result: { kind: 'invalidCaller' } }))
-      .toEqual({ kind: 'sourceNotAdmitted' });
+      .toMatchObject({ kind: 'sourceNotAdmitted' });
     expect(readTriageSourceConfiguration({
       status: 'success',
       result: { kind: 'currentnessConflict' },
@@ -290,7 +290,7 @@ describe('the source settings configuration model', () => {
       code: 'denied',
       message: 'Denied.',
       retryable: false,
-    })).toEqual({ kind: 'failed', message: 'Denied.', retryable: false });
+    })).toMatchObject({ kind: 'failed', message: 'Denied.', retryable: false, failure: { code: 'denied' } });
   });
 
   it('refuses an administration result that does not admit', () => {
@@ -474,7 +474,7 @@ describe('the candidate row projection', () => {
       UNKNOWN_TRIAGE_SOURCE_SETTINGS_ROW_LIFECYCLE_V1,
       { outcome: { kind: 'sourceNotAdmitted' } },
     );
-    expect(row.status).toBe('Example Tracker is no longer an admitted PRs & Issues source on this account.');
+    expect(row.status).toBe('The source change was refused. Open Details for the reason.');
     expect(row.tone).toBe('danger');
     // A refused configuration leaves the row exactly where it was.
     expect(row.controls.map((control) => control.id)).toEqual(['add']);
@@ -932,5 +932,26 @@ describe('the source failure sentence', () => {
       describeTriageSourceFailure({ class: 'unknown', code: 'f' }),
     ]);
     expect(sentences.size).toBe(6);
+  });
+});
+
+
+describe('administration refusal identity at settings presentation', () => {
+  it.each([
+    ['sourceAdministrationPurposeMismatch', 'The draft purpose does not match the admitted source.'],
+    ['sourceAdministrationInstanceNotOwned', 'This source does not own the configured instance.'],
+  ])('retains %s and the execution Request ID in the presented row', (code, detail) => {
+    const discovery = readTriageSourceDiscovery({ status: 'success', result: {
+      kind: 'complete', candidates: [draft('acme/api')], failures: [],
+    } });
+    const input = { discovery, configured: { kind: 'read' as const, complete: true, instances: [] },
+      outcomes: {}, learned: {}, sourceDisplayName: 'Example Tracker' };
+    const [initial] = projectTriageSourceSettingsRows(input);
+    if (!initial) throw new Error('missing candidate');
+    const outcome = readTriageSourceConfiguration({ status: 'success', requestId: 'request-admin-123',
+      result: { kind: 'invalidCaller', failure: { class: 'permission', code, detail } } });
+    const [row] = projectTriageSourceSettingsRows({ ...input, outcomes: { [initial.key]: outcome } });
+    expect(row).toMatchObject({ failure: { code, detail, requestId: 'request-admin-123' } });
+    expect(row?.status).not.toContain('no longer an admitted');
   });
 });

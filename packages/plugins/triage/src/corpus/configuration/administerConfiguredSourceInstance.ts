@@ -2,6 +2,7 @@ import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type {
     TriageConfiguredSourceInstanceV1,
+    TriageSourceFailureV1,
     TriageSourceInstanceDraftV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -61,7 +62,7 @@ export type CorpusSourceInstanceAdministrationResultV1 =
         kind: 'active' | 'reused' | 'reconfigured' | 'reactivated' | 'removed';
         sourceInstanceId: string;
     }>
-    | Readonly<{ kind: 'invalidCaller' }>
+    | Readonly<{ kind: 'invalidCaller'; failure: TriageSourceFailureV1 }>
     | Readonly<{ kind: 'conflict' }>;
 
 export type CorpusAdministerConfiguredSourceInstanceInputV1 = Readonly<{
@@ -78,7 +79,14 @@ export type CorpusAdministerConfiguredSourceInstanceInputV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
-const INVALID_CALLER: CorpusSourceInstanceAdministrationResultV1 = Object.freeze({ kind: 'invalidCaller' });
+const INVALID_CALLER = Object.freeze({
+    kind: 'invalidCaller',
+    failure: {
+        class: 'permission',
+        code: 'sourceAdministrationInstanceNotOwned',
+        detail: 'This source does not own the configured instance.',
+    },
+} satisfies CorpusSourceInstanceAdministrationResultV1);
 const CONFLICT: CorpusSourceInstanceAdministrationResultV1 = Object.freeze({ kind: 'conflict' });
 
 function configuredFrom(
@@ -434,7 +442,7 @@ export async function administerConfiguredSourceInstance(
     // admitted descriptor declares. Anything else would let one source persist
     // a configuration reaching another purpose's Connected Accounts.
     if (request.kind !== 'remove' && request.draft.binding.purpose !== input.declaredPurpose) {
-        return INVALID_CALLER;
+        return { kind: 'invalidCaller', failure: { class: 'permission', code: 'sourceAdministrationPurposeMismatch', detail: 'The draft purpose does not match the admitted source.' } };
     }
 
     if (request.kind === 'create') {

@@ -318,7 +318,7 @@ describe('the canonical configured source instance writer', () => {
             request: { kind: 'remove', sourceInstanceId: ID_A },
             nowMs: 20,
             mintSourceInstanceId: mintSequence(),
-        })).toEqual({ kind: 'invalidCaller' });
+        })).toMatchObject({ kind: 'invalidCaller', failure: { code: 'sourceAdministrationInstanceNotOwned' } });
 
         expect(await administerConfiguredSourceInstance({
             collections,
@@ -327,7 +327,7 @@ describe('the canonical configured source instance writer', () => {
             request: { kind: 'remove', sourceInstanceId: ID_B },
             nowMs: 20,
             mintSourceInstanceId: mintSequence(),
-        })).toEqual({ kind: 'invalidCaller' });
+        })).toMatchObject({ kind: 'invalidCaller', failure: { code: 'sourceAdministrationInstanceNotOwned' } });
 
         expect(await liveRows(collections.sourceInstances)).toHaveLength(1);
     });
@@ -344,7 +344,7 @@ describe('the canonical configured source instance writer', () => {
             mintSourceInstanceId: mintSequence(ID_A),
         });
 
-        expect(result).toEqual({ kind: 'invalidCaller' });
+        expect(result).toMatchObject({ kind: 'invalidCaller', failure: { code: 'sourceAdministrationPurposeMismatch' } });
         expect(await liveRows(collections.sourceInstances)).toHaveLength(0);
     });
 

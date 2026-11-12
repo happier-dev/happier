@@ -9,6 +9,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/mani
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageSourceInstanceIdV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
 import { TriageSourceInstanceDraftV1Schema } from './instances.js';
+import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import type { TriageSourceDescriptorV1 } from './descriptor.js';
 
 /** The Action's target-local id. */
@@ -124,6 +125,7 @@ export const TriageSourceAdministrationActionResultV1Schema = defineProtocolUnio
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('invalidCaller'),
+        failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('currentnessConflict'),

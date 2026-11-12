@@ -22,6 +22,7 @@
  * would hide a row the target says exists.
  */
 
+import { projectTriageSourceReadFailureV1, type TriageSourceReadFailureV1 } from '../invocation/failure.js';
 import type { PluginActionExecution, PluginTranslate } from '@happier-dev/plugin-ui';
 import {
   TriageListInstancesResultV1Schema,
@@ -221,10 +222,10 @@ export type TriageSourceSettingsConfigurationV1 =
   | Readonly<{ kind: 'removed'; sourceInstanceId: string }>
   | Readonly<{ kind: 'conflict' }>
   | Readonly<{ kind: 'atMaximum' }>
-  | Readonly<{ kind: 'sourceNotAdmitted' }>
+  | Readonly<{ kind: 'sourceNotAdmitted'; failure?: TriageSourceReadFailureV1 }>
   | Readonly<{ kind: 'raced' }>
   | Readonly<{ kind: 'unreadable' }>
-  | Readonly<{ kind: 'failed'; message: string; retryable: boolean }>
+  | Readonly<{ kind: 'failed'; message: string; retryable: boolean; failure?: TriageSourceReadFailureV1 }>
   | Readonly<{ kind: 'outcomeUnknown'; message: string }>;
 
 /**
@@ -298,6 +299,7 @@ export type TriageSourceSettingsRowV1 = Readonly<{
   /** Stored or successfully committed source-owned configuration; never decoded here. */
   configuredConfiguration: TriageSourceInstanceConfigurationV1 | null;
   keyFollowsProviderName: boolean;
+  failure: TriageSourceReadFailureV1 | null;
 }>;
 
 /**
@@ -386,7 +388,7 @@ export function readTriageSourceConfiguration(
     return { kind: 'outcomeUnknown', message: execution.message };
   }
   if (execution.status === 'error') {
-    return { kind: 'failed', message: execution.message, retryable: execution.retryable };
+    return { kind: 'failed', message: execution.message, retryable: execution.retryable, failure: projectTriageSourceReadFailureV1(execution, execution.code, execution.code) };
   }
 
   const parsed = TriageSourceAdministrationActionResultV1Schema.safeParse(execution.result);
@@ -404,7 +406,7 @@ export function readTriageSourceConfiguration(
     case 'removed':
       return { kind: 'removed', sourceInstanceId: result.sourceInstanceId };
     case 'invalidCaller':
-      return { kind: 'sourceNotAdmitted' };
+      return { kind: 'sourceNotAdmitted', failure: projectTriageSourceReadFailureV1(execution, 'invalidCaller', 'invalidCaller', result.failure ?? { class: 'permission', code: 'invalidCaller' }) };
     case 'currentnessConflict':
       return { kind: 'raced' };
     case 'conflict':
@@ -521,11 +523,7 @@ function describeTriageSourceConfiguration(
       };
     case 'sourceNotAdmitted':
       return {
-        text: text(
-          'plugins.triage.sourceSettings.configuration.sourceNotAdmitted',
-          `${sourceDisplayName} is no longer an admitted ${PRODUCT_NAME} source on this account.`,
-          { source: sourceDisplayName, product: PRODUCT_NAME },
-        ),
+        text: outcome.failure?.detail ?? text('plugins.triage.sourceSettings.configuration.refused', 'The source change was refused. Open Details for the reason.'),
         tone: 'danger',
       };
     case 'raced':
@@ -687,6 +685,7 @@ function projectTriageSourceSettingsRow(input: Readonly<{
   const standing = describeLifecycle(lifecycle, subject.presence, input.sourceDisplayName, input.text);
   const draft = subject.draft ?? null;
   return {
+    failure: input.outcome && 'failure' in input.outcome ? input.outcome.failure ?? null : null,
     key: subject.key,
     title: subject.label,
     status: settled?.text ?? standing?.text ?? null,
