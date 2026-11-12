@@ -23,6 +23,7 @@ import {
   DaemonPluginComposerReferenceSearchRequestSchema,
   DaemonPluginComposerReferenceSearchResponseSchema,
   DaemonPluginUiResourceReadRequestSchema,
+  DaemonPluginUiResourceReadResponseSchema,
   DaemonPluginUiResourceWatchOpenRequestSchema,
   DaemonPluginUiResourceWatchNextResponseSchema,
   DaemonPluginSettingsWatchRequestSchema,
@@ -57,6 +58,24 @@ const CONTRIBUTOR_SOURCE_CUSTODY = {
   immutableGenerationId: 'contributor-generation',
   installSource: 'archive',
 } as const;
+
+it('accepts large canonical Resource bytes and rejects malformed encodings for native and plugin reads', () => {
+  const base64 = Buffer.alloc(16 * 1024 * 1024, 97).toString('base64');
+  const common = { ok: true, contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}` };
+  const resources = [
+    { ...common, resource: { hostRead: 'machines.services.list', input: { serverId: 'home', machineId: 'machine' } } },
+    { ...common, resource: { pluginId: 'happier.machine.services', localId: 'logs' }, kind: 'asset' },
+  ];
+  for (const resource of resources) {
+    expect(DaemonPluginUiResourceReadResponseSchema.safeParse({ ...resource, bytesBase64: base64 }).success).toBe(true);
+    for (const bytesBase64 of ['', 'YQ==']) {
+      expect(DaemonPluginUiResourceReadResponseSchema.safeParse({ ...resource, bytesBase64 }).success).toBe(true);
+    }
+    for (const bytesBase64 of ['AB==', 'AAB=', 'YQ==\n', 'Y=Q=', 'YQ=']) {
+      expect(DaemonPluginUiResourceReadResponseSchema.safeParse({ ...resource, bytesBase64 }).success).toBe(false);
+    }
+  }
+});
 
 it('preserves cold Bot template descriptors in the canonical daemon family projection', () => {
   const entry = { id: 'acme.bots/garden', pluginId: 'acme.bots', pluginVersion: '1.0.0',

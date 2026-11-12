@@ -3,6 +3,7 @@ export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, 
   type PluginBrowserProjectionEntry, type PluginBrowserTargetProjection, type PluginBrowserActionProjectionEntry,
   type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { PluginActionFailureResponseV1Schema } from '../plugins/actions/failureResponse.js';
 import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -688,15 +689,8 @@ export type DaemonPluginSecretDeleteRequest = z.infer<
 export const DaemonPluginSecretDeleteResponseSchema = DaemonPluginSecretStatusResponseSchema;
 export type DaemonPluginSecretDeleteResponse = DaemonPluginSecretStatusResponse;
 
-const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-const CANONICAL_BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
-
 function isCanonicalBase64(value: string): boolean {
-  if (!CANONICAL_BASE64_PATTERN.test(value)) return false;
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
-  if (padding === 0) return true;
-  const lastSextet = BASE64_ALPHABET.indexOf(value[value.length - padding - 1] ?? '');
-  return padding === 2 ? lastSextet % 16 === 0 : lastSextet % 4 === 0;
+  return readCanonicalPaddedBase64DecodedLength(value) !== null;
 }
 
 export const DaemonPluginStructuredMessageActionExecuteResponseSchema = lazyZodSchema(() => z.union([
