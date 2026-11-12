@@ -2138,6 +2138,7 @@ const es: ConnectedServicesPoolCopy = {
     startUnavailableInUse: ({ count }) => count === 1 ? `1 ya está en uso` : `${count} ya están en uso`,
     startUnavailableBody: ({ counts }) => `${counts}. Tu mensaje se conserva.`,
     startUnavailableDraftKept: `Tu mensaje se conserva.`,
+    startUnavailableRetryAfter: ({ time }) => `Vuelve a intentarlo después de ${time}`,
     signInAccount: ({ account }) => `Iniciar sesión en ${account}`,
     strategyExpiryFirst: "Caduca antes",
     strategyExpiryFirstDescription: "Usa primero la cuenta que se reinicia o termina antes.",

@@ -206,6 +206,8 @@ export function SessionPublicLinkCard(props: Readonly<{
     onOpenPendingApproval: () => void;
     onCreate: (options: SessionPublicLinkCreateOptions) => Promise<PublicLinkCardPublication | null>;
     onDelete: () => Promise<void>;
+    /** Another operation on the issued link, drawn in the card's action row. */
+    linkControl?: React.ReactNode;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { publicShare } = props;
@@ -379,6 +381,7 @@ export function SessionPublicLinkCard(props: Readonly<{
                 disabled={mutationsDisabled}
                 onPress={configure}
             />}
+            linkControl={props.linkControl}
             turnOffControl={<ToolbarButton
                 testID="session-public-link-turn-off"
                 label={t('session.collaboration.pane.turnOff')}

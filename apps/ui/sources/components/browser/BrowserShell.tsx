@@ -92,6 +92,7 @@ import { useBrowserPluginActions } from './useBrowserPluginActions';
 import { BROWSER_CHROME_WIDTH, BROWSER_PAGE_BASIS, resolveBrowserChromeControlMetrics, useBrowserChromeDensity } from './browserChromeDensity';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { BrowserStatusBar } from './BrowserStatusBar';
 import { BrowserToolbar } from './BrowserToolbar';
 import type { BrowserViewportEmulationV1 } from '@happier-dev/protocol/browser/input/v1';
@@ -850,7 +851,9 @@ export function BrowserShell(props: Readonly<{
 
     // The retained Browser body mounts outside the details workspace, so it takes its state step here:
     // the page's states (Ended, Can't reach, Start failed) read at the pane's measure, as the lab draws them.
+    // The page is arbitrary pixels under the chrome, so the popovers and menus it opens take the live-picture coat.
     return (
+        <GlassLivePictureBackdropContext.Provider value>
         <SurfaceStateSizeProvider size={phone ? 'phone' : 'details'}>
         <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
             {annotatorSession ? <BrowserAnnotatorMount session={annotatorSession} onAnnotator={setAnnotator} /> : null}
@@ -1015,6 +1018,7 @@ export function BrowserShell(props: Readonly<{
             ) : null}
         </View>
         </SurfaceStateSizeProvider>
+        </GlassLivePictureBackdropContext.Provider>
     );
 }
 

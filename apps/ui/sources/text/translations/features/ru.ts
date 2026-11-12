@@ -2160,6 +2160,7 @@ const ru: ConnectedServicesPoolCopy = {
     startUnavailableInUse: ({ count }) => Shared_personalHomeSettingsTranslations.pluralRu(count, `${count} аккаунт уже используется`, `${count} аккаунта уже используются`, `${count} аккаунтов уже используются`),
     startUnavailableBody: ({ counts }) => `${counts}. Ваше сообщение сохранено.`,
     startUnavailableDraftKept: `Ваше сообщение сохранено.`,
+    startUnavailableRetryAfter: ({ time }) => `Повторите попытку после ${time}`,
     signInAccount: ({ account }) => `Войти в ${account}`,
     strategyExpiryFirst: "Скорее истекает",
     strategyExpiryFirstDescription: "Сначала используется аккаунт, лимит или подписка которого сбрасывается или заканчивается раньше.",

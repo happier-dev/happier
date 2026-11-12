@@ -2138,6 +2138,7 @@ const ja: ConnectedServicesPoolCopy = {
     startUnavailableInUse: ({ count }) => `${count}件はすでに使用中`,
     startUnavailableBody: ({ counts }) => `${counts}です。メッセージは保持されています。`,
     startUnavailableDraftKept: `メッセージは保持されています。`,
+    startUnavailableRetryAfter: ({ time }) => `${time} 以降にもう一度お試しください`,
     signInAccount: ({ account }) => `${account}にサインイン`,
     strategyExpiryFirst: "期限優先",
     strategyExpiryFirstDescription: "リセットまたは終了が最も早いアカウントを先に使います。",

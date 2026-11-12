@@ -1641,8 +1641,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 4,
     },
+    // The state and its separator keep their words; only the reason after them gives way.
     pendingAffordanceText: {
         ...Typography.variant('meta'),
+        flexShrink: 0,
     },
     // The delivery status reads under the bubble, on the band the committed row keeps for its actions (lab
     // B1): the status first, the revealed actions after it. It is always painted at one line, so a state

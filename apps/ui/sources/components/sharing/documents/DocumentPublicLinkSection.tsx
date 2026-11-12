@@ -13,7 +13,7 @@ import type { DocumentShareKind } from './documentShareAdapter';
 import { describePublicLinkNetworkConsequence } from '@/components/sharing/PublicLinkNetworkConfirmation';
 
 const styles = StyleSheet.create(theme => ({
-    audit: { marginHorizontal: theme.space.s12, marginBottom: theme.space.s12, gap: theme.space.s8 },
+    audit: { marginTop: theme.space.s8, gap: theme.space.s8 },
     visit: { ...Typography.mono(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.text.secondary },
 }));
 
@@ -57,11 +57,11 @@ export function DocumentPublicLinkSection(props: Readonly<{
             loading={link.loading} loaded={link.loaded} failed={link.error} readOnly={link.readOnly}
             pendingApproval={link.pendingApproval} onRetry={link.reload} onOpenPendingApproval={link.openPendingApproval}
             networkPolicyLabel={networkPolicyLabel} networkConsequenceStatus={networkConsequenceStatus}
-            onCreate={link.create} onDelete={link.remove} />
-        {link.publication ? <View style={styles.audit}>
-            <ToolbarButton testID={`${idPrefix}document-share-public-link-audit`}
+            onCreate={link.create} onDelete={link.remove}
+            linkControl={<ToolbarButton testID={`${idPrefix}document-share-public-link-audit`}
                 label={t('shareSheet.publicLink.audit')} disabled={link.readOnly || audit.loading} busy={audit.loading}
-                onPress={() => { void readAudit(); }} />
+                onPress={() => { void readAudit(); }} />} />
+        {link.publication && (audit.failed || audit.rows) ? <View style={styles.audit}>
             {audit.failed ? <SurfaceStateCard size="line" kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
                 action={{ label: t('common.retry'), onPress: readAudit }} /> : null}
             {audit.rows?.length === 0 ? <SurfaceStateCard size="line" kind="empty" title={t('shareSheet.publicLink.auditEmpty')} /> : null}

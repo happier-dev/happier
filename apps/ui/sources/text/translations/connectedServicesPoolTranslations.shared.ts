@@ -18,6 +18,7 @@ export const en = {
     startUnavailableInUse: ({ count }: { count: number }) => count === 1 ? '1 is already in use' : `${count} are already in use`,
     startUnavailableBody: ({ counts }: { counts: string }) => `${counts}. Your message is kept.`,
     startUnavailableDraftKept: 'Your message is kept.',
+    startUnavailableRetryAfter: ({ time }: { time: string }) => `Try again after ${time}`,
     signInAccount: ({ account }: { account: string }) => `Sign in to ${account}`,
     strategyExpiryFirst: "Expiring first",
     strategyExpiryFirstDescription: "Uses the account that resets or ends soonest first.",

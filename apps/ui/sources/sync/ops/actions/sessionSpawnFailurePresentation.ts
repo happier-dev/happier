@@ -8,6 +8,7 @@ import { SessionCreationCurrentnessFailureV1Schema } from '@happier-dev/protocol
 import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
+import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { t } from '@/text';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -245,7 +246,13 @@ export function resolveSessionSpawnNewConnectedAccountFailure(
 ): Readonly<{ title: string; reasons: string; message: string; actions: readonly SessionSpawnConnectedAccountRecoveryAction[] }> | null {
     const pool = result.type === 'error' && 'launchError' in result ? result.launchError?.connectedAccountPool : undefined;
     if (!pool) return null;
-    const reasons = connectedServicePoolExclusionCountsText(pool.excluded.map(member => member.reason));
+    const counts = connectedServicePoolExclusionCountsText(pool.excluded.map(member => member.reason));
+    // The pool owner's own retry times: the earliest one still ahead says when a start can succeed.
+    const now = Date.now();
+    const nextRetryAtMs = pool.excluded.reduce<number | null>((earliest, member) => typeof member.retryAtMs === 'number'
+        && member.retryAtMs > now && (earliest === null || member.retryAtMs < earliest) ? member.retryAtMs : earliest, null);
+    const retry = nextRetryAtMs === null ? '' : t('connectedServicesPool.startUnavailableRetryAfter', { time: formatResetAtTime(nextRetryAtMs, now) });
+    const reasons = counts && retry ? `${counts}. ${retry}` : counts || retry;
     const reconnect = pool.excluded.find(member => member.reason === 'auth_invalid');
     const actions: SessionSpawnConnectedAccountRecoveryAction[] = [];
     if (reconnect) actions.push({ kind: 'reconnect', serviceId: pool.serviceId, profileId: reconnect.profileId });

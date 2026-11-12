@@ -3,6 +3,7 @@ import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/cre
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { Modal } from '@/modal/ModalManager';
 import { joinList } from '@/utils/text/joinList';
+import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import type { ModalConfig } from '@/modal/types';
 import { resolveSessionSpawnNewResultFailureMessage, resolveSessionSpawnNewConnectedAccountFailure, presentSessionSpawnNewConnectedAccountFailure } from './sessionSpawnFailurePresentation';
 
@@ -38,6 +39,26 @@ describe('connected-account pool start failure presentation', () => {
             { kind: 'reconnect', serviceId: 'happier.agent.codex/openai-codex', profileId: 'auth-1' },
             { kind: 'select', serviceId: 'happier.agent.codex/openai-codex' },
         ]);
+    });
+    it('says when to try again from the earliest future reset the pool owner reported, and nothing when none is known', async () => {
+        await preloadTranslations('en');
+        const now = Date.now();
+        const soon = now + 2 * 60 * 60 * 1000;
+        const withResets = { ...failure, launchError: { ...failure.launchError, connectedAccountPool: {
+            ...failure.launchError.connectedAccountPool, excluded: [
+                { profileId: 'quota-1', reason: 'quota_exhausted', retryAtMs: now + 30 * 60 * 60 * 1000 },
+                { profileId: 'quota-2', reason: 'quota_exhausted', retryAtMs: soon },
+                { profileId: 'quota-3', reason: 'quota_exhausted', retryAtMs: now - 60_000 },
+                { profileId: 'auth-1', reason: 'auth_invalid', retryAtMs: null },
+            ],
+        } } } satisfies SessionSpawnNewResultV1;
+        const retry = t('connectedServicesPool.startUnavailableRetryAfter', { time: formatResetAtTime(soon, now) });
+        const presentation = resolveSessionSpawnNewConnectedAccountFailure(withResets, 'Codex');
+        expect(presentation?.reasons).toContain(retry);
+        expect(resolveSessionSpawnNewResultFailureMessage(withResets)).toContain(retry);
+        // Without a reported reset the message keeps only the counts.
+        expect(resolveSessionSpawnNewConnectedAccountFailure(failure, 'Codex')?.reasons)
+            .not.toContain(t('connectedServicesPool.startUnavailableRetryAfter', { time: '' }).trim());
     });
     it('offers account selection without inventing sign-in for quota-only or empty exclusions', () => {
         for (const excluded of [failure.launchError.connectedAccountPool.excluded.slice(0, 2), []]) {

@@ -2149,6 +2149,7 @@ const pl: ConnectedServicesPoolCopy = {
     startUnavailableInUse: ({ count }) => Shared_personalHomeSettingsTranslations.pluralPl(count, `1 konto jest już w użyciu`, `${count} konta są już w użyciu`, `${count} kont jest już w użyciu`),
     startUnavailableBody: ({ counts }) => `${counts}. Twoja wiadomość została zachowana.`,
     startUnavailableDraftKept: `Twoja wiadomość została zachowana.`,
+    startUnavailableRetryAfter: ({ time }) => `Spróbuj ponownie po ${time}`,
     signInAccount: ({ account }) => `Zaloguj się do ${account}`,
     strategyExpiryFirst: "Wygasa wcześniej",
     strategyExpiryFirstDescription: "Najpierw używa konta, które resetuje się lub kończy najwcześniej.",

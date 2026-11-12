@@ -2133,6 +2133,7 @@ const zhHans: ConnectedServicesPoolCopy = {
     startUnavailableInUse: ({ count }) => `${count} 个已在使用中`,
     startUnavailableBody: ({ counts }) => `${counts}。你的消息已保留。`,
     startUnavailableDraftKept: `你的消息已保留。`,
+    startUnavailableRetryAfter: ({ time }) => `请在 ${time} 之后重试`,
     signInAccount: ({ account }) => `登录 ${account}`,
     strategyExpiryFirst: "即将到期优先",
     strategyExpiryFirstDescription: "优先使用最先重置或到期的账号。",

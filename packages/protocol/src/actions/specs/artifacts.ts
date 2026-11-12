@@ -74,7 +74,9 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     id, approval: { result: 'required' },
     ...(id === 'artifact.delete'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
-    ...(id === 'artifact.public_link.revoke' ? { irreversible: true as const } : {}),
+    // The confirm's button repeats the Turn off control that opened it, matching the title.
+    ...(id === 'artifact.public_link.revoke' ? { irreversible: true as const,
+      confirmVerb: { key: 'session.collaboration.pane.turnOff', fallback: 'Turn off' } } : {}),
     ...(id === 'artifact.public_link.create' ? { approvalNarrowing: {
       narrow(original: unknown, chosen: unknown) {
         const source = ArtifactActionInputSchemasV1['artifact.public_link.create'].safeParse(original);
