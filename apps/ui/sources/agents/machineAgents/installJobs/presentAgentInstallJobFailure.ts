@@ -18,7 +18,8 @@ export function presentAgentInstallJobRpcFailure(error: unknown): Readonly<{ cod
     if (code === 'member_install_unavailable') {
         return { code, title: t('agentInstallJob.jobUnavailable'), body: t('errors.agentIsolationMemberSetupAskManager') };
     }
-    return { code, title: t('agentInstallJob.jobUnavailable'), body: t('agentInstallJob.jobMissingBody') };
+    const body = t('agentInstallJob.jobMissingBody');
+    return { code, title: t('agentInstallJob.jobUnavailable'), body: error instanceof AgentInstallJobRpcError ? `${body} (${code})` : body };
 }
 
 /** Display uncertainty is not a daemon installer outcome. */

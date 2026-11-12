@@ -30,6 +30,12 @@ describe('agent install failure presentation', () => {
             .toMatchObject({ body: 'agentInstallJob.notManagedBody', recovery: { kind: 'chooseAgent' } });
     });
 
+    it('shows the typed refusal code when no specific recovery presentation exists', () => {
+        for (const code of ['install_unavailable', 'RPC_FORBIDDEN']) {
+            expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(code)).body).toContain(code);
+        }
+    });
+
     it('explains an extraction size refusal without exposing raw paths', () => {
         expect(presentAgentInstallJobFailure({ kind: 'failed', code: 'archive_expanded_byte_limit', stepId: 'cli', message: 'Extraction failed in C:\\private\\install.log.' })).toMatchObject({
             body: 'agentInstallJob.archiveExpandedByteLimitBody',
@@ -44,13 +50,13 @@ describe('agent install failure presentation', () => {
             title: 'agentInstallJob.machineUnreachable', body: 'agentInstallJob.unreachableBody',
         });
         expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError('invalid_response'))).toMatchObject({
-            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody',
+            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody (invalid_response)',
         });
         expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError('server_unreachable'))).toMatchObject({
-            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody',
+            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody (server_unreachable)',
         });
         expect(presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError('install_unavailable'))).toMatchObject({
-            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody',
+            title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody (install_unavailable)',
         });
         expect(presentAgentInstallJobRpcFailure(new Error('Unacknowledged request'))).toMatchObject({
             title: 'agentInstallJob.jobUnavailable', body: 'agentInstallJob.jobMissingBody',
