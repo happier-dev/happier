@@ -22,9 +22,13 @@ export async function readAccountEncryptionModeOnce(input: Readonly<{
   if (observed) {
     try { return { kind: 'resolved', mode: (await observed).mode }; }
     catch (error) {
-      // A predecessor Home without currentness can still report mode. This
-      // compatibility read never publishes or grants an observed identity.
-      if (classifyServerEndpointError(error).statusCode !== 404) throw error;
+      // Currentness availability is not persisted Account mode. Read that
+      // authority directly when its observation transport is unavailable; this
+      // neither publishes an identity nor grants currentness. Refusals and
+      // retired/aborted custody still fail closed with their original cause.
+      const failure = classifyServerEndpointError(error);
+      if (input.scope?.signal?.aborted || (failure.statusCode !== 404
+        && failure.kind !== 'network' && failure.kind !== 'timeout' && failure.kind !== 'server_error')) throw error;
     }
   }
   const response = await input.request();

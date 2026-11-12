@@ -49,7 +49,10 @@ import { createCliApprovalsArtifactStore } from './artifactStore';
 // Only the Account HTTP boundary is replaced; the real Artifact codec, header
 // binding, approval parser, and lifecycle transition owner remain in the path.
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), defaults: {} }));
-vi.mock('axios', () => ({ default: http }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...http, isAxiosError: actual.default.isAxiosError } };
+});
 // Process startup is outside this composed in-process daemon fixture.
 vi.mock('@/daemon/ensureDaemon', () => ({ ensureDaemonRunningForSessionCommand: async () => undefined }));
 vi.mock('@/configuration', () => ({ configuration: {
@@ -140,6 +143,31 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+  it.each(['plain', 'e2ee'] as const)('reads persisted %s mode for cold install approval without a supplied mode', async mode => {
+    accountMode = mode;
+    const store = createCliApprovalsArtifactStore({ credentials: credentials() });
+    const created = await store.approvalsCreate({ request: installRequest(), serverId: 'home-1' });
+    expect(await store.approvalsGet({ artifactId: created.artifactId, serverId: 'home-1' }))
+      .toMatchObject({ actionId: 'plugins.install', status: 'open' });
+    expect(rows.get(created.artifactId)).toMatchObject({ encryptionMode: mode });
+  });
+
+  it.each([401, 503, 'ECONNREFUSED'] as const)('retains Account mode read failure %s instead of diagnosing missing mode', async failure => {
+    accountMode = 'e2ee';
+    const store = createCliApprovalsArtifactStore({ credentials: credentials() });
+    const originalGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('/v1/account/encryption')) {
+        if (typeof failure === 'string') throw Object.assign(new Error('Connection refused'), { code: failure });
+        return { status: failure, data: { error: 'unavailable' } };
+      }
+      return originalGet(...args);
+    });
+    await expect(store.approvalsCreate({ request: installRequest(), serverId: 'home-1' }))
+      .rejects.toMatchObject(typeof failure === 'string' ? { code: failure } : { response: { status: failure } });
+    expect(rows.size).toBe(0);
+  });
+
   it.each(['archive', 'cold-dev'] as const)('installs %s from a saved Home through daemon review and one approval without a Machine flag', async (entry) => {
     accountMode = entry === 'cold-dev' ? 'e2ee' : 'plain';
     const root = await mkdtemp(join(tmpdir(), 'happier-saved-home-install-'));

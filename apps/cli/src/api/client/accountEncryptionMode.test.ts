@@ -42,6 +42,26 @@ describe('readAccountEncryptionModeOnce', () => {
     } finally { await observation.dispose(); await channel.close(); vi.restoreAllMocks(); }
   });
 
+  it.each([503, 'ECONNREFUSED'] as const)('reads persisted mode when the held currentness transport is unavailable (%s)', async failure => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'mode-transport' })).toString('base64url')}.fixture`;
+    const serverBaseUrl = 'https://mode-transport.test';
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const transport = vi.spyOn(axios, 'get');
+    if (typeof failure === 'number') transport.mockResolvedValue({ status: failure, data: { error: 'unavailable' } });
+    else transport.mockRejectedValue(Object.assign(new Error('Connection refused'), { code: failure }));
+    const observation = acquireRequesterAccountEncryptionCurrentness({ accountId: 'mode-transport', token, serverBaseUrl });
+    try {
+      await expect(observation.read()).rejects.toMatchObject({ code: 'account_encryption_currentness_unavailable' });
+      const request = vi.fn(async () => ({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } }));
+      await expect(readAccountEncryptionModeOnce({ credentials: { token, encryption: null },
+        scope: { token, serverBaseUrl }, usage: 'identity', request }))
+        .resolves.toEqual({ kind: 'resolved', mode: 'e2ee' });
+      expect(request).toHaveBeenCalledOnce();
+      expect(observation.isCurrent({ mode: 'e2ee', updatedAt: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null })).toBe(false);
+    } finally { await observation.dispose(); await channel.close(); vi.restoreAllMocks(); }
+  });
+
   it('retains HTTP and schema failures without interpreting an outage as plain', async () => {
     await expect(readAccountEncryptionModeOnce({
       credentials,

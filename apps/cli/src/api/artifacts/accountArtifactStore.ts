@@ -107,6 +107,7 @@ export function projectServiceHealthNoticeNotification(input: Readonly<{
   if (header.source.kind !== 'host' || header.source.topic !== 'service_health'
     || (header.type !== 'blocked' && header.type !== 'update') || !page || !('kind' in page)) return null;
   return ServiceHealthNoticeNotificationV1Schema.parse({ topic: 'service_health', type: header.type,
+    ...(header.healthPhase ? { healthPhase: header.healthPhase } : {}),
     title: header.title, ...(header.body === undefined ? {} : { body: header.body }),
     data: { v: 1, topic: 'account_notice', accountId, artifactId, source: header.source, page,
       serverId: page.page === 'machine_service' ? page.machine.serverId : page.environment.serverId } });
@@ -549,7 +550,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const bearer = Object.entries(authorization).find(([key]) => key.toLowerCase() === 'authorization')?.[1];
       if (bearer !== `Bearer ${params.credentials!.token}`) return 'unknown';
     }
-    return params.getAccountEncryptionMode({ ...options, usage: 'identity' });
+    return params.getAccountEncryptionMode({ ...options, usage: 'identity', throwOnTransportError: true });
   };
   const assertOwnerAccountMode = async (stored: Pick<StoredArtifact, 'access' | 'encryptionMode'>,
     timing?: { accountModeMs: number; codecMs: number },
@@ -1120,7 +1121,7 @@ export function createAccountArtifactStore(params: Readonly<{
       callbacks: Pick<Parameters<typeof createCliArtifactSignedInLinkJoinAction>[0], 'consumeSecret' | 'onOpened'>) => createCliArtifactSignedInLinkJoinAction({
         ...callbacks, request: request => requestPublicLink(request),
         resolveRecipient: async signal => {
-          const mode = await params.getAccountEncryptionMode({ signal, usage: 'identity' });
+          const mode = await params.getAccountEncryptionMode({ signal, usage: 'identity', throwOnTransportError: true });
           if (!contentAccountId || mode !== 'plain' && mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
           if (mode === 'plain') return { accountId: contentAccountId, mode, contentPublicKey: null };
           const encryption = requireCredentials(contentCredentials).encryption;
@@ -1447,7 +1448,7 @@ export function createAccountArtifactStore(params: Readonly<{
       const labels: ArtifactKindWriteBatchInputV1['items'] = [];
       let cursor: string | undefined;
       let mode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
-      const readAccountMode = () => mode ??= params.getAccountEncryptionMode({ usage: 'identity', signal: options.signal });
+      const readAccountMode = () => mode ??= params.getAccountEncryptionMode({ usage: 'identity', signal: options.signal, throwOnTransportError: true });
       do {
         if (options.signal.aborted) return { status: 'retired' };
         const page = await fetchHeaderPage({ limit: 500, unclassified: true, ownerAccountId, cursor, signal: options.signal });
@@ -1541,7 +1542,7 @@ export function createAccountArtifactStore(params: Readonly<{
       if (!accountId || accountId !== input.accountId) {
         throw Object.assign(new Error('notice_account_scope_mismatch'), { code: 'notice_account_scope_mismatch' });
       }
-      const mode = await params.getAccountEncryptionMode();
+      const mode = await params.getAccountEncryptionMode({ throwOnTransportError: true });
       if (mode === 'unknown') throw Object.assign(new Error('account_encryption_mode_unavailable'), { code: 'account_encryption_mode_unavailable' });
       const baseContent = AccountNoticeArtifactBodyV1Schema.parse({ v: 1, source: input.source, type: input.type,
         resolved: input.resolved, ...(input.healthPhase === undefined ? {} : { healthPhase: input.healthPhase }),
@@ -1606,8 +1607,8 @@ export function createAccountArtifactStore(params: Readonly<{
           // Default native attention covers a new actionable opening, not
           // evidence refreshes, non-production updates or recovery phases.
           const opening = header.source.kind === 'host' && header.source.topic === 'service_health'
-            && header.type === 'blocked' && header.healthPhase === 'open'
-            && (!notice || notice.healthPhase !== 'open' || notice.type !== 'blocked');
+            && (header.healthPhase === 'open' || header.healthPhase === 'recovered')
+            && (!notice || notice.healthPhase !== header.healthPhase || notice.type !== header.type);
           const opened = header.status === 'open' && !header.resolved
             && (health ? header.healthPhase === 'open' && (!notice || notice.healthPhase === 'recovered' || notice.resolved)
               : !notice || notice.resolved);
