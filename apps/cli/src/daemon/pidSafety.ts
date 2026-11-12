@@ -1,4 +1,4 @@
-import { findHappyProcessByPid } from './doctor';
+import { classifyHappyProcess, findHappyProcessByPid } from './doctor';
 import { processGenerationMatches, readProcessIdentityByPid } from './processIdentity';
 import { hashProcessCommand } from './sessionRegistry';
 
@@ -37,10 +37,14 @@ export async function isPidSafeHappySessionProcess(params: {
 
   if (!/^[a-f0-9]{64}$/.test(expectedProcessCommandHash)) return false;
 
-  const [proc, identity] = await Promise.all([
-    (dependencies.findHappyProcessByPidFn ?? findHappyProcessByPid)(params.pid),
-    (dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid)(params.pid),
-  ]);
+  const identity = await (dependencies.readProcessIdentityByPidFn ?? readProcessIdentityByPid)(params.pid);
+  const proc = dependencies.findHappyProcessByPidFn
+    ? await dependencies.findHappyProcessByPidFn(params.pid)
+    : identity && classifyHappyProcess({
+      pid: identity.pid,
+      name: identity.censusRow?.name,
+      cmd: identity.command,
+    });
   return !!proc
     && ALLOWED_HAPPY_SESSION_PROCESS_TYPES.has(proc.type)
     && identity?.pid === params.pid

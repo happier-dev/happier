@@ -7,7 +7,7 @@ import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
-import { processGenerationProvesReuse, readProcessIdentityByPid } from '@/daemon/processIdentity';
+import { processGenerationProvesReuse, readProcessIdentitiesByPid, readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
 import { readDaemonRestartVerifyPollMs, readDaemonRestartVerifyTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { configuration } from '@/configuration';
@@ -168,6 +168,20 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         return;
       }
 
+      // One process-table sample serves this tick's tracked runner observations.
+      // Node child handles remain authoritative and require no census.
+      const observedPids = [...pidToTrackedSession.values()].flatMap(tracked => {
+        const child = tracked.childProcess;
+        if (!tracked.windowsTerminalLaunchCustody && tracked.startedBy === 'daemon'
+          && child?.pid === tracked.pid && child.exitCode === null && child.signalCode === null) return [];
+        return [tracked.pid, ...(child?.pid ? [child.pid] : []),
+          ...(tracked.runnerProcessIdentity ? [tracked.runnerProcessIdentity.pid] : [])];
+      });
+      const observations = await readProcessIdentitiesByPid(observedPids);
+      const readIdentity: typeof readProcessIdentityByPid = pidSafetyDependencies?.readProcessIdentityByPidFn
+        ?? (async pid => observations.get(pid) ?? null);
+      const readRunState: typeof readProcessRunState = pidSafetyDependencies?.readProcessRunStateFn
+        ?? (async pid => readProcessRunState(pid, { observedProcess: observations.get(pid) ?? null }));
       // Prune stale sessions
       for (const [pid, tracked] of pidToTrackedSession.entries()) {
         // The child handle remains authoritative until Node reports its exit.
@@ -175,8 +189,8 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         if (tracked.windowsTerminalLaunchCustody) {
           const presence = await classifyTrackedSessionProcessPresence({
             tracked,
-            readProcessRunState: pidSafetyDependencies?.readProcessRunStateFn ?? readProcessRunState,
-            readProcessIdentityByPid: pidSafetyDependencies?.readProcessIdentityByPidFn ?? readProcessIdentityByPid,
+            readProcessRunState: readRunState,
+            readProcessIdentityByPid: readIdentity,
           });
           if (isShuttingDown?.() === true) return;
           if (pidToTrackedSession.get(pid) !== tracked) continue;
@@ -199,9 +213,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           await observeHealthySession(tracked);
           continue;
         }
-        const runState = await (
-          pidSafetyDependencies?.readProcessRunStateFn ?? readProcessRunState
-        )(pid).catch(() => null);
+        const runState = await readRunState(pid).catch(() => null);
         if (isShuttingDown?.() === true) return;
         if (pidToTrackedSession.get(pid) !== tracked) continue;
         if (runState === 'dead' || runState === 'zombie') {
@@ -222,9 +234,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           await observeHealthySession(tracked);
           continue;
         }
-        const processIdentity = await (
-          pidSafetyDependencies?.readProcessIdentityByPidFn ?? readProcessIdentityByPid
-        )(pid).catch(() => null);
+        const processIdentity = await readIdentity(pid).catch(() => null);
         const currentTracked = pidToTrackedSession.get(pid);
         if (
           currentTracked !== tracked

@@ -15,7 +15,7 @@ import {
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import {
   verifySessionMarkerProcessLiveness as verifyMarkerProcessLiveness,
-} from '@/daemon/processLivenessVerifier';
+} from '@/daemon/processIdentity';
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 

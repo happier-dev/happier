@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/daemon/sessionRegistry', () => ({
     listSessionMarkers: mocks.listSessionMarkers,
 }));
-vi.mock('@/daemon/processLivenessVerifier', () => ({
+vi.mock('@/daemon/processIdentity', () => ({
     verifySessionMarkerProcessLiveness: mocks.verifyProcessLiveness,
 }));
 vi.mock('@/api/session/external/security/validateExternalMachineSource', () => ({

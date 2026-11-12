@@ -9,7 +9,7 @@ import type {
 } from '@/daemon/sessionRegistry';
 import {
   verifySessionMarkerProcessLiveness as verifyMarkerProcessLiveness,
-} from '@/daemon/processLivenessVerifier';
+} from '@/daemon/processIdentity';
 import {
   readExactLiveRunnerRetainedPluginGenerationIds,
 } from '@/plugins/store/registry/generationCustodyRetirement';

@@ -382,12 +382,11 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   }
 
   if (existing?.pid) {
-    const holderState = await readHolderRunState(existing.pid);
-    const shouldReadIdentity = holderState !== 'dead' && holderState !== 'zombie'
-      && existing.processStartTimeMs !== undefined;
-    const observedIdentity = shouldReadIdentity
-      ? await readProcessIdentity(existing.pid).catch(() => null)
-      : null;
+    const observedIdentity = existing.pid === pid ? processIdentity
+      : await readProcessIdentity(existing.pid).catch(() => null);
+    const holderState = params.readProcessRunState
+      ? await readHolderRunState(existing.pid)
+      : await readProcessRunStateDefault(existing.pid, { observedProcess: observedIdentity });
     const observedFingerprint = existing.processInstanceFingerprint
       && holderState !== 'dead' && holderState !== 'zombie'
       ? readProcessInstanceFingerprint(existing.pid, existing.processInstanceFingerprint)
@@ -395,7 +394,9 @@ export async function acquireSessionRunnerLock(params: Readonly<{
     const observedCommandHash = holderState === 'stopped'
       && existing.processStartTimeMs === undefined
       && !existing.processInstanceFingerprint
-      ? await getCurrentProcessCommandHash(existing.pid).catch(() => null)
+      ? params.getCurrentProcessCommandHash
+        ? await getCurrentProcessCommandHash(existing.pid).catch(() => null)
+        : observedIdentity?.command ? hashProcessCommand(observedIdentity.command) : null
       : null;
     const presence = classifySessionRunnerProcessPresence({
       runState: holderState,

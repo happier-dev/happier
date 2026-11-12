@@ -4,7 +4,7 @@ import {
 } from '@/daemon/sessionRegistry';
 import {
   verifySessionMarkerProcessLiveness,
-} from '@/daemon/processLivenessVerifier';
+} from '@/daemon/processIdentity';
 import {
   mergeRunnerManagedDependencyRetentionV1,
   type RunnerManagedDependencyRetentionV1,

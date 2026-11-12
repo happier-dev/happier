@@ -4,7 +4,7 @@ import { configuration } from '@/configuration';
 import {
   readLiveRunnerAgentDaemonServiceAuthorityRetainedGenerationIds,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
-import { verifySessionMarkerProcessLiveness } from '@/daemon/processLivenessVerifier';
+import { verifySessionMarkerProcessLiveness } from '@/daemon/processIdentity';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { retireSessionSubagentCustodySource } from '@/session/transport/http/sessionSubagentCustodyHttp';

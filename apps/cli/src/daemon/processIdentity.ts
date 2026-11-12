@@ -1,10 +1,11 @@
-import { compareNumericProcessGenerationIdentities } from '@happier-dev/cli-common/processInstance';
+import { compareNumericProcessGenerationIdentities, processGenerationMatches, processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
 
 import { parseProcessCustodyStartIdentity } from '@/subprocess/supervision/processCustody';
 import { createProcessCensusReader, readProcessCensus, type ProcessCensusDependencies } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
-import { readProcessRunState } from './processRunState';
+import { readProcessRunState, type ProcessRunState } from './processRunState';
+import type { DaemonSessionMarker } from './sessionRegistry';
 
 export type ProcessGenerationWitness = Readonly<{ pid: number; processStartTimeMs: number }>;
 export type ProcessGenerationLiveness = 'verified_running' | 'verified_stopped' | 'unknown';
@@ -26,22 +27,15 @@ export async function inspectProcessGeneration(
     }> = {},
 ): Promise<ProcessGenerationLiveness> {
     if (!Number.isSafeInteger(ownerProcess.pid) || ownerProcess.pid <= 0) return 'unknown';
-    let runState: Awaited<ReturnType<typeof readProcessRunState>>;
-    try {
-        runState = await (dependencies.readProcessRunState ?? readProcessRunState)(ownerProcess.pid);
-    } catch {
-        return 'unknown';
+    if (ownerProcess.processStartTimeMs === undefined) {
+        const state = await (dependencies.readProcessRunState ?? readProcessRunState)(ownerProcess.pid).catch(() => null);
+        return state === 'dead' || state === 'zombie' ? 'verified_stopped' : 'unknown';
     }
-    if (runState === 'dead' || runState === 'zombie') return 'verified_stopped';
-    if (runState !== 'servable' || ownerProcess.processStartTimeMs === undefined) return 'unknown';
-    const currentIdentity = await (dependencies.readProcessIdentityByPid ?? readProcessIdentityByPid)(ownerProcess.pid).catch(() => null);
-    if (currentIdentity?.processStartTimeMs === undefined) return 'unknown';
-    const comparison = compareProcessGenerationIdentities(
-        `${ownerProcess.pid}:${ownerProcess.processStartTimeMs}`,
-        `${currentIdentity.pid}:${currentIdentity.processStartTimeMs}`,
-    );
-    return comparison === 'same' ? 'verified_running'
-        : comparison === 'reused' ? 'verified_stopped' : 'unknown';
+    return (await verifyProcessLiveness({
+        ...ownerProcess,
+        readRunState: dependencies.readProcessRunState,
+        readProcessIdentityByPidFn: dependencies.readProcessIdentityByPid,
+    })).status;
 }
 
 type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';
@@ -126,25 +120,93 @@ export function compareProcessGenerationIdentities(
     return compareNumericProcessGenerationIdentities(expectedIdentity, observedIdentity, platform);
 }
 
+/** One fresh census supplies every requested PID in a containing lifecycle observation. */
+export async function readProcessIdentitiesByPid(
+    pids: readonly number[],
+    dependencies: ReadProcessIdentityByPidDependencies = {},
+): Promise<ReadonlyMap<number, LocalServiceProcessFact>> {
+    const requested = [...new Set(pids.filter(pid => Number.isInteger(pid) && pid > 0))];
+    if (!requested.length || !isSupportedPlatform(dependencies.platform ?? process.platform)) return new Map();
+    try {
+        const read = Object.keys(dependencies).length ? createProcessCensusReader(dependencies) : readProcessCensus;
+        const snapshot = await read({ freshness: 'fresh', pids: [...new Set([...requested, process.pid])], scope: 'all' });
+        if (snapshot.status !== 'ok') return new Map();
+        const selfPrincipal = snapshot.rows.find(candidate => candidate.pid === process.pid)?.principal ?? null;
+        return new Map(snapshot.rows.map(row => [row.pid, censusRowToProcessFact(row, selfPrincipal)]));
+    } catch { return new Map(); }
+}
+
 export async function readProcessIdentityByPid(
     pid: number,
     dependencies: ReadProcessIdentityByPidDependencies = {},
 ): Promise<LocalServiceProcessFact | null> {
-    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return (await readProcessIdentitiesByPid([pid], dependencies)).get(pid) ?? null;
+}
 
-    const platform = dependencies.platform ?? process.platform;
-    if (!isSupportedPlatform(platform)) return null;
 
+/** Only a fresh, different process-start witness may report proven_reused. */
+export type ProcessIdentityVerification = 'verified' | 'proven_reused' | 'unknown';
+export type VerifiedProcessLiveness = Readonly<{
+    status: ProcessGenerationLiveness;
+    pid: number;
+    processStartTimeMs?: number;
+}>;
+
+type ReadProcessRunState = (pid: number) => Promise<ProcessRunState>;
+
+/** One birth observation and one liveness decision for every generation consumer. */
+export async function verifyProcessLiveness(params: Readonly<{
+    pid: number;
+    processStartTimeMs?: number;
+    verifyIdentity?: (pid: number, identity: LocalServiceProcessFact | null) => Promise<ProcessIdentityVerification>;
+    readRunState?: ReadProcessRunState;
+    readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
+}>): Promise<VerifiedProcessLiveness> {
+    const processIdentity = { pid: params.pid,
+        ...(params.processStartTimeMs === undefined ? {} : { processStartTimeMs: params.processStartTimeMs }) };
+    if (!parseProcessGenerationWitness(processIdentity)) return { status: 'unknown', ...processIdentity };
     try {
-        const read = Object.keys(dependencies).length ? createProcessCensusReader(dependencies) : readProcessCensus;
-        // Preserve foreign-principal birth evidence for PID safety; the census withholds its private fields.
-        const snapshot = await read({ freshness: 'fresh', pids: [pid, process.pid], scope: 'all' });
-        if (snapshot.status !== 'ok') return null;
-        const row = snapshot.rows.find(candidate => candidate.pid === pid);
-        if (!row) return null;
-        const selfPrincipal = snapshot.rows.find(candidate => candidate.pid === process.pid)?.principal ?? null;
-        return censusRowToProcessFact(row, selfPrincipal);
-    } catch {
-        return null;
-    }
+        const observed = await (params.readProcessIdentityByPidFn ?? readProcessIdentityByPid)(params.pid);
+        const runState = params.readRunState
+            ? await params.readRunState(params.pid)
+            : await readProcessRunState(params.pid, { observedProcess: observed });
+        if (runState === 'dead' || runState === 'zombie') return { status: 'verified_stopped', ...processIdentity };
+        if (runState !== 'servable') return { status: 'unknown', ...processIdentity };
+        const comparison = observed?.processStartTimeMs === undefined ? 'ambiguous'
+            : compareProcessGenerationIdentities(
+                params.pid + ':' + params.processStartTimeMs,
+                observed.pid + ':' + observed.processStartTimeMs,
+            );
+        const verification = params.verifyIdentity
+            ? await params.verifyIdentity(params.pid, observed)
+            : comparison === 'same' ? 'verified' : comparison === 'reused' ? 'proven_reused' : 'unknown';
+        return { status: verification === 'verified' ? 'verified_running'
+            : verification === 'proven_reused' ? 'verified_stopped' : 'unknown', ...processIdentity };
+    } catch { return { status: 'unknown', ...processIdentity }; }
+}
+
+export async function verifySessionMarkerProcessLiveness(
+    marker: Pick<DaemonSessionMarker, 'pid' | 'processCommandHash' | 'processStartTimeMs'>,
+    deps: Readonly<{
+        readRunState?: ReadProcessRunState;
+        verifyHappyProcessIdentity?: typeof import('./pidSafety').isPidSafeHappySessionProcess;
+        readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
+    }> = {},
+): Promise<VerifiedProcessLiveness> {
+    return await verifyProcessLiveness({
+        pid: marker.pid,
+        processStartTimeMs: marker.processStartTimeMs,
+        readRunState: deps.readRunState,
+        readProcessIdentityByPidFn: deps.readProcessIdentityByPidFn,
+        verifyIdentity: async (pid, observed): Promise<ProcessIdentityVerification> => {
+            const verified = deps.verifyHappyProcessIdentity
+                ? await deps.verifyHappyProcessIdentity({ pid,
+                    expectedProcessStartTimeMs: marker.processStartTimeMs,
+                    expectedProcessCommandHash: marker.processCommandHash })
+                : observed?.pid === pid && processGenerationMatches(marker.processStartTimeMs, observed.processStartTimeMs);
+            if (verified) return 'verified';
+            return observed?.pid === pid && processGenerationProvesReuse(marker.processStartTimeMs, observed.processStartTimeMs)
+                ? 'proven_reused' : 'unknown';
+        },
+    });
 }

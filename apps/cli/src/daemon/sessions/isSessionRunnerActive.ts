@@ -29,7 +29,7 @@ function trackedSessionMatchesSessionId(tracked: TrackedSession, sessionId: stri
 type ReadProcessRunState = (pid: number) => Promise<ProcessRunState>;
 
 async function classifyStoredProcessPresence(params: {
-  runState: ProcessRunState | null;
+  readProcessRunState: ReadProcessRunState;
   storedProcessStartTimeMs?: number;
   storedProcessInstanceFingerprint?: string;
   storedProcessCommandHash?: string;
@@ -37,23 +37,20 @@ async function classifyStoredProcessPresence(params: {
   readProcessIdentityByPid: typeof readProcessIdentityByPid;
   readProcessInstanceFingerprint: SessionRunnerProcessInstanceFingerprintReader;
 }): Promise<SessionRunnerProcessPresence> {
-  const shouldReadIdentity = params.runState !== 'dead' && params.runState !== 'zombie'
-    && (
-      params.storedProcessStartTimeMs !== undefined
-      || (params.runState === 'stopped' && Boolean(params.storedProcessCommandHash))
-    );
-  const currentIdentity = shouldReadIdentity
-    ? await params.readProcessIdentityByPid(params.pid).catch(() => null)
-    : null;
+  const shouldReadIdentity = params.storedProcessStartTimeMs !== undefined || Boolean(params.storedProcessCommandHash);
+  const currentIdentity = shouldReadIdentity ? await params.readProcessIdentityByPid(params.pid).catch(() => null) : null;
+  const runState = await (params.readProcessRunState === readProcessRunStateDefault && shouldReadIdentity
+    ? readProcessRunStateDefault(params.pid, { observedProcess: currentIdentity })
+    : params.readProcessRunState(params.pid)).catch(() => null);
   const observedFingerprint = params.storedProcessInstanceFingerprint
-    && params.runState !== 'dead' && params.runState !== 'zombie'
+    && runState !== 'dead' && runState !== 'zombie'
     ? params.readProcessInstanceFingerprint(params.pid, params.storedProcessInstanceFingerprint)
     : null;
-  const observedCommandHash = params.runState === 'stopped' && currentIdentity?.command
+  const observedCommandHash = runState === 'stopped' && currentIdentity?.command
     ? hashProcessCommand(currentIdentity.command)
     : undefined;
   return classifySessionRunnerProcessPresence({
-    runState: params.runState,
+    runState: runState,
     storedProcessStartTimeMs: params.storedProcessStartTimeMs,
     observedProcessStartTimeMs: currentIdentity?.processStartTimeMs,
     storedProcessInstanceFingerprint: params.storedProcessInstanceFingerprint,
@@ -75,9 +72,8 @@ async function classifyLockPresence(params: {
   if (!status.ok) return status.reason === 'not_found' ? 'absent' : 'unknown';
 
   const pid = status.lock.pid;
-  const runState = await params.readProcessRunState(pid).catch(() => null);
   return await classifyStoredProcessPresence({
-    runState,
+    readProcessRunState: params.readProcessRunState,
     storedProcessStartTimeMs: status.lock.processStartTimeMs,
     storedProcessInstanceFingerprint: status.lock.processInstanceFingerprint,
     storedProcessCommandHash: status.lock.processCommandHash,
@@ -118,9 +114,8 @@ export async function classifyTrackedSessionProcessPresence(params: Readonly<{
     return 'unknown';
   }
   const pidToCheck = exactRunner?.pid ?? childPid ?? params.tracked.pid;
-  const runState = await params.readProcessRunState(pidToCheck).catch(() => null);
   const presence = await classifyStoredProcessPresence({
-    runState,
+    readProcessRunState: params.readProcessRunState,
     storedProcessStartTimeMs: exactRunner?.processStartTimeMs ?? params.tracked.processStartTimeMs,
     storedProcessCommandHash: exactRunner?.processCommandHash ?? params.tracked.processCommandHash,
     pid: pidToCheck,

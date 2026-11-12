@@ -38,7 +38,7 @@ import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import {
   verifyProcessLiveness,
   type VerifiedProcessLiveness,
-} from '@/daemon/processLivenessVerifier';
+} from '@/daemon/processIdentity';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import { processGenerationProvesReuse, processIdentityMatches } from '@happier-dev/cli-common/processInstance';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -336,8 +336,7 @@ async function verifyAuthorityRunnerLiveness(
   return await verifyProcessLiveness({
     pid: runner.pid,
     processStartTimeMs: runner.processStartTimeMs,
-    verifyIdentity: async (pid) => {
-      const identity = await readProcessIdentityByPid(pid);
+    verifyIdentity: async (pid, identity) => {
       if (!identity || identity.pid !== pid) return 'unknown';
       if (processGenerationProvesReuse(runner.processStartTimeMs, identity.processStartTimeMs)) {
         return 'proven_reused';

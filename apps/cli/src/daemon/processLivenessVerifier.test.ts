@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   verifyProcessLiveness,
   verifySessionMarkerProcessLiveness,
-} from './processLivenessVerifier';
+} from './processIdentity';
 
 describe('verifyProcessLiveness', () => {
   it.each(['dead', 'zombie'] as const)(

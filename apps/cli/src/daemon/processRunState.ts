@@ -1,3 +1,4 @@
+import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { createProcessCensusReader, readProcessCensus, type ProcessCensusDependencies } from '@/processes/census/processCensus';
 
@@ -23,12 +24,21 @@ export type ProcessRunState = 'dead' | 'servable' | 'stopped' | 'zombie';
 export async function readProcessRunState(pid: number, deps?: Pick<ProcessCensusDependencies,
   'platform' | 'linuxBoundary' | 'execFile' | 'helperExecutablePath'> & Readonly<{
   isPidAlive?: (pid: number) => boolean;
+  /** A containing identity/lifecycle verdict reuses its one census observation. */
+  observedProcess?: LocalServiceProcessFact | null;
   platform?: NodeJS.Platform;
 }>): Promise<ProcessRunState> {
   if (!Number.isFinite(pid) || pid <= 0) return 'dead';
   const isPidAlive = deps?.isPidAlive ?? isPidPresent;
   const platform = deps?.platform ?? process.platform;
   const alive = isPidAlive(pid);
+
+  if (deps && 'observedProcess' in deps) {
+    const state = deps.observedProcess?.censusRow?.state;
+    if (state === 'stopped' || state === 'zombie') return state;
+    if (state) return 'servable';
+    return isPidAlive(pid) ? 'servable' : 'dead';
+  }
 
   if (platform === 'win32') {
     return alive ? 'servable' : 'dead';

@@ -8,7 +8,7 @@ import {
   verifySessionMarkerProcessLiveness,
   verifyProcessLiveness,
   type VerifiedProcessLiveness,
-} from '@/daemon/processLivenessVerifier';
+} from '@/daemon/processIdentity';
 import {
   listSessionMarkers,
   type DaemonSessionMarker,
