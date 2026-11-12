@@ -1,5 +1,5 @@
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { readHostWindowFocus } from '@/utils/runtime/readHostWindowFocus';
+import { isHostWindowFocused, readHostWindowFocus } from '@/utils/runtime/readHostWindowFocus';
 
 type DesktopWindowDocument = Readonly<{
     visibilityState?: string;
@@ -51,15 +51,8 @@ export function isDesktopMainWindowVisible(): boolean {
  * still reports `visible`, and suppressing on it would silently drop the
  * notification the user was relying on.
  *
- * A host that publishes no `hasFocus` falls back to visibility, which is the
- * strongest fact it offers.
+ * The focus fact itself is {@link isHostWindowFocused}, shared with browser tabs.
  */
 export function isDesktopMainWindowFocused(): boolean {
-    if (!isDesktopHost()) {
-        return false;
-    }
-
-    const doc = readDesktopWindowDocument();
-    const focused = readHostWindowFocus();
-    return focused ?? doc?.visibilityState !== 'hidden';
+    return isDesktopHost() && isHostWindowFocused();
 }

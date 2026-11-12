@@ -17,10 +17,14 @@ import { readAccountSessionDeliveryMutedScopes } from '@/sync/api/session/sessio
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
 import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
-import { isDesktopMainWindowFocused } from '@/desktop/window/desktopMainWindowPresence';
+import { isHostWindowFocused } from '@/utils/runtime/readHostWindowFocus';
 import { getFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
 import { storage, useLocalSetting } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useOptionalAuth } from '@/auth/context/AuthContext';
+import { navigateToSession } from '@/hooks/session/useNavigateToSession';
 import {
     areServerProfileIdentifiersEquivalent,
     getActiveServerSnapshot,
@@ -47,6 +51,11 @@ import {
 import { buildActivityLocalNotificationContent } from '../buildActivityLocalNotificationContent';
 import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification';
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
+import {
+    isWebLocalNotificationPermissionGranted,
+    sendWebLocalNotification,
+    subscribeWebLocalNotificationPermission,
+} from '../channels/sendWebLocalNotification';
 import { GuardStopWarningDesktopBanners } from './GuardStopWarningDesktopBanners';
 import { ManagedMachineDeletionNotificationRuntime } from './ManagedMachineDeletionNotificationRuntime';
 import { observeGuardStopWarningNotifications } from '../guardStopWarningLifecycle';
@@ -119,11 +128,25 @@ function isSessionActivelyViewedForLocalNotification(event: ActivityLocalNotific
         return false;
     }
 
-    if (!isDesktopHost()) {
-        return true;
-    }
+    // A browser tab or desktop window can keep a Session open while the person works elsewhere.
+    return Platform.OS !== 'web' || isHostWindowFocused();
+}
 
-    return isDesktopMainWindowFocused();
+/**
+ * Document hosts (browser tabs and desktop windows) have no Expo foreground handler, so they
+ * apply the in-app choice when the event is admitted. Native applies it from that handler.
+ */
+function resolveDocumentHostForegroundState(): 'foreground' | 'background' | undefined {
+    if (Platform.OS !== 'web') return undefined;
+    return isHostWindowFocused() ? 'foreground' : 'background';
+}
+
+/**
+ * Every open tab receives the same event, and the browser replaces a notification with the same
+ * tag, so tagging by the event's canonical identity shows one notification per event.
+ */
+function resolveWebNotificationTag(event: ActivityLocalNotificationEvent, identity: string | undefined): string | undefined {
+    return identity ? `happier:${JSON.stringify([sessionAddressKey(event.address), event.event, identity])}` : undefined;
 }
 
 function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {
@@ -136,7 +159,13 @@ function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {
 }
 
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
-    if (Platform.OS === 'web' && !isDesktopHost()) return null;
+    // A browser has an OS delivery channel only once it grants notification permission.
+    const webPermissionGranted = React.useSyncExternalStore(
+        subscribeWebLocalNotificationPermission,
+        isWebLocalNotificationPermissionGranted,
+        () => false,
+    );
+    if (Platform.OS === 'web' && !isDesktopHost() && !webPermissionGranted) return null;
     return <SupportedActivityLocalNotificationRuntime />;
 }
 
@@ -148,6 +177,14 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     const audienceSource = useActivityAttentionSource();
     const reminderServerIds = React.useMemo(() => [...audienceSource.audienceScopes.keys()], [audienceSource.audienceScopes]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
+    // A clicked browser notification opens its Session through the shared Home switch.
+    const router = useDestinationRouter();
+    const refreshFromActiveServer = useOptionalAuth()?.refreshFromActiveServer;
+    const openSessionRef = React.useRef((_address: ActivityLocalNotificationEvent['address']) => {});
+    openSessionRef.current = (address) => {
+        void navigateToSession(address.sessionId, { serverId: address.serverId },
+            { router, refreshFromActiveServer: refreshFromActiveServer ?? (async () => {}) });
+    };
     React.useEffect(() => {
         const nativeDesktop = isDesktopHost() && desktopHostKind() === 'tauri';
         if (Platform.OS === 'web' && !nativeDesktop) return;
@@ -249,6 +286,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 event: resolveLocalNotificationEventKind(event),
                 channel: 'local_notification',
                 sameSessionVisible: isSessionActivelyViewedForLocalNotification(event, scope.accountId),
+                foregroundState: resolveDocumentHostForegroundState(),
                 now: new Date(),
                 ...(followEvent ? { follow: { event: followEvent, policies: followPolicy ? [followPolicy] : [] } } : {}),
             });
@@ -338,6 +376,19 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 return;
             }
 
+            if (Platform.OS === 'web') {
+                // Plain browsers have no push leg on this device, so there is nothing to arbitrate.
+                const address = event.address;
+                fireAndForget(sendWebLocalNotification({
+                    title: notification.title,
+                    body: notification.body,
+                    tag: resolveWebNotificationTag(event, eventIdentity),
+                    silent: deliveryPlan.delivery === 'silent',
+                    onClick: () => openSessionRef.current(address),
+                }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
+                return;
+            }
+
             const resolvedSound = resolveExpoLocalNotificationSound(event, deliveryPlan);
             const expoNotificationParams: Parameters<typeof sendExpoLocalNotification>[0] = {
                 title: notification.title,
@@ -367,6 +418,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
     ]);
 
     // Phones get the guard's stop warning as a push; a desktop host announces it locally.
-    return isDesktopHost() ? <GuardStopWarningDesktopBanners />
-        : <ManagedMachineDeletionNotificationRuntime serverIds={reminderServerIds} />;
+    // Deletion reminders are scheduled native notifications, which a browser cannot hold.
+    if (isDesktopHost()) return <GuardStopWarningDesktopBanners />;
+    return Platform.OS === 'web' ? null : <ManagedMachineDeletionNotificationRuntime serverIds={reminderServerIds} />;
 }

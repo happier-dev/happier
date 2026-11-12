@@ -89,6 +89,16 @@ separate last-mile controls.
 
 When you are already looking at a given session, Happier suppresses notifications for that same session to avoid duplicate noise while you are actively reading it.
 
+### Browser notifications
+
+The web app shows browser system notifications when a turn finishes, and when a session needs a permission decision or your answer. The toggles under **Settings → Notifications → Device notifications** choose which ones appear, and clicking a notification opens its session on its Home.
+
+Your browser asks for permission when you turn on the first switch under **Settings → Notifications → Device notifications**. If the switch is already on and your browser never asked, turn it off and back on. If you blocked notifications for the site earlier, allow them in your browser's site settings instead; the switch can't bring the prompt back.
+
+A session open in a tab that has focus stays quiet. Switch to another app and that session notifies you as usual. While the Happier window has focus, **In-app notifications** applies to other sessions: `Silent` shows them without sound and `Off` hides them. The desktop app hides them with `Off` too.
+
+While the tab is hidden, behind another tab or in a minimized window, the web app pauses its connection and notifications stop. To be notified while you work elsewhere, give Happier its own browser window and keep part of it on screen, or use the desktop app, which stays connected in the background.
+
 **Development builds:** expand a webhook channel in notification settings and choose **Send test**.
 After confirmation, a connected machine sends a fixed diagnostic message using the channel's saved
 address and signing secret. The result shows whether the receiver accepted or refused it, or whether

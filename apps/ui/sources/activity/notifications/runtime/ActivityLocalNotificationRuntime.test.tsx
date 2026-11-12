@@ -17,6 +17,7 @@ import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch'
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -80,6 +81,12 @@ type ExpoLocalNotificationParams =
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async (_params: ExpoLocalNotificationParams) => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
 const cancelScheduledNotification = vi.hoisted(() => vi.fn(async (_identifier: string) => undefined));
+const routerNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { navigate: routerNavigate } }).module;
+});
 
 // Expo is the native OS boundary; keep the real inventory and reminder selection beneath it.
 vi.mock('expo-notifications', async (importOriginal) => ({
@@ -258,6 +265,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         };
         sendExpoLocalNotification.mockClear();
         sendTauriLocalNotification.mockClear();
+        routerNavigate.mockClear();
 
         const { resetActivityLocalNotificationRuntimeForTests } = await import('./activityLocalNotificationBus');
         resetActivityLocalNotificationRuntimeForTests();
@@ -1412,5 +1420,130 @@ describe('ActivityLocalNotificationRuntime', () => {
         await act(async () => {
             tree?.unmount();
         });
+    });
+
+    it('shows one browser notification per event across tabs and opens its Session on its Home when clicked', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        vi.stubGlobal('focus', vi.fn());
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const firstTab = await renderScreen(<ActivityLocalNotificationRuntime />);
+        const secondTab = await renderTestScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'ready-1');
+        });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(2));
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'ready-2');
+        });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(4));
+
+        const tags = browser.shown.map(({ options }) => options?.tag);
+        expect(tags[0]).toBeTruthy();
+        expect(tags[1]).toBe(tags[0]);
+        expect(tags[3]).toBe(tags[2]);
+        expect(tags[2]).not.toBe(tags[0]);
+        expect(browser.shown[0].title).toBe('Ready session · Home A');
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        await act(async () => { browser.shown[0].onclick?.(); });
+        expect(routerNavigate).toHaveBeenCalledWith(expect.stringContaining('session-1'), expect.anything());
+        expect(String(routerNavigate.mock.calls[0]?.[0])).toContain('srv_home_a');
+
+        await firstTab.unmount();
+        await secondTab.unmount();
+    });
+
+    it('notifies about the open browser Session only while its window does not have focus', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const hostDocument = { visibilityState: 'visible', hasFocus: () => true };
+        vi.stubGlobal('document', hostDocument);
+        visibleSessionIdsValue = ['session-1'];
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-ready');
+        });
+        await act(async () => {});
+        expect(browser.shown).toHaveLength(0);
+
+        hostDocument.hasFocus = () => false;
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'blurred-ready');
+        });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(1));
+        await screen.unmount();
+    });
+
+    it('applies the in-app notification choice while the browser window has focus', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        const hostDocument = { visibilityState: 'visible', hasFocus: () => true };
+        vi.stubGlobal('document', hostDocument);
+        await setActiveAccountSettings({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'off' } });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-off');
+        });
+        await act(async () => {});
+        expect(browser.shown).toHaveLength(0);
+
+        hostDocument.hasFocus = () => false;
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'background-full');
+        });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(1));
+        expect(browser.shown[0].options?.silent).toBeUndefined();
+        await screen.unmount();
+    });
+
+    it('shows browser notifications without sound for the silent in-app choice while the window has focus', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        const browser = installBrowserNotificationApiStub('granted');
+        vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => true });
+        await setActiveAccountSettings({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'silent' } });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-silent');
+        });
+        await expectNotificationDelivery(() => expect(browser.shown).toHaveLength(1));
+        expect(browser.shown[0].options?.silent).toBe(true);
+        await screen.unmount();
+    });
+
+    it('hides desktop notifications with the off in-app choice while the desktop window has focus', async () => {
+        reactNativeRuntime.platformOs = 'web';
+        reactNativeRuntime.isDesktopHost = true;
+        const hostDocument = { visibilityState: 'visible', hasFocus: () => true };
+        vi.stubGlobal('document', hostDocument);
+        await setActiveAccountSettings({ attentionDeliveryPolicyV1: { v: 1, foregroundBehavior: 'off' } });
+        const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+        const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+        const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'focused-off');
+        });
+        await act(async () => {});
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
+
+        hostDocument.hasFocus = () => false;
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, [], undefined, 'background-full');
+        });
+        await expectNotificationDelivery(() => expect(sendTauriLocalNotification).toHaveBeenCalledTimes(1));
+        await screen.unmount();
     });
 });

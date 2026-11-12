@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -10,6 +11,9 @@ import {
     areLocalNotificationsOff, readLocalNotificationPreference, type LocalNotificationPreferenceId,
 } from '@/components/settings/notifications/localNotificationPreferences';
 import type { DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
+import { requestWebLocalNotificationPermission } from '@/activity/notifications/channels/sendWebLocalNotification';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type NotificationLocalDeviceSectionProps = Readonly<{
     localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
@@ -35,7 +39,17 @@ export function NotificationLocalDeviceSection({
                 rightElement={(
                     <Switch
                         value={read('enabled')}
-                        onValueChange={(value) => { void setSetting(NOTIFICATIONS_SETTINGS.settings.localEnabled, Boolean(value)); }}
+                        onValueChange={(value) => {
+                            const enabled = Boolean(value);
+                            void setSetting(NOTIFICATIONS_SETTINGS.settings.localEnabled, enabled);
+                            // Browsers only show their permission prompt for a user gesture. The
+                            // desktop app requests permission from its own permission row.
+                            if (enabled && Platform.OS === 'web' && !isDesktopHost()) {
+                                fireAndForget(requestWebLocalNotificationPermission(), {
+                                    tag: 'NotificationLocalDeviceSection.requestWebLocalNotificationPermission',
+                                });
+                            }
+                        }}
                     />
                 )}
                 showChevron={false}
