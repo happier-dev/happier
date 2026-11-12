@@ -16,7 +16,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 const actualFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
 afterEach(() => vi.restoreAllMocks());
 
-it('plans the real emulation declaration package-first, refuses unsupported fallback and leaves native support untouched', async () => {
+it('plans emulation package-first, leaves unresolved apt candidates for Apply and refuses unsupported architectures', async () => {
   const source = fileURLToPath(new URL('../../../../../packages/plugins/machine-recipes/src/binfmtQemu.ts', import.meta.url));
   const { binfmtQemu } = await import(pathToFileURL(source).href);
   const pluginId = 'happier.machine.recipes';
@@ -27,7 +27,7 @@ it('plans the real emulation declaration package-first, refuses unsupported fall
   let packageAvailable = true;
   const calls: string[] = [];
   vi.spyOn(fs, 'readFile').mockImplementation(async (...args: Parameters<typeof fs.readFile>) => {
-    if (String(args[0]) === '/proc/1/comm') return Buffer.from('systemd\n');
+    if (String(args[0]) === '/proc/1/comm') return args[1] === 'utf8' ? 'systemd\n' : Buffer.from('systemd\n');
     if (String(args[0]).startsWith('/proc/sys/fs/binfmt_misc/')) throw Object.assign(new Error('absent'), { code: 'ENOENT' });
     return actualFs.readFile(...args);
   });
@@ -70,7 +70,10 @@ it('plans the real emulation declaration package-first, refuses unsupported fall
         { id: 'register-apt-arm64', kind: 'command', args: ['qemu-aarch64.conf'] }] } }] } });
     expect(calls).not.toContain('/usr/lib/systemd/systemd-binfmt');
     packageAvailable = false;
-    expect(await plan(['arm64'])).toMatchObject({ ok: true, result: { support: [{ status: 'unsupported' }],
-      recipePlans: [{ plan: { steps: [], checkFacts: [{ status: 'drifted' }, { status: 'unsupported' }] } }] } });
+    expect(await plan(['arm64'])).toMatchObject({ ok: true, result: { support: [{ status: 'drifted' }],
+      recipePlans: [{ plan: { steps: [{ id: 'distro-package' }, { id: 'register-apt-arm64' }],
+        checkFacts: [{ status: 'drifted' }, { status: 'drifted', facts: { unresolvedPackages: ['qemu-user-static'] } }] } }] } });
+    expect(await plan(['unsupported-architecture'])).toMatchObject({ ok: true, result: { support: [{ status: 'unsupported' }],
+      recipePlans: [{ plan: { steps: [], checkFacts: [{ status: 'unsupported', facts: { requiredFact: 'architectureProbe' } }] } }] } });
   } finally { await runtime.dispose(); }
 });

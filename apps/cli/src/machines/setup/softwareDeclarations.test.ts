@@ -89,10 +89,13 @@ describe('first-party software data through the canonical setup planner', () => 
     } }] });
   });
 
-  it('refuses denied, pinned-unavailable and missing-package facts without probing an alternate manager', async () => {
+  it('refuses denied inspection and keeps unresolved apt candidates with their selected manager for Apply to refresh', async () => {
     for (const mode of ['denied', 'pinMissing', 'packageMissing'] as const) {
       const { result, calls } = await plan({ apt: [{ name: 'wanted', ...(mode === 'pinMissing' ? { version: '2' } : {}) }], dnf: [{ name: 'wanted' }] }, mode);
-      expect(result).toMatchObject({ support: [{ status: mode === 'denied' ? 'unavailable' : 'unsupported' }] });
+      expect(result).toMatchObject({ support: [{ status: mode === 'denied' ? 'unavailable' : 'drifted' }] });
+      if (mode !== 'denied') expect(result).toMatchObject({ recipePlans: [{ plan: { nativeFacts: [
+        { status: 'drifted', facts: { manager: 'apt', unresolvedPackages: ['wanted'] } },
+      ] } }] });
       expect(calls.some(command => command.executable === 'dnf')).toBe(false);
     }
     const invalid = await plan({ apt: [{ name: '--injected' }], dnf: [{ name: 'wanted' }] });
@@ -104,9 +107,9 @@ describe('first-party software data through the canonical setup planner', () => 
     const generic = await plan({ apt: [{ name: 'wanted' }], dnf: [{ name: 'wanted' }] }, 'allMissing');
     expect(generic.result).toMatchObject({ support: [{ status: 'unsupported' }], recipePlans: [{ plan: { steps: [] } }] });
     const chrome = await plan({}, 'packageMissing', 'google-chrome');
-    expect(chrome.result).toMatchObject({ support: [{ status: 'unsupported' }], recipePlans: [{ plan: {
+    expect(chrome.result).toMatchObject({ support: [{ status: 'drifted' }], recipePlans: [{ plan: {
       steps: [{ kind: 'package', manager: 'apt', packages: [{ name: 'google-chrome-stable' }] }],
-      nativeFacts: [{ status: 'unsupported', facts: { requiredFact: 'packageAvailability', package: 'google-chrome-stable' } }],
+      nativeFacts: [{ status: 'drifted', facts: { unresolvedPackages: ['google-chrome-stable'] } }],
     } }] });
     expect(chrome.calls.some(command => command.executable === 'dnf' || command.executable === 'curl')).toBe(false);
   });

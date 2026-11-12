@@ -38,6 +38,7 @@ describe.skipIf(process.platform === 'win32')('vendor removal at the real shell 
     await writeFile(join(root, 'docker'), `#!/bin/sh
 case "$1 $2" in
   'info ') test -z "$DOCKER_UNAVAILABLE" ;;
+  'info --format') test -z "$DOCKER_UNAVAILABLE" || exit 1; printf 'true\\n' ;;
   'container ls') printf '%s\\n' foreign coolify coolify-db coolify-redis coolify-sentinel coolify-realtime coolify-proxy dokploy-traefik ;;
   'volume ls') printf '%s\\n' foreign coolify-db coolify-redis dokploy dokploy-postgres dokploy-redis ;;
   'service ls') printf '%s\\n' foreign dokploy dokploy-traefik dokploy-postgres dokploy-redis ;;
