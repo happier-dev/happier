@@ -437,6 +437,8 @@ describe('ConnectedAccountSetupController real ownership', () => {
 
     it('lists an account needing sign-in first and offers an unconnected service in the real Connect catalog', async () => {
         const unconnected = await seedServicesOverview();
+        // This test exercises list grouping; phones retain the chosen grid since ee3184ecf8b.
+        storage.getState().applyLocalSettings({ connectedServicesIndexViewV1: 'list' });
         const screen = await renderScreen(<InjectedAuthProvider credentials={account.credentials}><ModalProvider>
             <ConnectedServicesSettingsView />
         </ModalProvider></InjectedAuthProvider>);
@@ -524,7 +526,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         const screen = await renderScreen(element({ ...selection, selectedTarget: null,
             resolveExecutionTarget: () => null }, service, null));
         try {
-            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
             expect(screen.findHostByTestId('connected-service-setup:method:manual')).toBeNull();
             expect(screen.findHostByTestId('connected-service-setup:method:device')).toBeNull();
             expect(controlCommands).toEqual([]);
@@ -542,7 +544,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 targetSelection={selection} registry={registry} panel={{ intent: { kind: 'add' }, onConnected, onCancel }} />
         </InjectedAuthProvider>);
         try {
-            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry')).not.toBeNull());
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account:error:retry'), screen.getTextContent()).not.toBeNull());
             expect(controlCommands).toEqual([]);
             expect(screen.findHostByTestId('connected-service-setup:preparing')).toBeNull();
             expect(screen.findHostByTestId('connected-service-setup:unknown-service')).toBeNull();
@@ -1929,47 +1931,62 @@ describe('ConnectedAccountSetupController real ownership', () => {
         }
     });
 
-    it('keeps one explicit Ask for credentials pending without repeating the connect intent, then cancels on close', async () => {
+    it('keeps one credential review pending without repeating the connect intent, then cancels on close', async () => {
         storage.getState().applySettings({ ...storage.getState().settings,
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'connectedServices.authentication.submitManual': { approvalRequiredSurfaces: ['ui'] },
             } }),
         }, 2);
         const approvals = installApprovalBoundary();
+        // 02102e614e18 / eb1a5146c42: own UI confirms in the receiving review, without an Artifact.
         await installNativeConfigurationAttemptBoundary();
         const screen = await manualScreen();
         await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'secret-token'));
         const submission = screen.pressByTestIdAsync('connected-account-manual:submit');
-        await vi.waitFor(() => expect(approvals, JSON.stringify({ rendered: screen.getTextContent(),
-            requests: httpRequests.map(url => url.pathname), alerts: vi.mocked(Modal.alert).mock.calls })).toHaveLength(1));
-        expect(approvals[0]).toMatchObject({ actionId: 'connectedServices.authentication.submitManual', status: 'open' });
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledOnce());
+        const review = vi.mocked(Modal.show).mock.calls[0]![0];
+        expect(review.chrome?.testID).toBe('actions.confirmation-review.modal');
+        const props = review.props;
+        if (!props || typeof props !== 'object' || !('onAnswer' in props) || typeof props.onAnswer !== 'function') {
+            throw new Error('Expected the receiving confirmation presentation');
+        }
+        expect(approvals).toEqual([]);
         expect(authenticationCommands).toEqual([{ operation: 'beginConnect', service, modeId: 'manual' }]);
-        expect(platform.confirm).not.toHaveBeenCalled();
+        expect(JSON.stringify(review)).not.toContain('secret-token');
         await screen.unmount();
+        props.onAnswer(true);
         await submission;
         expect(authenticationCommands.filter(command => command.operation === 'submitManual')).toEqual([]);
         expect(onConnected).not.toHaveBeenCalled();
     });
 
-    it('retains one initial explicit Ask across setup rerenders without beginning an unapproved attempt', async () => {
+    it('retains one initial credential review across setup rerenders without beginning an unapproved attempt', async () => {
         storage.getState().applySettings({ ...storage.getState().settings,
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'connectedServices.authentication.beginConnect': { approvalRequiredSurfaces: ['ui'] },
             } }),
         }, 2);
         const approvals = installApprovalBoundary();
+
         const screen = await renderScreen(element());
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull());
         await act(async () => screen.changeTextByTestId('connected-account-manual:token', 'secret-token'));
         // The explicit manual method keeps a local draft until the person submits it.
         const submission = screen.pressByTestIdAsync('connected-account-manual:submit');
-        await vi.waitFor(() => expect(approvals).toHaveLength(1));
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledOnce());
+        const review = vi.mocked(Modal.show).mock.calls[0]![0];
+        expect(review.chrome?.testID).toBe('actions.confirmation-review.modal');
+        const props = review.props;
+        if (!props || typeof props !== 'object' || !('onAnswer' in props) || typeof props.onAnswer !== 'function') {
+            throw new Error('Expected the receiving confirmation presentation');
+        }
         await screen.update(element());
-        expect(approvals).toHaveLength(1);
-        expect(approvals[0]).toMatchObject({ actionId: 'connectedServices.authentication.beginConnect', status: 'open' });
+        expect(Modal.show).toHaveBeenCalledOnce();
+        expect(approvals).toEqual([]);
         expect(authenticationCommands).toEqual([]);
-        expect(platform.confirm).not.toHaveBeenCalled();
+        expect(JSON.stringify(review)).not.toContain('secret-token');
         await screen.unmount();
+        props.onAnswer(true);
         await submission;
         expect(authenticationCommands).toEqual([]);
         expect(onConnected).not.toHaveBeenCalled();
@@ -2819,6 +2836,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await pressReadyAction(screen);
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
         await act(async () => screen.changeTextByTestId('connected-account-configuration:endpoint', 'https://new.example'));
+        vi.mocked(Modal.show).mockClear();
         const submission = screen.pressByTestIdAsync('connected-account-configuration:save');
         if (revision === null) {
             await submission;
@@ -2826,10 +2844,16 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 target: { kind: 'attempt', attemptId: 'attempt-1' }, expectedRevision: null,
                 values: { endpoint: 'https://new.example' }, secretValues: {} }));
             expect(platform.confirm).not.toHaveBeenCalled();
+            expect(Modal.show).not.toHaveBeenCalled();
             expect(authenticationCommands).toContainEqual({ operation: 'continueConnect', attemptId: 'attempt-1', expectedConfigurationRevision: 'config-2' });
         } else {
             await submission;
-            expect(platform.confirm).toHaveBeenCalledTimes(1);
+            expect(Modal.show).toHaveBeenCalledOnce();
+            expect(vi.mocked(Modal.show).mock.calls[0]?.[0]).toMatchObject({
+                chrome: { testID: 'actions.confirmation-review.modal' },
+                props: { actionId: 'connectedServices.configuration.replace',
+                    actionArgs: { expectedRevision: revision } },
+            });
             expect(controlCommands.some(command => command.operation === 'replaceConfiguration')).toBe(false);
         }
         await screen.unmount();
@@ -3335,15 +3359,20 @@ describe('ConnectedAccountSetupController real ownership', () => {
             await changeMachine('other-missing-machine');
             expect(screen.findHostByTestId('connected-account-configuration:endpoint')?.props.value).toBe('https://new.example');
         }
-        const pendingSave = screen.pressByTestIdAsync('connected-account-configuration:save');
+        await screen.pressByTestIdAsync('connected-account-configuration:save');
         if (selectedMachine === 'saving') {
             try {
                 await vi.waitFor(() => expect(saving).toBe(true));
+                // 32238eec816d keeps busy web openers focusable; semantics and activation stay disabled.
+                expect(screen.findHostByTestId('connected-account-configuration:save')?.props.accessibilityState)
+                    .toMatchObject({ disabled: true, busy: true });
                 await changeMachine('changed-during-save');
-                expect(screen.findHostByTestId('connected-account-configuration:save')?.props.disabled).toBe(true);
+                expect(screen.findHostByTestId('connected-account-configuration:save')?.props.accessibilityState)
+                    .toMatchObject({ disabled: true, busy: true });
+                await screen.pressByTestIdAsync('connected-account-configuration:save');
+                expect(writes).toBe(0);
             } finally { await act(async () => saveGate.resolve(null)); }
         }
-        await pendingSave;
         await vi.waitFor(() => expect(writes).toBe(1));
         expect(materialReads).toBe(0);
         if (selectedMachine === 'none') expect(controlCommands).toEqual([]);
