@@ -3316,6 +3316,53 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
+    it.each(['executed', 'presenterUnavailable'] as const)('carries a bound inline gesture through the registered Account Action entry (%s)', async settlement => {
+        const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+        const { Modal } = await import('@/modal');
+        const accountLifetime = clientAccountLifetime();
+        let writes = 0;
+        const activation = createClientActionActivation({ accountPlacement: true, accountLifetime,
+            dangerLevel: 'writesLocal', confirmationWhen: { presentUserUi: settlement === 'presenterUnavailable' },
+            accountHandler: async (_input, context) => { writes++; return { status: 'updated', requestId: context.requestId ?? null }; } });
+        await activation.composition.unload();
+        const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+            hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.('allSurfaces') ?? [],
+            invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+            }),
+        }));
+        const unregister = registerCurrentUiContextActionPort(createPort);
+        const bound = createPluginSurfaceActionControls({ pluginId: CALLER_PLUGIN_ID, surfaceId: 'surfacePlacement:test',
+            hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId,
+            } }, signal: new AbortController().signal,
+            isCurrent: () => true, captureCurrentBinding: () => () => true });
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let outcome: unknown;
+        const show = settlement === 'presenterUnavailable' ? vi.spyOn(Modal, 'show').mockImplementation(config => {
+            queueMicrotask(() => config.onHostUnmount?.());
+            return 'unmounted-inline-confirmation';
+        }) : undefined;
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            screen = await renderScreen(React.createElement('button', { testID: 'inline-write', onPress: async () => {
+                outcome = await bound.commit({ action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                    prepare: () => ({ input: {} }), onSettled: value => value }, undefined);
+            } }));
+            await screen.pressByTestIdAsync('inline-write');
+            const uuid = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+            if (settlement === 'executed') expect(outcome).toMatchObject({ ok: true, result: { status: 'updated', requestId: uuid } });
+            else expect(outcome).toMatchObject({ ok: false, errorCode: 'plugin_action_current_intent_unavailable', requestId: uuid,
+                details: { details: { currentIntentPresentation: { status: 'unavailable', requestId: uuid } } } });
+            expect(writes).toBe(settlement === 'executed' ? 1 : 0);
+        } finally { show?.mockRestore(); screen?.unmount(); bound.dispose(); unregister(); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
     it.each(['approved', 'rejected'] as const)('settles UI current intent before an Account Action invokes a nested Machine mutation (%s)', async decision => {
         const accountLifetime = clientAccountLifetime();
         const sourceId = 'acme.provider-source';
@@ -8431,6 +8478,30 @@ describe('present-user confirmation for daemon-target Actions', () => {
             expect(contributed.mock.calls[0]?.[1]).toMatchObject({ executionSurface: 'ui' });
             expect(contributed.mock.calls[0]?.[1].presentUserIntent).toBe(confirms ? 'confirmed' : undefined);
         } finally { storage.setState(previous); }
+    });
+
+    it.each(['untyped', 'typed'] as const)('retains the cause and request of a failing current-intent presenter before Machine dispatch (%s)', async kind => {
+        clientActionSchemasByQualifiedId.set(`${CALLER_PLUGIN_ID}/set-complete`, { inputSchema: { type: 'object' } });
+        let effects = 0;
+        const result = await dispatchPluginSurfaceAction({
+            actionRequestId: '813be538-5ae3-43a5-bf45-5f24df072540',
+            action: { pluginId: CALLER_PLUGIN_ID, localId: 'set-complete' }, input: {},
+            hostAction: { execute: async () => ({ ok: true, result: null }), context: { authority: 'present_user' } },
+            resolveContributedAction: resolveConfirmedDaemonTargetAction,
+            requestCurrentIntent: async () => {
+                if (kind === 'typed') throw new PluginError({ code: 'action_interactive_review_required',
+                    failureCause: { phase: 'action.current_intent', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+                throw new TypeError('private presenter content');
+            },
+            contributedAction: { machineId: 'machine-1', execute: async () => {
+                effects++; return { supported: true, result: { ok: true, result: null } };
+            } },
+        });
+        expect(result).toMatchObject({ ok: false, reason: kind === 'typed' ? 'action_interactive_review_required' : 'plugin_action_execution_failed',
+            requestId: '813be538-5ae3-43a5-bf45-5f24df072540', effectAttempted: false,
+            failureCause: { phase: 'action.current_intent', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+        expect(JSON.stringify(result)).not.toContain('private presenter content');
+        expect(effects).toBe(0);
     });
 
     it.each([

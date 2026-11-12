@@ -1,4 +1,4 @@
-import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
+import { fingerprintPluginAccountActionConfirmation, readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -9,7 +9,7 @@ import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contribut
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
@@ -1156,8 +1156,17 @@ async function settleDaemonActionPresentUserIntent(
             invocationSurface,
             ...(input.signal ? { signal: input.signal } : {}),
         });
-    } catch {
-        intent = { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+    } catch (error) {
+        const pluginError = readPluginActionError(error);
+        if (pluginError) return projectPluginActionFailure({
+            ...pluginError,
+            requestId: input.actionRequestId, effectAttempted: false,
+        });
+        return failure('internal_error', 'plugin_action_execution_failed', {
+            requestId: input.actionRequestId,
+            effectAttempted: false,
+            failureCause: projectActionFailureCauseV1(error, 'action.current_intent'),
+        });
     }
     if (input.signal?.aborted) return failure('unavailable', 'plugin_ui_invocation_aborted');
     if (input.isCurrent && !input.isCurrent()) {
@@ -1179,6 +1188,7 @@ async function settleDaemonActionPresentUserIntent(
             ? 'denied'
             : intent.code === 'plugin_action_generation_retired' ? 'stale_surface' : 'unavailable',
         intent.code,
+        { requestId: input.actionRequestId, effectAttempted: false, ...intent.data },
     );
 }
 
@@ -2102,6 +2112,9 @@ function matchesTargetedOperationAction(
 export async function dispatchPluginSurfaceAction(
     input: DispatchPluginSurfaceActionInput,
 ): Promise<PluginSurfaceActionDispatchOutcome> {
+    if (input.actionRequestId === undefined && input.hostAction?.context?.actionRequestId !== undefined) {
+        input = { ...input, actionRequestId: input.hostAction.context.actionRequestId };
+    }
     const preflight = preflightFailure(input);
     if (preflight) return preflight;
 
@@ -2350,6 +2363,9 @@ async function executeContributedAction(
         if (!admitted.ok) return admitted;
         const stopped = preflightFailure(input);
         if (stopped) return stopped;
+        if (!resolvePluginUiExecutionDeclaration(projectedAction, { current: resolveProjectedContributedAction(input, identity) })) {
+            return failure('stale_surface', 'plugin_ui_generation_retired');
+        }
         return { ok: true, result: { admitted: true } };
     }
     // Execution placement is chosen after the selected-operation carrier is
@@ -2816,7 +2832,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
             const surface = input.invocationSurface ?? 'ui';
             return {
                 enabled: action.available === true && action.surfaces.includes(surface) && isContributedActionEnabled(identity, surface),
-                approvalRequired: isApprovalRequiredByActionSettings(identity, surface, action),
+                approvalRequired: requiresContributedActionCurrentIntent(identity, surface, action),
             };
         },
         ...(input.interactionRequester ? { interactionRequester: input.interactionRequester } : {}),

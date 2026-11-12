@@ -442,6 +442,22 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         expect(confirmation?.confirmLabel).toBe('Publish preview');
     });
 
+    it('retains the unavailable presentation settlement and its interaction request', async () => {
+        const requestCurrentIntent = createPluginActionCurrentIntentHandler({
+            requester: { pluginId: 'acme.preview', contributionId: 'publish', occurrenceId: 'occurrence-1', invocationId: 'surface-1' },
+            isCurrent: () => true,
+        });
+        const action = PluginProjectedActionV2Schema.parse({
+            pluginId: 'acme.preview', id: 'publish', occurrenceId: 'occurrence-1', title: 'Publish',
+            scopes: ['global'], surfaces: ['ui'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
+        });
+        const pending = requestCurrentIntent({ action, input: {}, fingerprint: 'publish-1', surface: 'ui', invocationSurface: 'ui' });
+        await openedDialog();
+        modalHarness.readConfig().onHostUnmount();
+        await expect(pending).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable',
+            data: { details: { currentIntentPresentation: { status: 'unavailable', requestId: expect.any(String) } } } });
+    });
+
     it('presents an Action confirmation through the plugin\'s admitted translation bundle', async () => {
         // The declaration carries `{ key, fallback }`. Reading `.fallback`
         // pinned every admitted plugin to its authored English wording, which

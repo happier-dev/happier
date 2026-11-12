@@ -19,7 +19,7 @@ import type { CurrentIntentMismatchV1 } from '../../actions/executor/approvalRev
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { isPluginError, isPluginErrorData } from '../errors.js';
-import { readActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
+import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import type {
   PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
@@ -604,7 +604,8 @@ export type PluginActionCurrentIntentRequest<TAction> = Readonly<{
 export type PluginActionCurrentIntentResult = Readonly<
   | { status: 'approved'; fingerprint: string; artifactId?: string }
   | { status: 'deferred'; artifactId: string }
-  | { status: 'rejected' | 'unavailable'; code: string; mismatch?: CurrentIntentMismatchV1 }
+  | { status: 'rejected' | 'unavailable'; code: string; mismatch?: CurrentIntentMismatchV1;
+      data?: Readonly<{ details: Readonly<Record<string, StrictJsonValue>> }> }
 >;
 
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
@@ -614,13 +615,16 @@ export type PluginActionPresentUserGateResult<TAction> = Readonly<
   | Extract<PluginActionInvocationResult, { status: 'failed' }>
 >;
 
-function presentUserUnavailable(code: string, message = code, mismatch?: CurrentIntentMismatchV1): PluginActionPresentUserGateResult<never> {
+function presentUserUnavailable(code: string, message = code, mismatch?: CurrentIntentMismatchV1,
+  details?: Readonly<Record<string, StrictJsonValue>>): PluginActionPresentUserGateResult<never> {
   return Object.freeze({ status: 'unavailable', code, message,
-    ...(mismatch === undefined ? {} : { data: { details: { currentIntentMismatch: { field: mismatch.field } } } }) });
+    ...(mismatch === undefined && details === undefined ? {} : { data: { details: {
+      ...details, ...(mismatch === undefined ? {} : { currentIntentMismatch: { field: mismatch.field } }),
+    } } }) });
 }
 
-function presentUserFailed(code: string, message: string): PluginActionPresentUserGateResult<never> {
-  return Object.freeze({ status: 'failed', code, message });
+function presentUserFailed(code: string, message: string, data?: StrictJsonValue): PluginActionPresentUserGateResult<never> {
+  return Object.freeze({ status: 'failed', code, message, ...(data === undefined ? {} : { data }) });
 }
 
 function presentUserDeferred(artifactId: string): PluginActionPresentUserGateResult<never> {
@@ -828,8 +832,10 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       let fingerprint: string;
       try {
         fingerprint = fingerprintOperands();
-      } catch {
-        return presentUserUnavailable('plugin_action_current_intent_unavailable');
+      } catch (error) {
+        return presentUserFailed('plugin_action_execution_failed', 'plugin_action_execution_failed', {
+          failureCause: projectActionFailureCauseV1(error, 'action.current_intent.fingerprint'), effectAttempted: false,
+        });
       }
       let intent: PluginActionCurrentIntentResult;
       try {
@@ -846,7 +852,9 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
         if (pluginError && !args.signal?.aborted) return Object.freeze({ status: 'failed' as const, ...pluginError });
         return args.signal?.aborted
           ? presentUserUnavailable('plugin_action_aborted')
-          : presentUserUnavailable('plugin_action_current_intent_unavailable');
+          : presentUserFailed('plugin_action_execution_failed', 'plugin_action_execution_failed', {
+            failureCause: projectActionFailureCauseV1(error, 'action.current_intent'), effectAttempted: false,
+          });
       }
       if (args.signal?.aborted) return presentUserUnavailable('plugin_action_aborted');
       if (intent.status === 'deferred') {
@@ -855,7 +863,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
           ? presentUserDeferred(artifactId)
           : presentUserUnavailable('plugin_action_current_intent_unavailable');
       }
-      if (intent.status !== 'approved') return presentUserUnavailable(intent.code, intent.code, intent.mismatch);
+      if (intent.status !== 'approved') return presentUserUnavailable(intent.code, intent.code, intent.mismatch, intent.data?.details);
       // Consume consent against the operands about to run, without resolving
       // policy or plugin metadata again. Mutable input cannot retarget approval.
       let consumedFingerprint: string;

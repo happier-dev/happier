@@ -17,6 +17,37 @@ import {
   defineProtocolString,
 } from './protocolComposableSchema.js';
 
+it('preserves an unavailable current-intent presentation cause', async () => {
+  const data = { details: { currentIntentPresentation: { status: 'unavailable', requestId: 'interaction-request' } } };
+  const gate = createPluginActionPresentUserGate({
+    resolve: () => ({ status: 'resolved', action: {}, policy: {
+      qualifiedId: 'acme.test/actions/write', occurrenceId: 'current', dangerLevel: 'safe', scopes: ['global'],
+      surfaces: ['ui'], approvalRequiredByActionSettings: true, authorization: currentIntentAuthorizationFacts(),
+    } }),
+    requestCurrentIntent: async () => ({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable', data }),
+  });
+  expect(await gate.admit({ input: {}, surface: 'ui', invocationSurface: 'ui' }))
+    .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable', data });
+});
+
+it.each(['fingerprint', 'presenter'] as const)('retains a typed current-intent %s exception without disclosing content', async phase => {
+  const gate = createPluginActionPresentUserGate({
+    resolve: () => ({ status: 'resolved', action: {}, policy: {
+      qualifiedId: 'acme.test/actions/write', occurrenceId: 'current', dangerLevel: 'safe',
+      scopes: ['global'], surfaces: ['ui'], approvalRequiredByActionSettings: true,
+      authorization: currentIntentAuthorizationFacts(),
+    } }),
+    requestCurrentIntent: async () => { throw new TypeError('private presenter content'); },
+  });
+  const result = await gate.admit({ input: phase === 'fingerprint' ? { invalid: undefined } : {},
+    surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user' });
+  expect(result).toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed', data: {
+    failureCause: { phase: phase === 'fingerprint' ? 'action.current_intent.fingerprint' : 'action.current_intent',
+      errorClass: phase === 'fingerprint' ? 'Error' : 'TypeError', errorCode: null, httpStatus: null }, effectAttempted: false,
+  } });
+  expect(JSON.stringify(result)).not.toContain('private presenter content');
+});
+
 it('retains numeric native refusal status through the author payload reader', () => {
   const failureCause = { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: '10000', httpStatus: 403 };
   expect(readPluginActionFailureAuthorPayload({ failureCause })).toMatchObject({ failureCause: {

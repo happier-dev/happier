@@ -4817,6 +4817,14 @@ a held Machine the filtered answer omits has left the inventory, as a complete
 read would show. An incomplete filtered answer falls back to the complete read.
 Named plugins stay pending until their read is adopted, so a superseded or
 failed row-level read keeps them for the trailing refresh.
+On the wire, `materializations.read` sends each distinct Machine UI-artifact list
+once in `uiArtifactSets`; a materialization row names it by index
+(`uiArtifactSet`) instead of repeating it (every Machine reporting the same
+bundled plugin reports the same list). The server route encodes with Protocol's
+`encodePluginAccountAvailabilityMaterializationsReadV1`; the action output schema
+decodes, admitting each list once and sharing that frozen list across rows, and
+the UI projection keeps that one list per replacement instead of copying it per
+row. An inline `uiArtifacts` row is still decoded (admitted on its own).
 This is an undeployed 0.3 source contract, not a released wire transition.
 
 Catalog-scale Action, contribution-projection and Account-settings schemas in

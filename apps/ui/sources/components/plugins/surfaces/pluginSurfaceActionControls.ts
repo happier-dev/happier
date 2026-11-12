@@ -15,6 +15,7 @@ import { normalizePluginUiMountedContributedActionReferenceV1 } from '@happier-d
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
 import type { PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
+import { randomUUID } from '@/platform/randomUUID';
 
 export type MountedPluginActionControl = Readonly<{
     id: string;
@@ -65,7 +66,6 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     const listeners = new Set<() => void>();
     let snapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
     const emptySnapshot: readonly MountedPluginActionControl[] = Object.freeze([]);
-    let sequence = 0;
     let disposed = false;
     const current = () => !disposed && !input.signal.aborted && input.isCurrent();
     const publish = () => {
@@ -154,12 +154,12 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         signal: input.signal, preparationSignal: options?.signal,
         available: input.isActionAvailable?.() !== false, isCurrent: current,
         captureCurrentBinding: input.captureCurrentBinding,
-        execute: (action, preparation, signal) => execute(action, preparation, signal, input.surfaceId + ':inline:' + ++sequence),
+        execute: (action, preparation, signal) => execute(action, preparation, signal, randomUUID()),
     });
     const press = async (id: string): Promise<void> => {
         const binding = controls.get(id);
         if (input.isActionAvailable?.() === false || !binding || !live(id, binding) || binding.view.busy || binding.view.presentation.disabled) return;
-        const requestId = `${input.surfaceId}:actionControl:${++sequence}`;
+        const requestId = randomUUID();
         // Optional Machine admission can change without replacing the mounted
         // Account control. Bind authority to this preparation, not its lifetime.
         const isCurrentBinding = input.captureCurrentBinding();

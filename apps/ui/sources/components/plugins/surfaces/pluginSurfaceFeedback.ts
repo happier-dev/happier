@@ -225,6 +225,10 @@ export function createPluginActionCurrentIntentHandler(input: Readonly<{
         return Object.freeze({
             status: 'unavailable' as const,
             code: 'plugin_action_current_intent_unavailable',
+            data: { details: { currentIntentPresentation: {
+                status: outcome.status,
+                requestId: outcome.requestId,
+            } } },
         });
     };
 }
