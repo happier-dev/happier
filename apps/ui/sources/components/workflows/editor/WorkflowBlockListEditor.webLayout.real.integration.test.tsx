@@ -19,7 +19,7 @@ import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browser
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
 // A phone browser: the primary pointer is a finger (no hover). This is the platform boundary the
-// touch floor reads once at module load.
+// shared pointer owner reads and subscribes to as the screen mounts.
 const pointer = vi.hoisted(() => ({ coarse: true }));
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia');
 const fallbackMatchMedia = typeof window.matchMedia === 'function' ? window.matchMedia.bind(window) : null;
@@ -56,6 +56,8 @@ afterAll(async () => {
 
 // Owners that size themselves from `onLayout` read the browser's boxes (names sized to their words).
 installWebLayoutBridge();
+// Source collection owns the cold editor graph; the case clock measures the actual interaction/layout.
+await import('./WorkflowBlockListEditor');
 const settle = (replay: () => Promise<void>) => act(replay);
 
 let root: Root | null = null;
@@ -79,7 +81,7 @@ function step(id: string, name: string, text: string) {
 }
 
 async function applyHomeFixture() {
-    const { storage } = await import('@/sync/domains/state/storage');
+    const { storage } = await import('@/sync/domains/state/storageStore');
     storage.setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
     const applied = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const previous = applied.getAppliedActiveServerSnapshot();
@@ -268,21 +270,21 @@ describe('the flow, as a browser lays it out', () => {
 describe('a typed card, as a browser lays it out', () => {
     it('insets its foot from the bottom border as it does from the sides (DESIGN-7 N30)', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
             const container = await renderDocument([
                 { kind: 'action', id: 'notify', name: 'Announce it', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Release notes are ready' } } },
             ], 900);
-            const layout = await measureWebLayout(container, { viewport: { width: 900, height: 900 }, texts: ['Action · no agent turn'], settle });
+            const { t } = await import('@/text');
+            const noteLabel = t('workflows.page.blocks.actionSub');
+            const layout = await measureWebLayout(container, { viewport: { width: 900, height: 900 }, texts: [noteLabel], settle });
             const card = layout.rect('workflow-editor-action-notify-card');
-            const [note] = layout.textRects('Action · no agent turn');
+            const [note] = layout.textRects(noteLabel);
             expect(note).toBeDefined();
             const side = note!.left - card.left;
             const bottom = card.bottom - note!.bottom;
             expect(Math.abs(bottom - side)).toBeLessThanOrEqual(3);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
