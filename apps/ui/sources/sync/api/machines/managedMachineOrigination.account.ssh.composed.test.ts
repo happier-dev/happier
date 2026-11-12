@@ -305,7 +305,11 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             }
             const command = request.command;
             let stdout = '';
-            if (command.includes('uname -s') && command.includes('uname -m') && !command.includes('platform')) stdout = 'Linux\nx86_64\n/home/guest\n';
+            // Integrity assets arrive through guest SSH downloads; preserve the
+            // captured signed bytes at that native-process boundary.
+            if (command.endsWith(`download '${signedRelease.source}checksums-happier-v${signedRelease.version}.txt.minisig' -`)) stdout = signedRelease.signatureText;
+            else if (command.endsWith(`download '${signedRelease.source}checksums-happier-v${signedRelease.version}.txt' -`)) stdout = signedRelease.checksumsText;
+            else if (command.includes('uname -s') && command.includes('uname -m') && !command.includes('platform')) stdout = 'Linux\nx86_64\n/home/guest\n';
             else if (command.includes('uname -s')) stdout = JSON.stringify({ platform: 'linux', arch: 'x86_64' });
             else if (command.includes('current_target=') && command.includes('version_path')) stdout = 'current=\nprevious=\n';
             else if (command.includes('enroll-remote')) {
@@ -338,7 +342,7 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
         const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'one-off', homeId, launch, retention, wakeOnAcceptedMessage: false },
             enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, reviewedFacts: { launch, provisioner, retention,
                 retentionCapabilities: provisioner.retention, billing: provisioner.billing, optionStatus: 'current', prerequisites: [], wakeOnAcceptedMessage: false } });
-        // Captured public release HTTP bytes keep signature verification and
+        // Captured public release metadata and native-process bytes keep signature verification and
         // guest installation real; no internal recipe or Action port is replaced.
         vi.stubGlobal('fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
             const address = new URL(String(url));
@@ -347,10 +351,6 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
                 `checksums-happier-v${signedRelease.version}.txt.minisig`,
                 `happier-v${signedRelease.version}-linux-x64.tar.gz`,
             ].map(name => ({ name, browser_download_url: `${signedRelease.source}${name}` })) });
-            if (address.origin === 'https://github.com') {
-                if (address.pathname.endsWith('.txt.minisig')) return new Response(signedRelease.signatureText);
-                if (address.pathname.endsWith('.txt')) return new Response(signedRelease.checksumsText);
-            }
             return homes.request(url, init);
         });
         const executor = createDefaultActionExecutor();
