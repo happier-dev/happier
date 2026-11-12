@@ -171,6 +171,9 @@ describe('Environment start-first native generation', () => {
             if (!activated) throw new Error('candidate activation missing');
             expect(activated.health).toBe('healthy');
             const generation = activated.routingGeneration();
+            for (const replica of generation.services.flatMap(service => service.replicas)) {
+                expect(replica.name).toBe(replica.id.slice(0, 12));
+            }
             expect(generation.services.map(service => service.replicas.length)).toEqual([2, 2]);
             expect(new Set(generation.services.flatMap(service => service.replicas.map(replica => replica.name))).size).toBe(4);
             for (const service of generation.services) {

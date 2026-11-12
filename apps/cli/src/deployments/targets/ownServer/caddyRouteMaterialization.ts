@@ -75,7 +75,7 @@ type CaddyDomainRenderInput = Omit<CaddyDomainRouteInput, 'upstreams'> & {
 export type CaddyDomainTlsMaterial = {
     connectionPolicy: { '@id': string; match: { sni: readonly string[] }; certificate_selection?: { any_tag: readonly string[] } };
     certificate?: { '@id': string; certificate: string; key: string; tags: readonly string[] };
-    automationPolicy?: { '@id': string; subjects: readonly string[]; issuers: readonly { module: 'acme' }[] };
+    automationPolicy?: { '@id': string; subjects: readonly string[] };
     redirectRoute: CaddyRoute;
 };
 export type CaddyDomainRouteMaterial = {
@@ -221,7 +221,7 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
     const { domain, domainId, listener } = input;
     const redirectTo = listener === 'public' && domain.target.redirectTo !== undefined
         ? canonicalRedirectDestination(domain.target.redirectTo) : undefined;
-    const { routeId, proxyId, fallbackId, redirectId, tlsPolicyId, automationPolicyId, certificateId, removalIds } = nativeCaddyDomainRouteIdsV1(domainId, listener);
+    const { routeId, proxyId, fallbackId, redirectId, tlsPolicyId, certificateId, removalIds } = nativeCaddyDomainRouteIdsV1(domainId, listener);
     const local = input.upstreams.kind === 'replicas';
     const upstreams = input.upstreams.kind === 'replicas'
         ? input.upstreams.containerNames.map((name) => `${name}:${domain.target.containerPort}`)
@@ -297,9 +297,11 @@ function renderCaddyDomainRoute(input: CaddyDomainRenderInput, privatePeerAllowe
         material.tls = {
             connectionPolicy: { '@id': tlsPolicyId, match: { sni: [domain.hostname] },
                 ...(custom ? { certificate_selection: { any_tag: [certificateId] } } : {}) },
-            ...(custom ? custom.certificatePem && custom.privateKeyPem ? { certificate: {
+            // An explicit automation policy overrides Caddy's automatic internal
+            // issuer selection even when its issuers field is omitted (2.10.2).
+            ...(custom?.certificatePem && custom.privateKeyPem ? { certificate: {
                 '@id': certificateId, certificate: custom.certificatePem, key: custom.privateKeyPem, tags: [certificateId],
-            } } : {} : { automationPolicy: { '@id': automationPolicyId, subjects: [domain.hostname], issuers: [{ module: 'acme' }] } }),
+            } } : {}),
             redirectRoute: { '@id': redirectId, match: route.match,
                 handle: [{ handler: 'static_response', status_code: 308,
                     headers: { Location: [`https://${domain.hostname}{http.request.uri}`] } }], terminal: true },

@@ -79,14 +79,11 @@ describe('Caddy public TLS materialization', () => {
         }
     });
 
-    it('uses Caddy ACME automation only for the public hostname and leaves its renewal scheduling native', () => {
+    it.each(['app.example.com', 'replay135-cli-dj18.localhost', 'localhost', '127.0.0.1'])('leaves managed issuer selection for %s to Caddy', hostname => {
         const input = { domainId: 'domain-managed', listener: 'public' as const,
-            domain: { hostname: 'app.example.com', target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } },
+            domain: { hostname, target: { service: 'web', containerPort: 3000 }, healthCheck: { path: '/', expectStatus: 200 } },
             upstreams: { kind: 'replicas' as const, containerNames: ['app-web-1'] as const }, privateSourceRanges: [] };
-        expect(materializeCaddyDomainRouteV1(input)).toHaveProperty('tls.automationPolicy', {
-            '@id': nativeCaddyDomainRouteIdsV1(input.domainId, input.listener).automationPolicyId,
-            subjects: ['app.example.com'], issuers: [{ module: 'acme' }],
-        });
+        expect(materializeCaddyDomainRouteV1(input)).not.toHaveProperty('tls.automationPolicy');
         expect(materializeCaddyDomainRouteV1({ ...input, listener: 'privateOrigin' })).not.toHaveProperty('tls');
     });
 });

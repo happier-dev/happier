@@ -22,7 +22,7 @@ describe('Compose exact native resource lifetime', () => {
         const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
         const requests: Parameters<ProjectNativeToolchainIo['run']>[0][] = [];
         const rows = ['a', 'b'].map((id, index) => ({ ...container(id, 'running'),
-            Name: `/native-worker-${index + 1}`, NetworkSettings: { Ports: {}, Networks: { 'generation-network': {} } } }));
+            Name: `/happier-${'f'.repeat(64)}-worker-${index + 1}`, NetworkSettings: { Ports: {}, Networks: { 'generation-network': {} } } }));
         const capture = createNativeComposeLifecycle({ args, engineId: 'selected-engine',
             environment: { composeService: 'worker', containerIds: rows.map(row => row.Id) }, io: {
                 async events() { return { async dispose() {} }; }, async run(request) {
@@ -35,8 +35,8 @@ describe('Compose exact native resource lifetime', () => {
         capture.bindLaunch({ command: '/owned/docker', args: ['--context', 'selected', ...args], cwd: '/release', env: { DOCKER_CONFIG: '/owned/config' }, release() {} });
         const subscription = await capture.lifecycle.observe!(() => {});
         try {
-        expect(capture.lifecycle.nativeContainers?.()).toMatchObject(rows.map((_row, index) => ({
-            containerName: `native-worker-${index + 1}`, networkNames: ['generation-network'],
+        expect(capture.lifecycle.nativeContainers?.()).toMatchObject(rows.map(row => ({
+            containerName: row.Id.slice(0, 12), networkNames: ['generation-network'],
         })));
         const docker = await capture.lifecycle.nativeDocker?.();
         expect(docker?.engineId).toBe('selected-engine');

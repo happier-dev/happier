@@ -3239,12 +3239,17 @@ The sole byte owner is `deployments/targets/ownServer/caddyRouteMaterialization`
 That owner also materializes public TLS, exact-host redirects and certificate
 policy. Native effects apply its exact tagged resources through the same admin
 transport. Custom PEM and Basic Auth material remain finite host-private inputs,
-not Domain metadata; managed certificates use Caddy's native automation policy.
+not Domain metadata; managed certificates leave issuer selection to Caddy's
+native automation policy: public names use public issuers, while localhost,
+`.localhost` and IP addresses use its internal issuer.
 `target.redirectTo` accepts a canonical Domain (HTTPS by default) or an explicit
 HTTP/HTTPS URL with an optional path prefix. Destination userinfo, query and
 fragment are refused by this codec; the incoming path and query are preserved.
 Public edge routes use admitted private-origin endpoints; private replica routes
-use static container names and the Environment's admitted source ranges. Only
+use native Compose replica DNS names and the Environment's admitted source ranges.
+The native Compose owner uses Docker's short container-ID DNS alias when the
+container name exceeds the 63-character DNS label limit; discovery and start-first
+switches consume the same name decision. Only
 the private listener's exact GET health request has the Basic Auth exemption.
 
 Tunnel/member origins keep automatic HTTPS disabled and produce no certificates

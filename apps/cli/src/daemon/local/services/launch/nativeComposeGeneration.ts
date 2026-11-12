@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { nativeComposeContainerDnsName } from './nativeComposeDnsName';
 import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import { captureNativeComposeConfiguration, type NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
 import type { NativeComposeRoutingGeneration } from './nativeComposeStartFirst';
@@ -113,7 +114,7 @@ export function createNativeComposeGenerationProof(input: Readonly<{
                     replicas: containers.map(row => {
                         if (typeof row.Name !== 'string' || !row.Name.startsWith('/')
                             || !record(row.NetworkSettings) || !record(row.NetworkSettings.Networks)) return refuse('deployment_generation_unavailable');
-                        return { id: row.Id, name: row.Name.slice(1), networks: Object.keys(row.NetworkSettings.Networks) };
+                        return { id: row.Id, name: nativeComposeContainerDnsName(row.Id, row.Name.slice(1)), networks: Object.keys(row.NetworkSettings.Networks) };
                     }) };
             });
             return { serviceNativeIds, serviceContainerImages, health, routingServices };

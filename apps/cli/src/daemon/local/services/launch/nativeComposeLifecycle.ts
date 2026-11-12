@@ -1,6 +1,7 @@
 import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
+import { nativeComposeContainerDnsName } from './nativeComposeDnsName';
 import type { NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
 import { createHash } from 'node:crypto';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
@@ -289,7 +290,7 @@ function containers(stdout: string, project?: string): readonly Container[] | nu
                 ...(Number.isSafeInteger(startedAtMs) && startedAtMs > 0 && item.State.Status === 'running' ? { startedAtMs } : {}),
                 ...(typeof healthSince === 'number' && Number.isSafeInteger(healthSince) && healthSince > 0 ? { healthSince } : {}),
                 ...(typeof item.Name === 'string' && item.Name.startsWith('/') && item.Name.length > 1
-                    ? { containerName: item.Name.slice(1) } : {}),
+                    ? { containerName: nativeComposeContainerDnsName(item.Id, item.Name.slice(1)) } : {}),
                 ...(record(item.NetworkSettings.Networks) ? { networkNames: Object.keys(item.NetworkSettings.Networks) } : {}),
                 ...(typeof item.Config.Labels['com.docker.compose.project.working_dir'] === 'string'
                     ? { workingDirectory: item.Config.Labels['com.docker.compose.project.working_dir'] } : {}),
