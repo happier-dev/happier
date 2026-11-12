@@ -137,6 +137,39 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     await manager.dispose();
   });
 
+  it.each(['runtime', 'upload_bridge'] as const)('resumes %s listening for a spoken permission answer after readout cancels capture within the same admitted call', async (streamingMode) => {
+    nativeRuntime = { ...nativeRuntime,
+      transcribeAudio: async () => ({ text: 'YES', language: 'en' }),
+      createStreamingTranscriptionSession: async () => ({
+      appendPcm16: async () => ({ events: [] }),
+      finish: async () => ({ text: 'YES', language: 'en', events: [] }),
+      cancel: async () => {}, close: async () => {},
+    }) };
+    const manager = createVoiceInferenceSpeechStreamManager({
+      streamRoot: await createTempStreamRoot(), voiceInferenceWorker: worker,
+    });
+    managers.push(manager);
+    // Local Voice retains admission across readout, but retires the capture
+    // before speaking a native permission, text-consent or approval question.
+    const request = {
+      requestId: 'permission-question-call', packId, language: 'en',
+      streamingMode, format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
+    };
+    const beforeReadout = await manager.start(request);
+    if (!beforeReadout.ok) throw new Error('expected initial listening stream');
+    await expect(manager.cancel(beforeReadout)).resolves.toMatchObject({ ok: true });
+    const answering = await manager.start(request);
+    expect(answering).toMatchObject({ ok: true });
+    if (!answering.ok) throw new Error('expected permission-answer listening stream');
+    await expect(manager.appendPcm16Bytes({
+      streamId: answering.streamId, generation: answering.generation,
+      seq: 0, pcm16Bytes: new Uint8Array([0, 0, 1, 0]),
+    })).resolves.toMatchObject({ ok: true });
+    await expect(manager.finish({
+      streamId: answering.streamId, generation: answering.generation, finalSeq: 0,
+    })).resolves.toMatchObject({ ok: true, finalText: 'YES' });
+  });
+
   it('retires a native start lost with its transport before publishing a late stream', async () => {
     const gate = deferred<RuntimeStreamSession>();
     const cancel = vi.fn(async () => {});
@@ -766,7 +799,6 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
         cancel: vi.fn(async () => {}),
         close: vi.fn(async () => {}),
       };
-      const cancelStt = vi.spyOn(worker, 'cancelStt');
       nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: vi.fn(async () => runtimeSession) };
       const manager = createVoiceInferenceSpeechStreamManager({
         streamRoot: await createTempStreamRoot(),
@@ -811,7 +843,6 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       });
       expect(runtimeSession.cancel).toHaveBeenCalledOnce();
       expect(runtimeSession.close).toHaveBeenCalledOnce();
-      expect(cancelStt).toHaveBeenCalledWith('runtime-request-crash');
     } finally {
       restoreLogger();
     }

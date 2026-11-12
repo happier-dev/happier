@@ -293,7 +293,6 @@ describe('voice inference stream canonical fixture consumer', () => {
     const fixture = await readVoiceFixturePcm16('long-utterance-16k');
     const runtimeCancel = vi.fn(async () => {});
     const runtimeClose = vi.fn(async () => {});
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const appendStarted = deferred<void>();
     nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: vi.fn(async () => ({
       appendPcm16: vi.fn<VoiceInferenceStreamingTranscriptionSession['appendPcm16']>(async ({ signal }) => {
@@ -336,7 +335,6 @@ describe('voice inference stream canonical fixture consumer', () => {
     await expect(cancellation).resolves.toMatchObject({ ok: true });
     expect(runtimeCancel).toHaveBeenCalledOnce();
     expect(runtimeClose).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledOnce();
   });
 
   it('propagates cancellation through the worker-session signal before waiting for an in-flight append', async () => {
@@ -344,7 +342,6 @@ describe('voice inference stream canonical fixture consumer', () => {
     const fixture = await readVoiceFixturePcm16('long-utterance-16k');
     const runtimeCancel = vi.fn(async () => {});
     const runtimeClose = vi.fn(async () => {});
-    const cancelStt = vi.spyOn(worker, 'cancelStt');
     const appendStarted = deferred<void>();
     let workerSessionSignal: AbortSignal | null = null;
     nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: vi.fn<NonNullable<VoiceInferenceRuntime['createStreamingTranscriptionSession']>>(async ({ signal }) => {
@@ -393,7 +390,6 @@ describe('voice inference stream canonical fixture consumer', () => {
     await expect(cancellation).resolves.toMatchObject({ ok: true });
     expect(runtimeCancel).toHaveBeenCalledOnce();
     expect(runtimeClose).toHaveBeenCalledOnce();
-    expect(cancelStt).toHaveBeenCalledOnce();
   });
 
   it('does not publish a late successful final result after cancellation closes the stream', async () => {

@@ -86,7 +86,6 @@ export type VoiceInferenceSpeechStreamWorker = Readonly<{
     language: string | null;
     modelPackId: string | null;
   }>>;
-  cancelStt: (requestId: string) => Promise<void>;
   createStreamingTranscriptionSession?: (input: Readonly<{
     requestId: string;
     packId: string | null;
@@ -295,9 +294,9 @@ export function createVoiceInferenceSpeechStreamManager(
       }
       await session.runtimeSession.close().catch(() => undefined);
     }
-    if (closeOptions?.cancelWorker === true) {
-      await options.voiceInferenceWorker.cancelStt(session.requestId).catch(() => undefined);
-    }
+    // Both modes already cancel through the stream's linked abort signal.
+    // Request-id cancellation here can pre-cancel the next utterance on the
+    // same admitted call, either after runtime close or before batch recognition.
     await cleanupSessionFiles(session);
     activeApplicationAttemptIds.delete(session.requestId);
   }
