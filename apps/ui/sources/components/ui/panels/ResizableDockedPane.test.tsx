@@ -430,6 +430,54 @@ describe('ResizableDockedPane (web pointer drag)', () => {
     });
 });
 
+describe('ResizableDockedPane (grab point)', () => {
+    it('limits the hit area to a centred grab point so the seam stays usable', async () => {
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+
+        const { tree } = await renderScreen(<ResizableDockedPane
+                    widthPx={320}
+                    minWidthPx={200}
+                    maxWidthPx={480}
+                    resizeEdge="right"
+                    onCommitWidthPx={vi.fn()}
+                >
+                    <ViewStub />
+                </ResizableDockedPane>);
+
+        const handleStyle = findFirstByType(tree, 'Pressable')!.props.style;
+        // A full-height strip (top: 0 + bottom: 0) would cover the neighbouring scrollbar.
+        expect(handleStyle.bottom).toBeUndefined();
+        expect(handleStyle.top).toBe('50%');
+        expect(typeof handleStyle.height).toBe('number');
+    });
+
+    it('reports when the grab point is hovered or held so the owner can raise its draw order', async () => {
+        const onResizeHandleActiveChange = vi.fn();
+        const { ResizableDockedPane } = await import('./ResizableDockedPane');
+
+        const { tree } = await renderScreen(<ResizableDockedPane
+                    widthPx={320}
+                    minWidthPx={200}
+                    maxWidthPx={480}
+                    resizeEdge="right"
+                    onCommitWidthPx={vi.fn()}
+                    onResizeHandleActiveChange={onResizeHandleActiveChange}
+                >
+                    <ViewStub />
+                </ResizableDockedPane>);
+
+        await act(async () => {
+            invokeTestInstanceHandler(findFirstByType(tree, 'Pressable')!, 'onHoverIn', {});
+        });
+        expect(onResizeHandleActiveChange).toHaveBeenLastCalledWith(true);
+
+        await act(async () => {
+            invokeTestInstanceHandler(findFirstByType(tree, 'Pressable')!, 'onHoverOut', {});
+        });
+        expect(onResizeHandleActiveChange).toHaveBeenLastCalledWith(false);
+    });
+});
+
 function ViewStub() {
     return React.createElement('ViewStub');
 }
