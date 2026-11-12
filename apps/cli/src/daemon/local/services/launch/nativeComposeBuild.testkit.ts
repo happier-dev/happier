@@ -51,7 +51,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
     withApprovedImages(images: readonly DeploymentImageV1[], visit: (project: NativeComposeEnvironmentProject) => Promise<void>): Promise<void>;
 }>) => Promise<void>, options?: Readonly<{ environmentInstanceId?: string; secretArgument?: boolean; corruptArchive?: boolean; dynamicSecretName?: boolean;
     prebuilt?: boolean; prebuiltIndex?: boolean; preapprovalIndex?: boolean; extensionSecret?: boolean; selectedSubset?: boolean;
-    missingBuildx?: boolean;
+    missingBuildx?: boolean; subdirectoryCompose?: boolean;
     bakeFailure?: 'unsupportedPlatform' | 'execFormat' | 'buildFailed';
     bakeFailurePlatform?: string;
     prebuiltContainerd?: 'unchanged' | 'changed' | 'movesAfterLookup';
@@ -86,8 +86,11 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             } : {}),
         }, secrets: { token: { environment: options?.dynamicSecretName ? '${BUILD_SECRET_ENV_NAME:?required}' : 'BUILD_SECRET' }, runtime: { environment: 'RUNTIME_SECRET' } },
         configs: { runtime: { content: '${RUNTIME_SECRET:?required}' } } });
-        await writeFile(join(repository, 'compose.yaml'), JSON.stringify(model('.')));
-        await writeFile(join(repository, 'Dockerfile'), 'FROM scratch AS release\n');
+        const composeFile = options?.subdirectoryCompose ? 'nested/compose.yaml' : 'compose.yaml';
+        const contextDirectory = options?.subdirectoryCompose ? join(repository, 'nested/backend') : repository;
+        await mkdir(contextDirectory, { recursive: true });
+        await writeFile(join(repository, composeFile), JSON.stringify(model(options?.subdirectoryCompose ? './backend' : '.')));
+        await writeFile(join(contextDirectory, 'Dockerfile'), 'FROM scratch AS release\n');
         await writeFile(join(repository, '.env'), 'UNREVIEWED=${RUNTIME_SECRET:?runtime-only}\n');
         const git = (...args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
         git('init', '--quiet'); git('config', 'user.name', 'Native Build Fixture'); git('config', 'user.email', 'native-build@example.test');
@@ -267,7 +270,6 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                 if (sourceNormalization) {
                     assert.equal(Object.hasOwn(request.env, 'BUILD_SECRET'), false);
                     assert.equal(Object.hasOwn(request.env, 'BUILD_PUBLIC'), false);
-                    assert.equal(request.args[request.args.indexOf('--project-directory') + 1], source.rootPath);
                     assert.equal(request.args.includes('--no-path-resolution'), false);
                 }
                 // Reuse the canonical Docker boundary's native include/env-file,
@@ -388,8 +390,6 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             }
             if (request.args[0] !== 'buildx' || request.args[1] !== 'bake') throw new Error(`Unexpected Docker boundary: ${request.args.join(' ')}`);
             const projection = JSON.parse(await readFile(request.args[request.args.indexOf('--file') + 1], 'utf8'));
-            assert.equal(projection.services.web.build.context, source.rootPath);
-            assert.equal(projection.services.worker.build.context, source.rootPath);
             assert.equal(JSON.stringify(projection).includes('RUNTIME_'), false);
             assert.equal(JSON.stringify(projection).includes(buildSecret), false);
             assert.equal(request.env.BUILD_PUBLIC, 'visible-build-value');
@@ -407,7 +407,8 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             const services = requested.length ? [...new Set(requested.flatMap(service => service === 'web' && options?.selectedSubset
                 ? ['web', 'base'] : [service]))] : Object.keys(projection.services);
             if (request.args.includes('--print')) return { exitCode: 0, stdout: JSON.stringify({ target: Object.fromEntries(services.map(service =>
-                [`${service}-native`, { context: source.rootPath, dockerfile: join(source.rootPath, 'Dockerfile'),
+                [`${service}-native`, { context: projection.services[service].build.context,
+                    dockerfile: join(projection.services[service].build.context, projection.services[service].build.dockerfile ?? 'Dockerfile'),
                     tags: projection.services[service].build.tags?.length ? projection.services[service].build.tags : [projection.services[service].image],
                     ...(service === 'web' && options?.selectedSubset ? { contexts: { base: 'target:base-native' } } : {}),
                     ...(service === 'base' && requested.length ? { output: [{ type: 'cacheonly' }] } : {}),
@@ -432,12 +433,12 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
             return { exitCode: 0, stdout: '' };
         } };
         const createProject = (images: readonly DeploymentImageV1[]) => createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build', executionDirectory, exec, envPort, source,
-            files: ['compose.yaml'], services: options?.selectedSubset ? ['web'] : ['web', 'worker'], images,
+            files: [composeFile], services: options?.selectedSubset ? ['web'] : ['web', 'worker'], images,
             ...(options?.publication ? { imageAcquisition: createOwnServerNativeImageAcquisition({ source,
                 runtime: { exec, buildExecutionDirectory: executionDirectory, secrets: { installationPrivateSeed: seed,
                     grants: prepared.grants, registryConfigBaseDir: join(root, 'registry-configs') } },
                 environment: { name: 'Native builder', retainPreviousDeployments: 3,
-                    definition: { kind: 'repository', ref: 'fixture-source', compose: { path: 'compose.yaml', services: ['web', 'worker'] } }, bindings },
+                    definition: { kind: 'repository', ref: 'fixture-source', compose: { path: composeFile, services: ['web', 'worker'] } }, bindings },
                 targetLinkId: registryUse.targetLinkId, operation: 'deploy', signal, assertCurrent: source.assertCurrent,
             }) } : hasRegistry ? { imageAcquisition: { operation: 'deploy' as const, registries: [{ access: registryUse.access,
                 origin: registryUse.registryOrigin, bindingIdentity: environmentSecretBindingIdentityV1(registryUse), envPort: registryEnvPort,
@@ -468,7 +469,7 @@ export async function withNativeComposeBuildFixture(run: (fixture: Readonly<{
                 return { image, ...transport, async acquire() { return { path, ...transport }; } };
             }));
             const runtime = createNativeComposeLifecycle({ kind: 'environmentProject', exec, envPort: runtimeEnvPort, source: runtimeSource,
-                files: ['compose.yaml'], services: options?.selectedSubset ? ['web'] : ['web', 'worker'], images: selection?.images ?? [],
+                files: [composeFile], services: options?.selectedSubset ? ['web'] : ['web', 'worker'], images: selection?.images ?? [],
                 ...(archives.length ? { imageAcquisition: { operation: 'deploy', archives } } : {}), io, async settleNative() {} });
             try {
                 const render = await runtime.render();

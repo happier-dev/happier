@@ -494,6 +494,13 @@ with a typed result. Requester-chosen workspace roots remain physical-owner-only
 at the shared native/upload source acquisition owner. Missing signed role never
 grants Use deployment authority; existing owner/Manage behavior is retained.
 
+In 0.3 development, native Compose resolves relative build contexts from the
+first selected Compose file's directory. Dockerfiles resolve from their build
+context, following [Docker Compose's path rules](https://docs.docker.com/reference/compose-file/build/).
+`nativeComposeLifecycle.ts` supplies that project directory to native Compose
+normalization for both build and runtime; source-manifest validation remains
+relative to the immutable repository root.
+
 `ownServerDeploymentTarget.ts#createOwnServerDeploymentTargetForHost` delegates
 to one executor. Its host runtime borrows the daemon's mounted
 `projectManagedServices` owner; it must not construct another supervisor.

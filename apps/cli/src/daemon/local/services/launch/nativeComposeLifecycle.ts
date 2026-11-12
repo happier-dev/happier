@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import type { NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
 import { createHash } from 'node:crypto';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
@@ -946,7 +946,8 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         }
         finally { await launch.release(); }
     };
-    const base = ['compose', '--project-name', projectName, '--project-directory', input.source.rootPath,
+    const composeDirectory = files[0] ? dirname(resolve(input.source.rootPath, files[0])) : input.source.rootPath;
+    const base = ['compose', '--project-name', projectName, '--project-directory', composeDirectory,
         ...profiles.flatMap(profile => ['--profile', profile])];
     const pin = (service: string) => {
         const platform = effectivePlatforms.get(service) ?? runtimePlatform;
