@@ -1348,7 +1348,8 @@ export function createDiscussionRepository(options: Readonly<{
                     .map(state => listInFlight.get(listReadKey(state, anchor)))));
                 if (epoch !== accessLossEpoch) return;
                 const retained = anchors.map(anchor => ({ anchor, collection: getListSnapshot(anchor) }));
-                const root = snapshot.threads[discussionId]?.summary?.firstMessage;
+                const retainedSummary = snapshot.threads[discussionId]?.summary;
+                const root = retainedSummary?.anchor?.kind === 'doc' ? retainedSummary.firstMessage : undefined;
                 if (!await refreshSummary(discussionId, undefined, revisions.get(discussionId))) return;
                 const row = snapshot.threads[discussionId]?.summary;
                 if (!row) return;
