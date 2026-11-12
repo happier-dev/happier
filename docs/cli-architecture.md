@@ -2993,9 +2993,12 @@ writes facts through the existing desired-field CAS, preserving fresh incumbent
 facts while disregarding caller provenance. First-presence values are `present`
 or `absent`; a missing entry is unknown and later observations never promote an
 incumbent unknown item. There is no legacy-Boolean reader or row migration.
-Declared Remove requires native first-`absent` evidence; first-`present` and
-unknown are never removal authority. Detaching defaults to keeping native items
-in the implicit direct source, carrying their facts at the same canonical owner.
+Native uninstall requires first-`absent` evidence; first-`present` and unknown
+are never uninstall authority. Removing an explicitly added direct recipe clears
+its desired entry even when native software stays installed. Detaching a preset
+defaults to keeping its native items in the implicit direct source, carrying their
+facts at the same canonical owner. Both decisions belong to source-change review;
+Remove publishes its reviewed sources through the desired-field CAS.
 The existing UI setup preparation accepts per-target `removeItemKeys`, asks the
 same effects Plan, and carries its exact selection and `removalPlans` into
 Apply. Preset updates use the canonical source-change projection before that

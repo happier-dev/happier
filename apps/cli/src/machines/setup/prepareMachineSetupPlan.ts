@@ -47,7 +47,10 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
       ...(input.removeItemKeys === undefined ? {} : { removeItemKeys: input.removeItemKeys }) }) : undefined;
   if (change && !change.ok) return change;
   const sources = change?.sources ?? current.policy.sources;
-  const exclusions = input.exclusions ?? current.policy.exclusions;
+  const exclusions = input.exclusions ?? (change
+    ? current.policy.exclusions.filter(exclusion => areMachineSetupExclusionsBoundV1(
+      sources.map(source => source.setup), [exclusion]))
+    : current.policy.exclusions);
   const reviewing = input.sources !== undefined || input.exclusions !== undefined || input.mode !== undefined
     || input.removeItemKeys !== undefined;
   if (reviewing && !areMachineSetupExclusionsBoundV1(sources.map(source => source.setup), exclusions)) return fail('invalid_parameters');

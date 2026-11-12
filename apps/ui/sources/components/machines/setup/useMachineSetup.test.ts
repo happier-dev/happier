@@ -77,6 +77,24 @@ describe('readMachineSetupRecipes', () => {
     ]);
   });
 
+  it('projects the retained direct recipe from Plan and drops it after removal even with stale native inventory', () => {
+    const curl = { kind: 'setupRecipe' as const, selection: {
+      ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+      inputs: { package: { manager: 'apt', apt: { name: 'curl' } } },
+    } };
+    const plan = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 1, exclusions: [],
+      sources: [{ kind: 'direct', setup: { items: [curl] } }],
+      support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }],
+    });
+    expect(readMachineSetupRecipes(plan, null)).toMatchObject([
+      { item: curl, sourceIndex: 0, removable: true, status: 'satisfied' },
+    ]);
+    expect(readMachineSetupRecipes({ ...plan, desiredRevision: 2,
+      sources: [{ kind: 'direct', setup: {} }], support: [] }, {
+        recipes: [{ ref: curl.selection.ref, status: 'satisfied' }],
+      })).toEqual([]);
+  });
+
   it('shows nothing until the setup has been read', () => {
     expect(
       readMachineSetupRecipes(null, {

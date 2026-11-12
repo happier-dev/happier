@@ -138,7 +138,7 @@ export function projectMachineSetupSourceChangeExecutionV1(currentSources: Machi
 export type MachineSetupDetachedItemV1 = Readonly<{
   itemKey: string; item: SetupItem; initialPresence: FirstPresence | 'unknown'; selected: boolean;
 }>;
-/** Detaching defaults to Keep in direct. Only a native first-absent fact admits Remove. */
+/** Preset detachment defaults to Keep in direct. Direct removal forgets desired intent; native Remove needs first-absent evidence. */
 export function reviewMachineSetupSourceChangeV1(input: Readonly<{
   currentSources: MachineSetupSourceV1; currentSourceFacts?: MachineSetupSourceFactsMapV1;
   proposedSources: MachineSetupSourceV1; removeItemKeys?: readonly string[];
@@ -149,6 +149,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
   const selected = new Set(input.removeItemKeys ?? []);
   if (selected.size !== (input.removeItemKeys ?? []).length) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   const seen = new Set<string>();
+  const detachedFromPreset = new Set<string>();
   const firstPresentByKey = readMachineSetupFirstPresentV1(input.currentSources, input.currentSourceFacts);
   const detached: MachineSetupDetachedItemV1[] = [];
   for (const source of input.currentSources) for (const item of source.setup.items ?? []) {
@@ -160,6 +161,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
         && copy.setup.items?.some(candidate => candidate.kind !== 'app'
           && readMachineSetupRecipeIdentityV1(candidate.selection.ref) === readMachineSetupRecipeIdentityV1(item.selection.ref)));
     if (proposed.has(readMachineSetupRecipeIdentityV1(item.selection.ref)) && !carriedToDirect) continue;
+    if (source.kind !== 'direct') detachedFromPreset.add(itemKey);
     if (seen.has(itemKey)) continue;
     seen.add(itemKey);
     const first = firstPresentByKey.get(itemKey);
@@ -167,7 +169,7 @@ export function reviewMachineSetupSourceChangeV1(input: Readonly<{
     detached.push({ itemKey, item, initialPresence: first ?? 'unknown', selected: selected.has(itemKey) });
   }
   if ([...selected].some(key => !seen.has(key))) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
-  const kept = detached.filter(item => !item.selected);
+  const kept = detached.filter(item => !item.selected && detachedFromPreset.has(item.itemKey));
   if (!kept.length) return { ok: true, sources: input.proposedSources, detached };
   const sources = input.proposedSources.map(source => {
     if (source.kind !== 'direct') return source;

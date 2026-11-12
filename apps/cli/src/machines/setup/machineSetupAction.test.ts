@@ -11,6 +11,7 @@ import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
 import { readFile } from 'node:fs/promises';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
+import { installPackage } from '../../../../../packages/plugins/machine-recipes/src/installPackage';
 
 describe('admitted Machine setup snapshot lifetime', () => {
   beforeEach(() => {
@@ -18,6 +19,60 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each(['plain', 'e2ee'] as const)('clears a direct pre-existing recipe through Apply → conflict → Remove → replacement (%s)', async accountEncryptionMode => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'first-present', accountEncryptionMode,
+      additionalPlugins: [{ files: {}, manifest: { schemaVersion: 2, id: 'happier.machine.recipes', version: '1.0.0',
+        displayName: 'Machine recipes', runtime: { apiVersion: 1 }, contributes: {
+          machineRecipes: [{ id: 'install-package', ...installPackage }],
+        } } }],
+    });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const item = { kind: 'setupRecipe' as const, selection: {
+      ref: { pluginId: 'happier.machine.recipes', recipeId: 'install-package', revision: '1' },
+      inputs: { package: { manager: 'apt', apt: { name: 'jq' } } },
+    } };
+    const sources = [{ kind: 'direct' as const, setup: { items: [item] } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    expect(await fixture.apply({ input: { ...target, desiredRevision: plan.desiredRevision,
+      sources: plan.sources, exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] },
+      context: fixture.context('machines.setup.apply') })).toMatchObject({ operationId: expect.any(String) });
+    const read = () => fixture.machineSetupPlan({ input: target, context: fixture.context('machines.setup.plan') });
+    const persisted = MachineSetupPlanResultV1Schema.parse(await read());
+    expect(persisted).toMatchObject({ desiredRevision: 1, sources,
+      sourceFacts: { direct: { firstPresence: { [machineSetupItemKeyV1(item)]: 'present' } } } });
+    const replacement = { ...item, selection: { ...item.selection, inputs: {
+      package: { manager: 'apt', apt: { name: 'jq', version: '1.0' } },
+    } } };
+    expect(await fixture.machineSetupPlan({ input: { ...target, mode: 'effects',
+      sources: [{ kind: 'direct', setup: { items: [item, replacement] } }] },
+      context: fixture.context('machines.setup.plan') })).toMatchObject({ ok: false, errorCode: 'machine_setup_conflict' });
+    const removal = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources: [{ kind: 'direct', setup: {} }], mode: 'effects', removeItemKeys: [] },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    expect(removal.removalPlans).toEqual([]);
+    const nativeEffects = fixture.rootLaunches.length;
+    expect(await fixture.machineSetupRemove({ input: { ...target, desiredRevision: removal.desiredRevision,
+      sources: removal.sources, exclusions: removal.exclusions, removeItemKeys: [], removalPlans: [] },
+      context: fixture.context('machines.setup.remove') })).toMatchObject({ operationId: expect.any(String) });
+    const removed = MachineSetupPlanResultV1Schema.parse(await read());
+    expect(removed).toMatchObject({ desiredRevision: 2, support: [] });
+    expect(removed.sources).toEqual([{ kind: 'direct', setup: {} }]);
+    expect((await fixture.readInstalled()).installed).toBe(true);
+    expect(fixture.rootLaunches).toHaveLength(nativeEffects);
+    const next = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources: [{ kind: 'direct', setup: { items: [replacement] } }], mode: 'effects' },
+      context: fixture.context('machines.setup.plan'),
+    }));
+    expect(await fixture.apply({ input: { ...target, desiredRevision: next.desiredRevision,
+      sources: next.sources, exclusions: next.exclusions, recipePlans: next.recipePlans ?? [] },
+      context: fixture.context('machines.setup.apply', 'replacement-apply') })).toMatchObject({ operationId: expect.any(String) });
+    expect(MachineSetupPlanResultV1Schema.parse(await read())).toMatchObject({
+      desiredRevision: 3, sources: [{ kind: 'direct', setup: { items: [replacement] } }],
+    });
   });
   it('publishes successful Apply inventory once and reuses it on inert current-copy reads', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });

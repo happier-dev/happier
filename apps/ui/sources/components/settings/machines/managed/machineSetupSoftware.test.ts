@@ -54,7 +54,7 @@ it('reuses the observed Software plan while reviewing deliberate inputs without 
     expect(modes).toEqual([undefined, 'effects', 'effects']);
 });
 
-it('reviews direct Software detachment with native opt-in removal while preserving shared, foreign and pre-existing items', async () => {
+it('removes direct desired Software while preserving shared items and requiring opt-in for native uninstall', async () => {
     const item = (name: string) => ({ kind: 'softwareRecipe' as const, selection: {
         ref: { pluginId: 'example.software', recipeId: name, revision: '1' }, inputs: {},
     } });
@@ -110,12 +110,12 @@ it('reviews direct Software detachment with native opt-in removal while preservi
     expect(unselected).toMatchObject({ ok: true, facts: [{ removalOffers: [
         { itemKey: machineSetupItemKeyV1(owned), status: 'eligible', selected: false },
         { itemKey: machineSetupItemKeyV1(preExisting), status: 'notEligible', reason: 'preExisting' },
-    ] }], input: { targets: [{ sources: [sources[0], { kind: 'direct', setup: { items: [shared, foreign, owned, preExisting],
+    ] }], input: { targets: [{ sources: [sources[0], { kind: 'direct', setup: { items: [shared, foreign],
         scripts: sources[1]!.setup.scripts } }], recipePlans: [], removalPlans: [], removeItemKeys: [] }] } });
     const selected = await prepareMachineSetupSoftwareApplyInput({ ...request,
         removeItemKeys: { guest: [machineSetupItemKeyV1(owned)] } });
     expect(selected).toMatchObject({ ok: true, input: { targets: [{ sources: [sources[0], { kind: 'direct', setup: {
-        items: [shared, foreign, preExisting], scripts: sources[1]!.setup.scripts,
+        items: [shared, foreign], scripts: sources[1]!.setup.scripts,
     } }], recipePlans: [], removeItemKeys: [machineSetupItemKeyV1(owned)],
     removalPlans: [{ itemKey: machineSetupItemKeyV1(owned), plan: { steps: [{ executable: 'rm', args: ['--', 'owned'] }] } }] }] } });
     expect(await prepareMachineSetupSoftwareApplyInput({ ...request,
