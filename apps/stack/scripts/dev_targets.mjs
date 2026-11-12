@@ -13,7 +13,7 @@ import {
   resolveDevTargetsConfigPath,
   upgradeDevTargetsConfigToVersion3,
 } from './utils/dev_targets/config.mjs';
-import { spawnForegroundCommand } from './utils/proc/proc.mjs';
+import { getForegroundCommandResult, spawnForegroundCommand } from './utils/proc/proc.mjs';
 import { describeDevTargetSyncRecovery } from './utils/dev_targets/mutagen_runtime.mjs';
 
 async function configureWorkerPower(target) {
@@ -770,18 +770,13 @@ async function main() {
         stdio: 'inherit',
         ownedProcessGroup: true,
       });
-      // Forward parent-only termination to the native owner and wait for its
-      // remote cancellation/barrier cleanup before this CLI exits.
-      const signalListeners = new Map(['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => [signal, () => child.kill(signal)]));
-      for (const [signal, listener] of signalListeners) process.on(signal, listener);
-      try {
-        result = await new Promise((resolveResult) => {
-          child.once('error', (error) => resolveResult({ code: 1, error }));
-          child.once('exit', (code, signal) => resolveResult({ code, signal }));
+      result = await new Promise((resolveResult) => {
+        child.once('error', (error) => resolveResult({ code: 1, error }));
+        child.once('close', (status, signal) => {
+          const commandResult = getForegroundCommandResult(child, status, signal);
+          resolveResult({ code: commandResult.status, signal: commandResult.signal });
         });
-      } finally {
-        for (const [signal, listener] of signalListeners) process.removeListener(signal, listener);
-      }
+      });
     } else {
       // Windows origins and targets require the cross-platform SSH adapter;
       // POSIX-origin command routing uses the native execution owner above.

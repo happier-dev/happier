@@ -1182,6 +1182,8 @@ test('spawnProc reports complete stdout and stderr lines to onLine', async () =>
 });
 
 test('spawnProc labels planned dev-reload exits without hiding the exit code', async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'planned-exit.log');
   const stderrWrites = [];
   t.mock.method(process.stderr, 'write', (chunk) => {
     stderrWrites.push(String(chunk));
@@ -1193,6 +1195,7 @@ test('spawnProc labels planned dev-reload exits without hiding the exit code', a
     process.execPath,
     ['-e', 'setTimeout(() => process.exit(1), 20);'],
     process.env,
+    { teeFile },
   );
   markSpawnedProcessPlannedExit(child, 'dev-reload');
 
@@ -1200,6 +1203,7 @@ test('spawnProc labels planned dev-reload exits without hiding the exit code', a
 
   const streamedErr = stderrWrites.join('');
   assert.match(streamedErr, /\[server\] planned dev-reload exit \(code=1, sig=null\)/);
+  assert.match(await readFile(teeFile, 'utf8'), /planned dev-reload exit \(code=1, sig=null\)/);
   assert.doesNotMatch(streamedErr, /\[server\] exited \(code=1, sig=null\)/);
 });
 

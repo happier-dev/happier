@@ -1,6 +1,6 @@
 import { dirname, relative, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { spawnForegroundCommand } from '../../../apps/stack/scripts/utils/proc/proc.mjs';
+import { getForegroundCommandResult, spawnForegroundCommand } from '../../../apps/stack/scripts/utils/proc/proc.mjs';
 import { fileURLToPath } from 'node:url';
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
 
@@ -162,7 +162,8 @@ export async function runPluginSdkPreparedScript(scriptName, opts = {}) {
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     child.once('error', rejectRun);
-    child.once('close', (code, signal) => {
+    child.once('close', (nativeCode, nativeSignal) => {
+      const { status: code, signal } = getForegroundCommandResult(child, nativeCode, nativeSignal);
       if (code === 0) {
         resolveRun();
         return;

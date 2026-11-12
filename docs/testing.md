@@ -597,6 +597,20 @@ Waiting clients block on their control sockets without polling or process walks.
 Admission uses no owner/waiter files, PID reaper, separate backfill allowance or fixed
 job-count ceiling. Process and scratch custody retain their separate lifecycle owners.
 
+In current 0.3 development, the controller alone holds the dispatch reservation
+lifetime lock; transport and control children close their inherited descriptor.
+The existing custody sweep can therefore retire a remote execution after its
+controller dies. Workspace captures use the same owner-stamped allocation and
+abandoned-staging reaper as publication staging. The next capture reclaims
+captures whose recorded owner has departed; live, uncertain and foreign-host
+owners are retained. Capture scans do not apply legacy staging rules to other
+OS-temp directories. Older unstamped capture directories require explicit cleanup.
+Owned foreground cancellation keeps the custody group leader alive while the
+existing termination owner escalates signals and stops remaining workers. The
+command result crosses the existing IPC channel and is returned after custody
+closes; AbortSignal errors also settle after cleanup. SIGHUP retains its signal
+identity through this termination path.
+
 In current 0.3 development, finite workspace publishers declare their existing
 package/publication leases to `workspace_build_admission.mjs`; the broker
 coordinates capacity with each client's nonblocking resource acquisition.

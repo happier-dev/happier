@@ -18,10 +18,11 @@ const tempHelper = new URL('../../../../../scripts/testing/process/temporaryDire
 function spawnObservedCustody(args, options) {
   const child = spawn('/bin/bash', ['-c', `
     kill() {
-      local status
+      local status observed_signal=$1
       builtin kill "$@" 2>/dev/null; status=$?
-      case "$1" in
-        -TERM|-KILL) printf '[fixture-signal] %s %s %s\\n' "$1" "\${!#}" "$status" >&5 ;;
+      [ "$observed_signal" != -s ] || observed_signal="-$2"
+      case "$observed_signal" in
+        -TERM|-KILL) printf '[fixture-signal] %s %s %s\\n' "$observed_signal" "\${!#}" "$status" >&5 ;;
       esac
       return "$status"
     }
@@ -848,7 +849,12 @@ test('delayed group cancellation reports unavailable identity without signaling 
           heavyweight_stat_line="${leader.pid} (fixture) S ${Array(18).fill('0').join(' ')} $fixture_token"`} ;;
       esac
     }
-    kill() { printf '%s\\n' "$*" >> ${quote(signals)}; [ "$1" != -TERM ]; }
+    kill() {
+      local observed_signal=$1
+      [ "$observed_signal" != -s ] || observed_signal="-$2"
+      printf '%s %s\\n' "$observed_signal" "\${!#}" >> ${quote(signals)}
+      [ "$observed_signal" != -TERM ]
+    }
     export -f ps read kill
     exec /bin/bash ${quote(custody)} cancel ${quote(pidFile)} identity-execution
     `;
@@ -858,8 +864,8 @@ test('delayed group cancellation reports unavailable identity without signaling 
     assert.equal(result.status, 1, result.stderr);
     await access(pidFile);
     const recorded = await readFile(signals, 'utf8');
-    assert.ok(recorded.includes(`-TERM -- -${leader.pid}`), recorded);
-    assert.ok(!recorded.includes(`-KILL -- -${leader.pid}`), 'an unverified group was signaled after the grace period');
+    assert.ok(recorded.includes(`-TERM -${leader.pid}`), recorded);
+    assert.ok(!recorded.includes(`-KILL -${leader.pid}`), 'an unverified group was signaled after the grace period');
     assert.ok(result.stderr.trim().length > 0, `${identityState} identity left incomplete cancellation silent`);
     assert.ok(result.stderr.includes(String(leader.pid)), 'diagnostic did not identify the unverified group');
     const event = signalEvents(result.stderr).find(event => event.target_kind === 'pgid' && event.target_id === leader.pid && event.signal === 'TERM');

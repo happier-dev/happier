@@ -2258,7 +2258,7 @@ handle_selected_command_connection_failure() {
 
 cleanup_probe_tmp
 trap - EXIT HUP INT TERM
-flush_selected_sync "$@" &
+(exec 8>&-; flush_selected_sync "$@") &
 flush_pid=$!
 cancel_selected_flush() {
   executor_signal_pid controller_flush_cleanup "$flush_pid"
@@ -2316,6 +2316,10 @@ exec 9<> "$custody_pipe"
 [ "$control_stdin" != 1 ] || exec 5<&0
 [ "$explicit_tty" != 1 ] || exec 4<&0
 run_selected_ssh_with_custody() {
+  # Only the controller owns its reservation lock. SSH, the pipeline wrapper
+  # and its stderr reader may survive controller death and must not keep a
+  # dead reservation active when the existing orphan sweep observes it.
+  exec 8>&-
   # Retain every execution-qualified result for routing and show its native
   # reason, including refusals that AUTO can recover by choosing another worker.
   # SSH -E contains only SSH errors.
@@ -2357,9 +2361,9 @@ cancel_remote_execution_record() {
   # Cancellation must survive loss of the authoritative SSH control master.
   # A transport failure is not evidence that the remote execution is gone.
   if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" >/dev/null
+    ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" 8>&- 9>&- >/dev/null
   else
-    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" >/dev/null
+    ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" 8>&- 9>&- >/dev/null
   fi
 }
 for orphan_reservation in "$cache_dir/$selected_name.active."*; do
@@ -2393,7 +2397,7 @@ cancel_remote_execution() {
 }
 if [ "$explicit_tty" = 1 ]; then
   (
-    exec 9>&-
+    exec 8>&- 9>&-
     while IFS= read -r custody_line; do :; done
     cancel_remote_execution
     custody_ssh_command=$(ps -p "$ssh_pid" -o command= 2>/dev/null || true)
@@ -2412,7 +2416,7 @@ trap 'cancel_remote; exit 130' INT TERM
 trap 'cancel_remote; exit 129' HUP
 if [ "$control_stdin" = 1 ]; then
   (
-    exec 9>&-
+    exec 8>&- 9>&-
     while IFS= read -r control_line; do printf '%s\n' "$control_line" > "$custody_pipe"; done
     executor_signal_pid controller_input_eof "$$"
   ) <&5 &

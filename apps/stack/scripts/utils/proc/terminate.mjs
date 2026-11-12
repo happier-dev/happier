@@ -131,7 +131,7 @@ function observeTargetLiveness(pid, boundary) {
 
 function normalizeStartSignal(signal) {
   const s = String(signal ?? '').trim().toUpperCase();
-  if (s === 'SIGINT' || s === 'SIGTERM' || s === 'SIGKILL') return s;
+  if (s === 'SIGINT' || s === 'SIGTERM' || s === 'SIGHUP' || s === 'SIGKILL') return s;
   return 'SIGINT';
 }
 

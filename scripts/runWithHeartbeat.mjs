@@ -1,4 +1,4 @@
-import { exitWithCommandResult, spawnForegroundCommand } from '../apps/stack/scripts/utils/proc/proc.mjs';
+import { exitWithCommandResult, getForegroundCommandResult, spawnForegroundCommand } from '../apps/stack/scripts/utils/proc/proc.mjs';
 
 function formatDuration(ms) {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -76,7 +76,8 @@ const interval = setInterval(() => {
 }, intervalMs);
 interval.unref();
 
-child.on('close', (code, signal) => {
+child.on('close', (nativeCode, nativeSignal) => {
+    const { status: code, signal } = getForegroundCommandResult(child, nativeCode, nativeSignal);
     clearInterval(interval);
     const diagnosticPrefix = process.env.GITHUB_ACTIONS === 'true' ? '::error::' : '';
     if (signal) {

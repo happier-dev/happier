@@ -1,11 +1,10 @@
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 
 import { publishStagedDirectoryMountedSync } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
-import { readProcessHostIdentitySync, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
-import { reclaimAbandonedBuildStaging } from './abandoned_build_staging.mjs';
+import { createOwnedBuildStaging } from './abandoned_build_staging.mjs';
 
 const WINDOWS_TRANSIENT_RENAME_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 
@@ -54,25 +53,7 @@ export async function buildIntoTempThenReplace(
 
   const parent = dirname(outDir);
   await mkdir(parent, { recursive: true });
-  const host = readProcessHostIdentitySync();
-  // A killed build cannot run finally; its next sibling build owns reclamation.
-  await reclaimAbandonedBuildStaging(parent, host);
-  const tmpDir = join(parent, `.tmp.${Date.now()}.${process.pid}.${rand()}`);
-  const ownerFile = `${tmpDir}.owner.json`;
-
-  // Publish identity before the directory becomes visible to concurrent builds.
-  await writeFile(ownerFile, JSON.stringify({
-    v: 1,
-    pid: process.pid,
-    host,
-    processInstanceFingerprint: readProcessInstanceFingerprintSync(process.pid),
-  }), { flag: 'wx' });
-  try {
-    await mkdir(tmpDir);
-  } catch (error) {
-    await rm(ownerFile, { force: true }).catch(() => {});
-    throw error;
-  }
+  const { directory: tmpDir, cleanup } = await createOwnedBuildStaging(parent);
 
   try {
     await buildFn(tmpDir);
@@ -116,7 +97,6 @@ export async function buildIntoTempThenReplace(
       await rm(backupDir, { recursive: true, force: true }).catch(() => {});
     }
   } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-    await rm(ownerFile, { force: true }).catch(() => {});
+    await cleanup().catch(() => {});
   }
 }

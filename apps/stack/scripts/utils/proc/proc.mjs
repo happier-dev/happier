@@ -12,6 +12,7 @@ import {
 } from './boundedLog.mjs';
 
 const plannedExitMarker = Symbol('happier.stack.plannedExit');
+const foregroundCommandResult = Symbol('happier.stack.foregroundCommandResult');
 const DEFAULT_TEE_MAX_BYTES = DEFAULT_BOUNDED_LOG_MAX_BYTES;
 
 function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
@@ -370,7 +371,8 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     if (!silent) errBackpressure(process.stderr, writePrefixedLines(process.stderr, errPrefix, lines));
     if (teeStream) errBackpressure(teeStream, writePersistedLogLines(teeStream, teePrefix, lines, { timestamps: teeTimestamps }));
   });
-  child.completion = new Promise((resolve) => child.on('close', async (code, signal) => {
+  child.completion = new Promise((resolve) => child.on('close', async (nativeCode, nativeSignal) => {
+    const { status: code, signal } = getForegroundCommandResult(child, nativeCode, nativeSignal);
     child.__happierClosed = true;
     const outLines = filterLines('stdout', flushLineBuffer(outState));
     const errLines = filterLines('stderr', flushLineBuffer(errState));
@@ -384,16 +386,8 @@ export function spawnProc(label, cmd, args, env, options = {}) {
       writePersistedLogLines(teeStream, teePrefix, outLines, { timestamps: teeTimestamps });
       writePersistedLogLines(teeStream, teePrefix, errLines, { timestamps: teeTimestamps });
     }
-    await teeFinish.endAndWait();
-    resolve({
-      code: spawnError ? null : code,
-      signal: signal ?? null,
-      ...(spawnError ? { error: spawnError } : {}),
-    });
-  }));
-  child.on('exit', (code, sig) => {
     if (code !== 0) {
-      const streamLine = formatSpawnedProcessExitLine(`[${label}]`, code, sig, child);
+      const streamLine = formatSpawnedProcessExitLine(`[${label}]`, code, signal, child);
       if (!silent) {
         process.stderr.write(streamLine);
       }
@@ -402,13 +396,19 @@ export function spawnProc(label, cmd, args, env, options = {}) {
           const persistedExitPrefix = teeTimestamps
             ? `${teePrefix}[${new Date().toISOString()}] `
             : teePrefix;
-          teeStream.write(formatSpawnedProcessExitLine(persistedExitPrefix, code, sig, child));
+          teeStream.write(formatSpawnedProcessExitLine(persistedExitPrefix, code, signal, child));
         } catch {
           // ignore
         }
       }
     }
-  });
+    await teeFinish.endAndWait();
+    resolve({
+      code: spawnError ? null : code,
+      signal: signal ?? null,
+      ...(spawnError ? { error: spawnError } : {}),
+    });
+  }));
 
   return child;
 }
@@ -447,9 +447,11 @@ function runForegroundCustody(invocation) {
   if (!process.connected) return cancelOnParentLoss();
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
   const forwarded = new Set();
+  let cancelling = false;
   const handlers = new Map(signals.map((signal) => [signal, () => {
     // Consume our own group broadcast, then allow a later user cancellation.
     if (forwarded.delete(signal)) return;
+    cancelling = true;
     forwarded.add(signal);
     process.kill(-process.pid, signal);
   }]));
@@ -463,6 +465,12 @@ function runForegroundCustody(invocation) {
     process.send({ error: { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall, path: error.path, spawnargs: error.spawnargs } });
   });
   child.once('close', (status, signal) => {
+    // A command can exit before a signal-ignoring worker. Keep its group
+    // identity alive so the parent's existing tree terminator can finish.
+    if (cancelling) {
+      process.send({ commandResult: { status, signal } });
+      return;
+    }
     for (const [name, handler] of handlers) process.off(name, handler);
     process.off('disconnect', cancelOnParentLoss);
     process.disconnect();
@@ -477,9 +485,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === FO
 // Generic foreground calls retain their terminal session. Noninteractive
 // callers explicitly opt into owned groups; Windows retains taskkill custody.
 export function spawnForegroundCommand(cmd, args, options = {}) {
-  const { shell: shellOverride, ownedProcessGroup = false, ...spawnOptions } = options;
+  const { shell: shellOverride, ownedProcessGroup = false, signal: abortSignal, ...spawnOptions } = options;
   const invocation = resolveProcSpawnInvocation(cmd, args, spawnOptions.env ?? process.env, shellOverride);
   const detached = process.platform !== 'win32' && (ownedProcessGroup || spawnOptions.detached === true);
+  const ownsTree = detached || ownedProcessGroup;
   const stdio = spawnOptions.stdio ?? 'pipe';
   const child = detached
     ? fork(fileURLToPath(import.meta.url), [FOREGROUND_CUSTODY_ARG, JSON.stringify(invocation)], {
@@ -493,43 +502,99 @@ export function spawnForegroundCommand(cmd, args, options = {}) {
         ...invocation.spawnOptions,
         ...spawnOptions,
         detached: spawnOptions.detached ?? false,
+        ...(!ownsTree && abortSignal ? { signal: abortSignal } : {}),
       });
   if (detached) child.on('message', (message) => {
     if (message.error) child.emit('error', Object.assign(new Error(message.error.message), message.error));
+    if (message.commandResult) child[foregroundCommandResult] = message.commandResult;
   });
+  const killChild = child.kill.bind(child);
+  let cancellation;
+  let abortError;
+  const cancel = signal => {
+    if (!child.pid || child.exitCode != null || child.signalCode != null) return;
+    if (!ownsTree) {
+      killChild(signal);
+      return;
+    }
+    // Custody broadcasts graceful signals once. Keep group observation and
+    // forced termination with the existing tree owner, without broadcasting a
+    // second copy through both the parent and custody.
+    if (cancellation) {
+      if (process.platform !== 'win32') {
+        if (signal === 'SIGKILL') {
+          try { process.kill(-child.pid, signal); } catch (error) {
+            if (error.code !== 'ESRCH') throw error;
+          }
+        } else killChild(signal);
+      }
+      return;
+    }
+    cancellation = killProcessTree(child, signal, {
+      ...(detached ? { boundary: { kill: (pid, terminalSignal) => {
+        if (terminalSignal !== 0 && terminalSignal !== 'SIGKILL') return killChild(terminalSignal);
+        return process.kill(pid, terminalSignal);
+      } } } : {}),
+    });
+    void cancellation.then(result => {
+      if (!result.ok && child.exitCode == null && child.signalCode == null) {
+        process.stderr.write(`Child cancellation failed: ${result.reason}\n`);
+      }
+    }, error => process.stderr.write(`Child cancellation failed: ${error}\n`));
+  };
+  if (ownsTree) child.kill = (signal = 'SIGTERM') => {
+    const name = typeof signal === 'number'
+      ? Object.keys(constants.signals).find(key => constants.signals[key] === signal)
+      : typeof signal === 'string' ? signal.toUpperCase() : signal;
+    if (!['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGKILL'].includes(name)) return killChild(signal);
+    // Preserve the native boolean/probe contract while routing requested tree
+    // cancellation through the same owner as parent signals and AbortSignal.
+    if (!killChild(0)) return false;
+    cancel(name);
+    return true;
+  };
   const handlers = new Map();
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    const handler = () => {
-      if (!child.pid || child.exitCode != null || child.signalCode != null) return;
-      if (process.platform === 'win32') {
-        void killProcessTree(child, signal).then((result) => {
-          if (!result.ok) process.stderr.write(`Child cancellation failed: ${result.reason}\n`);
-        }, (error) => process.stderr.write(`Child cancellation failed: ${error}\n`));
-        return;
-      }
-      try {
-        child.kill(signal);
-      } catch (error) {
-        if (error?.code !== 'ESRCH') throw error;
-      }
-    };
+    const handler = () => cancel(signal);
     handlers.set(signal, handler);
     process.on(signal, handler);
   }
+  const onAbort = () => {
+    abortError = Object.assign(new Error('The operation was aborted', { cause: abortSignal.reason }), {
+      name: 'AbortError', code: 'ABORT_ERR',
+    });
+    cancel('SIGTERM');
+  };
   const dispose = () => {
     for (const [signal, handler] of handlers) process.off(signal, handler);
     handlers.clear();
+    if (ownsTree) abortSignal?.removeEventListener('abort', onAbort);
   };
   child.once('error', dispose);
-  child.once('close', dispose);
+  child.once('close', () => {
+    dispose();
+    // Native spawn abort settles immediately after signalling only its leader.
+    // Owned callers settle cancellation after the actual owned child closes.
+    if (abortError) child.emit('error', abortError);
+  });
+  if (ownsTree && abortSignal) {
+    if (abortSignal.aborted) queueMicrotask(onAbort);
+    else abortSignal.addEventListener('abort', onAbort, { once: true });
+  }
   return child;
+}
+
+// Read at close: custody may have needed forced termination after the actual
+// command exited. Project that command's result only after its tree is stopped.
+export function getForegroundCommandResult(child, status, signal) {
+  return child[foregroundCommandResult] ?? { status, signal };
 }
 
 export async function runCommand(cmd, args, options = {}) {
   const child = spawnForegroundCommand(cmd, args, options);
   return await new Promise((resolveResult) => {
     child.once('error', (error) => resolveResult({ status: null, signal: null, error }));
-    child.once('close', (status, signal) => resolveResult({ status, signal }));
+    child.once('close', (status, signal) => resolveResult(getForegroundCommandResult(child, status, signal)));
   });
 }
 
@@ -635,7 +700,8 @@ export async function run(cmd, args, options = {}) {
       settled = true;
       rejectPromise(error);
     });
-    proc.on('close', (code, signal) => {
+    proc.on('close', (nativeCode, nativeSignal) => {
+      const { status: code, signal } = getForegroundCommandResult(proc, nativeCode, nativeSignal);
       clearRunTimeout();
       if (timedOut || settled) return;
       settled = true;
@@ -700,7 +766,8 @@ export async function runCapture(cmd, args, options = {}) {
       settled = true;
       rejectPromise(error);
     });
-    proc.on('close', (code, signal) => {
+    proc.on('close', (nativeCode, nativeSignal) => {
+      const { status: code, signal } = getForegroundCommandResult(proc, nativeCode, nativeSignal);
       if (t) clearTimeout(t);
       if (settled) return;
       settled = true;
@@ -836,7 +903,8 @@ export async function runCaptureResult(cmd, args, options = {}) {
       if (hb) clearInterval(hb);
       terminalOverride = { kind: 'error', error: e };
     });
-    proc.on('close', async (code, signal) => {
+    proc.on('close', async (nativeCode, nativeSignal) => {
+      const { status: code, signal } = getForegroundCommandResult(proc, nativeCode, nativeSignal);
       if (t) clearTimeout(t);
       if (hb) clearInterval(hb);
       let cleanup = null;

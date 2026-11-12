@@ -6,7 +6,7 @@ import { callerHoldsWorkspaceBundleLock, createWorkspaceBundleLockPriorityScope,
   observeWorkspaceBundleLock, observeWorkspaceBundleLockPriority, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { parseWorkspaceLockLeaseValue } from '../../../../../packages/cli-common/workspaceLockLease.mjs';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { spawnForegroundCommand } from './proc.mjs';
+import { getForegroundCommandResult, spawnForegroundCommand } from './proc.mjs';
 import { callerHoldsDependencyConsumption, callerHoldsDependencyResourceBlocking, resolveDependencyRefreshLockPath, resolveLockedInstallEnv, withDependencyConsumption, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { JSON_OWNER_FILE_LOCK_BUSY_ERROR_CODE } from './jsonOwnerFileLock.mjs';
 
@@ -129,7 +129,8 @@ export async function runWorkspaceBuildAdmission({ command, args = [], locks = [
     child.stdout?.on('data', value => { if (captureStdout) stdout += value; onStdout?.(value); });
     child.stderr?.on('data', value => { if (captureStderr) stderr += value; onStderr?.(value); });
     child.once('error', value => { error = value; });
-    child.once('close', (status, terminalSignal) => {
+    child.once('close', (nativeStatus, nativeSignal) => {
+      const { status, signal: terminalSignal } = getForegroundCommandResult(child, nativeStatus, nativeSignal);
       for (const [name, handler] of handlers) process.off(name, handler);
       resolveResult({ status: callerSignal ? null : status, signal: callerSignal ?? terminalSignal,
         ...(child.stdout ? { stdout } : {}), ...(child.stderr ? { stderr } : {}), ...(error ? { error } : {}) });
@@ -334,7 +335,7 @@ export async function runWorkspaceBuildAdmissionWorker(argv) {
           stdio: 'inherit', ownedProcessGroup: true,
           ...(invocation.windowsVerbatimArguments !== undefined ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments } : {}) });
         child.once('error', reject);
-        child.once('close', (status, terminalSignal) => resolveResult({ status, signal: terminalSignal }));
+        child.once('close', (status, signal) => resolveResult(getForegroundCommandResult(child, status, signal)));
       });
       process.exitCode = result.signal ? 128 + (constants.signals[result.signal] ?? 0) : result.status ?? 1;
     };

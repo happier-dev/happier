@@ -50,18 +50,19 @@ ${source.slice(reapStart, reapEnd)}
   };
 }
 
-async function remoteExecution(t, fixture) {
+async function remoteExecution(t, fixture, { stubborn = false } = {}) {
   const pidFile = fixture.path('remote-exec/native-retained-controller.pid');
   const child = spawn('/bin/bash', [new URL('./remote_execution_custody.sh', import.meta.url).pathname,
-    'run', pidFile, 'native-retained-controller', '/bin/sh', '-c', 'printf ready; read release'], {
+    'run', pidFile, 'native-retained-controller', '/bin/sh', '-c',
+    stubborn ? `trap '' TERM; sleep 300 & printf 'ready %s\\n' "$!"; read release` : 'printf ready; read release'], {
     env: { ...process.env, HAPPIER_REMOTE_EXEC_LIFELINE: '0', HAPPIER_REMOTE_EXEC_CONTROL_STDIN: '0', TMPDIR: fixture.root },
   });
   let stderr = '';
   child.stderr.on('data', data => { stderr += data; });
   const closed = once(child, 'close');
   t.after(async () => { if (!child.stdin.writableEnded) child.stdin.end('release\n'); await closed; });
-  await once(child.stdout, 'data');
-  return { child, closed, pidFile, stderr: () => stderr };
+  const [ready] = await once(child.stdout, 'data');
+  return { child, closed, pidFile, descendantPid: stubborn ? Number(ready.toString().trim().split(' ')[1]) : null, stderr: () => stderr };
 }
 
 async function liveController(t, record, locked) {
@@ -149,3 +150,70 @@ test('an unlocked reservation becomes reapable after its real controller exits',
   assert.equal(await readFile(record, 'utf8').then(() => true, () => false), false,
     'confirmed cancellation must release the dead controller reservation');
 });
+
+
+for (const heavyweight of [false, true]) {
+  test(`a killed controller releases reservation custody held by its ${heavyweight ? 'admission transport and stderr reader' : 'ordinary transport'}`, { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await reservationReader(t);
+    const source = await readFile(launcher, 'utf8');
+    const sshStart = source.indexOf('\nrun_selected_ssh() {');
+    const sshEnd = source.indexOf('\ncustody_pipe=', sshStart);
+    const transportStart = source.indexOf('\nrun_selected_ssh_with_custody() {');
+    const transportEnd = source.indexOf('\nadmission_error_log=', transportStart);
+    assert.ok(sshStart > 0 && sshEnd > sshStart && transportStart > 0 && transportEnd > transportStart);
+    const record = fixture.path('worker.active.killed');
+    const transport = fixture.path('ssh');
+    // Replace only SSH's OS/network boundary. Its real subprocess survives
+    // controller SIGKILL, just as a disconnected or blocked transport can.
+    await writeFile(transport, '#!/bin/sh\nprintf "ready\\n"\nwhile :; do sleep 1; done\n', { mode: 0o700 });
+    const controllerFile = fixture.path('controller.sh');
+    await writeFile(controllerFile, `. '${identity}'
+${source.slice(sshStart, sshEnd)}
+${source.slice(transportStart, transportEnd)}
+record=$1
+exec 8>>"$record"
+flock 8
+printf '%s\\nvalidation\\nnative-retained-controller\\n%s\\n\\n' "$$" "$(heavyweight_process_token "$$")" > "$record"
+explicit_tty=0
+ssh_config=
+authoritative_ssh_error_log=
+payload_ssh_server_alive_interval=0
+ssh_target=worker
+remote_command=payload
+heavyweight_admission_required=${heavyweight ? 1 : 0}
+requires_remote_dependencies=0
+custody_pipe=$2
+admission_error_pipe=$3
+admission_error_log=$4
+mkfifo "$custody_pipe" "$admission_error_pipe"
+exec 9<>"$custody_pipe"
+run_selected_ssh_with_custody &
+wait "$!"
+`);
+    const child = spawn('/bin/sh', [controllerFile, record, fixture.path('lifetime.pipe'), fixture.path('error.pipe'), fixture.path('error.log')], {
+      env: { ...process.env, PATH: `${fixture.root}:${process.env.PATH}` }, detached: true,
+    });
+    const closed = once(child, 'close');
+    t.after(async () => {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      await closed;
+    });
+    await once(child.stdout, 'data');
+    const remote = await remoteExecution(t, fixture, { stubborn: true });
+    assert.ok(Number.isSafeInteger(remote.descendantPid) && remote.descendantPid > 0);
+    assert.equal(fixture.active(record).status, 0, 'the live controller must retain reservation custody');
+    const exited = once(child, 'exit');
+    child.kill('SIGKILL');
+    await exited;
+    assert.equal(fixture.active(record).status, 1,
+      'transport descendants must not retain the dead controller lifetime lock');
+    const reaped = fixture.reap();
+    assert.equal(reaped.status, 0, reaped.stderr);
+    const descendant = spawnSync('ps', ['-o', 'stat=', '-p', String(remote.descendantPid)], { encoding: 'utf8' });
+    assert.ok(descendant.status === 1 || descendant.stdout.trim().startsWith('Z'),
+      'the reservation must remain until its TERM-ignoring remote descendant stops');
+    const [code, signal] = await remote.closed;
+    assert.ok(code !== 0 || signal !== null, remote.stderr());
+    await assert.rejects(readFile(record), { code: 'ENOENT' });
+  });
+}

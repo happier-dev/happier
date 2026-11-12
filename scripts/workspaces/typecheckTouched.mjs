@@ -4,7 +4,7 @@ import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
-import { appendBoundedTail, redactFailureDiagnostic, spawnForegroundCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
+import { appendBoundedTail, getForegroundCommandResult, redactFailureDiagnostic, spawnForegroundCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { resolvePnpmCommandInvocation } from './execPnpmCommand.mjs';
 import { shouldRouteTypeScriptCliThroughHstack } from './resolveTypeScriptCliInvocation.mjs';
 import { compareTouchedTypecheckLocations } from './typecheckDiagnostics.mjs';
@@ -109,7 +109,7 @@ export async function runTouchedTypecheck({ repoRoot, packagePath, paths, baseli
   });
   const result = await new Promise(resolveResult => {
     child.once('error', error => resolveResult({ status: null, signal: null, error }));
-    child.once('close', (status, signal) => resolveResult({ status, signal }));
+    child.once('close', (status, signal) => resolveResult(getForegroundCommandResult(child, status, signal)));
   });
   await Promise.all(readers);
   const elapsedMs = Math.round(performance.now() - started);

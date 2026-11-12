@@ -94,11 +94,12 @@ function failure(reason, failureId, cause) {
 }
 
 async function runPayload({ command, args, env, signal }) {
-  const { spawnForegroundCommand } = await import('./proc.mjs');
+  const { getForegroundCommandResult, spawnForegroundCommand } = await import('./proc.mjs');
   return await new Promise((resolveResult, reject) => {
     const child = spawnForegroundCommand(command, args, { env, signal, stdio: 'inherit', ownedProcessGroup: true });
     child.once('error', reject);
-    child.once('close', (status, terminalSignal) => {
+    child.once('close', (nativeStatus, nativeSignal) => {
+      const { status, signal: terminalSignal } = getForegroundCommandResult(child, nativeStatus, nativeSignal);
       resolveResult(terminalSignal ? 128 + (constants.signals[terminalSignal] ?? 0) : status ?? 1);
     });
   });

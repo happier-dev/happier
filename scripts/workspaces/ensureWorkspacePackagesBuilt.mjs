@@ -8,6 +8,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { readBundledPluginPackageNames } from '../../apps/cli/scripts/build-owned/bundledPluginMembership.ts';
 import { createCliSourceLoader } from '../../packages/cli-common/cliSourceLoader.mjs';
 
+import { createOwnedBuildStaging } from '../../apps/stack/scripts/utils/fs/abandoned_build_staging.mjs';
 import { buildIntoTempThenReplace } from '../../apps/stack/scripts/utils/fs/atomic_dir_swap.mjs';
 import { readCachedFileDigestSync } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../apps/stack/scripts/build/source_author_inputs.mjs';
@@ -1122,7 +1123,7 @@ export const defaultWorkspaceBuildBoundary = {
 };
 
 async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) {
-  const directory = await mkdtemp(join(tmpdir(), 'happier-workspace-capture-'));
+  const { directory, cleanup } = await createOwnedBuildStaging(tmpdir(), { prefix: 'happier-workspace-capture' });
   const repoDir = join(directory, 'repo');
   const capturedDirs = [packageDir, ...dependencyDirs];
   try {
@@ -1189,9 +1190,9 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
       env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir,
         HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR: monorepoRoot,
         HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: identityRepoDir },
-      cleanup: () => rm(directory, { recursive: true, force: true }) };
+      cleanup };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    await cleanup();
     throw error;
   }
 }
