@@ -582,8 +582,6 @@ project_inherited_command_environment() {
 }
 
 run_controller_coalesced() {
-  coalescing_mode=
-  [ "${command_class-}" = entry-loads ] && coalescing_mode=reuse-running
   coalesced_command=$(quote_remote "$launcher_path")
   [ -z "$explicit_target" ] || coalesced_command="$coalesced_command $(quote_remote "--target=$explicit_target")"
   coalesced_command="$coalesced_command$explicit_remote_restart_options --"
@@ -592,7 +590,7 @@ run_controller_coalesced() {
   done
   exec node "$script_dir/../scripts/utils/dev_targets/controller_coalescing.mjs" \
     "$repo_root" "$invoked_cwd" 1 \
-    "$controller_coalescing_environment_names" "$coalesced_command" "$coalescing_mode"
+    "$controller_coalescing_environment_names" "$coalesced_command" reuse-running
 }
 
 explicit_remote_restart_options=
@@ -1080,9 +1078,9 @@ if [ "$policy_placement" = primary-only ]; then
   fi
   run_local -- "$@"
 fi
-# One connection represents one caller. The shared job re-enters once and
-# owns selection, synchronization and admission; other lifetimes stay native.
-if [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
+# Only entry-loads reuse running results. Other commands dispatch directly;
+# they have no shared result to justify a controller client/owner lifetime.
+if [ "$policy_heavyClass" = entry-loads ] && [ "${HAPPIER_CONTROLLER_COALESCED-}" != 1 ] && [ -z "$command_repo_root" ] \
     && [ "$explicit_tty" != 1 ] && [ "$control_stdin" != 1 ] \
     && [ -z "$runtime_build_target" ] && [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
   run_controller_coalesced "$@"

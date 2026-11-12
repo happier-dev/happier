@@ -9140,3 +9140,40 @@ test('Windows launcher is explicitly local-only and does not start the Node rout
   assert.doesNotMatch(powershell, /HAPPIER_PREFERRED_EXECUTION/);
   assert.match(powershell, /\$invocation\[0\] -eq '--local'/);
 });
+
+
+for (const [kind, args, reusable] of [
+  ['ordinary', ['probe-command'], false],
+  ['search', ['rg', 'needle', 'apps/stack/scripts/utils'], false],
+  ['test', ['vitest', 'run', 'fixture.test.ts'], false],
+  ['compiler', ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/cli/tsconfig.source.json'], false],
+  ['entry-loads', ['node', 'apps/stack/scripts/perf/entry-load.mjs'], true],
+]) test(`coalescing process cost: ${kind}`, { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await memoryRoutingFixture(t, {
+    availableKiB: 40000000, totalKiB: 45000000,
+    roomyAvailableKiB: 40000000, roomyTotalKiB: 45000000,
+  });
+  await executable(join(fixture.binDir, 'uname'), '#!/bin/sh\nprintf \"Linux\\n\"\n');
+  delete fixture.invocation.env.HAPPIER_CONTROLLER_COALESCED;
+  delete fixture.invocation.env.HSTACK_EXEC_CONTROLLER_LIFELINE;
+  const counter = join(fixture.root, 'coalescing-processes');
+  const preload = join(fixture.root, 'count-coalescing.cjs');
+  await writeFile(preload, `if (process.argv[1]?.endsWith('/controller_coalescing.mjs')) {
+    require('node:fs').appendFileSync(process.env.COALESCING_PROCESS_COUNT,
+      (process.argv[2] === '--serve' ? 'owner' : 'client') + '\\n');
+  }`);
+  Object.assign(fixture.invocation.env, {
+    NODE_OPTIONS: `--require=${preload}`, COALESCING_PROCESS_COUNT: counter,
+  });
+  const counts = async () => (await readFile(counter, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean);
+  const result = spawnSync('/bin/sh', [launcher, '--', ...args], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /remote:/);
+  const started = await counts();
+  if (!reusable) assert.deepEqual(started, [], `${kind} must start zero coalescing clients and owners`);
+  else {
+    assert.equal(started.filter(processKind => processKind === 'client').length, 1);
+    // An already resident owner may serve this client; only startup is counted.
+    assert.ok(started.filter(processKind => processKind === 'owner').length <= 1);
+  }
+});
