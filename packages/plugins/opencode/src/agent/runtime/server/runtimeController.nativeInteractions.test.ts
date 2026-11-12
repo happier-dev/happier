@@ -5,7 +5,11 @@ import { buildOpenCodeV2ConnectedAuthConfigPart } from '../../auth/services/requ
 import { asRecord } from './openCodeParsing.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
+import { normalizeOpenCodeV2Event } from './openCodeV2EventAdapter.js';
 import { normalizeOpenCodeV2Messages } from './openCodeV2Wire.js';
+import { createOpenCodeSessionRuntime } from './sessionRuntime.js';
+import { AGENT_DEFINITION } from '../../definition.js';
+import { createRuntimeTranscriptProjector } from '../../../../../../../apps/cli/src/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 
 const readyMcpRegistration = Promise.resolve({
   requiredHappier: { status: 'ready' as const },
@@ -123,6 +127,76 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it.each(['success', 'failed'] as const)('publishes foreground V2 MCP calls and their %s result once across live and history delivery', async (outcome) => {
+    const runtime = await createRuntime({ client: createClient(), dialect: 'v2', askQuestions: vi.fn() });
+    const events: unknown[] = [];
+    const dispose = runtime.subscribeRuntimeEvents(event => events.push(event));
+    const native = createOpenCodeSessionRuntime({
+      operations: runtime,
+      request: { kind: 'create', sessionId: 'happier-session-1', cwd: '/repo' },
+      disposeOperations: () => runtime.resetOrDisposeRuntime(),
+      runtimeCapabilities: {
+        sessionCapabilities: AGENT_DEFINITION.core.sessionCapabilities,
+        tools: { delivery: 'native_mcp', support: 'supported' },
+      },
+    });
+    const commits: unknown[] = [];
+    const projections: Promise<unknown>[] = [];
+    const project = createRuntimeTranscriptProjector();
+    const watcher = native.watch(event => {
+      if (event.kind !== 'tool-call' && event.kind !== 'tool-result') return;
+      projections.push(project({ event, provider: 'opencode', session: {
+        sessionId: 'happier-session-1',
+        // The durable transcript port is the persistence boundary; mapping/projection stay real.
+        enqueueAgentMessageCommitted: async (_provider, body) => {
+          commits.push(body);
+          return { persisted: true, delivered: true };
+        },
+      } }));
+    });
+    try {
+      runtime.beginTurnLifecycle('usage-turn');
+      // r159 OpenCode 2.2.7 persisted this code-mode tool shape (sanitized inputs/results).
+      // V2 session.tool.* frames carry the name on input.started.
+      const identity = { sessionID: 'provider-session-1', assistantMessageID: 'usage-message', id: 'usage-call' };
+      const input = { code: 'await tools.happier_action_execute({ actionId: "usage.query" })' };
+      const result = JSON.stringify({ accounting: { totals: { eventCount: 2235 } } });
+      const expectedOutput = outcome === 'success' ? { output: result } : { error: 'fixture refusal' };
+      for (const [type, data] of [
+        ['session.tool.input.started', { ...identity, name: 'execute' }],
+        ['session.tool.called', { ...identity, input, executed: true }],
+        [`session.tool.${outcome}`, { ...identity, content: [{ type: 'text', text: result }], error: 'fixture refusal', executed: true }],
+      ] as const) {
+        const normalized = normalizeOpenCodeV2Event(type, data);
+        await runtime.handleProviderEvent({ payload: normalized });
+      }
+      expect(events).toHaveLength(3);
+      // A durable snapshot of the same native call must not duplicate publication.
+      await runtime.handleProviderEvent({ type: 'message.part.updated', properties: { part: {
+        type: 'tool', sessionID: identity.sessionID, messageID: identity.assistantMessageID,
+        callID: identity.id, tool: 'execute',
+        state: { status: outcome === 'success' ? 'completed' : 'error', input, output: result },
+      } } });
+      expect(events).toMatchObject([
+        { kind: 'turn-start', turnId: 'usage-turn' },
+        { kind: 'tool-call', turnId: 'usage-turn', toolCallId: 'usage-call', toolName: 'execute', toolInput: input },
+        { kind: 'tool-result', turnId: 'usage-turn', toolCallId: 'usage-call',
+          output: expectedOutput,
+          ...(outcome === 'failed' ? { isError: true } : {}) },
+      ]);
+      await Promise.all(projections);
+      expect(commits).toMatchObject([
+        { type: 'tool-call', name: 'execute', input },
+        { type: 'tool-result', output: expectedOutput,
+          ...(outcome === 'failed' ? { isError: true } : {}) },
+      ]);
+    } finally {
+      watcher.dispose();
+      dispose();
+      await native.dispose();
+    }
+  });
+
   it('omits current context when paid counters have no native total while retaining a measured zero total', async () => {
     const client = createClient();
     vi.mocked(client.sessionPromptAsync).mockResolvedValue({ id: 'native-paid-user' });

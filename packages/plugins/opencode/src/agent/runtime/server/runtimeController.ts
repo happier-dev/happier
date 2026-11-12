@@ -1827,7 +1827,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           metadata: { ...asRecord(previous?.state.metadata), ...asRecord(properties.metadata) },
         },
       });
-      if (!part || (eventSessionId === state.providerSessionId && !part.nativeChildLaunch)) return;
+      if (!part) return;
       nativeToolParts.set(key, part);
       if (type.endsWith('.input.started') || type.endsWith('.input.delta') || type.endsWith('.input.ended')) return;
       await handleProviderEvent({ payload: { type: 'message.part.updated', properties: { part: { type: 'tool', ...part } } } });
