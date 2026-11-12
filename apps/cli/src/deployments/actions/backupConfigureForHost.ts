@@ -117,7 +117,7 @@ export function createDeploymentBackupConfigureForHost(host: Host) {
                 const saved = parsed.data;
                 if (!saved.ok) return projectDeploymentFailure(saved.error);
                 if (response.status !== 200 || saved.environmentId !== environmentId
-                    || saved.revision !== environment.environment.revision + 1) return deploymentOutputValidationFailure('deployments.backup.configure', response.status);
+                    || (saved.revision !== environment.environment.revision && saved.revision !== environment.environment.revision + 1)) return deploymentOutputValidationFailure('deployments.backup.configure', response.status);
                 return { ok: true as const, environmentId: saved.environmentId, revision: saved.revision };
             },
             async saveBackupBindings({ environmentId, expectedRevision, bindings, context: currentContext }) {

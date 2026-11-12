@@ -4062,6 +4062,37 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+
+    it.each(['save', 'initializeAndSave'] as const)('publishes backup bindings after an unchanged %s configuration save', async intent => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const actionId = 'deployments.backups.configure';
+        const native = projectDeploymentNativeAdmissionV1(actionId, { serverId,
+            environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'markNotNeeded' });
+        if (!native || !('kind' in native) || native.kind !== 'backupConfigure') throw new Error('Expected configure admission');
+        const binding = { ...f.authorization.binding, actionId, environmentId: f.environment.id,
+            deploymentNativeAdmission: { ...native, intent } };
+        const bindingAction = 'deployments.bindings.set';
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
+            actionId: bindingAction, environmentId: f.environment.id });
+        for (const delta of [0, 1, 2]) {
+            const expectedRevision = f.environmentRevision + delta;
+            const reviewedChild = { actionId: bindingAction, role: 'backup.bindings' as const,
+                inputDigest: computeActionInputApprovalDigestV1(bindingAction, { serverId, environmentId: f.environment.id,
+                    expectedRevision, set: [], remove: [] }) };
+            const storage = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+                expectedRevision, contentArtifactId: artifactId,
+                contentHeaderVersion: 1, contentBodyVersion: 1, referencedSavedSecretRevisions: [], grants: [] });
+            const permitted = delta === 0 || delta === 1;
+            expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+                { method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/bindings`,
+                    body: storage, routeInput: storage, reviewedChild })).toBe(permitted);
+            const preparation = { kind: 'clientBindings', serverId, environmentId: f.environment.id, expectedRevision };
+            expect(await readDeploymentBackupConfigureHttpPurpose(db, binding, bindingAction,
+                { method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
+                    body: preparation, routeInput: preparation, reviewedChild })).toBe(permitted);
+        }
+    });
+
     it('publishes only the re-key password binding at the reviewed Environment revision', async () => {
         const f = await fixture('account', 'account', { readableEnvironment: true });
         const actionId = 'deployments.backups.configure';
@@ -4220,7 +4251,7 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await verify('POST', bindingPath, bindingStorage, bindingStorage, bindingAction, testOnly, reviewedChild)).toBeNull();
         expect(await verify('POST', bindingPath, bindingStorage, bindingStorage, bindingAction, authorization,
             { ...reviewedChild, role: 'preview.bindings' })).toBeNull();
-        for (const change of [{ environmentId: foreign.environment.id }, { expectedRevision: f.environmentRevision },
+        for (const change of [{ environmentId: foreign.environment.id }, { expectedRevision: f.environmentRevision + 2 },
             { contentArtifactId: artifactId }]) {
             const substituted = { ...bindingStorage, ...change };
             expect(await verify('POST', bindingPath, substituted, substituted, bindingAction, authorization, reviewedChild)).toBeNull();

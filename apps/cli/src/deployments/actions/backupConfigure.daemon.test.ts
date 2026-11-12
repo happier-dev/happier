@@ -20,7 +20,15 @@ import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifa
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['plain', 'e2ee'] as const)('configures notNeeded through the %s daemon backup writer before any Target exists', async mode => {
+it.each([
+    { mode: 'plain', label: 'advanced', delta: 1, status: 200, wrongEnvironment: false, accepted: true },
+    { mode: 'e2ee', label: 'advanced', delta: 1, status: 200, wrongEnvironment: false, accepted: true },
+    { mode: 'plain', label: 'same-revision', delta: 0, status: 200, wrongEnvironment: false, accepted: true },
+    { mode: 'plain', label: 'future-revision', delta: 2, status: 200, wrongEnvironment: false, accepted: false },
+    { mode: 'plain', label: 'older-revision', delta: -1, status: 200, wrongEnvironment: false, accepted: false },
+    { mode: 'plain', label: 'wrong-environment', delta: 1, status: 200, wrongEnvironment: true, accepted: false },
+    { mode: 'plain', label: 'wrong-status', delta: 1, status: 201, wrongEnvironment: false, accepted: false },
+] as const)('handles $label save responses through the $mode daemon backup writer before any Target exists', async ({ mode, delta, status, wrongEnvironment, accepted }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     delete detail.content.backup;
     detail.targetLinks = [];
@@ -65,7 +73,7 @@ it.each(['plain', 'e2ee'] as const)('configures notNeeded through the %s daemon 
             environment: detail.environment, targetLinks: [] } };
         expect(request.url).toBe(`https://home.test/v1/deployments/environments/${detail.environment.id}/backup`);
         writes.push(request.data);
-        return { status: 200, data: { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 } };
+        return { status, data: { ok: true, environmentId: wrongEnvironment ? 'other-environment' : detail.environment.id, revision: detail.environment.revision + delta } };
     });
     const artifacts = createCredentialedAccountArtifactStore(credentials);
     let nativeAcquisitions = 0;
@@ -74,9 +82,13 @@ it.each(['plain', 'e2ee'] as const)('configures notNeeded through the %s daemon 
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
         readActiveBackupAutomationIds: async () => [],
         runtime: { async acquire() { nativeAcquisitions++; throw new Error('notNeeded cannot acquire native custody'); } } });
-    expect(await deps.deploymentAction('deployments.backups.configure', { serverId: 'home',
-        environmentId: detail.environment.id, expectedRevision: detail.environment.revision, intent: 'markNotNeeded' }, {}))
-        .toMatchObject({ kind: 'notNeeded', environmentId: detail.environment.id, revision: detail.environment.revision + 1 });
+    const result = await deps.deploymentAction('deployments.backups.configure', { serverId: 'home',
+        environmentId: detail.environment.id, expectedRevision: detail.environment.revision, intent: 'markNotNeeded' }, {});
+    if (!accepted) {
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+        return;
+    }
+    expect(result).toMatchObject({ kind: 'notNeeded', environmentId: detail.environment.id, revision: detail.environment.revision + delta });
     expect(writes).toEqual([{ serverId: 'home', environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         contentArtifactId: [...created.keys()][0], contentHeaderVersion: 1, contentBodyVersion: 1 }]);
     const saved = await runWithServerHttpBaseUrl('https://home.test', () => artifacts.read([...created.keys()][0]!, {

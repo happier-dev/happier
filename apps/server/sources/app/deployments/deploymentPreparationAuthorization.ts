@@ -906,7 +906,8 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
             return matches({ id: defaults.content.contentArtifactId });
     }
     if (admission.intent === 'rekeyAndSave' && !bindings) return false;
-    const bindingRevision = admission.expectedRevision + (admission.intent === 'rekeyAndSave' ? 0 : 1);
+    const matchesBindingRevision = (revision: number) => revision === admission.expectedRevision
+        || admission.intent !== 'rekeyAndSave' && revision === admission.expectedRevision + 1;
     if (admission.intent === 'test' || effectActionId !== DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && !bindings) return false;
     const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId,
         actionId: bindings ? DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 : DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 });
@@ -919,16 +920,16 @@ export async function readDeploymentBackupConfigureHttpPurpose(tx: Tx, binding: 
         const parsed = EnvironmentSecretAdmissionRequestV1Schema.safeParse(proof.body);
         return parsed.success && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
             && ('kind' in parsed.data
-                ? parsed.data.expectedRevision === bindingRevision && parsed.data.buildMachineId === undefined
+                ? matchesBindingRevision(parsed.data.expectedRevision) && parsed.data.buildMachineId === undefined
                 : parsed.data.machineId === binding.machineId && parsed.data.installationId === binding.installationId
-                    && parsed.data.materialization.kind === 'bindings' && parsed.data.materialization.expectedRevision === bindingRevision
+                    && parsed.data.materialization.kind === 'bindings' && matchesBindingRevision(parsed.data.materialization.expectedRevision)
                     && parsed.data.materialization.buildMachineId === undefined) && matches(parsed.data);
     }
     const parsed = bindings ? DeploymentBindingsSetStorageInputV1Schema.safeParse(proof.body)
         : DeploymentEnvironmentBackupSetInputV1Schema.safeParse(proof.body);
     return parsed.success && proof.path === `${base}/${bindings ? 'bindings' : 'backup'}`
         && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
-        && parsed.data.expectedRevision === (bindings ? bindingRevision : admission.expectedRevision)
+        && (bindings ? matchesBindingRevision(parsed.data.expectedRevision) : parsed.data.expectedRevision === admission.expectedRevision)
         && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
         && matches(parsed.data);
 }
