@@ -1,6 +1,7 @@
 import { onTestFinished } from 'vitest';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, MarketplaceIndexSourceSnapshotV1Schema } from '@happier-dev/protocol/marketplace';
 import { deriveRegistrySourceIdV1, HAPPIER_PICKS_SOURCE_ID, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { standardCleanup } from '@/dev/testkit';
@@ -50,16 +51,21 @@ export async function createRegistrySourcesUiHome(suffix: string, options: Reado
                 contentWrites++;
             }
             const resourceRequest = new URL(path, 'https://registry-fixture.test');
-            if (resourceRequest.pathname === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({
-                resources: (options.savedSecretResourceIds ?? [])
-                    .filter(resourceId => !resourceRequest.searchParams.has('resourceId') || resourceRequest.searchParams.get('resourceId') === resourceId)
-                    .map(resourceId => ({ resourceId, encryptionMode: 'plain',
-                    storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'token', value: 'fixture-token' } }, recipientEnvelope: null,
-                    entry: { ref: formatSharedSavedSecretRefV1(resourceId), source: 'shared_resource', relationship: 'owner', ownerAccountId: 'artifact-account',
-                        name: resourceId, kind: 'token', revision: 1, materialStatus: 'ready',
-                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
-                })),
-            }));
+            if (resourceRequest.pathname === '/v1/account/saved-secrets/resources/materials'
+                || resourceRequest.pathname === '/v1/account/saved-secrets/resources') {
+                const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({
+                    resources: (options.savedSecretResourceIds ?? [])
+                        .filter(resourceId => !resourceRequest.searchParams.has('resourceId') || resourceRequest.searchParams.get('resourceId') === resourceId)
+                        .map(resourceId => ({ resourceId, encryptionMode: 'plain',
+                        storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'token', value: 'fixture-token' } }, recipientEnvelope: null,
+                        entry: { ref: formatSharedSavedSecretRefV1(resourceId), source: 'shared_resource', relationship: 'owner', ownerAccountId: 'artifact-account',
+                            name: resourceId, kind: 'token', revision: 1, materialStatus: 'ready',
+                            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    })),
+                });
+                return Response.json(resourceRequest.pathname.endsWith('/materials') ? materials
+                    : SharedSavedSecretListOutputV1Schema.parse({ resources: materials.resources.map(resource => resource.entry) }));
+            }
             if (failRulesWrites && path.endsWith('/skill-rules') && init?.method === 'POST')
                 return Response.json({ error: 'unavailable' }, { status: 503 });
             return catalog.handle(path, init);

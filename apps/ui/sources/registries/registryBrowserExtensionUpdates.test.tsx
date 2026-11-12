@@ -36,6 +36,10 @@ it.each([
   homes.answer(serverId, '/v1/actions/registries.updates.check', { select: async body => {
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
     if (envelope.target?.kind !== 'machine') throw new Error('Expected exact Machine target');
+    const pluginOnly = envelope.input && typeof envelope.input === 'object' && 'kind' in envelope.input && envelope.input.kind === 'plugin';
+    // An all-kinds check also asks each remaining Machine for its native plugins.
+    if (pluginOnly) return { body: { v: 1, actionId: 'registries.updates.check', requestId: envelope.requestId,
+      execution: { ok: true, result: { checkedAt: 10, results: [] } } } };
     targets.push(envelope.target.machineId);
     expect(envelope.input).toEqual(target || envelope.target.machineId === 'machine-a' ? filter : { ...filter, kind: 'browserExtension' });
     const accountResults = envelope.target.machineId === 'machine-a' && !('kind' in filter)

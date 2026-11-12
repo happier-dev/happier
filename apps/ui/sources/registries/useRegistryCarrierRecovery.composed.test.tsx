@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { expect, it, vi, onTestFinished } from 'vitest';
-import { act, createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import type { RegistryFetchRequestV1 } from '@happier-dev/protocol/registries';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
@@ -38,7 +39,7 @@ const { recordMachineRequestFailed, recordMachineRequestSucceeded, clearMachineR
 const { resolveFreshMachineAdministrationExecutionTarget } = await import('@/sync/domains/machines/administration/executionTarget');
 const { useRegistryItems } = await import('./useRegistryItems');
 
-it('recovers a supplier catalog when its Machine arrives after another carrier, and retries an offline supplier on page reopen without a hot loop', async () => {
+it('recovers a supplier catalog when its Machine arrives after another carrier, and retains an offline supplier on page reopen until explicit Retry', async () => {
     await homes.reset();
     const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-late-supplier.test', {
         key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] },
@@ -54,27 +55,34 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
     const entry = projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
         id: 'team', title: 'Team skills', format: 'git', kinds: ['skill'], url: 'https://git.example.test/skills',
     } });
+    const executionOrigin = { serverIdentityId: 'srv_registry_late_supplier', materializationRef: {
+        machineId: 'late-supplier', pluginId, materializationId: 'late-supplier' } };
     const projection = normalizePluginInstalledUiDeclarations({}, undefined, { id: pluginId, displayName: 'Acme', version: '1.0.0',
-        enabled: true, source: { kind: 'path', locator: '/plugins/acme' } }, [entry]);
+        enabled: true, occurrenceId: 'late-supplier', source: { kind: 'path', locator: '/plugins/acme' } },
+        [{ ...entry, occurrenceId: 'late-supplier', executionOrigin }]);
     const pluginUiProjection = unionPluginUiProjections([{ machineId: 'late-supplier', serverId: fixture.home.id,
         phase: 'retainedOffline', interactionEnabled: false, projection }]).pluginUiProjection;
-    const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
+    function Wrapper({ children }: React.PropsWithChildren) {
+        return React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
         pluginUiProjection, pluginBrowserProjection: null, phase: 'retainedOffline', interactionEnabled: false,
         machineId: 'late-supplier', serverId: fixture.home.id, platform: 'web', accountLifetime: lifetime,
         reloadConnectedAccountProjection: () => {}, connectedAccountProjectionState: createConnectedAccountDescriptorProjectionLoadingState('fixture'),
         clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
-    }, children: null }));
+        }, children });
+    }
     const previous = storage.getState();
     onTestFinished(() => storage.setState({ machines: previous.machines, machineListByServerId: previous.machineListByServerId,
         machineListStatusByServerId: previous.machineListStatusByServerId }));
     const general = createMachineFixture({ id: 'general-carrier', activeAt: Date.now() });
     const supplier = createMachineFixture({ id: 'late-supplier', activeAt: Date.now() });
-    const publish = (machines: typeof supplier[]) => storage.setState({ machines: Object.fromEntries(machines.map(m => [m.id, m])),
+    const publish = (machines: typeof supplier[]) => { storage.setState({ machines: Object.fromEntries(machines.map(m => [m.id, m])),
         machineListByServerId: { ...storage.getState().machineListByServerId, [fixture.home.id]: machines },
         machineListStatusByServerId: { ...storage.getState().machineListStatusByServerId, [fixture.home.id]: 'idle' } });
+        observeMachinePresenceForTest(lifetime.scope, machines.map(machine => machine.id));
+    };
     publish([]);
     transport.calls.length = 0;
-    const hook = await renderHook((enabled: boolean) => useRegistryItems({ kind: 'skill', sourceIds: [entry.id] }, enabled), { initialProps: true });
+    const hook = await renderHook((enabled: boolean) => useRegistryItems({ kind: 'skill', sourceIds: [entry.id] }, enabled), { initialProps: true, wrapper: Wrapper });
     await waitForHomeGovernance(() => expect({ error: hook.getCurrent().error, status: hook.getCurrent().status,
         failures: hook.getCurrent().sourceFailures.map(f => f.status.state) }).toEqual({ error: null, status: null, failures: ['needs_machine'] }));
     await act(async () => { publish([general]); });
@@ -89,7 +97,7 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
     expect(hook.getCurrent().items.map(item => item.itemId)).toEqual(['supplier-skill']);
     expect(transport.calls.map(call => call.machineId)).toEqual([supplier.id]);
-    // A genuine outage settles visibly, without hot retries. Opening that failed page is a new read boundary.
+    // A genuine outage settles visibly. Warm navigation retains it until the person chooses Retry (e6f660b4eaf).
     recordMachineRequestFailed({ serverId: fixture.home.id, accountId: lifetime.scope.accountId, machineId: supplier.id });
     transport.unreachableList = true;
     await act(async () => { await hook.getCurrent().refresh(); });
@@ -101,6 +109,10 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
     transport.unreachableList = false;
     await hook.rerender(false);
     await hook.rerender(true);
+    await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+    expect(hook.getCurrent().sourceFailures.map(failure => failure.status.state)).toEqual(['unreachable']);
+    expect(transport.calls).toHaveLength(failedCalls);
+    await act(async () => { await hook.getCurrent().refresh(); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
     expect(transport.calls).toHaveLength(failedCalls + 1);
     recordMachineRequestSucceeded({ serverId: fixture.home.id, accountId: lifetime.scope.accountId, machineId: supplier.id });
@@ -113,7 +125,6 @@ it('recovers a supplier catalog when its Machine arrives after another carrier, 
     await act(async () => { publish([general, supplier]); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().sourceFailures).toEqual([]));
     await hook.unmount();
-    await screen.unmount();
 });
 
 
