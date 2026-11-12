@@ -2,7 +2,7 @@ import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from '../zodRuntimePolicy.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
-import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1 } from '../actions/actionIds.js';
+import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1, type ActionId } from '../actions/actionIds.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import { isFilesystemActionId } from '../actions/filesystemActionFamily.js';
@@ -67,7 +67,7 @@ export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type Appr
 
 const ApprovalReplayOutcomeUnknownDetailsSchema = z.strictObject({ reasonCode: z.string().check(z.minLength(1)) });
 
-function isSameApprovalHome(request: ApprovalRequestV2, left: string, right: string): boolean {
+function isSameApprovalHome(request: Readonly<{ executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId'> }>, left: string, right: string): boolean {
   const origin = request.executionOriginV1;
   return left === right
     || left === origin.serverId && right === origin.serverIdentityId
@@ -75,7 +75,11 @@ function isSameApprovalHome(request: ApprovalRequestV2, left: string, right: str
 }
 
 function parseStrictApprovalFailure(input: Readonly<{
-  request: ApprovalRequestV2;
+  request: Readonly<{
+    actionId: ActionId;
+    actionArgs: unknown;
+    executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId' | 'sessionId' | 'target'>;
+  }>;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
   const finiteCommand = (storedRead ? createStoredReadSchema(FiniteCommandFailureDetailsV1Schema)
@@ -284,12 +288,37 @@ function parseStrictApprovalFailure(input: Readonly<{
         if (!args.success || 'mode' in args.data && args.data.mode === 'preview') return null;
         const next = details.data.continuation;
         if (args.data.copyFrom) {
-          if (!next || details.data.phase !== 'bindings' || !details.data.environmentId
-            || next.input.serverId !== args.data.serverId) return null;
-          if (next.actionId === 'deployments.bindings.set') {
-            if (next.input.environmentId !== details.data.environmentId) return null;
-          } else if (next.input.requestKey !== args.data.requestKey
-            || !sameStrictJsonValue(next.input.copyFrom, args.data.copyFrom)) return null;
+          if (!details.data.environmentId) return null;
+          if (details.data.phase === 'bindings') {
+            if (!next) return { ...input.failure, details: details.data };
+            if (next.actionId === 'deployments.bindings.set') {
+              if (next.input.serverId !== args.data.serverId
+                || next.input.environmentId !== details.data.environmentId) return null;
+            } else if (next.actionId === 'deployments.environments.create') {
+              if (next.input.serverId !== args.data.serverId || next.input.requestKey !== args.data.requestKey
+                || !sameStrictJsonValue(next.input.copyFrom, args.data.copyFrom)) return null;
+            } else return null;
+          } else {
+            const plan = 'copyPlan' in args.data ? args.data.copyPlan?.data : undefined;
+            const environmentId = details.data.environmentId;
+            const revision = details.data.revision;
+            if (!plan?.length || revision === undefined
+              || details.data.phase !== 'target' && details.data.phase !== 'environment') return null;
+            if (next) {
+              if (details.data.phase !== 'target') return null;
+              if (next.actionId === 'action.invoke') {
+                if (!plan.some(row => sameStrictJsonValue(next.input, { action: row.provision.action,
+                  input: { ...row.provision.input, serverId: args.data.serverId, environmentId, expectedRevision: revision } }))) return null;
+              } else if (next.actionId === 'deployments.targets.link') {
+                const link = next.input;
+                if (!plan.some(row => sameStrictJsonValue(link.provider.credentialPrincipal, row.provision.input.credentialPrincipal)
+                  && sameStrictJsonValue(link, { serverId: args.data.serverId, environmentId, expectedRevision: revision,
+                    requestKey: `${args.data.requestKey}-data-${row.targetLinkId}`, targetId: row.targetId,
+                    source: { kind: 'plugin', contribution: row.contribution }, targetKind: row.targetKind,
+                    role: 'data', machines: [], provider: link.provider }))) return null;
+              } else return null;
+            }
+          }
         } else if (!('definition' in args.data) || args.data.definition?.from !== 'catalogApp' || next) return null;
       }
       return { ...input.failure, details: details.data };
@@ -595,10 +624,12 @@ export function readApprovalExecutionFailure(
   const error = typeof execution.error === 'string' && execution.error.trim().length > 0
     ? execution.error
     : errorCode;
+  // Retired Publish history displays its failure without entering the live Action parser.
+  if (request.v === 2 && request.actionId === RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1) return { ok: false, errorCode, error };
   // Current contributed approvals use the V2 execution contract despite their
   // V1 request version. Legacy generic V1 annotations remain untrusted.
   const target = request.v !== 2 ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
-  const currentExecution = request.v === 2 && request.actionId !== RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1
+  const currentExecution = request.v === 2
     ? request.execution : target?.success ? target.data.execution : undefined;
   if (!currentExecution) return { ok: false, errorCode, error };
   const failureCause = ActionFailureCauseV1Schema.safeParse(currentExecution.failureCause);

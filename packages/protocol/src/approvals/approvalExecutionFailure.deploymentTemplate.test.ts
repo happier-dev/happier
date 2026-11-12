@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DeploymentEnvironmentCreateInputV1Schema } from '../deployments/deploymentActionsV1.js';
 import { projectActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { projectApprovalRequestForPublicRead } from '../actions/actionApprovalPresentation.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -98,5 +99,76 @@ describe('catalog App partial failure custody', () => {
     const stored = storedFailure(request, { ...opaque, executedAtMs: 3, effectAttempted: true });
     expect(projectApprovalRequestForPublicRead(stored)).toMatchObject({ execution: { details } });
     expect(JSON.stringify(projectApprovalRequestForPublicRead(stored))).not.toContain('private-fixture');
+  });
+});
+
+
+const dataContribution = { pluginId: 'com.example.data', localId: 'database' };
+const dataPrincipal = { kind: 'account', accountId: 'owner',
+  purpose: { consumer: { pluginId: 'com.example.data', localId: 'provision' }, purpose: 'manage' },
+  target: { kind: 'account', account: { service: { pluginId: 'com.example.data', localId: 'account' }, accountId: 'selected' } } };
+const provision = { action: { pluginId: 'com.example.data', localId: 'provision' },
+  input: { name: 'empty-copy', credentialPrincipal: dataPrincipal } };
+const copyInput = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: 'project', requestKey: 'duplicate',
+  protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine',
+  contentArtifactId: 'private-environment', contentHeaderVersion: 1, contentBodyVersion: 1,
+  copyIntentCommitment: 'A'.repeat(43),
+  copyFrom: { environmentId: 'source-environment', expectedRevision: 4,
+    choices: { secrets: [], values: [], data: [{ targetLinkId: 'source-data', kind: 'createEmpty', provision }] } },
+  copyPlan: { bindings: [], data: [{ targetLinkId: 'source-data', targetId: 'database', targetKind: 'database',
+    contribution: dataContribution, provision }] } });
+const copyDetails = { kind: 'partial', phase: 'target', environmentId: 'copied-environment', revision: 2,
+  errorCode: 'deployment_content_unavailable', savedSecrets: [{ name: 'DATABASE_URL', phase: 'runtime',
+    source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('new-connection'), resourceRevision: 1 } }],
+  requiredFact: 'data:source-data:createEmpty', remedy: 'Open the existing Environment to configure its data.' };
+const provisionContinuation = { actionId: 'action.invoke', input: { action: provision.action,
+  input: { ...provision.input, serverId: 'home', environmentId: copyDetails.environmentId, expectedRevision: copyDetails.revision } } };
+const dataLinkContinuation = { actionId: 'deployments.targets.link', input: { serverId: 'home',
+  environmentId: copyDetails.environmentId, expectedRevision: copyDetails.revision, requestKey: 'duplicate-data-source-data',
+  targetId: 'database', source: { kind: 'plugin', contribution: dataContribution }, targetKind: 'database', role: 'data', machines: [],
+  provider: { credentialPrincipal: dataPrincipal, providerIdentity: { providerAccountId: 'selected', providerResourceId: 'created',
+    providerEnvironment: 'new' }, providerEnvironment: { kind: 'custom', id: 'new' } } } };
+
+describe('duplicate managed-data partial failure custody', () => {
+  it.each([
+    ['provision refusal', { ...copyDetails, continuation: provisionContinuation }],
+    ['link refusal', { ...copyDetails, continuation: dataLinkContinuation }],
+    ['ambiguous provider effect', copyDetails],
+    ['existing allocation recovery', { ...copyDetails, phase: 'environment', savedSecrets: [] }],
+  ] as const)('retains %s through current, stored and public approval failures', (_label, partial) => {
+    const request = requestFor('deployments.environments.create', copyInput);
+    const refused = { ok: false as const, errorCode: partial.errorCode, error: partial.errorCode, details: partial };
+    const execution = projectApprovalExecutionFailureV2({ request, failure: refused, executedAtMs: 3 });
+    expect(execution).toMatchObject({ details: partial });
+    const stored = storedFailure(request, execution);
+    expect(readApprovalExecutionFailure(stored)).toMatchObject({ details: partial });
+    expect(ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored)))
+      .toMatchObject({ execution: { details: partial } });
+  });
+
+  it('rejects continuations outside the admitted copy data action, destination or credential selection', () => {
+    const request = requestFor('deployments.environments.create', copyInput);
+    const wrongPrincipal = { ...dataPrincipal, accountId: 'another-owner' };
+    for (const partial of [
+      { ...copyDetails, continuation: { ...provisionContinuation, input: { ...provisionContinuation.input,
+        action: { pluginId: 'com.other.data', localId: 'provision' } } } },
+      { ...copyDetails, continuation: { ...provisionContinuation, input: { ...provisionContinuation.input,
+        input: { ...provisionContinuation.input.input, name: 'unreviewed' } } } },
+      ...[
+        { serverId: 'other-home' }, { environmentId: 'other-environment' }, { expectedRevision: 99 },
+        { role: 'runtime' }, { targetId: 'other-target' },
+        { source: { kind: 'plugin', contribution: { ...dataContribution, pluginId: 'com.other.data' } } },
+        { provider: { ...dataLinkContinuation.input.provider, credentialPrincipal: wrongPrincipal } },
+      ].map(patch => ({ ...copyDetails, continuation: { ...dataLinkContinuation,
+        input: { ...dataLinkContinuation.input, ...patch } } })),
+      { ...copyDetails, phase: 'generation' },
+      { ...copyDetails, environmentId: undefined },
+    ]) {
+      const refused = { ok: false as const, errorCode: partial.errorCode, error: partial.errorCode, details: partial };
+      expect(projectApprovalExecutionFailureV2({ request, failure: refused, executedAtMs: 3 })).not.toHaveProperty('details');
+      const stored = storedFailure(request, { ...refused, executedAtMs: 3 });
+      expect(readApprovalExecutionFailure(stored)).not.toHaveProperty('details');
+      expect(projectApprovalRequestForPublicRead(stored)).not.toHaveProperty('execution.details');
+    }
   });
 });
