@@ -5,7 +5,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { withCodexNativeAttachFixture } from './runtime.nativeAttach.test-support.js';
 
 describe('Codex native host function tools', () => {
-  it('advertises functions at thread creation and returns host results through native callbacks', async () => {
+  it.each([undefined, { allowedTools: [], unlistedTools: 'deny' as const }])('advertises directly callable host functions independently of native tool restrictions (%j)', async (toolRestriction) => {
     const calls: JsonValue[] = [];
     const descriptor = getVoiceActionFunctionTool();
     const action = { t: getActionSpec('servers.list').bindings?.voiceClientToolName, args: {} };
@@ -15,6 +15,9 @@ describe('Codex native host function tools', () => {
         { type: 'namespace', name: 'happier_host', description: expect.any(String), tools: [{ type: 'function', ...descriptor }] },
       ]);
       expect(session.functionToolsDelivered).toBe(true);
+      expect(fixture.nativeLaunches.some(argv => argv.includes(
+        'features.code_mode.direct_only_tool_namespaces=["happier_host"]',
+      ))).toBe(true);
       const response = await fixture.requestNativeTool({ threadId: 'fresh-thread', turnId: 'turn-1',
         callId: 'call-1', namespace: 'happier_host', tool: descriptor.name, arguments: action });
       expect(calls).toEqual([action]);
@@ -29,7 +32,7 @@ describe('Codex native host function tools', () => {
         expect(rejected.result).toMatchObject({ success: false });
       }
       expect(calls).toHaveLength(1);
-    }, { toolRestriction: { allowedTools: [], unlistedTools: 'deny' }, functionTools: [{ ...descriptor,
+    }, { toolRestriction, functionTools: [{ ...descriptor,
       async call(input) { calls.push(input); return { ok: true, sessionId: 'created' }; } }] });
   });
 

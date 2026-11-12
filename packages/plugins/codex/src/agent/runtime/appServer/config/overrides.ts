@@ -1,5 +1,5 @@
 import { listHappierToolAutoApprovedNamesV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import type { AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionConfigurationSnapshot, AgentSessionMcpToolPolicy, AgentSessionOpenRequest, AgentSessionSkillDelivery } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
@@ -47,7 +47,6 @@ export function buildCodexUnlistedToolConfigOverrides(configuration?: CodexToolR
         'features.computer_use=false',
         'features.code_mode.enabled=false',
         'features.code_mode.excluded_tool_namespaces=["functions"]',
-        `features.code_mode.direct_only_tool_namespaces=[${quoteTomlString(CODEX_HOST_FUNCTION_NAMESPACE)}]`,
         'features.image_generation=false',
         'features.hooks=false',
         'features.workspace_dependencies=false',
@@ -128,12 +127,18 @@ export function buildCodexAppServerConfigOverrides(
     options: Readonly<{
         processEnv?: Readonly<Record<string, string | undefined>>;
         skills?: AgentSessionSkillDelivery;
+        functionTools?: AgentSessionOpenRequest['functionTools'];
         mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
     }> & CodexToolRestrictionConfiguration = {},
 ): string[] {
     const serverNames = listCodexAppServerMcpServerNames(mcpServers, options);
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides = buildCodexUnlistedToolConfigOverrides(options);
+    // Code-mode-only models hide ordinary dynamic functions from the direct
+    // catalog. Host callbacks must stay callable independently of native policy.
+    if (options.functionTools?.length || options.unlistedTools === 'deny') {
+        overrides.push(`features.code_mode.direct_only_tool_namespaces=[${quoteTomlString(CODEX_HOST_FUNCTION_NAMESPACE)}]`);
+    }
     if (options.skills?.nativeDisables.length) {
         const disables = options.skills.nativeDisables.map(({ path }) => `{path=${quoteTomlString(path)},enabled=false}`);
         overrides.push(`skills.config=[${disables.join(',')}]`);

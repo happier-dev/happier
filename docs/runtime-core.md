@@ -1173,6 +1173,11 @@ ceiling. Canonical Action effect approval remains owned by the Action executor;
 an explicitly selected read-only intent still applies. Existing daemons need a
 reload to consume this change.
 
+Codex host function delivery is independent of that native permission policy.
+Its launch configuration keeps the `happier_host` namespace directly visible
+to code-mode-only models whenever the host supplies functions. Local Voice
+continues to use Protocol's Action catalog and the shared UI Action executor.
+
 The Voice settings schema owns the idle lifetime default for both clients and
 the CLI. A confirmed primary Run Stop remains successful if the optional sweep
 for other matching Runs cannot load its inventory; that failure emits a cleanup

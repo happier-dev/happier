@@ -2472,6 +2472,7 @@ export function createCodexAppServerRuntime(
         configOverrides: buildCodexAppServerConfigOverrides(mcpServers, {
           processEnv,
           ...params.toolRestriction,
+          functionTools: params.functionTools,
           mcpToolPolicy: params.mcpToolPolicy,
           ...(params.appServerTransport !== 'daemonProxy' ? { skills: params.skills } : {}),
         }),
