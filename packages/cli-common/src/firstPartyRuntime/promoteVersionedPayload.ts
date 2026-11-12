@@ -87,11 +87,12 @@ export async function promoteVersionedPayloadWithoutLock(params: Readonly<{
     sourcePathAlreadyFiltered: params.stagedPayloadAlreadyFiltered === true,
     existingDestinationPolicy: 'require-identical',
     onTempReady: async (tempPath) => {
+      // Acquired payloads may be read-only, including their existing ring marker.
+      if (process.platform !== 'win32') await publishRuntimePayloadPermissions(tempPath);
       await writeEmbeddedPublicReleaseRingMarker({
         payloadRoot: tempPath,
         releaseRing: layout.channel,
       });
-      if (process.platform !== 'win32') await publishRuntimePayloadPermissions(tempPath);
     },
   });
 

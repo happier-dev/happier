@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -44,9 +44,8 @@ export async function writeEmbeddedPublicReleaseRingMarker(params: Readonly<{
   payloadRoot: string;
   releaseRing: PublicReleaseRingId;
 }>): Promise<void> {
-  await writeFile(
-    join(params.payloadRoot, EMBEDDED_PUBLIC_RELEASE_RING_MARKER_FILE),
-    `${params.releaseRing}\n`,
-    'utf8',
-  );
+  const markerPath = join(params.payloadRoot, EMBEDDED_PUBLIC_RELEASE_RING_MARKER_FILE);
+  await writeFile(markerPath, `${params.releaseRing}\n`, 'utf8');
+  // Publication can create this file after the payload permissions are set.
+  if (process.platform !== 'win32') await chmod(markerPath, 0o644);
 }

@@ -29,6 +29,34 @@ async function createPayload(rootDir: string, versionId: string, contents: strin
 }
 
 describe('promoteVersionedPayload', () => {
+    it.skipIf(process.platform === 'win32').each([true, false])('promotes an installed read-only payload and publishes its release marker (existing: %s)', async (existingMarker) => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-promote-readonly-marker-'));
+        const previousUmask = process.umask(0o077);
+        try {
+            const stagedPayloadPath = await createPayload(homeDir, '1.0.0', 'first-version');
+            const marker = join(stagedPayloadPath, 'public-release-ring.id');
+            if (existingMarker) await writeFile(marker, 'preview\n', { mode: 0o444 });
+            await chmod(join(stagedPayloadPath, 'happier'), 0o555);
+
+            const promotion = await promoteVersionedPayload({
+                componentId: 'happier-cli', channel: 'stable',
+                processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir },
+                versionId: '1.0.0', stagedPayloadPath,
+                stagedPayloadAlreadyFiltered: true,
+            });
+
+            expect(await readFile(join(promotion.versionPath, 'public-release-ring.id'), 'utf8')).toBe('stable\n');
+            const paths = resolveInstalledFirstPartyComponentPaths({
+                componentId: 'happier-cli', processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir },
+            });
+            expect(await readFile(paths.binaryPath, 'utf8')).toBe('first-version');
+            expect((await stat(join(promotion.versionPath, 'public-release-ring.id'))).mode & 0o777).toBe(0o644);
+        } finally {
+            process.umask(previousUmask);
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
     it.skipIf(process.platform === 'win32')('publishes private-mode runtime code for a separate native execution user without granting writes', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-promote-member-readable-'));
         try {
