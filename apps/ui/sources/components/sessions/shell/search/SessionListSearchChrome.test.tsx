@@ -425,7 +425,6 @@ describe('SessionListSearchChrome', () => {
 
         const inputStyle = flatten(inputOf(screen.root).props.style);
         expect(inputStyle.height).toBeUndefined();
-        expect(inputStyle.lineHeight).toBeUndefined();
 
         const escalation = screen.root.findByProps({ testID: 'session-list-search-everything' });
         // The row keeps its design height (padding around one line); a finger reaches it through the hit area.

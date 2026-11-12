@@ -37,9 +37,11 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => tr
 
 afterEach(standardCleanup);
 
+// Load after configuring the native boundary, outside the render assertions' timeout.
+const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+
 describe('SessionListSearchChrome native layout', () => {
     it('keeps the title row and gives the open field its own full-width row beneath it', async () => {
-        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
         const screen = await renderScreen(
             <SessionListSearchChrome
                 filterControl={React.createElement('FilterControl', { testID: 'session-list-filter-control' })}
@@ -59,7 +61,6 @@ describe('SessionListSearchChrome native layout', () => {
     });
 
     it('gives every header and field action the touch floor on a touch platform', async () => {
-        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const screen = await renderScreen(
             <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>

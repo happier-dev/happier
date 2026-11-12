@@ -12,7 +12,7 @@ export const SESSION_LIST_COLUMN_METRICS = Object.freeze({
     /** The narrowest the list title gets before the Projects/Recent segment yields (the shared column floor). */
     titleFloorPx: HAPPIER_COLLECTION_LIST_METRICS.titleFloor,
     fieldCloseButtonSizePx: COMPACT_SEARCH_FIELD_CLOSE_BUTTON_SIZE_PX,
-    fieldGapPx: 4,
+    fieldGapPx: HAPPIER_COLLECTION_LIST_METRICS.headerGap,
     groupLabelPaddingTopPx: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingTop,
     groupLabelPaddingBottomPx: HAPPIER_COLLECTION_LIST_METRICS.groupLabelPaddingBottom,
 });
