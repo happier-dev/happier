@@ -10,7 +10,7 @@ export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
     | { type: 'turn-lifecycle'; event: LocalTurnLifecycleEvent }
     | { type: 'context-compaction'; phase: 'completed'; lifecycleId: string; source: 'provider-event' | 'transcript-inference'; providerEventId?: string }
-    | { type: 'user-text'; text: string; clientId?: string }
+    | { type: 'user-text'; text: string; clientId?: string; nativeContent?: readonly Record<string, unknown>[] }
     | { type: 'assistant-text'; text: string }
     | { type: 'thinking'; text: string }
     | { type: 'tool-call'; callId: string; name: string; input: unknown }

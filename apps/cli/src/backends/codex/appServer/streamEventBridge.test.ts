@@ -7,6 +7,34 @@ import { describe, expect, it } from 'vitest';
 import { createCodexAppServerStreamEventBridge } from './streamEventBridge';
 
 describe('createCodexAppServerStreamEventBridge', () => {
+    it('retains collaboration identities that arrive only when a live tool completes', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+        bridge.onNotification({ method: 'item/started', params: { item: {
+            id: 'spawn', type: 'collabAgentToolCall', tool: 'spawnAgent', receiverThreadIds: [],
+        } } });
+        const result = bridge.onNotification({ method: 'item/completed', params: { item: {
+            id: 'spawn', type: 'collabAgentToolCall', tool: 'spawnAgent', receiverThreadIds: ['child'], status: 'completed',
+        } } });
+        expect(result).toEqual([expect.objectContaining({ type: 'tool-result', output: expect.objectContaining({ receiverThreadIds: ['child'] }) })]);
+    });
+    it.each([
+        { type: 'subAgentActivity', name: 'subAgentActivity', input: { kind: 'interacted', agentThreadId: 'child-1', agentPath: '/root/child', model: 'model', reasoningEffort: 'high' }, result: { completedAtMs: 20 } },
+        { type: 'collabAgentToolCall', name: 'spawnAgent', input: { tool: 'spawnAgent', senderThreadId: 'parent', receiverThreadIds: ['child-1'], prompt: 'Inspect fixture', model: 'model' }, result: { status: 'completed', agentsStates: { 'child-1': { status: 'running' } } } },
+        { type: 'dynamicToolCall', name: 'lookup', input: { namespace: 'catalog', tool: 'lookup', arguments: { query: 'fixture' } }, result: { status: 'completed', success: true, contentItems: [{ type: 'inputText', text: 'result' }], durationMs: 10 } },
+    ])('preserves native $type inputs and results in both history and live projection', ({ type, name, input, result }) => {
+        const completed = { id: 'call-1', type, ...input, ...result };
+        const history = createCodexAppServerStreamEventBridge().onNotification({ method: 'item/completed', params: { item: completed } });
+        expect(history).toEqual([
+            expect.objectContaining({ type: 'tool-call', callId: 'call-1', name, input }),
+            expect.objectContaining({ type: 'tool-result', callId: 'call-1', output: result }),
+        ]);
+        const live = createCodexAppServerStreamEventBridge();
+        expect(live.onNotification({ method: 'item/started', params: { item: { id: 'call-1', type, ...input } } }))
+            .toEqual([expect.objectContaining({ type: 'tool-call', name, input })]);
+        const settled = live.onNotification({ method: 'item/completed', params: { item: completed } });
+        expect(settled).toHaveLength(1);
+        expect(settled[0]).toMatchObject({ type: 'tool-result', callId: 'call-1', output: result });
+    });
     it('keeps native completed command output in the tool result when no started event was observed', () => {
         const updates = createCodexAppServerStreamEventBridge().onNotification({ method: 'item/completed', params: {
             item: { id: 'native-command', type: 'commandExecution', command: 'pwd', cwd: '/project',
@@ -39,7 +67,12 @@ describe('createCodexAppServerStreamEventBridge', () => {
             type: 'provider-user-text',
             itemId: 'native_user_1',
             clientId: null,
-            text: 'hello from Codex TUI\nsecond paragraph',
+            text: 'hello from Codex TUI\n[Codex mention: README.md (/repo/README.md)]\nsecond paragraph',
+            nativeContent: [
+                { type: 'text', text: 'hello from Codex TUI' },
+                { type: 'mention', name: 'README.md', path: '/repo/README.md' },
+                { type: 'text', text: 'second paragraph' },
+            ],
         }]);
 
         expect(

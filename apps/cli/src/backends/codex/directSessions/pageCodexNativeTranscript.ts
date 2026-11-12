@@ -108,8 +108,9 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       for (; offset < messages.length; offset += 1) {
         const item = messages[offset]!;
         const size = measureDirectTranscriptItemBytes(item);
-        if (items.length >= params.maxItems || bytes + size > params.maxBytes) {
-          if (items.length === 0) throw new Error('Codex native transcript item exceeds the requested byte budget');
+        // Match rollout stream paging: the byte budget bounds aggregation,
+        // not a valid indivisible record. Return a larger record on its own.
+        if (items.length > 0 && (items.length >= params.maxItems || bytes + size > params.maxBytes)) {
           const nextCursor = encode({ ...state, skip: index, offset, pendingId: key,
             anchor: index ? identity(page.data[index - 1]!) : null,
             fingerprint: index ? fingerprint(page.data[index - 1]!) : null });
