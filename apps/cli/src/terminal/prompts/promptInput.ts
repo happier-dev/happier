@@ -232,7 +232,9 @@ function askQuestion(params: Readonly<{
       error.name = 'AbortError';
       finish(() => reject(error));
     };
-    if (params.signal?.aborted) {
+    // A pipe consumed by an earlier private-input read will not emit end again.
+    // Readline otherwise leaves this question pending forever.
+    if (params.signal?.aborted || ('readableEnded' in params.input && params.input.readableEnded === true)) {
       onAbort();
       return;
     }

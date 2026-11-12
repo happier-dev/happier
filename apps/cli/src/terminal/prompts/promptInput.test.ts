@@ -68,6 +68,27 @@ function createPromptRl(answer: string, onQuestion?: () => void) {
 }
 
 describe('promptInput', () => {
+  it('settles a prompt after the private stdin pipe has already ended', async () => {
+    platformRef.value = 'win32';
+    const input = new PassThrough();
+    input.end('disposable');
+    for await (const chunk of input) { void chunk; }
+    stdinRef.value = input as unknown as NodeJS.ReadStream;
+    stdoutRef.value = new PassThrough() as unknown as NodeJS.WriteStream;
+    const readline = await vi.importActual<typeof import('node:readline')>('node:readline');
+    createInterfaceMock.mockImplementation(readline.createInterface);
+    const { promptInput } = await import('./promptInput');
+    const controller = new AbortController();
+    let outcome = 'pending';
+    const pending = promptInput('Approve?', { signal: controller.signal }).then(
+      () => { outcome = 'answered'; },
+      error => { outcome = error.name; },
+    );
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(outcome).toBe('AbortError');
+    } finally { controller.abort(); await pending; }
+  });
   it('adapts arrow and Escape keypresses through the same readline prompt lifecycle', async () => {
     const input = Object.assign(new EventEmitter(), { isTTY: true, label: 'stdin' });
     stdinRef.value = input as unknown as NodeJS.ReadStream;

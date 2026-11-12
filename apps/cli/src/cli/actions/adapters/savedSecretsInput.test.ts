@@ -6,8 +6,16 @@ import { handleActionsCommand } from '@/cli/commands/actions';
 import { listCompiledActionCliCommands, findCompiledActionCliCommand } from '../compiledCommands';
 import { runCompiledActionCliCommand } from '../executeCommand';
 import { createSavedSecretsCliHttpFixture } from './savedSecretsCliHttpFixture';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 
 const terminal = vi.hoisted(() => ({ promptInput: vi.fn(async () => 'hidden-value'), isInteractiveTerminal: vi.fn(() => true) }));
+const socketIo = vi.hoisted(() => ({ io: vi.fn() }));
+vi.mock('socket.io-client', () => socketIo);
 // Terminal input and echo are the actual external boundary under test.
 vi.mock('@/terminal/prompts/promptInput', () => terminal);
 const cleanups: (() => Promise<void>)[] = [];
@@ -35,6 +43,53 @@ async function harness(options?: Parameters<typeof createSavedSecretsCliHttpFixt
 }
 
 describe('compiled secret input custody', () => {
+  it('settles a passkey create when its ordinary terminal approval is rejected', async () => {
+    const fixture = await createSavedSecretsCliHttpFixture();
+    cleanups.push(fixture.close);
+    const privateKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
+      .export({ type: 'pkcs8', format: 'der' }).toString('base64');
+    const stdin = Readable.from([Buffer.from(JSON.stringify({ credentialId: 'YQ==', isResidentCredential: true,
+      rpId: 'login.example', privateKey, userHandle: 'dQ==', signCount: 0,
+      backupEligibility: false, backupState: false }))]);
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(stdin as typeof process.stdin);
+    const command = findCompiledActionCliCommand(['secrets', 'create'], listCompiledActionCliCommands())!;
+    let request: ApprovalRequest | null = null;
+    const approvalSettings = accountSettingsParse({});
+    // The Home relay is the boundary; registration and approval coordination stay real.
+    socketIo.io.mockImplementation(() => createApiSessionSocketStub({
+      emit: (event, args, socket) => {
+        if (event === SOCKET_RPC_EVENTS.REGISTER) queueMicrotask(() => socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, args[0]));
+      },
+    }));
+    terminal.promptInput.mockResolvedValueOnce('no');
+    const notice = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const output = captureConsoleJsonOutput();
+    try {
+      await runCompiledActionCliCommand({ command,
+        argv: ['secrets', 'create', 'Disposable', '--passkey-format', 'chromium-cdp', '--json'],
+        deps: { ...fixture.deps, createExecutorFn: params => {
+          const { executor } = createCliActionExecutorHarness({ token: params.credentials.token, credentials: params.credentials,
+            sessionId: '', mode: 'plain', ctx: null, serverId: 'home-1', serverIdentityId: 'home-1', serverHttpBaseUrl: fixture.origin,
+            actionsSettingsProvider: createActionSettingsProvider({ getAccountSettings: () => approvalSettings }),
+            onApprovalRequested: params.onApprovalRequested }, {
+            // Artifact persistence is the boundary; policy, input and decisions stay real.
+            approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'passkey-approval' }; },
+            approvalsGet: async () => request,
+            approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
+          });
+          return {
+            execute: (id, input, context) => executor.execute(id, input, { ...context,
+              authority: 'present_user', actionRequestId: 'passkey-request', runtimeAccountId: 'account-cli-fixture', serverId: 'home-1',
+              serverIdentityId: 'home-1', defaultSessionMachineId: 'secret-machine' }),
+            resolveSessionTarget: async () => { throw new Error('Unexpected Session lookup'); },
+          };
+        } } });
+      expect(output.json()).toMatchObject({ ok: false, error: { code: 'approval_rejected' } });
+      expect(stdin.readableEnded).toBe(true);
+      expect(fixture.writes).toEqual([]);
+      expect(output.logs.join('\n') + JSON.stringify(notice.mock.calls)).not.toContain(privateKey);
+    } finally { output.restore(); }
+  });
   it('refuses plaintext through generic Action invocation before reading credentials', async () => {
     let credentialReads = 0;
     const output = captureConsoleJsonOutput();

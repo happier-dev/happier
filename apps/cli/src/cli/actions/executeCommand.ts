@@ -34,6 +34,7 @@ import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 
 import type { CompiledActionCliCommand } from './compiledCommands';
 import { renderActionCliCommandHelp } from './commandHelp';
+import { createCliActionApprovalPresenter } from './approvalPrompt';
 import { isWorkflowActionCliCommand, readActionCliExecutionTarget } from './executionTarget';
 import {
   actionCliEnvelopeKind,
@@ -436,6 +437,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
     };
     const executorOptions = {
       credentials,
+      onApprovalRequested: createCliActionApprovalPresenter({ actionId: command.actionId, json, envelopeKind: kind }),
       ...(serverIdentityId ? { serverIdentityId } : {}),
       onRequesterSessionCredentialDisclosure: (disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure>) =>
         confirmCliRequesterCredentialDisclosure(disclosure, { json, ...(requestSignal ? { signal: requestSignal } : {}) }),

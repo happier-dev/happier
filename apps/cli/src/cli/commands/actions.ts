@@ -1,7 +1,7 @@
 import { showHelp } from '../actions/discoveryHelp';
 import { isDeploymentCiStepCommand } from '../actions/discoveryRouting';
 import { randomUUID } from 'node:crypto';
-import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
+import { createCliActionApprovalPresenter } from '@/cli/actions/approvalPrompt';
 import { definitionList, fail, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
 import { actionSpecToActionDefinitionV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -59,10 +59,9 @@ import {
 } from '@/cli/actions/parseCommandInput';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { assertCommandArguments, argvBeforeOptionTerminator, readFlagValue, readRawFlagValue } from '@/cli/commands/shared/argvFlags';
-import { printJsonEnvelope, wantsJson, writeJsonStdout, type SessionControlJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { printJsonEnvelope, wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { getServerProfile } from '@/server/serverProfiles';
-import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
 import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import {
   ACTION_CLI_SERVER_ID_FLAG,
@@ -439,24 +438,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
       ? () => deps.readCredentialsForServerIdFn(fixedServer.serverId)
       : deps.readCredentialsFn,
     externalActionClient: true as const,
-    onApprovalRequested: async (artifactId: string, confirmationSignal: AbortSignal,
-      decide: Parameters<CliApprovalRequestedHandler>[2]): Promise<ActionExecuteResult> => {
-      if (json) console.error(JSON.stringify({ v: 1, ok: true, kind: 'actions_invoke',
-        data: { kind: 'approval_request_created', artifactId, actionId: requested },
-      } satisfies SessionControlJsonEnvelope));
-      else console.error(`Waiting for approval: ${artifactId}`);
-      let approve = hasInvokeOption(args, INVOKE_YES_FLAG);
-      if (!approve) {
-        try {
-          approve = await promptConfirmYesNo('Approve this Action?', { default: 'no', signal: confirmationSignal });
-        } catch (error) {
-          if (confirmationSignal.aborted) throw error;
-        }
-      }
-      const decision = await decide(approve ? 'approve' : 'reject');
-      return !approve && decision.ok
-        ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } : decision;
-    },
+    onApprovalRequested: createCliActionApprovalPresenter({
+      actionId: requested, json, envelopeKind: 'actions_invoke', approve: hasInvokeOption(args, INVOKE_YES_FLAG),
+    }),
     ...(machineId ? { machineId } : {}),
   } : null;
   const executor = executorOptions ? await deps.createExecutorFn(fixedServer
