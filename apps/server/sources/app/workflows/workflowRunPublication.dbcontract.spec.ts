@@ -91,16 +91,18 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
         const watcher = await db.automation.create({ data: { accountId: accounts[2].id, name: stem, enabled: true,
             templateCiphertext: recipe.serialized, templateVersion: 1 } });
         await db.automationAssignment.create({ data: { automationId: watcher.id, machineId: watcherMachine.id, enabled: true } });
-        // A retained lifecycle origin makes watcher admission publish a Session
-        // audience that is outside the shared Workflow's Artifact audience.
+        // This independent review Run publishes only when it changes. Admission
+        // of another occurrence must not republish its historical Session origin.
         const reviewSession = await db.session.create({ data: { accountId: accounts[2].id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}" } });
         await db.sessionShare.create({ data: { sessionId: reviewSession.id, sharedByUserId: accounts[2].id,
             sharedWithUserId: accounts[3].id, accessLevel: "view" } });
         const reviewTriggerId = randomUUID();
         const reviewOccurrence = { v: 1 as const, kind: "sessionLifecycle" as const, event: "parentTurnCompleted" as const,
             sourceSessionId: reviewSession.id, sourceTurnId: randomUUID(), occurredAt: Date.now() };
-        await db.automationRun.create({ data: { accountId: accounts[2].id, automationId: watcher.id, originKind: "automation",
-            state: "succeeded", scheduledAt: new Date(), dueAt: new Date(), finishedAt: new Date(),
+        const reviewRun = await db.automationRun.create({ data: { accountId: accounts[2].id, automationId: watcher.id, originKind: "automation",
+            state: "queued", scheduledAt: new Date(), dueAt: new Date(),
+            workflowCustodyState: "pending", workflowAcceptedSnapshotEnvelope: "{}",
+            assignments: { create: { machineId: watcherMachine.id, priority: 0 } },
             ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({ kind: "trigger", triggerKind: "sessionLifecycle",
                 triggerId: reviewTriggerId, triggerRevision: 0, occurredAt: reviewOccurrence.occurredAt,
                 occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: reviewTriggerId, evidence: reviewOccurrence }),
@@ -124,14 +126,14 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
                     source: { kind: "workflow_run", runId: run.id }, condition: "terminal" }) } });
             sources.push({ owner, session, artifact, run, trigger });
         }
-        return { accounts, runAudience, watcher, reviewSession, sources };
+        return { accounts, runAudience, watcher, reviewSession, reviewRun, sources };
     }
 
     it('keeps seen failures out of ORM and SQL attention across custody revisions with owner-only publication', async () => {
         const f = await fixture();
         const source = f.sources[0];
         const failedAt = new Date('2026-10-23T10:00:00.000Z');
-        await db.automationRun.update({ where: { id: source.run.id }, data: { state: 'failed', finishedAt: failedAt, revision: 2 } });
+        await db.automationRun.update({ where: { id: source.run.id }, data: { state: 'failed', startedAt: failedAt, finishedAt: failedAt, revision: 2 } });
         const membership = async (accountId: string) => {
             const orm = await db.automationRun.findMany({ where: { id: source.run.id, AND: [workflowRunAttentionWhere(accountId)] }, select: { id: true } });
             const id = workflowRunSqlIdentifier;
@@ -303,7 +305,7 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
                         headers: { "x-test-user-id": source.owner.id },
                         payload: { operation: "pause", runId: source.run.id, expectedRevision: 0 } });
                     expect(response.statusCode, response.body).toBe(503);
-                    expect(response.json()).toEqual({ error: "storage_unavailable" });
+                    expect(response.json()).toEqual({ error: "database_transaction_conflict_exhausted" });
                     expect(conflicts.length).toBeGreaterThan(0);
                     expect(await db.automationRun.findUniqueOrThrow({ where: { id: source.run.id } })).toMatchObject({ state, revision: 0 });
                 } finally { await app.close(); }
@@ -499,9 +501,9 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
             expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: source.trigger.id } })).remainingOccurrences).toBe(0);
             expect(await db.automationRun.count({ where: { triggerId: source.trigger.id } })).toBe(1);
         }
-        expect(await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+        expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
             accountId: f.accounts[3].id, kind: "session", entityId: f.reviewSession.id,
-        } }, select: { accountId: true } })).toEqual({ accountId: f.accounts[3].id });
+        } }, select: { accountId: true } })).toBeNull();
     });
 
     it.each(["existing", "new", "review", "automation", "machine", "archive", "registration"] as const)("%s publication waits for the lower Account before acquiring the owner's mode fence", async kind => {
@@ -524,6 +526,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
             accountId: watcher.id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}", active: false,
         } }) : null;
         if (archiveSession) {
+            await db.sessionShare.create({ data: { sessionId: archiveSession.id, sharedByUserId: watcher.id,
+                sharedWithUserId: lower.id, accessLevel: "view" } });
             await db.automationTrigger.create({ data: { automationId: f.watcher.id, kind: "sessionLifecycle", enabled: true,
                 ...encodeAutomationSessionLifecycleConfiguration({ kind: "sessionLifecycle", sourceSessionId: archiveSession.id,
                     events: ["sessionArchived"], policy: { kind: "everyMatch" } }) } });
@@ -583,6 +587,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
                 : kind === "registration"
                     ? updateAutomationTrigger({ accountId: watcher.id, automationId: f.watcher.id,
                         triggerId: source.trigger.id, expectedRevision: 0, enabled: true })
+                : kind === "review"
+                    ? cancelWorkflowRun({ accountId: watcher.id, runId: f.reviewRun.id, expectedRevision: 0 })
                 : cancelWorkflowRun({ accountId: owner.id, runId: source.run.id, expectedRevision: 0 });
         const mutationOutcome = Promise.allSettled([mutation]).finally(() => { finished = true; });
         try {
@@ -601,9 +607,10 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
                     'SELECT "id" FROM "Session" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', archiveSession.id,
                 ), { isolationLevel: "ReadCommitted" })).resolves.toEqual([{ id: archiveSession.id }]);
             } else if (kind !== "new") {
+                const mutatedRunId = kind === "review" ? f.reviewRun.id : source.run.id;
                 await expect(inTx(tx => tx.$queryRawUnsafe<{ id: string }[]>(
-                    'SELECT "id" FROM "AutomationRun" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', source.run.id,
-                ), { isolationLevel: "ReadCommitted" })).resolves.toEqual([{ id: source.run.id }]);
+                    'SELECT "id" FROM "AutomationRun" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', mutatedRunId,
+                ), { isolationLevel: "ReadCommitted" })).resolves.toEqual([{ id: mutatedRunId }]);
             }
         } finally {
             release();
