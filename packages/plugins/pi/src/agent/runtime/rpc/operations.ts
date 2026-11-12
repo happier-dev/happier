@@ -86,6 +86,8 @@ const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 const PI_SESSION_OPEN_TIMEOUT_MS = 5 * 60_000;
 
 class PiSessionOpenTimeoutError extends Error {
+  readonly code = 'pi_session_open_timeout';
+
   constructor(readonly phase: string) {
     super(`Pi session open timed out during ${phase} after ${PI_SESSION_OPEN_TIMEOUT_MS}ms`);
     this.name = 'PiSessionOpenTimeoutError';
