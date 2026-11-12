@@ -197,7 +197,7 @@ describe('Automation event V1 contracts', () => {
       source: { ...source, observationOnly: { kind: 'execution' } } }).success).toBe(false);
   });
 
-  it('keeps Event eligibility declarative and admits a history-gap reset only for checkpointed pulls', () => {
+  it('keeps Event eligibility declarative and admits the canonical recovery Action for checkpointed pulls and durable pushes', () => {
     expect(PluginEventAutomationDeclarationV1Schema.parse({
       v: 1,
       eligible: true,
@@ -233,6 +233,7 @@ describe('Automation event V1 contracts', () => {
         sourceContractVersion: 1,
         supportedObservationTransports: ['durablePush'],
         sourceConfigSchema: { type: 'object', additionalProperties: false },
+        setupActionRef: { pluginId: 'com.acme.github', localId: 'choose-repository' },
         webhookContributionRef: {
           pluginId: 'com.acme.github',
           localId: 'repository-webhook',
@@ -242,7 +243,7 @@ describe('Automation event V1 contracts', () => {
           localId: 'baseline-history-gap',
         },
       },
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 
   it('admits a session-socket observation declaration without checkpoint-only roles', () => {

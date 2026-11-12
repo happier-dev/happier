@@ -98,11 +98,12 @@ export const PluginEventAutomationDeclarationV1Schema = lazyZodSchema(() => z.st
     });
   }
   if (!value.source.supportedObservationTransports.includes('checkpointedPull')
+    && !supportsDurablePush
     && value.source.historyGapResetActionRef !== undefined) {
     context.addIssue({
       code: "custom",
       path: ['source', 'historyGapResetActionRef'],
-      message: 'history-gap recovery requires checkpointedPull observation support',
+      message: 'history-gap recovery requires checkpointedPull or durablePush observation support',
     });
   }
   const purposeBindings = value.source.connectedAccountPurposeBindings ?? [];
