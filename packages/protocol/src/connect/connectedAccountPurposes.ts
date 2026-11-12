@@ -5,6 +5,7 @@ import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js"
 import { canonicalBoundedRecordKeySchema } from '../common/canonicalRecordKey.js';
 import { ConnectedServiceCredentialKindSchema } from './connectedServiceCredentialKind.js';
 import { ConnectedAccountPurposeIdSchema } from './connectedAccountPurposeIdentity.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import {
   PluginContributionReferenceV2Schema,
   PluginLocalizedStringV2Schema,
@@ -117,6 +118,13 @@ export const PluginConnectedAccountMaterializationKindsSchema = lazyZodSchema(()
 export const ConnectedAccountPurposeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionReferenceV2Schema),
+  /** Use the selected binding through this Provider's existing managed endpoint owner. */
+  managedProviderEndpoint: z.optional(z.strictObject({
+    provider: asProtocolZod(PluginContributionIdentityV1Schema),
+    purpose: ConnectedAccountPurposeIdSchema,
+    /** Native model namespace removed before exact Provider catalog admission. */
+    modelIdPrefix: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  })),
   /** Optional human-facing presentation; purpose remains the machine identifier. */
   title: z.optional(PluginLocalizedStringV2Schema),
   required: z.optional(z.boolean()),

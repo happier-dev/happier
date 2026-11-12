@@ -42,7 +42,12 @@ type SpawnError = Extract<SpawnSessionResult, { type: 'error' }>;
  * their Session before the runner starts. Other fresh launches keep
  * runner-side creation.
  */
-export function daemonLaunchRequiresCommittedSession(options: SpawnSessionOptions): boolean {
+export function daemonLaunchRequiresCommittedSession(
+  options: SpawnSessionOptions,
+  context: Readonly<{ requiresSessionConsumer?: boolean }> = {},
+): boolean {
+  // Managed endpoint custody belongs to the real Session, never a spawn nonce.
+  if (context.requiresSessionConsumer) return true;
   if (!options.existingSessionId && (options.discussionParticipant !== undefined
     || options.sessionCreationCorrespondence?.recipe.discussionParticipant !== undefined)) {
     // Typed native callers share the raw owner's fresh-origin correspondence

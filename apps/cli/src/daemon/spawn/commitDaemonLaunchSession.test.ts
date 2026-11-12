@@ -80,6 +80,11 @@ function plainSessionRow(id: string, metadata: Record<string, unknown>) {
 }
 
 describe('commitDaemonLaunchSession', () => {
+  it('requires the canonical Session before a managed Connected Account endpoint acquires its consumer', () => {
+    const options = { directory: '/repo' };
+    expect(daemonLaunchRequiresCommittedSession(options)).toBe(false);
+    expect(daemonLaunchRequiresCommittedSession(options, { requiresSessionConsumer: true })).toBe(true);
+  });
   it('offers committed progress after authenticated attach and before physical launch completion', async () => {
     const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
       resolveAccountId: async () => 'account', generateOperationId: () => 'commit-operation' });

@@ -11,6 +11,32 @@ import {
 } from './connectedAccountPurposes.js';
 
 describe('connected-account consumer purposes', () => {
+  it('retains an exact managed Provider endpoint route and rejects unknown route authority', () => {
+    const declaration = {
+      purpose: 'meta-inference',
+      service: { pluginId: 'happier.agent.muse', localId: 'muse' },
+      managedProviderEndpoint: {
+        provider: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        purpose: 'meta-upstream',
+        modelIdPrefix: 'meta/',
+      },
+    };
+    expect(ConnectedAccountPurposeDeclarationV1Schema.parse(declaration)).toEqual(declaration);
+    expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
+      ...declaration,
+      managedProviderEndpoint: { ...declaration.managedProviderEndpoint, endpointUrl: 'https://other.example' },
+    }).success).toBe(false);
+    for (const route of [
+      { ...declaration.managedProviderEndpoint, modelIdPrefix: '' },
+      { provider: 'cliproxyapi', purpose: 'meta-upstream' },
+      { provider: declaration.managedProviderEndpoint.provider, purpose: '' },
+      { provider: { ...declaration.managedProviderEndpoint.provider, endpoint: 'other' }, purpose: 'meta-upstream' },
+    ]) {
+      expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
+        ...declaration, managedProviderEndpoint: route,
+      }).success).toBe(false);
+    }
+  });
   it('owns the strict bounded materialization request contract for every branch', () => {
     expect(ConnectedAccountMaterializationRequestSchema.parse({
       kind: 'httpHeaders',
@@ -63,7 +89,7 @@ describe('connected-account consumer purposes', () => {
     ]) {
       expect(ConnectedAccountMaterializationRequestSchema.safeParse({
         kind: 'httpHeaders',
-        origin,
+        origin: origin,
         headerNames: ['authorization'],
       }).success).toBe(false);
     }
