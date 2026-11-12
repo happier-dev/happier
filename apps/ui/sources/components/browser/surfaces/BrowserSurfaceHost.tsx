@@ -928,7 +928,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     return (
         <BrowserStreamedSurfaceRuntimeHost input={{
             view: focusedView ?? null,
-            browserSessionId: presenceSessionId,
+            browserSessionId: presenceSessionId ?? props.browserSessionId,
             enabled: policy.browserEnabled && policy.viewTargetsEnabled && visible && hostActivelyViewed,
             machineId: props.pluginBrowserActionContext?.machineId,
             serverId: props.pluginBrowserActionContext?.serverId,

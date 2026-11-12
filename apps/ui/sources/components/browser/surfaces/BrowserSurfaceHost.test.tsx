@@ -1881,10 +1881,11 @@ describe('BrowserSurfaceHost', () => {
     });
 
     it.each([
-        { platform: 'web', seeded: false },
-        { platform: 'android', seeded: false },
-        { platform: 'web', seeded: true },
-    ] as const)('opens Diagnostics for a managed human Session (platform=$platform, seeded=$seeded)', async ({ platform, seeded }) => {
+        { platform: 'web', seeded: false, sessionId: 'human-session' },
+        { platform: 'android', seeded: false, sessionId: 'human-session' },
+        { platform: 'web', seeded: true, sessionId: 'human-session' },
+        { platform: 'web', seeded: false, sessionId: null },
+    ] as const)('opens Diagnostics for a managed browser (platform=$platform, seeded=$seeded, sessionId=$sessionId)', async ({ platform, seeded, sessionId }) => {
         const { BrowserDaemonViewV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
         const { BrowserShell } = await import('@/components/browser/BrowserShell');
         const { resetBrowserDiagnosticsDrawerStateForTests } = await import('@/components/browser/diagnostics/BrowserDiagnosticsDrawer');
@@ -1918,7 +1919,7 @@ describe('BrowserSurfaceHost', () => {
             path: '/human/workspace', host: 'human.local', homeDir: '/human', machineId: 'enclosing-machine',
         } });
         storage.getState().applySessions([humanSession]);
-        const view = { browserSessionId: seeded ? 'different-managed-session' : 'human-session', viewId: 'managed-view', navigationGeneration: 0 };
+        const view = { browserSessionId: seeded ? 'different-managed-session' : sessionId ?? 'browser_surface:details:browser_launchpad', viewId: 'managed-view', navigationGeneration: 0 };
         // The Session has no agent metadata or locally opened view. Its daemon discovery
         // supplies the exact identity through the existing stream-target/event owner.
         browserStreamBoundary.views = [BrowserDaemonViewV1Schema.parse({ browserSessionId: view.browserSessionId, viewId: view.viewId,
@@ -1944,9 +1945,9 @@ describe('BrowserSurfaceHost', () => {
                 generatedAt: 1, refreshState: 'idle', events: [] } };
         });
         browserPreviewBoundary.servicesRpc = input => input.method === RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT ? reads(input) : Promise.resolve(null);
-        const host = (visible: boolean) => <PluginSurfaceFocusEligibilityProvider active={visible}><BrowserSurfaceHost browserSessionId={seeded ? view.browserSessionId : 'human-presentation'} platform={platform}
+        const host = (visible: boolean) => <PluginSurfaceFocusEligibilityProvider active={visible}><BrowserSurfaceHost browserSessionId={seeded || !sessionId ? view.browserSessionId : 'human-presentation'} platform={platform}
             initialBrowserState={initialBrowserState} visible={visible}
-            pluginBrowserActionContext={{ sessionId: 'human-session', machineId: 'machine_1', serverId: scope.serverId }}
+            pluginBrowserActionContext={{ sessionId, machineId: 'machine_1', serverId: scope.serverId }}
             policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: true, contextEnabled: false }}
             localServicePreviewState={createLocalServicePreviewState()} testID="human-browser" /></PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderScreen(host(true));
