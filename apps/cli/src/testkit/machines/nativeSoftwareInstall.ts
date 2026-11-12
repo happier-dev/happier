@@ -1,4 +1,5 @@
 import { createNativeSoftwareOsFixture, nativeTerminal, packageOs } from './nativeSoftwareOs';
+import { detectCliSnapshotOnDaemonPath } from '@/capabilities/snapshots/cliSnapshot';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { randomBytes } from 'node:crypto';
@@ -114,7 +115,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   runtimeOptions?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['runtimeOptions'];
   additionalPlugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
   sessionStartup?: Pick<Parameters<typeof createRequesterSessionControlRuntimeFixture>[0],
-    'trackedSessions' | 'pidToAwaiter' | 'processEnv' | 'startup'
+    'trackedSessions' | 'spawnAwaiterByKey' | 'processEnv' | 'startup'
     | 'resolveRequesterSessionRuntimeContext' | 'releaseRequesterSessionRuntimeContext'> & Readonly<{
       useRealSessionSpawn?: boolean;
       onExternalActionIngressOwnerReady?: (owner: import('@/rpc/handlers/externalAction').ExternalActionIngressOwner)
@@ -383,7 +384,7 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
         ? { resolveRequesterSessionRuntimeContext: options.sessionStartup.resolveRequesterSessionRuntimeContext } : {}),
       ...(options.sessionStartup?.releaseRequesterSessionRuntimeContext
         ? { releaseRequesterSessionRuntimeContext: options.sessionStartup.releaseRequesterSessionRuntimeContext } : {}),
-      ...(options.sessionStartup?.pidToAwaiter ? { pidToAwaiter: options.sessionStartup.pidToAwaiter } : {}),
+      ...(options.sessionStartup?.spawnAwaiterByKey ? { spawnAwaiterByKey: options.sessionStartup.spawnAwaiterByKey } : {}),
       ...(options.sessionStartup?.processEnv ? { processEnv: options.sessionStartup.processEnv } : {}),
       getApiMachineForSessions: () => client, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       startup: { pluginRuntimeController: runtime.controller,
@@ -405,6 +406,17 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       ...(options.sessionStartup?.useRealSessionSpawn ? { sessionSpawnV1OutcomeRequired: true as const } : {}),
       stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} }, { externalActionIngressOwner: handlerOwner });
     recordFixturePhase('installed_rpc_registration.end');
+    // The fixture starts requester control without the normal Machine sync
+    // bootstrap. Run its initial native inventory publication explicitly;
+    // native Setup admission does not own or require Agent discovery.
+    recordFixturePhase('initial_agent_inventory.begin');
+    const checkedAt = Date.now();
+    const snapshot = await detectCliSnapshotOnDaemonPath({});
+    await client.updateMachineMetadata(metadata => {
+      if (!metadata) throw new Error('Native fixture metadata is unavailable for initial Agent inventory');
+      return metadata;
+    }, { agentInventoryObservation: { snapshot, checkedAt } });
+    recordFixturePhase('initial_agent_inventory.end');
     // This fixture attaches its connected socket before registering the daemon's
     // real handlers. Refresh once after registration, as the normal connection
     // readiness publication does when those handlers are already installed.
