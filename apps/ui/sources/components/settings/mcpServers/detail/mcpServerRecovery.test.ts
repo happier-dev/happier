@@ -36,7 +36,7 @@ describe('MCP detail recovery destinations', () => {
     const statuses = mcpServerMachineStatuses({ machines: [{ machineId: 'machine / two', name: 'MacBook', online: true }],
       tests: { 'machine / two': { ok: false, runtimeMissing: 'uv', errorCode: 'spawn_failed', checkedAt: 1 } }, fixes: state.fixes });
     statuses.get('machine / two')!.fix!.onPress();
-    expect(state.route).toHaveBeenCalledWith('/machines/machine%20%2F%20two/installables?serverId=home%20%2F%20one');
+    expect(state.route).toHaveBeenCalledWith('/machines/machine%20%2F%20two?serverId=home%20%2F%20one&tab=setup&page=tools');
   });
   it('API-key recovery saves a secret-backed bearer header and retires OAuth only on submit', () => {
     const state = setup(McpServerCatalogEntryV1Schema.parse({ ...server, remote: { ...server.remote, headers: {} } }));
