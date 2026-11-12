@@ -976,13 +976,20 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // section's choice: the form doesn't repeat it as a raw provider field.
     const choiceDimensions: readonly ('size' | 'image' | 'location' | 'network')[] = formSized
         ? ['image', 'location', 'network'] : ['size', 'image', 'location', 'network'];
-    const decidedByChoice = new Set(choiceDimensions.flatMap(dimension => {
-        const rows = draft?.options?.dimensions[dimension] ?? [];
-        return rows[0]?.assignments.map(assignment => assignment.path)
-            .filter(path => rows.every(row => row.assignments.some(assignment => assignment.path === path))) ?? [];
-    }));
+    const choiceRows = choiceDimensions.map(dimension => draft?.options?.dimensions[dimension] ?? []);
     const formFields = launchFields.filter(field => !sizeFields.includes(field)
-        && ![...decidedByChoice].some(path => managedConfiguratorChoiceOwnsField(path, field.path)))
+        && !choiceRows.some(rows => {
+            if (rows.length === 0) return false;
+            const values = rows.map(row => {
+                const assignment = row.assignments.find(candidate => managedConfiguratorChoiceOwnsField(candidate.path, field.path));
+                return assignment?.path === field.path ? assignment.value : assignment
+                    ? readInputPath(assignment.value, field.path.slice(assignment.path.length + 1)) : undefined;
+            });
+            // A root assignment supplies only its own operands. Keep a declared variant selector when
+            // its alternatives include a representation these rows cannot choose (a prepared native image).
+            return values.every(value => value !== undefined) && !(field.widget === 'select'
+                && field.options?.some(option => !values.some(value => pluginJsonValuesEqual(value, option.value))));
+        }))
         .map(field => launchRefusal?.fieldPath === field.path
             ? { ...field, description: localized(provisioner.contribution.pluginId, launchRefusal.status) } : field);
     const launchEditable = !!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true);

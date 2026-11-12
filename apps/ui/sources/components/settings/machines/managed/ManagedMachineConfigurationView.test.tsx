@@ -670,7 +670,8 @@ describe('mounted managed configurator', () => {
           connectedAccounts: { getBinding: unavailable, requestSelection: unavailable, listAccounts: unavailable,
             materializeListedAccount: unavailable, watch: unavailable,
             materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer maritime-fixture' } }) },
-          http: createPluginHttpFixture({ request: async ({ url }: HttpRequest) => ({ status: 200, finalUrl: url, headers: {}, body: new TextEncoder().encode('{}') }) }),
+          http: createPluginHttpFixture({ request: async ({ url }: HttpRequest) => ({ status: 200, finalUrl: url, headers: {},
+            body: new TextEncoder().encode(JSON.stringify({ plan: 'growth', machines: 0, awakeMachines: 0 })) }) }),
         } }));
       }
       const serverId = await harness.addHome({ name: 'Compute billing', serverUrl: `https://${vendor}-billing.example.test`,
@@ -928,6 +929,85 @@ describe('mounted managed configurator', () => {
     }
     expect(onUse).not.toHaveBeenCalled();
   });
+  it('keeps the Lume native-image editor reachable while catalog image tiles are available', () => withPopoverWebGlobals(async () => {
+    const { PLUGIN_MANIFEST: manifest } = await import('../../../../../../../packages/plugins/machine-lume/src/manifest');
+    const { LumeOptionsInputV1Schema } = await import('../../../../../../../packages/plugins/machine-lume/src/machine/schemas');
+    const descriptor = MachineProvisionerContributionV1Schema.parse(manifest.contributes.machineProvisioners?.[0]);
+    const declaration = PluginActionContributionV2Schema.parse(manifest.contributes.actions?.find(action => action.id === descriptor.actions.options));
+    const contribution = { pluginId: manifest.id, localId: descriptor.id };
+    const action = PluginProjectedActionV2Schema.parse({ id: declaration.id, title: declaration.title, pluginId: manifest.id,
+      scopes: declaration.scopes, surfaces: declaration.surfaces, execution: declaration.execution, dangerLevel: declaration.dangerLevel,
+      occurrenceId: 'lume-image-editor', available: true,
+      inputHints: normalizePluginActionInputHintsV2(declaration.inputHints, declaration.inputSchema) });
+    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+      ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
+      installedPackagesById: { [manifest.id]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: manifest.id } },
+      actionsById: { [buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: action.id })]: action } } });
+    nativeBoundary.rpc.mockImplementation(async (request: { method: string }) =>
+      request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
+        : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: declaration.inputSchema }
+          : { ok: false, code: 'unsupported' });
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://lume-image-editor.example',
+      serverIdentityId: 'srv_lume_image_editor', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
+    const catalogReference = 'ghcr.io/trycua/macos-sequoia-cua:latest';
+    const options = createMachineProvisionerOptionsFixture({ base: { launch: { cpu: 4, memoryBytes: 8 * 1024 ** 3 } },
+      dimensions: { image: [{ id: catalogReference, title: 'macOS Sequoia',
+        assignments: [{ path: 'image', value: { kind: 'catalog', id: catalogReference } }] }],
+        location: [{ id: 'home', title: 'Home', assignments: [{ path: 'storage', value: 'home' }] }],
+        size: [], network: [], duration: [] } });
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: 'lume-image-editor', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] }] }],
+      ['machines.provisioners.check', { available: true }],
+      ['machines.provisioners.options', options],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
+    const { pressTestInstanceAsync } = await import('@/dev/testkit');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={defaultController} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.images:${catalogReference}`)).not.toBeNull());
+      await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
+      // A catalog tile supplies its id; it cannot choose the declaration's custom-image representation.
+      expect(screen.findByTestId('managed-config.field:image.id')).toBeNull();
+      const select = async (path: string, value: string) => {
+        const field = screen.tree.findAllByType(HappierInputField).find(node => node.props.field.path === path);
+        expect(field, `Expected the declared ${path} choice to remain reachable`).toBeDefined();
+        const option = field?.props.options.find((entry: { value: unknown }) => entry.value === value);
+        expect(option).toBeDefined();
+        const choice = () => screen.findAllByType('Pressable').find(node =>
+          (node.props.role ?? node.props.accessibilityRole) === 'radio' && node.props.accessibilityLabel === option.label);
+        if (!choice()) {
+          const trigger = screen.findAllByType('Pressable').find(node =>
+            String(node.props.accessibilityLabel ?? '').startsWith(field?.props.field.title + ':'));
+          expect(trigger).toBeDefined();
+          await pressTestInstanceAsync(trigger);
+          await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
+          await waitForHomeGovernance(() => expect(choice()).toBeDefined());
+        }
+        await pressTestInstanceAsync(choice());
+      };
+      await select('image.kind', 'native-image');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image.reference')).not.toBeNull());
+      const nativeReference = 'ghcr.io/example/prepared-linux:latest';
+      await act(async () => screen.changeTextByTestId('managed-config.field:image.reference', nativeReference));
+      await select('image.privateCarrier.kind', 'lume-default-password');
+      await select('image.privateCarrier.guestOs', 'linux');
+      await act(async () => screen.changeTextByTestId('managed-config.field:image.privateCarrier.user', 'developer'));
+      await waitForHomeGovernance(() => {
+        const request = harness.requestsFor('/v1/actions/machines.provisioners.options').at(-1);
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request?.input);
+        const input = ProvisionerOptionsInputV1Schema.parse(envelope.input);
+        expect(LumeOptionsInputV1Schema.parse(input.selectors).image).toMatchObject({ kind: 'native-image', reference: nativeReference,
+          privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'developer' } });
+      });
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  }));
   it('materialises partial Lima native defaults without flashing an unavailable choice while the image is required', async () => {
     const { LIMA_PLUGIN } = await import('../../../../../../../packages/plugins/machine-lima/src/manifest');
     const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
