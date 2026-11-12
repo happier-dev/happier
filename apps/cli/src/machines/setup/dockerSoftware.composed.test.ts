@@ -1,5 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { PassThrough } from 'node:stream';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createActionExecutor, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -21,6 +23,31 @@ import { groupMachineSetupChanges } from '../../../../../apps/ui/sources/compone
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { prepareDedicatedDaemonBootstrap, MachineEffectInternalRequestSchema } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+
+const dockerFiles = vi.hoisted(() => ({ directory: '' }));
+// Keep the real file interpreter and isolate its native Docker filesystem boundary.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const target = (path: unknown) => typeof path === 'string' && (path === '/etc/docker' || path.startsWith('/etc/docker/')
+    || dockerFiles.directory !== '' && (path === dockerFiles.directory || path.startsWith(`${dockerFiles.directory}/`)));
+  const pathFor = <T,>(path: T): T => typeof path === 'string' && (path === '/etc/docker' || path.startsWith('/etc/docker/'))
+    ? (dockerFiles.directory + path.slice('/etc/docker'.length)) as T : path;
+  return { ...actual,
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      const stat = await actual.lstat(pathFor(args[0]), args[1]);
+      return target(args[0]) ? Object.assign(stat, { uid: typeof stat.uid === 'bigint' ? 0n : 0,
+        gid: typeof stat.gid === 'bigint' ? 0n : 0 }) : stat;
+    },
+    chown: async (...args: Parameters<typeof actual.chown>) => { if (!target(args[0])) await actual.chown(...args); },
+    readFile: (...args: Parameters<typeof actual.readFile>) => actual.readFile(pathFor(args[0]), args[1]),
+    writeFile: (...args: Parameters<typeof actual.writeFile>) => actual.writeFile(pathFor(args[0]), args[1], args[2]),
+    mkdir: (...args: Parameters<typeof actual.mkdir>) => actual.mkdir(pathFor(args[0]), args[1]),
+    chmod: (...args: Parameters<typeof actual.chmod>) => actual.chmod(pathFor(args[0]), args[1]),
+    mkdtemp: (...args: Parameters<typeof actual.mkdtemp>) => actual.mkdtemp(pathFor(args[0]), args[1]),
+    rename: (...args: Parameters<typeof actual.rename>) => actual.rename(pathFor(args[0]), pathFor(args[1])),
+    rm: (...args: Parameters<typeof actual.rm>) => actual.rm(pathFor(args[0]), args[1]),
+  };
+});
 
 const ref = { pluginId: 'happier.machine.recipes', recipeId: 'docker-engine', revision: '1' };
 const ok = (stdout = ''): MachineSetupNativeCommandResult => ({ code: 0, stdout, stderr: '' });
@@ -54,6 +81,10 @@ it('discloses vendor host-port exclusivity in the public Plan and pre-approval c
 // Action discovery/Plan, package selection and Apply's interpreter remain real.
 async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' | 'cliOnly' | 'stopped' | 'ready' | 'denied' = 'absent', refreshFails = false) {
   const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true, plugins: [{ files: {}, manifest: PLUGIN_MANIFEST }] });
+  dockerFiles.directory = join(runtime.happyHomeDir, 'docker');
+  await mkdir(dockerFiles.directory);
+  await writeFile(join(dockerFiles.directory, 'daemon.json'), '{}\n');
+  await chmod(join(dockerFiles.directory, 'daemon.json'), 0o644);
   const acquire = () => acquireAuthoritativePluginRuntimeRegistryLease({ controller: runtime.controller, happyHomeDir: runtime.happyHomeDir });
   const calls: MachineSetupNativeCommand[] = [];
   const installed = new Set<string>();
@@ -65,6 +96,8 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
   let serviceRunning = serviceEnabled;
   const run = async (command: MachineSetupNativeCommand, administrator = false): Promise<MachineSetupNativeCommandResult> => {
     calls.push(command);
+    if (command.executable === 'getent' && command.args.at(-1) === 'root') return ok(command.args.includes('group')
+      ? 'root:x:0:\n' : 'root:x:0:0:root:/root:/bin/bash\n');
     if (command.executable === 'getent') return ok(command.args.includes('group')
       ? `docker:x:109:${member ? 'happier' : ''}\n` : 'happier:x:1000:1000::/home/happier:/bin/bash\n');
     if (command.executable === 'id') return ok(member ? '1000 109\n' : '1000\n');
@@ -86,6 +119,7 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
     if (command.executable === 'cat') return ok(`Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t${groups.join(' ')}\n`);
     if (command.executable === 'docker') return groups.includes(109) && serviceRunning
       ? ok('Docker Engine\n') : { code: 1, stdout: '', stderr: 'permission denied' };
+    if (command.executable === 'dockerd' && command.args[0] === '--validate') return ok();
     if (command.executable === 'which') return (command.args[0] === 'dockerd' ? serverPresent : engine !== 'absent')
       ? ok(`/usr/bin/${command.args[0]}\n`) : { code: 1, stdout: '', stderr: '' };
     if (command.executable === 'grep') return { code: family === 'other' ? 1
@@ -132,7 +166,7 @@ async function fixture(family: 'ubuntu' | 'debian' | 'other', engine: 'absent' |
   const executor = createActionExecutor(deps);
   const context = { surface: 'agent' as const, authority: 'present_user' as const };
   const plan = () => executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'machine', sources: [{
-    kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] },
+    kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: { daemonConfig: {} } } }] },
   }] }, context);
   const observation = { version: 1 as const, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot' as const,
     rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed' as const, managedDropIn: 'valid' as const,
@@ -184,7 +218,7 @@ it('discloses Docker root-equivalent effects in the ordinary spawn approval befo
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       machineSetupPlanInput: { homeId: 'home', machineId: 'machine', sources: [{
-        kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] },
+        kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: { ref, inputs: { daemonConfig: {} } } }] },
       }] },
     } as const;
     const context = { ...f.context, surface: 'ui' as const, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
@@ -240,7 +274,7 @@ it('repairs daemon membership without replacing an existing Docker engine with d
   } finally { await f.runtime.dispose(); }
 });
 
-it.each(['ubuntu', 'debian'] as const)('bootstrap and Software use identical %s Docker steps for fresh, CLI-only, stopped and healthy CE engines', async family => {
+it.each(['ubuntu', 'debian'] as const)('bootstrap and Software share %s Docker engine steps for fresh, CLI-only, stopped and healthy CE engines', async family => {
   for (const engine of ['absent', 'cliOnly', 'stopped', 'ready'] as const) {
     const f = await fixture(family, engine);
     try {
@@ -273,7 +307,10 @@ it.each(['ubuntu', 'debian'] as const)('bootstrap and Software use identical %s 
           return { status: 0, stdout: JSON.stringify({ type: 'result', result: { status: 'applied', completedStepIds: [], daemonRestartRequired: false } }) + '\n', stderr: '' };
         },
       });
-      expect(bootstrapSteps).toEqual(plan.steps);
+      // Software additionally carries the person's reviewed daemon settings;
+      // bootstrap uses engine defaults without authoring configuration.
+      expect(plan.steps.find(step => step.kind === 'file')).toMatchObject({ content: { kind: 'jsonMerge', value: {} } });
+      expect(bootstrapSteps).toEqual(plan.steps.filter(step => step.kind !== 'file'));
       expect(bootstrapSteps?.some(step => step.kind === 'package')).toBe(engine === 'absent' || engine === 'cliOnly');
       expect(bootstrapSteps?.find(step => step.kind === 'serviceUnit')).toMatchObject({ unit: 'docker.service', enabled: true, running: true });
     } finally { await f.runtime.dispose(); }
@@ -308,7 +345,7 @@ it.each([{ configured: false, installed: false, refreshFails: false, engine: 'ab
       readCgroup: async () => '0::/user.slice/user-1000.slice/user@1000.service/app.slice/happier-daemon.service\n' };
     const reviewed = await prepareMachineSetupPlanV1({ current,
       input: { homeId: 'home', machineId: 'machine', mode: 'effects', sources: [{ kind: 'direct', setup: {
-        items: [{ kind: 'softwareRecipe', selection: { ref, inputs: {} } }] } }] },
+        items: [{ kind: 'softwareRecipe', selection: { ref, inputs: { daemonConfig: {} } } }] } }] },
       readRecipes: async () => [{ id: `${ref.pluginId}/${ref.recipeId}`, pluginId: ref.pluginId, pluginVersion: PLUGIN_MANIFEST.version,
         definition: PLUGIN_MANIFEST.contributes.machineRecipes!.find(recipe => recipe.id === ref.recipeId)! }],
       readAdminAccessObservation: async () => f.observation, runNative: f.run, groupRefreshNative });

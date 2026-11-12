@@ -81,7 +81,7 @@ it('publishes an opt-in restricted receiver with exact reviewed removal and both
   expect(receiver?.steps).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'user', locked: true, supplementaryGroups: [], ownershipMarker: expect.any(Object) }),
     expect.objectContaining({ kind: 'directory', owner: 'root', mode: 0o755, protectedAncestors: true }),
-    expect.objectContaining({ kind: 'file', owner: 'root', validate: { kind: 'sshd', contexts: [
+    expect.objectContaining({ kind: 'file', owner: 'root', validate: { kind: 'sshd', publicHostKeyEvidence: true, contexts: [
       expect.objectContaining({ user: { kind: 'input', path: 'username' } }),
       expect.objectContaining({ user: { kind: 'input', path: 'administrator.username' } }),
     ] } }),

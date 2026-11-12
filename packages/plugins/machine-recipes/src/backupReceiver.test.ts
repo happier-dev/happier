@@ -8,8 +8,11 @@ it('requires effective receiver restrictions on apply and preserves only adminis
     senderPublicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
     connection: { host: 'probe', address: '192.0.2.1' },
     administrator: { username: 'operator', host: 'probe', address: '192.0.2.2' }, sshServiceUnit: 'ssh.service' };
-  const policy = recipe.steps.map(step => resolveMachineRecipeStepInputsV1(step, inputs)).find(step => step.id === 'receiver-ssh-policy');
-  const removal = recipe.removeSteps!.map(step => resolveMachineRecipeStepInputsV1(step, inputs)).find(step => step.id === 'receiver-ssh-policy');
+  const policyStep = recipe.steps.find(step => step.id === 'receiver-ssh-policy');
+  const removalStep = recipe.removeSteps?.find(step => step.id === 'receiver-ssh-policy');
+  if (!policyStep || !removalStep) throw new Error('Missing receiver SSH policy');
+  const policy = resolveMachineRecipeStepInputsV1(policyStep, inputs);
+  const removal = resolveMachineRecipeStepInputsV1(removalStep, inputs);
   const admin = { user: 'operator', host: 'probe', address: '192.0.2.2' };
   expect(policy).toMatchObject({ validate: { kind: 'sshd', contexts: [
     { user: 'receiver', expected: { chrootdirectory: '/srv/receiver', forcecommand: 'internal-sftp', authenticationmethods: 'publickey',
