@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Banner, Button, Row, Stack, Status, TechnicalDetailsDisclosure, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Banner, Button, Row, Stack, Status, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { taskWriteMessage, taskSourceLinkLabel, type TaskWriteMessageContext, type TaskWritePresentationResult } from '../taskWriteMessage.js';
 
 export function TaskWriteNotice({ result, checking, onCheckAgain, sourceUrl, sessionLink, context }: Readonly<{
@@ -19,14 +20,10 @@ export function TaskWriteNotice({ result, checking, onCheckAgain, sourceUrl, ses
   const code = result.kind === 'refused' ? result.reason : result.failure?.code;
   const requestId = result.requestId ?? (result.kind === 'refused' ? undefined : result.failure?.requestId);
   return <Stack gap="small">
-    <Banner tone="warning" title={taskWriteMessage(text, result, context)} />
-    <TechnicalDetailsDisclosure title={text('plugins.triage.surface.detail.tab.details', 'Details')}
-      lines={[
-        ...(code === undefined ? [] : [{ key: 'code', label: text('plugins.triage.sourceFailure.code', 'Code'), value: code }]),
-        ...(requestId === undefined ? [] : [{ key: 'request-id', label: text('plugins.triage.sourceFailure.requestId', 'Request ID'), value: requestId }]),
-        ...(result.phase === undefined ? [] : [{ key: 'phase', label: text('plugins.triage.sourceFailure.phase', 'Phase'), value: result.phase }]),
-        ...(result.effectAttempted === undefined ? [] : [{ key: 'effect-attempted', label: text('plugins.triage.sourceFailure.effectAttempted', 'Effect attempted'), value: String(result.effectAttempted) }]),
-      ]} />
+    <Banner tone="warning" title={taskWriteMessage(text, { ...result, message: undefined }, context)} />
+    <ActionFailureDetails code={code} requestId={requestId} message={result.message} phase={result.phase} effectAttempted={result.effectAttempted}
+      details={result.kind === 'refused' ? result.details : undefined}
+      detail={result.kind === 'refused' ? undefined : result.failure?.detail} />
     {result.kind !== 'uncertain' ? null : <Row gap="small" wrap>
       {onCheckAgain === undefined ? null : <Button variant="secondary" size="small" busy={checking} disabled={checking}
         title={text('plugins.triage.tasks.write.checkAgain', 'Check again')} onPress={() => { void onCheckAgain(); }} />}

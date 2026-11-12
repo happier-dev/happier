@@ -488,7 +488,9 @@ const presented = await presentActionFailure(hostApi, failure);
 ```
 
 Pass the failed Action result unchanged: `ok: false`, `errorCode`, `error`,
-and its optional `failureCause`, `details` and `requestId`. A code-only failure may omit `error`; unknown codes then use the app presenter’s generic fallback. The helper checks
+and its optional `failureCause`, `details` and `requestId`. In 0.3 development,
+optional authored `message` and `remediation` retain the producer’s reason and
+recovery; the app’s code copy is used only when that reason is absent. A code-only failure may omit `error`; unknown codes then use the app presenter’s generic fallback. The helper checks
 `hostApi.version().methods` for `presentActionFailure`. On older hosts it
 shows the producer message with Code and Request ID. Hosts with the method use
 the app presenter and its safe technical details. The current presenter combines

@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Fase",
+  "plugins.triage.sourceFailure.effectAttempted": "Effetto tentato",
+  "plugins.triage.sourceFailure.reason": "Motivo",
   "plugins.triage.surface.failure.retained": "Le relative voci potrebbero mancare o non essere aggiornate.",
   "plugins.triage.sourceFailure.code": "Codice",
   "plugins.triage.sourceFailure.requestId": "ID richiesta",

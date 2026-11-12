@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Fase",
+  "plugins.triage.sourceFailure.effectAttempted": "Efeito tentado",
+  "plugins.triage.sourceFailure.reason": "Motivo",
   "plugins.triage.surface.failure.retained": "As suas entradas podem estar em falta ou desatualizadas.",
   "plugins.triage.sourceFailure.code": "Código",
   "plugins.triage.sourceFailure.requestId": "ID da solicitação",

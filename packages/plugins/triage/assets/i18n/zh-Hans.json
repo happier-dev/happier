@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "阶段",
+  "plugins.triage.sourceFailure.effectAttempted": "已尝试执行",
+  "plugins.triage.sourceFailure.reason": "原因",
   "plugins.triage.surface.failure.retained": "其条目可能缺失或已过期。",
   "plugins.triage.sourceFailure.code": "代码",
   "plugins.triage.sourceFailure.requestId": "请求 ID",

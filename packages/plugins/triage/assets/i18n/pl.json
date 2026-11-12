@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Etap",
+  "plugins.triage.sourceFailure.effectAttempted": "Próba wykonania",
+  "plugins.triage.sourceFailure.reason": "Powód",
   "plugins.triage.surface.failure.retained": "Ich wpisy mogą być niekompletne lub nieaktualne.",
   "plugins.triage.sourceFailure.code": "Kod",
   "plugins.triage.sourceFailure.requestId": "Identyfikator żądania",

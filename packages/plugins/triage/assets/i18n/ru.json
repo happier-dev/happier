@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Этап",
+  "plugins.triage.sourceFailure.effectAttempted": "Действие предпринято",
+  "plugins.triage.sourceFailure.reason": "Причина",
   "plugins.triage.surface.failure.retained": "Их записи могут отсутствовать или быть устаревшими.",
   "plugins.triage.sourceFailure.code": "Код",
   "plugins.triage.sourceFailure.requestId": "Идентификатор запроса",

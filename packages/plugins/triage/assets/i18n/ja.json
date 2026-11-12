@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "段階",
+  "plugins.triage.sourceFailure.effectAttempted": "処理を試行済み",
+  "plugins.triage.sourceFailure.reason": "理由",
   "plugins.triage.surface.failure.retained": "これらの項目が表示されないか、古い情報の可能性があります。",
   "plugins.triage.sourceFailure.code": "コード",
   "plugins.triage.sourceFailure.requestId": "リクエスト ID",

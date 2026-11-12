@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "階段",
+  "plugins.triage.sourceFailure.effectAttempted": "已嘗試執行",
+  "plugins.triage.sourceFailure.reason": "原因",
   "plugins.triage.surface.failure.retained": "其項目可能缺失或已過期。",
   "plugins.triage.sourceFailure.code": "代碼",
   "plugins.triage.sourceFailure.requestId": "請求 ID",

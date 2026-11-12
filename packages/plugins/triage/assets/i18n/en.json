@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Phase",
+  "plugins.triage.sourceFailure.effectAttempted": "Effect attempted",
+  "plugins.triage.sourceFailure.reason": "Reason",
   "plugins.triage.surface.failure.retained": "Their entries may be missing or out of date.",
   "plugins.triage.sourceFailure.code": "Code",
   "plugins.triage.sourceFailure.requestId": "Request ID",

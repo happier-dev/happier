@@ -1,4 +1,7 @@
 {
+  "plugins.triage.sourceFailure.phase": "Fase",
+  "plugins.triage.sourceFailure.effectAttempted": "Efecte intentat",
+  "plugins.triage.sourceFailure.reason": "Motiu",
   "plugins.triage.surface.failure.retained": "Les seves entrades poden faltar o estar desactualitzades.",
   "plugins.triage.sourceFailure.code": "Codi",
   "plugins.triage.sourceFailure.requestId": "ID de sol·licitud",

@@ -1,5 +1,5 @@
 import {
-    defineProtocolArray, defineProtocolLiteral, defineProtocolNumber,
+    defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber,
     defineProtocolObject, defineProtocolString, defineProtocolUnion,
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -93,7 +93,11 @@ export type TriageTaskTransitionInputV1 = ReturnType<typeof TriageTaskTransition
 const observation = defineProtocolObject(TriageSourcePresentObservationV1Fields, { policy: 'closed' });
 export const TriageTaskWriteResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('applied'), observation }, { policy: 'closed' }),
-    defineProtocolObject({ kind: defineProtocolLiteral('refused'), reason: TriageIdentifierV1ProtocolSchema }, { policy: 'closed' }),
+    defineProtocolObject({ kind: defineProtocolLiteral('refused'), reason: TriageIdentifierV1ProtocolSchema,
+        message: defineProtocolString().optional(), details: defineProtocolJsonValue().optional(),
+        retryable: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
+        requestId: defineProtocolString().optional(),
+    }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('uncertain'), observation: observation.optional(), failure: TriageSourceFailureV1Schema.optional(),
     }, { policy: 'closed' }),

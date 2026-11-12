@@ -12247,7 +12247,9 @@ Plugins may contribute a `starter` registry source alongside app sources. A star
 
 Native and hosted-web plugin UIs share `hostApi.presentActionFailure(failure)`.
 The closed input projects the Action failure envelope (`errorCode`, optional `error`,
-optional `failureCause`, `details` and `requestId`). The host delegates to
+optional `failureCause`, `details` and `requestId`, plus optional authored
+`message` and `remediation`). The authored reason and recovery take precedence;
+code copy is the fallback. The host delegates to
 `resolveActionExecutionFailureMessage`; it does not maintain another code map.
 The result carries `reason`, `nextStep` and `technicalDetails` lines compatible
 with TechnicalDetailsDisclosure. Today the presenter combines reason and recovery

@@ -1,10 +1,14 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { PluginActionFailureResponseV1Schema } from '../actions/failureResponse.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 
 /** Presentation only: the Action's existing closed failure envelope owns the input. */
 export const PluginUiPresentActionFailureRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ...ActionExecuteFailureSchema.shape,
+  // Reuse the author vocabulary already admitted by the Action failure owner.
+  message: PluginActionFailureResponseV1Schema.shape.message,
+  remediation: PluginActionFailureResponseV1Schema.shape.remediation,
   // Code-only failures can still use the presenter's generic fallback.
   error: z.optional(ActionExecuteFailureSchema.shape.error),
 }));

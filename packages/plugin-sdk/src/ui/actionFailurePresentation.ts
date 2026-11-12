@@ -10,7 +10,7 @@ export async function presentActionFailure(
     if (hostApi.version().methods.includes('presentActionFailure') && hostApi.presentActionFailure) {
         return hostApi.presentActionFailure(failure, options);
     }
-    return { reason: failure.error ?? failure.errorCode, nextStep: null, technicalDetails: [
+    return { reason: failure.message ?? failure.error ?? failure.errorCode, nextStep: null, technicalDetails: [
         { key: 'code', label: 'Code', value: failure.errorCode },
         ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
     ] };
