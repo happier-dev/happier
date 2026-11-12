@@ -1,6 +1,7 @@
 import type { SupportedLanguage } from '../_all';
 
 type PreparationCopy = Readonly<{
+  resultTitle: string; operationsTitle: string; unverified: string; unverifiedHint: string;
   prepare: string; import: string; importLead: string;
   workspace: string; tool: string; paths: string; noWorkspace: string; noRepository: string;
   needsSetupLead: string; adds: string;
@@ -10,6 +11,10 @@ type PreparationCopy = Readonly<{
 
 export const deploymentPreparationTranslations: Record<SupportedLanguage, PreparationCopy> = {
   en: {
+    resultTitle: "Preparation session",
+    operationsTitle: "Session operations",
+    unverified: "Unverified",
+    unverifiedHint: "Validation for this pull request head has not been confirmed. Review the Session’s operations and deployment receipts.",
     needsSetupLead: 'To run it, the repository needs files that say how to build and start it. An agent can write them and open a pull request. Nothing deploys until you merge it.',
     adds: 'The pull request adds',
     addsDockerfile: 'Builds the app as a small production image',
@@ -26,6 +31,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Open this Project on a Machine first, then choose its checkout here.',
   },
   ru: {
+    resultTitle: "Сессия подготовки",
+    operationsTitle: "Операции сессии",
+    unverified: "Не проверено",
+    unverifiedHint: "Проверка этой версии pull request не подтверждена. Просмотрите операции сессии и результаты развёртываний.",
     needsSetupLead: 'Чтобы запустить приложение, в репозитории нужны файлы, описывающие сборку и запуск. Агент может написать их и открыть pull request. Ничего не развёртывается, пока вы его не сольёте.',
     adds: 'Pull request добавит',
     addsDockerfile: 'Собирает приложение в небольшой рабочий образ',
@@ -42,6 +51,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Сначала откройте этот проект на машине, затем выберите здесь его рабочую копию.',
   },
   pl: {
+    resultTitle: "Sesja przygotowania",
+    operationsTitle: "Operacje sesji",
+    unverified: "Niezweryfikowane",
+    unverifiedHint: "Weryfikacja tej wersji pull requestu nie została potwierdzona. Sprawdź operacje sesji i wyniki wdrożeń.",
     needsSetupLead: 'Aby uruchomić aplikację, repozytorium potrzebuje plików opisujących budowanie i start. Agent może je napisać i otworzyć pull request. Nic się nie wdroży, dopóki go nie scalisz.',
     adds: 'Pull request dodaje',
     addsDockerfile: 'Buduje aplikację jako mały obraz produkcyjny',
@@ -58,6 +71,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Najpierw otwórz ten projekt na maszynie, a potem wybierz tutaj jego kopię roboczą.',
   },
   es: {
+    resultTitle: "Sesión de preparación",
+    operationsTitle: "Operaciones de la sesión",
+    unverified: "Sin verificar",
+    unverifiedHint: "No se ha confirmado la validación de esta versión de la solicitud de cambios. Revisa las operaciones de la sesión y los resultados de los despliegues.",
     needsSetupLead: 'Para ejecutarla, el repositorio necesita archivos que digan cómo construirla e iniciarla. Un agente puede escribirlos y abrir una pull request. No se despliega nada hasta que la fusiones.',
     adds: 'La pull request añade',
     addsDockerfile: 'Construye la app como una imagen de producción pequeña',
@@ -74,6 +91,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primero abre este proyecto en una máquina y luego elige aquí su copia de trabajo.',
   },
   fr: {
+    resultTitle: "Session de préparation",
+    operationsTitle: "Opérations de la session",
+    unverified: "Non vérifié",
+    unverifiedHint: "La validation de cette version de la pull request n’a pas été confirmée. Consultez les opérations de la session et les résultats des déploiements.",
     needsSetupLead: 'Pour l’exécuter, le dépôt a besoin de fichiers qui décrivent comment la construire et la démarrer. Un agent peut les écrire et ouvrir une pull request. Rien n’est déployé tant que vous ne l’avez pas fusionnée.',
     adds: 'La pull request ajoute',
     addsDockerfile: 'Construit l’app sous forme d’une petite image de production',
@@ -90,6 +111,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Ouvrez d’abord ce projet sur une machine, puis choisissez sa copie de travail ici.',
   },
   it: {
+    resultTitle: "Sessione di preparazione",
+    operationsTitle: "Operazioni della sessione",
+    unverified: "Non verificato",
+    unverifiedHint: "La validazione di questa versione della pull request non è stata confermata. Controlla le operazioni della sessione e i risultati delle distribuzioni.",
     needsSetupLead: 'Per eseguirla, il repository ha bisogno di file che dicano come compilarla e avviarla. Un agente può scriverli e aprire una pull request. Non viene distribuito nulla finché non la unisci.',
     adds: 'La pull request aggiunge',
     addsDockerfile: 'Compila l’app come una piccola immagine di produzione',
@@ -106,6 +131,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Prima apri questo progetto su una macchina, poi scegli qui la sua copia di lavoro.',
   },
   pt: {
+    resultTitle: "Sessão de preparação",
+    operationsTitle: "Operações da sessão",
+    unverified: "Não verificado",
+    unverifiedHint: "A validação desta versão da pull request não foi confirmada. Consulte as operações da sessão e os resultados das implantações.",
     needsSetupLead: 'Para executá-la, o repositório precisa de arquivos que digam como compilá-la e iniciá-la. Um agente pode escrevê-los e abrir um pull request. Nada é implantado até você mesclá-lo.',
     adds: 'O pull request adiciona',
     addsDockerfile: 'Compila o app como uma imagem de produção pequena',
@@ -122,6 +151,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primeiro abra este projeto em uma máquina e depois escolha sua cópia de trabalho aqui.',
   },
   ca: {
+    resultTitle: "Sessió de preparació",
+    operationsTitle: "Operacions de la sessió",
+    unverified: "Sense verificar",
+    unverifiedHint: "No s’ha confirmat la validació d’aquesta versió de la sol·licitud de canvis. Revisa les operacions de la sessió i els resultats dels desplegaments.",
     needsSetupLead: 'Per executar-la, el repositori necessita fitxers que diguin com construir-la i iniciar-la. Un agent els pot escriure i obrir una pull request. No es desplega res fins que la fusionis.',
     adds: 'La pull request afegeix',
     addsDockerfile: 'Construeix l’app com una imatge de producció petita',
@@ -138,6 +171,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Primer obre aquest projecte en una màquina i després tria aquí la seva còpia de treball.',
   },
   de: {
+    resultTitle: "Vorbereitungssitzung",
+    operationsTitle: "Vorgänge der Sitzung",
+    unverified: "Nicht verifiziert",
+    unverifiedHint: "Die Validierung dieses Pull-Request-Stands wurde nicht bestätigt. Prüfe die Vorgänge der Sitzung und die Deployment-Ergebnisse.",
     needsSetupLead: 'Damit die App läuft, braucht das Repository Dateien, die Build und Start beschreiben. Ein Agent kann sie schreiben und einen Pull Request öffnen. Nichts wird deployt, bis du ihn zusammenführst.',
     adds: 'Der Pull Request fügt hinzu',
     addsDockerfile: 'Baut die App als kleines Produktions-Image',
@@ -154,6 +191,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     noWorkspace: 'Öffne dieses Projekt zuerst auf einer Maschine und wähle dann hier seine Arbeitskopie.',
   },
   'zh-Hans': {
+    resultTitle: "准备会话",
+    operationsTitle: "会话操作",
+    unverified: "未验证",
+    unverifiedHint: "尚未确认此拉取请求当前版本的验证结果。请查看会话操作和部署结果。",
     needsSetupLead: '要运行它，仓库需要说明如何构建和启动的文件。代理可以编写这些文件并创建拉取请求。合并之前不会部署任何内容。',
     adds: '拉取请求将添加',
     addsDockerfile: '将应用构建为精简的生产镜像',
@@ -169,6 +210,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     workspace: '代理的工作位置', tool: '现有工具', paths: '配置文件路径', noWorkspace: '请先在一台机器上打开此项目，然后在这里选择工作副本。',
   },
   'zh-Hant': {
+    resultTitle: "準備工作階段",
+    operationsTitle: "工作階段操作",
+    unverified: "未驗證",
+    unverifiedHint: "尚未確認此提取要求目前版本的驗證結果。請查看工作階段操作與部署結果。",
     needsSetupLead: '要執行它，儲存庫需要說明如何建置與啟動的檔案。代理可以撰寫這些檔案並建立提取要求。合併之前不會部署任何內容。',
     adds: '提取要求將新增',
     addsDockerfile: '將應用程式建置為精簡的正式環境映像',
@@ -184,6 +229,10 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     workspace: '代理的工作位置', tool: '現有工具', paths: '設定檔路徑', noWorkspace: '請先在一台機器上開啟此專案，再在這裡選擇工作副本。',
   },
   ja: {
+    resultTitle: "準備セッション",
+    operationsTitle: "セッションの操作",
+    unverified: "未検証",
+    unverifiedHint: "このプルリクエストの現在のリビジョンは検証が確認されていません。セッションの操作とデプロイ結果を確認してください。",
     needsSetupLead: '実行するには、ビルドと起動の方法を記したファイルがリポジトリに必要です。エージェントがそれらを書き、プルリクエストを開けます。マージするまで何もデプロイされません。',
     adds: 'プルリクエストで追加されるもの',
     addsDockerfile: 'アプリを小さな本番用イメージとしてビルドします',

@@ -53,7 +53,8 @@ the reviewed installation. This creates an Environment and attempts its deployme
 Open the resulting Environment to see what completed.
 
 If you already have a definition, open **Apps** in the Store and choose
-**Paste a Compose file** or **Run an image**, then choose its Project.
+**Paste a Compose file** or **Run an image**, then choose an existing Project or
+**New project**. A new Project is created when you confirm Environment creation.
 Supply the Compose document, or the image name and its container
 port, then name the Environment and choose its Machine. Review creation before
 confirming it, and use **Deploy** to review and run the deployment.
@@ -63,6 +64,22 @@ For a repository-backed Project, open its **Deployments** tab and choose
 (`compose.yaml` is the initial path). Save and confirm creation, then review
 **Deploy**. The Project must first be saved as a Source; follow the page's prompt
 if it is not.
+
+If the repository has no Compose file, including a repository with only a
+Dockerfile, choose **Prepare with an agent** in the Project's **Deployments**
+tab. Choose a workspace checkout and continue in the resulting Session. The
+agent prepares repository changes for review and a pull request, preserving
+valid deployment files. Review the proposed validation and pull request before
+merging, then return to create and deploy an Environment from the updated source.
+The handoff itself does not deploy the app or merge the pull request for you.
+Validation of the exact PR head needs its own review, using a non-production
+Environment or a Dev Container. Inspect the validation operation and its receipt;
+without a validation run, treat the proposal as unverified.
+
+To start from another deployment tool, choose **Import from another tool** and
+provide the tool name and configuration file paths. Continue the inspection and
+mapping in the Session. Backups, data restoration, and moving traffic each need
+their own review; starting an import leaves the existing app running.
 
 Check **History** for the deployment result. The **Overview** shows services and
 health; use **Logs** to inspect build or runtime output. **Variables** holds

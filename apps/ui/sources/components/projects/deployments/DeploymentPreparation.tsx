@@ -28,6 +28,8 @@ import { buildProjectSourceOpenRoute } from '../activation/projectOpenRoute';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { useProjectSource } from '../sources/useProjectSources';
 import { createDeploymentActions } from './deploymentActions';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { DeploymentPreparationResult } from './DeploymentPreparationResult';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 
@@ -58,10 +60,23 @@ function PreparationProposal() {
 
 /** Prepare and Import share the registered Action; neither depends on an investigation record. */
 export function DeploymentPreparationEntry(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode }>) {
+    const [handoff, setHandoff] = React.useState<(DeploymentPreparationContext & Readonly<{
+        mode: PreparationMode; session: SessionAddress;
+    }>) | null>(null);
+    // A returned Session belongs to the captured Entry, including while its modal
+    // settles after the person has opened another Source or Account.
+    const session = handoff && handoff.lifetime === props.lifetime
+        && handoff.projectSourceId === props.projectSourceId && handoff.mode === props.mode
+        && handoff.environmentId === props.environmentId && props.lifetime.isCurrent()
+        ? handoff.session : null;
     const title = t(`projects.deployments.preparation.${props.mode}`);
-    return <SectionActionButton testID={`project-deployments.${props.mode}.open`} title={title} icon="sparkle"
-        onPress={() => showDeploymentSheet({ component: DeploymentPreparationSheet, props,
-            title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false })} />;
+    return <>
+        <SectionActionButton testID={`project-deployments.${props.mode}.open`} title={title} icon="sparkle"
+            onPress={() => showDeploymentSheet({ component: DeploymentPreparationSheet,
+                props: { ...props, onSessionAvailable: session => setHandoff({ ...props, session }) },
+                title, testID: `project-deployments.${props.mode}.dialog`, closeOnBackdrop: false })} />
+        {session ? <DeploymentPreparationResult session={session} accountId={props.lifetime.scope.accountId} /> : null}
+    </>;
 }
 
 function failureCode(error: unknown): string {
@@ -69,7 +84,8 @@ function failureCode(error: unknown): string {
 }
 
 /** Opened only on the person's gesture: Source and Account rows retain their existing readers. */
-function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode }> & CustomModalInjectedProps) {
+function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readonly<{ mode: PreparationMode;
+    onSessionAvailable(session: SessionAddress): void }> & CustomModalInjectedProps) {
     const { lifetime, projectSourceId } = props;
     const sourceRead = useProjectSource(lifetime, projectSourceId);
     const source = sourceRead.source?.source ?? null;
@@ -113,7 +129,7 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
     const navigateToProjectOpen = useNavigateToProjectOpen();
     const title = t(`projects.deployments.preparation.${props.mode}`);
     const openSession = (session: NonNullable<NonNullable<typeof partial>['sessionRef']>) => {
-        props.onClose(); router.push(buildScopedSessionRouteHref(session));
+        props.onSessionAvailable(session); props.onClose(); router.push(buildScopedSessionRouteHref(session));
     };
     const confirm = async () => {
         if (!chosen || !source || !repository || busy) return;
@@ -130,7 +146,10 @@ function DeploymentPreparationSheet(props: DeploymentPreparationContext & Readon
                 ...(props.mode === 'import' ? { importFrom: { tool, configurationPaths } } : {}) });
             const result = await createDeploymentActions(lifetime, projectSourceId).prepare(input, chosen.machineId);
             if (result.kind === 'handedOff') openSession(result.sessionRef);
-            else if (result.kind === 'partial') { setPartial(result); setRefused(result.reason); }
+            else if (result.kind === 'partial') {
+                if (result.sessionRef) props.onSessionAvailable(result.sessionRef);
+                setPartial(result); setRefused(result.reason);
+            }
             else setRefused(result.reason);
         } catch (error) { setRefused(failureCode(error)); }
         finally { setBusy(false); }

@@ -39,7 +39,7 @@ async function fixture() {
   router.resetParams(); router.spies.push.mockClear();
   const serverId = await homes.addHome({ name: 'Preparation', serverUrl: 'https://preparation-entry.test',
     accountId: 'owner', serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
-  const source = { id: 'project', revision: 3, name: 'App', audience: [], createdByAccountId: 'owner',
+  const source = { id: 'project', revision: 3, name: 'App', defaultRef: 'preparation-ready-branch', audience: [], createdByAccountId: 'owner',
     repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
       repository: { nameWithOwner: 'owner/app', visibility: 'private' }, protocol: 'https' } };
   homes.answer(serverId, '/v1/projects/sources/project', { body: { ok: true, source, canManage: true } });
@@ -70,6 +70,83 @@ afterEach(async () => {
 });
 
 describe('deployment preparation entry', () => {
+  it.each([false, true])('prepares from the repository creation draft before creating an Environment (phone=%s)', async phone => {
+    const { serverId, account } = await fixture();
+    const { DeploymentEnvironmentDraft } = await import('./DeploymentEnvironmentDraft');
+    const sessionRef = { serverId, sessionId: 'draft-prepare-session' };
+    let received: unknown;
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'workspace-machine',
+      actionId: 'deployments.prepare', tokenEpoch: 0, execute(raw) {
+        received = DeploymentPrepareInputV1Schema.parse(raw);
+        return { kind: 'handedOff', sessionRef };
+      } });
+    const screen = await renderAccountScreen(<ModalProvider><DeploymentEnvironmentDraft lifetime={account.accountLifetime}
+      sourceId="project" phone={phone} actions={null} onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} /></ModalProvider>);
+    try {
+      await waitForTestEvent(screen.subscribe, () => {
+        expect(screen.getTextContent()).toContain('preparation-ready-branch');
+      });
+      expect(screen.findByTestId('project-deployments.prepare.open')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.import.open')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.prepare.open');
+      await waitReady(screen);
+      await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await waitForTestEvent(screen.subscribe, () => {
+        expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
+      });
+      expect(received).toMatchObject({ projectSourceId: 'project', sourceRevision: 3,
+        baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'checkout' } });
+      expect(received).not.toHaveProperty('environmentId');
+      expect(homes.artifacts(serverId).list()).toEqual([]);
+    } finally { await screen.unmount(); account.dispose(); }
+  });
+
+  it.each(['source', 'account'] as const)('withdraws the retained handoff when its %s context changes', async replacement => {
+    const { serverId, account } = await fixture();
+    const { DeploymentPreparationEntry } = await import('./DeploymentPreparation');
+    type EntryContext = React.ComponentProps<typeof DeploymentPreparationEntry>;
+    const initial = { lifetime: account.accountLifetime, projectSourceId: 'project', mode: 'prepare' } satisfies EntryContext;
+    const control: { replace(context: EntryContext): void; mount: object | null } = {
+      replace() { throw new Error('Entry harness is not mounted'); }, mount: null,
+    };
+    function Harness() {
+      const [context, setContext] = React.useState<EntryContext>(initial);
+      const mount = React.useRef({});
+      control.replace = setContext; control.mount = mount.current;
+      return <ModalProvider><DeploymentPreparationEntry {...context} /></ModalProvider>;
+    }
+    const sessionRef = { serverId, sessionId: 'prepare-context-session' };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'workspace-machine',
+      actionId: 'deployments.prepare', tokenEpoch: 0, execute() { return { kind: 'handedOff', sessionRef }; } });
+    let replacementAccount: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
+    const screen = await renderAccountScreen(<Harness />);
+    try {
+      const originalMount = control.mount;
+      await screen.pressByTestIdAsync('project-deployments.prepare.open');
+      await waitReady(screen);
+      await screen.pressByTestIdAsync('project-deployments.prepare.confirm');
+      await waitForTestEvent(screen.subscribe, () => {
+        expect(router.spies.push).toHaveBeenCalledWith(buildScopedSessionRouteHref(sessionRef));
+      });
+      expect(screen.findByTestId('project-deployments.prepare.result.session')).not.toBeNull();
+      let next: EntryContext = { ...initial, projectSourceId: 'another-project' };
+      if (replacement === 'account') {
+        const replacementServerId = await homes.addHome({ name: 'Replacement', serverUrl: 'https://replacement-preparation.test',
+          accountId: 'replacement-owner', currentAccount: true });
+        replacementAccount = await captureLazyActionAccountContext(replacementServerId);
+        next = { ...initial, lifetime: replacementAccount.accountLifetime };
+      }
+      const committedResultPresence: boolean[] = [];
+      const stop = screen.subscribe(() => {
+        committedResultPresence.push(screen.findByTestId('project-deployments.prepare.result.session') !== null);
+      });
+      try { await act(async () => { control.replace(next); }); } finally { stop(); }
+      expect(control.mount, 'the same Entry harness must remain mounted').toBe(originalMount);
+      expect(committedResultPresence).not.toContain(true);
+      expect(screen.findByTestId('project-deployments.prepare.result.session')).toBeNull();
+    } finally { await screen.unmount(); replacementAccount?.dispose(); account.dispose(); }
+  });
+
   it('offers repository preparation without a configured investigation and opens the workspace choice', async () => {
     const {serverId, account} = await fixture();
     try {
