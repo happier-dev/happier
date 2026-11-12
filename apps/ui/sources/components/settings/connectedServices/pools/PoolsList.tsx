@@ -25,6 +25,7 @@ import { ConnectedServiceCapacityAvatar, CONNECTED_SERVICE_GAUGE_BOX } from '../
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveAccountCapacityView,
+    type AccountCapacityView,
     type CapacityRingDatum,
 } from '../account/accountBlockModel';
 import {
@@ -90,7 +91,9 @@ function usePoolsScreenIsFocused(): boolean {
     return typeof useIsFocused === 'function' ? useIsFocused() : true;
 }
 
-export type SnapshotGauge = Readonly<{ capacityPct: number | null; rings: CapacityRingDatum[] }>;
+export type SnapshotGauge = AccountCapacityView;
+
+const EMPTY_SNAPSHOT_GAUGE: SnapshotGauge = Object.freeze({ capacityPct: null, rings: [], credits: null, creditsOnly: false });
 
 /**
  * Project account capacity ONCE from a snapshot and return both the overall
@@ -101,7 +104,7 @@ export type SnapshotGauge = Readonly<{ capacityPct: number | null; rings: Capaci
 function deriveSnapshotGauge(
     snapshot: ReturnType<typeof useConnectedServiceQuotaSnapshot>['snapshot'],
 ): SnapshotGauge {
-    if (!snapshot) return { capacityPct: null, rings: [] };
+    if (!snapshot) return EMPTY_SNAPSHOT_GAUGE;
     return resolveAccountCapacityView(snapshot.meters, snapshot.fetchedAt, NOOP_GAUGE_LABEL_FORMATTER);
 }
 
@@ -109,6 +112,8 @@ export type PoolMemberResolution = Readonly<{
     health: AccountHealth;
     capacityPct: number | null;
     rings: CapacityRingDatum[];
+    /** Included limits spent, provider credits still serving the member. */
+    creditsOnly: boolean;
 }>;
 
 /** Stable structural key for a ring set (order-sensitive); used for render-loop dedup. */
@@ -149,6 +154,7 @@ const PoolMemberProbe = React.memo(function PoolMemberProbe(props: Readonly<{
     const health = deriveAccountHealth({
         status: memberHealthStatus,
         capacityPct,
+        creditsAvailable: gauge.credits?.available === true,
         isStale,
     });
 
@@ -156,10 +162,11 @@ const PoolMemberProbe = React.memo(function PoolMemberProbe(props: Readonly<{
     // an unchanged ring set never re-fires the report effect (render-loop safety).
     const ringsKey = ringsKeyOf(rings);
     const profileId = member.profileId;
+    const creditsOnly = gauge.creditsOnly;
     React.useEffect(() => {
-        onResolve(profileId, { health, capacityPct, rings });
+        onResolve(profileId, { health, capacityPct, rings, creditsOnly });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- `ringsKey` stands in for the fresh `rings` array.
-    }, [onResolve, profileId, health, capacityPct, ringsKey]);
+    }, [onResolve, profileId, health, capacityPct, ringsKey, creditsOnly]);
 
     return null;
 });
@@ -187,6 +194,7 @@ const PoolRow = React.memo(function PoolRow(props: Readonly<{
                 existing
                 && existing.health === resolution.health
                 && existing.capacityPct === resolution.capacityPct
+                && existing.creditsOnly === resolution.creditsOnly
                 && ringsKeyOf(existing.rings) === ringsKeyOf(resolution.rings)
             ) {
                 return prev;
@@ -206,6 +214,9 @@ const PoolRow = React.memo(function PoolRow(props: Readonly<{
     const activeCapacityPct = group.activeProfileId
         ? resolutions[group.activeProfileId]?.capacityPct ?? null
         : null;
+    const activeCreditsOnly = group.activeProfileId
+        ? resolutions[group.activeProfileId]?.creditsOnly === true
+        : false;
 
     const activeTitle = group.activeProfileId
         ? resolveConnectedServiceGroupProfileTitle({
@@ -284,6 +295,14 @@ const PoolRow = React.memo(function PoolRow(props: Readonly<{
                 </Text>
                 <Text style={styles.metaSeparator}> · </Text>
                 <Text testID={`${rowTestId}:strategy`} style={styles.meta}>{strategyLabel}</Text>
+                {activeCreditsOnly ? (
+                    <>
+                        <Text style={styles.metaSeparator}> · </Text>
+                        <Text testID={`${rowTestId}:credits-only`} style={styles.meta}>
+                            {t('connectedServices.account.credits.includedUsed')}
+                        </Text>
+                    </>
+                ) : null}
             </View>
             {props.quotaProbesActive
                 ? group.members.map((member) => (

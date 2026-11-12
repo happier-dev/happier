@@ -9,6 +9,7 @@ import {
     resolveAccountUsageRows,
     resolveAccountCapacityRings,
     resolveAccountCapacityView,
+    resolveResetLimitLabels,
 } from './accountBlockModel';
 
 function meterRow(overrides: Partial<ConnectedServiceQuotaGaugeMeterRow>): ConnectedServiceQuotaGaugeMeterRow {
@@ -24,6 +25,16 @@ function meterRow(overrides: Partial<ConnectedServiceQuotaGaugeMeterRow>): Conne
         resetLabel: null,
         tone: 'neutral',
         ...overrides,
+    };
+}
+
+function NOOP_FORMATTER(base: ConnectedServiceQuotaGaugeLabelFormatter): ConnectedServiceQuotaGaugeLabelFormatter {
+    const empty = () => '';
+    return {
+        ...base, unavailable: empty, remaining: empty, remainingWithReset: empty, used: empty,
+        durationNow: empty, durationOutdated: empty, durationDaysHours: empty, durationHoursMinutes: empty,
+        durationHours: empty, durationMinutes: empty, subscriptionEnds: empty, subscriptionEndsInDays: empty,
+        subscriptionRenews: empty, subscriptionRenewsInDays: empty,
     };
 }
 
@@ -43,6 +54,20 @@ describe('accountBlockModel', () => {
         ], 2_000, formatter);
         expect(capacity.capacityPct).toBe(18);
         expect(capacity.rings).toEqual([{ ratio: 0.18, tone: 'warning' }]);
+    });
+    it('keeps provider credits out of capacity and reports a spent account as credits-only', () => {
+        const formatter = {} as ConnectedServiceQuotaGaugeLabelFormatter;
+        const weekly = { meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown' as const, utilizationPct: 100, resetsAt: null, status: 'ok' as const, details: {} };
+        const credits = (remaining: number) => ({
+            meterId: 'credits', label: 'Credits', used: null, limit: null, remaining, unit: 'credits' as const,
+            utilizationPct: null, resetsAt: null, isExhausted: remaining <= 0, status: 'ok' as const, details: {},
+        });
+        const withCredits = resolveAccountCapacityView([weekly, credits(16_845)], 2_000, NOOP_FORMATTER(formatter));
+        expect(withCredits).toMatchObject({ capacityPct: 0, credits: { available: true, balance: 16_845 }, creditsOnly: true });
+        expect(resolveAccountCapacityView([weekly, credits(0)], 2_000, NOOP_FORMATTER(formatter)))
+            .toMatchObject({ capacityPct: 0, credits: { available: false, balance: 0 }, creditsOnly: false });
+        expect(resolveAccountCapacityView([weekly], 2_000, NOOP_FORMATTER(formatter)))
+            .toMatchObject({ capacityPct: 0, credits: null, creditsOnly: false });
     });
     describe('resolveAccountUsageRows', () => {
         it('preserves unknown percentages in details without inventing a capacity ring', () => {
@@ -104,5 +129,25 @@ describe('accountBlockModel', () => {
             expect(resolveAccountHealthDotColor(lightTheme, 'attention')).toBe(lightTheme.colors.state.warning.foreground);
             expect(resolveAccountHealthDotColor(lightTheme, 'healthy')).toBe(lightTheme.colors.state.success.foreground);
         });
+    });
+});
+
+describe('resolveResetLimitLabels', () => {
+    const familyLabels = { fiveHour: '5-hour limit', weekly: 'Weekly limit' };
+    const meter = (meterId: string, label: string, providerLimitId?: string) => ({
+        meterId, label, used: null, limit: null, unit: 'unknown' as const, utilizationPct: 0, resetsAt: null,
+        status: 'ok' as const, details: {}, ...(providerLimitId ? { providerLimitId } : {}),
+    });
+
+    it('names cleared limits in the USAGE vocabulary and lists each limit once', () => {
+        expect(resolveResetLimitLabels(
+            ['five_hour', 'seven_day', 'seven_day_fable', 'spend_cap', 'five_hour'],
+            [meter('seven_day_fable', 'Weekly (Fable)'), meter('spend', 'Spend', 'spend_cap')],
+            familyLabels,
+        )).toEqual(['5-hour limit', 'Weekly limit', 'Weekly (Fable)', 'Spend']);
+    });
+
+    it('keeps an unrecognized provider limit id visible rather than dropping it', () => {
+        expect(resolveResetLimitLabels(['provider-special'], [], familyLabels)).toEqual(['provider-special']);
     });
 });

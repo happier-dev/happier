@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  mapClaudeRateLimitEventToQuotaEvidence,
   mapClaudeRateLimitEventToUsageDetails,
   mapClaudeProviderFailureToUsageDetails,
   mapClaudeStopFailureHookToUsageDetails,
@@ -456,5 +457,29 @@ describe('mapClaudeRateLimitEventToUsageDetails', () => {
       action: null,
       connectedService: null,
     });
+  });
+});
+
+describe('Claude extra usage on passive rate-limit events', () => {
+  it('carries the overage status onto every observed window', () => {
+    const windows = mapClaudeRateLimitEventToQuotaEvidence({
+      type: 'rate_limit_event',
+      rate_limit_info: {
+        status: 'allowed',
+        isUsingOverage: true,
+        overageStatus: 'allowed',
+        overageResetsAt: 1_779_500_000,
+        unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1_779_000_000 }, seven_day: { utilization: 0.4 } },
+      },
+    });
+    expect(windows).toHaveLength(2);
+    expect(windows.every((window) => window.overage?.status === 'allowed')).toBe(true);
+  });
+
+  it('keeps windows without overage facts unchanged', () => {
+    expect(mapClaudeRateLimitEventToQuotaEvidence({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.5 } } },
+    })).toEqual([expect.objectContaining({ providerLimitId: 'five_hour', overage: null })]);
   });
 });

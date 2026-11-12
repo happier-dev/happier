@@ -36,7 +36,9 @@ export {
 } from './slashCommands.js';
 export {
   normalizeClaudeOauthProfileEntitlement,
+  formatClaudeOauthPlanLabel,
   readClaudeOauthCredentialMetadata,
+  readClaudeOauthProfileSubscriptionStatus,
   readClaudeOauthCredentialOrganizationId,
   type ClaudeOauthCredentialMetadata,
   type ClaudeOauthEntitlementMetadata,

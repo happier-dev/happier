@@ -51,7 +51,9 @@ export function parseClaudeQuotaResets(payload: unknown, now: number): Readonly<
       const grantedAtMs = timestamp(raw.starts_at);
       const expiresAtMs = timestamp(raw.ends_at);
       const expired = expiresAtMs !== null && expiresAtMs <= now;
-      const available = cedar.eligible && cedar.next_grant_id === raw.id && raw.usable_now === true
+      // next_grant_id is the provider's default suggestion, not an exclusive selection: Claude Code
+      // 2.1.319 offers every grant whose own usable_now is true (verified against a November 2026 read).
+      const available = cedar.eligible && raw.usable_now === true
         && raw.paused !== true && remaining > 0 && !expired
         && (grantedAtMs === null || grantedAtMs <= now) && (cooldownUntil === null || cooldownUntil <= now);
       if (available) availableCount += remaining;
@@ -60,7 +62,7 @@ export function parseClaudeQuotaResets(payload: unknown, now: number): Readonly<
           : !cedar.eligible ? 'ineligible' : raw.paused === true ? 'paused'
             : cooldownUntil !== null && cooldownUntil > now ? 'cooldown'
               : grantedAtMs !== null && grantedAtMs > now ? 'not_started'
-                : cedar.next_grant_id !== raw.id ? 'not_selected' : 'provider_unavailable' }) };
+                : 'provider_unavailable' }) };
       credits.push({ providerCreditId: raw.id, kind: 'quota_reset', providerResetType: 'cedar_ember',
         status: expired ? 'expired' : remaining === 0 ? 'redeemed' : available ? 'available' : 'unknown',
         title: typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : null,

@@ -301,6 +301,39 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
     }
   });
 
+  it('records Claude extra usage that keeps serving a spent window as provider credit evidence', async () => {
+    const previousSelectionEnv = installClaudeSelectionEnv();
+    try {
+      await recordClaudeRateLimitQuotaEvidence({
+        client: { sessionId: 'sess_claude_overage_quota', sessionTurnLifecycle: { failTurn: createClaudeFailTurnSpy() } },
+      } as any, [{
+        v: 1,
+        resetAtMs: null,
+        retryAfterMs: null,
+        quotaScope: 'account',
+        recoverability: 'wait',
+        providerLimitId: 'seven_day',
+        planType: null,
+        utilization: 100,
+        overage: { status: 'allowed', resetAtMs: 1_779_500_000_000 },
+        action: null,
+        connectedService: null,
+      }], '[claude-test]');
+
+      expect(mockNotifyDaemonConnectedServiceQuotaSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'sess_claude_overage_quota',
+        snapshot: expect.objectContaining({
+          meters: [
+            expect.objectContaining({ meterId: 'seven_day', remainingPct: 0, resetAtMs: null }),
+            expect.objectContaining({ meterId: 'extra_usage', unit: 'credits', isExhausted: false, status: 'ok' }),
+          ],
+        }),
+      }));
+    } finally {
+      restoreClaudeSelectionEnv(previousSelectionEnv);
+    }
+  });
+
   it('records every passive Claude quota window as a labelled meter of one snapshot', async () => {
     const previousSelectionEnv = installClaudeSelectionEnv();
     const passiveWindow = {

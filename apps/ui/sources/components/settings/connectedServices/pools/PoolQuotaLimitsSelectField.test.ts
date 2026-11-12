@@ -74,4 +74,17 @@ describe('buildPoolQuotaLimitCandidates', () => {
         expect(session?.subtitle).not.toContain('1 window');
         expect(session?.subtitle).toContain('1 of 1 enabled account');
     });
+
+    it('does not offer provider credits as a selectable allowance', () => {
+        const snapshot = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1, staleAfterMs: 60_000,
+            planLabel: null, accountLabel: null,
+            meters: [
+                { meterId: 'weekly', label: 'Weekly', used: null, limit: null, unit: 'unknown', utilizationPct: 100, resetsAt: null, status: 'ok' },
+                { meterId: 'credits', label: 'Credits', used: null, limit: null, remaining: 10, unit: 'credits', utilizationPct: null, resetsAt: null, status: 'ok' },
+            ],
+        });
+
+        expect(buildPoolQuotaLimitCandidates({ snapshots: [snapshot] }).map((candidate) => candidate.id)).toEqual(['weekly']);
+    });
 });

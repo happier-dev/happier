@@ -33,6 +33,7 @@ import {
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 import type { ConnectedServiceCredentialRefreshResult } from './refresh/ConnectedServiceRefreshCoordinator';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { isConnectedServiceAuthGroupQuotaSnapshotExhausted } from './accountGroups/quotas/quotaUsability';
 import type { RuntimeAccountIdentitySelectionInput } from './quotas/identity/runtimeAccountIdentityTypes';
 import { selectConnectedServiceAuthGroupCandidate } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './accountGroups/selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
@@ -444,9 +445,9 @@ function isActiveGroupProfileUsageExhausted(
   const activeState = state.activeProfileId
     ? state.memberStatesByProfileId.get(state.activeProfileId) ?? null
     : null;
-  const activeRemaining = activeState?.quotaSnapshot?.effectiveRemainingPercent;
-  return activeState?.quotaSnapshot?.exhausted === true
-    || (typeof activeRemaining === 'number' && Number.isFinite(activeRemaining) && activeRemaining <= 0)
+  // Quota evidence goes through the canonical usability owner, so an account still served by
+  // provider credits is not treated as a hard limit; recorded provider limit failures stay authoritative.
+  return (activeState?.quotaSnapshot ? isConnectedServiceAuthGroupQuotaSnapshotExhausted(activeState.quotaSnapshot) : false)
     || (typeof activeState?.quotaExhaustedUntilMs === 'number' && activeState.quotaExhaustedUntilMs > nowMs)
     || (typeof activeState?.rateLimitedUntilMs === 'number' && activeState.rateLimitedUntilMs > nowMs);
 }

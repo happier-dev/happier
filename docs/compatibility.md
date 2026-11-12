@@ -591,6 +591,16 @@ it for presentation and expiry-first ranking; absence preserves eligibility sema
 readers safely ignore it. Pool-selected usage projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
 
+Provider credits (Codex `credits`, Claude `extra_usage` or an in-band Claude
+`overageStatus`) travel as an ordinary quota meter with `unit: 'credits'` and no
+`details.limitCategory`; Codex adds the balance as `remaining` and the provider
+verdict as `isExhausted`. No wire field or enum value is added, so released readers
+parse it unchanged and treat it as one more meter. Updated readers classify it with
+the protocol `isConnectedServiceQuotaCreditMeter` owner: it is never an included
+allowance, every pool `quotaLimitSelection` keeps it, and an account whose included
+usage allowances are spent stays usable (ranked after accounts with included quota)
+while it has credit headroom. A provider usage-limit error remains authoritative.
+
 Provider rejection codes (for example Claude's `rate_limit`) are not allowance
 IDs. When the provider does not identify the exhausted allowance, recovery keeps
 that identity unknown and uses the existing account-level recovery policy; only

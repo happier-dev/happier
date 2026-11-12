@@ -13,6 +13,13 @@ import {
   resolveConnectedServiceAuthGroupSnapshotEligibilityBlocker,
   type ConnectedServiceAuthGroupPositiveEvidence,
 } from '../memberRuntimeState';
+import {
+  isConnectedServiceAuthGroupMeterExhausted as meterIsExhausted,
+  isConnectedServiceAuthGroupQuotaSnapshotExhausted as isQuotaExhausted,
+  isConnectedServiceAuthGroupRateLimitMeter as isRateLimitMeter,
+  isConnectedServiceAuthGroupUsageMeter as isQuotaMeter,
+  resolveConnectedServiceAuthGroupQuotaUsability,
+} from '../quotas/quotaUsability';
 
 export {
   reconcileMemberRuntimeStateWithFreshQuotaEvidence,
@@ -55,6 +62,8 @@ export type ConnectedServiceAuthGroupQuotaSnapshot = Readonly<{
   meters?: ReadonlyArray<ConnectedServiceAuthGroupQuotaMeterSnapshot>;
   exhausted?: boolean;
   planUnavailable?: boolean;
+  /** Provider credit headroom (Codex credits, Claude extra usage); absent when the account reports none. */
+  creditsAvailable?: boolean;
 }>;
 
 export type ConnectedServiceAuthGroupMemberRuntimeState = Readonly<{
@@ -82,6 +91,8 @@ export type ConnectedServiceAuthGroupMemberRuntimeState = Readonly<{
 export type ConnectedServiceAuthGroupCandidate = ConnectedServiceAuthGroupMember & Readonly<{
   leastLimitedScore: number | null;
   preferenceDeadlineMs?: number | null;
+  /** Usable only through provider credits; ranked after every candidate with included quota left. */
+  creditsOnly?: boolean;
 }>;
 
 export type ConnectedServiceAuthGroupCandidateSelection = Readonly<{
@@ -107,6 +118,7 @@ export type ConnectedServiceAuthGroupCandidateDecisionTraceEntry = Readonly<{
     remainingPercent?: number | null;
     capturedAtMs?: number;
     exhausted?: boolean;
+    creditsOnly?: boolean;
   }>;
 }>;
 
@@ -262,49 +274,6 @@ function isQuotaSnapshotWithinFreshnessWindow(
   });
 }
 
-function meterHasRemainingQuota(meter: ConnectedServiceAuthGroupQuotaMeterSnapshot): boolean {
-  const remaining = numberOrNull(meter.remainingPct);
-  return remaining !== null && remaining > 0;
-}
-
-function meterIsExhausted(meter: ConnectedServiceAuthGroupQuotaMeterSnapshot): boolean {
-  const remaining = numberOrNull(meter.remainingPct);
-  return remaining !== null && remaining <= 0;
-}
-
-function isQuotaMeter(meter: ConnectedServiceAuthGroupQuotaMeterSnapshot): boolean {
-  return meter.limitCategory === 'usage_limit';
-}
-
-function isRateLimitMeter(meter: ConnectedServiceAuthGroupQuotaMeterSnapshot): boolean {
-  return meter.limitCategory === 'rate_limit';
-}
-
-function snapshotProvesQuotaUsable(snapshot: ConnectedServiceAuthGroupQuotaSnapshot): boolean {
-  if (snapshot.exhausted) return false;
-  const quotaMeters = (snapshot.meters ?? []).filter(isQuotaMeter);
-  if (quotaMeters.length > 0) return quotaMeters.every(meterHasRemainingQuota);
-  const remaining = numberOrNull(snapshot.effectiveRemainingPercent);
-  return remaining !== null && remaining > 0;
-}
-
-function snapshotProvesRateLimitUsable(snapshot: ConnectedServiceAuthGroupQuotaSnapshot): boolean {
-  const rateLimitMeters = (snapshot.meters ?? []).filter(isRateLimitMeter);
-  return rateLimitMeters.length > 0 && rateLimitMeters.every(meterHasRemainingQuota);
-}
-
-function isQuotaExhausted(snapshot: ConnectedServiceAuthGroupQuotaSnapshot): boolean {
-  if (snapshot.exhausted) return true;
-  if ((snapshot.meters ?? []).some((meter) => (
-    (isQuotaMeter(meter) || isRateLimitMeter(meter))
-    && meterIsExhausted(meter)
-  ))) {
-    return true;
-  }
-  const remaining = numberOrNull(snapshot.effectiveRemainingPercent);
-  return remaining !== null && remaining <= 0;
-}
-
 /** An elapsed allowance is unknown, never positive recovery proof. No reset means
  * the observed exhaustion still applies; age alone cannot invent replenishment. */
 function ageElapsedExhaustedAllowances(
@@ -323,12 +292,22 @@ function ageElapsedExhaustedAllowances(
 }
 
 /** A reset is a quota remedy, not a fallback for every reason a pool cannot select. */
+/** A selection that can serve work from included quota; a credits-only pick is only the paid fallback. */
+export function hasConnectedServiceAuthGroupIncludedQuotaSelection(selection: ConnectedServiceAuthGroupCandidateSelection): boolean {
+  return selection.selected !== null && selection.selected.creditsOnly !== true;
+}
+
 export function resolveConnectedServiceAuthGroupQuotaResetCandidates(
   params: Parameters<typeof selectConnectedServiceAuthGroupCandidate>[0],
 ): ReadonlyArray<ConnectedServiceAuthGroupMember & Readonly<{ providerLimitIds: ReadonlyArray<string> }>> {
   const selection = selectConnectedServiceAuthGroupCandidate({ ...params, allowCurrentProfileRetry: true });
-  if (selection.selected || selection.reason === 'manual_strategy') return [];
-  const resettable = new Set<string>();
+  if (hasConnectedServiceAuthGroupIncludedQuotaSelection(selection) || selection.reason === 'manual_strategy') return [];
+  // Paid credits are the last tier: a banked free reset on a spent account outranks them, so
+  // credits-only candidates stay resettable alongside the quota-exhausted members.
+  const resettable = new Set<string>(selection.decisionTrace.candidates
+    .filter((entry) => entry.decision !== 'excluded' && entry.quotaEvidence.creditsOnly === true
+      && isFreshQuotaSnapshot(params.memberStatesByProfileId.get(entry.profileId)?.quotaSnapshot, params.nowMs, params.quotaFreshnessMs))
+    .map((entry) => entry.profileId));
   for (const excluded of selection.excluded) {
     if (excluded.reason === 'disabled' || excluded.reason === 'auth_invalid' || excluded.reason === 'plan_unavailable') continue;
     if (excluded.reason !== 'quota_exhausted') return [];
@@ -371,11 +350,13 @@ function buildCandidateQuotaEvidenceTrace(snapshot: ConnectedServiceAuthGroupQuo
   if (!snapshot) {
     return { status: 'stale_or_missing' };
   }
+  const usability = resolveConnectedServiceAuthGroupQuotaUsability(snapshot);
   return {
     status: fresh ? 'fresh' : 'last_known',
     remainingPercent: resolveLeastLimitedScore(snapshot),
     capturedAtMs: snapshot.capturedAtMs,
-    exhausted: isQuotaExhausted(snapshot),
+    exhausted: usability === 'exhausted',
+    ...(usability === 'credits_only' ? { creditsOnly: true } : {}),
   };
 }
 
@@ -857,6 +838,8 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     const candidate: ConnectedServiceAuthGroupCandidate = {
       ...member,
       leastLimitedScore: resolveLeastLimitedScore(quotaSnapshot),
+      ...(quotaSnapshot && resolveConnectedServiceAuthGroupQuotaUsability(quotaSnapshot) === 'credits_only'
+        ? { creditsOnly: true } : {}),
       ...(params.policy.strategy === 'expiry_first' ? {
         preferenceDeadlineMs: resolvePreferenceDeadline(quotaSnapshot, state?.subscription, params.nowMs),
       } : {}),
@@ -907,6 +890,8 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   } else {
     candidates.sort(comparePriority);
   }
+  // Credits are the fallback for every strategy: a stable partition keeps each tier's strategy order.
+  candidates.sort((left, right) => Number(left.creditsOnly === true) - Number(right.creditsOnly === true));
 
   const primaryRestorePreferred = resolvePrimaryRestorePreferredCandidate({
     members: params.members,

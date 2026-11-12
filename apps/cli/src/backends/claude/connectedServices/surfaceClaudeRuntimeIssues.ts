@@ -423,7 +423,8 @@ function buildClaudeRuntimeQuotaMeter(
     source: ClaudeQuotaSnapshotSource,
 ): ConnectedServiceQuotaSnapshotV1['meters'][number] {
     const providerLimitId = resolveClaudeQuotaProviderLimitId(details);
-    const resetAtMs = details.resetAtMs ?? details.overage?.resetAtMs ?? null;
+    // Only a rejected limit borrows the overage reset; a passive window's reset is its own.
+    const resetAtMs = details.resetAtMs ?? (details.limitCategory ? details.overage?.resetAtMs ?? null : null);
     const utilizationPct = details.utilization;
     return {
         meterId: providerLimitId,
@@ -455,6 +456,32 @@ function buildClaudeRuntimeQuotaMeter(
 }
 
 /**
+ * Claude extra usage observed in-band: the same `extra_usage` credit meter the usage endpoint
+ * reports, so a spent window that extra usage keeps serving is not read as an exhausted account.
+ */
+function buildClaudeRuntimeExtraUsageMeter(
+    windows: readonly NormalizedProviderUsageLimitDetailsV1[],
+    source: ClaudeQuotaSnapshotSource,
+): ConnectedServiceQuotaSnapshotV1['meters'][number] | null {
+    const overage = windows.find((window) => window.overage && window.overage.status !== 'unknown')?.overage;
+    if (!overage) return null;
+    return {
+        meterId: 'extra_usage',
+        label: 'Extra usage',
+        used: null,
+        limit: null,
+        unit: 'credits',
+        utilizationPct: null,
+        resetsAt: overage.resetAtMs,
+        resetAtMs: overage.resetAtMs,
+        isExhausted: overage.status === 'rejected',
+        status: 'ok',
+        source,
+        details: {},
+    };
+}
+
+/**
  * One quota snapshot per provider observation. Every window observed together must be in the same
  * snapshot: the account-usage record it feeds is replaced wholesale, not merged per meter.
  */
@@ -470,6 +497,7 @@ function buildClaudeRuntimeQuotaSnapshot(params: Readonly<{
     const source = params.source ?? 'runtime_event';
     const evidenceKind = params.evidenceKind ?? 'claude_runtime_usage_limit';
     const exact = params.windows.every((window) => window.utilization !== null);
+    const extraUsageMeter = buildClaudeRuntimeExtraUsageMeter(params.windows, source);
     return {
         v: 1,
         serviceId: params.serviceId,
@@ -490,7 +518,10 @@ function buildClaudeRuntimeQuotaSnapshot(params: Readonly<{
             providerLimitId: resolveClaudeQuotaProviderLimitId(primaryWindow),
             observedAtMs: params.fetchedAt,
         },
-        meters: params.windows.map((window) => buildClaudeRuntimeQuotaMeter(window, source)),
+        meters: [
+            ...params.windows.map((window) => buildClaudeRuntimeQuotaMeter(window, source)),
+            ...(extraUsageMeter ? [extraUsageMeter] : []),
+        ],
     };
 }
 

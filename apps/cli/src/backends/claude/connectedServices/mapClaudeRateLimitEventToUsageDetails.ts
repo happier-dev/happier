@@ -570,6 +570,7 @@ function buildPassiveQuotaEvidence(input: Readonly<{
   providerLimitId: string | null;
   utilization: number;
   resetAtMs: number | null;
+  overage: NormalizedProviderUsageLimitDetailsV1['overage'];
 }>): NormalizedProviderUsageLimitDetailsV1 {
   return {
     v: 1,
@@ -580,9 +581,21 @@ function buildPassiveQuotaEvidence(input: Readonly<{
     ...(input.providerLimitId ? { providerLimitId: input.providerLimitId } : {}),
     planType: null,
     utilization: input.utilization,
-    overage: null,
+    overage: input.overage,
     action: null,
     connectedService: null,
+  };
+}
+
+/** Claude extra usage ("overage") facts the event reports; null when it reports none. */
+function readClaudeRateLimitOverage(info: Record<string, unknown>): NormalizedProviderUsageLimitDetailsV1['overage'] {
+  const overageStatusRaw = info.overageStatus ?? info.overage_status;
+  if (overageStatusRaw === undefined || overageStatusRaw === null) return null;
+  const disabledReason = readString(info.overageDisabledReason ?? info.overage_disabled_reason);
+  return {
+    status: normalizeOverageStatus(overageStatusRaw),
+    resetAtMs: readTimestampMs(info.overageResetsAt ?? info.overage_resets_at),
+    ...(disabledReason ? { disabledReason } : {}),
   };
 }
 
@@ -598,6 +611,7 @@ export function readClaudeRateLimitEventWindows(event: unknown): readonly Normal
   const info = isRecord(record.rate_limit_info) ? record.rate_limit_info : null;
   if (!info) return [];
 
+  const overage = readClaudeRateLimitOverage(info);
   const unifiedWindows = isRecord(info.unifiedWindows) ? info.unifiedWindows : {};
   const windowEvidence = Object.entries(unifiedWindows).flatMap(([windowId, window]) => {
     if (!isRecord(window)) return [];
@@ -607,6 +621,7 @@ export function readClaudeRateLimitEventWindows(event: unknown): readonly Normal
       providerLimitId: windowId,
       utilization,
       resetAtMs: readTimestampMs(window.resetsAt),
+      overage,
     })];
   });
   if (windowEvidence.length > 0) return windowEvidence;
@@ -617,6 +632,7 @@ export function readClaudeRateLimitEventWindows(event: unknown): readonly Normal
     providerLimitId: readString(info.rateLimitType ?? info.rate_limit_type),
     utilization,
     resetAtMs: readTimestampMs(info.resetsAt ?? info.resets_at),
+    overage,
   })];
 }
 

@@ -637,7 +637,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
 
   it('preemptively reports at_or_below_threshold when projected burn crosses the threshold before the next window', () => {
     const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    // A fast-burning active member: 60% -> 40% remaining across 30s (0.02%/ms burn).
+    // A sustained burn: 60% -> 30% remaining across the full 5-minute policy horizon.
     store.recordSnapshot({
       serviceId: 'claude-subscription',
       groupId: 'team-pool',
@@ -648,19 +648,22 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       serviceId: 'claude-subscription',
       groupId: 'team-pool',
       profileId: 'active',
-      snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt: 30_000, remainingPct: 40 }),
+      snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt: 300_000, remainingPct: 30 }),
     });
 
     const memberStatesByProfileId = store.buildMemberStates({
       serviceId: 'claude-subscription',
       groupId: 'team-pool',
-      capturedAtMs: 30_000,
+      capturedAtMs: 300_000,
     });
-    const burn = store.getRecentBurn({ serviceId: 'claude-subscription', groupId: 'team-pool', profileId: 'active' });
+    const burn = store.getRecentBurn({
+      serviceId: 'claude-subscription', groupId: 'team-pool', profileId: 'active',
+      minObservationDurationMs: 300_000,
+    });
     expect(burn).not.toBeNull();
-    expect(burn?.remainingPercentPerMs).toBeCloseTo(20 / 30_000, 10);
+    expect(burn?.remainingPercentPerMs).toBeCloseTo(30 / 300_000, 10);
 
-    // Current remaining (40%) is above the 15% threshold, but a 300s projection at this burn rate
+    // Current remaining (30%) is above the 15% threshold, but a 300s projection at this burn rate
     // crosses it -> preemptive soft-switch should fire before the hard limit.
     const projected = resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
       activeProfileId: 'active',
@@ -670,13 +673,13 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
         probeIfSnapshotOlderThanMs: 300_000,
       },
       memberStatesByProfileId,
-      nowMs: 30_000,
+      nowMs: 300_000,
       quotaFreshnessMs: 300_000,
       burnProjection: burn ? { remainingPercentPerMs: burn.remainingPercentPerMs, horizonMs: 300_000 } : null,
     });
     expect(projected).toMatchObject({
       status: 'at_or_below_threshold',
-      remainingPercent: 40,
+      remainingPercent: 30,
       thresholdPercent: 15,
       projected: true,
     });
@@ -689,9 +692,42 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
         softSwitchRemainingPercent: 15,
       },
       memberStatesByProfileId,
-      nowMs: 30_000,
+      nowMs: 300_000,
       quotaFreshnessMs: 300_000,
-    })).toMatchObject({ status: 'above_threshold', remainingPercent: 40 });
+    })).toMatchObject({ status: 'above_threshold', remainingPercent: 30 });
+  });
+
+  it('keeps a horizon baseline across flat integer readings while projecting a genuine burn', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const binding = { serviceId: 'claude-subscription', groupId: 'team-pool', profileId: 'active' } as const;
+    for (const [fetchedAt, remainingPct] of [
+      [0, 60], [30_000, 60], [60_000, 54], [90_000, 54], [120_000, 48],
+      [150_000, 48], [180_000, 42], [210_000, 42], [240_000, 36], [270_000, 36], [300_000, 30],
+    ] as const) {
+      store.recordSnapshot({
+        ...binding,
+        snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt, remainingPct }),
+      });
+    }
+
+    const burn = store.getRecentBurn({ ...binding, minObservationDurationMs: 300_000 });
+    expect(burn).toMatchObject({
+      remainingPercentPerMs: 30 / 300_000,
+      observedAtMs: 300_000,
+      remainingPercent: 30,
+    });
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        softSwitchRemainingPercent: 15,
+        probeIfSnapshotOlderThanMs: 300_000,
+      },
+      memberStatesByProfileId: store.buildMemberStates({ ...binding, capturedAtMs: 300_000 }),
+      nowMs: 300_000,
+      quotaFreshnessMs: 300_000,
+      burnProjection: burn ? { remainingPercentPerMs: burn.remainingPercentPerMs, horizonMs: 300_000 } : null,
+    })).toMatchObject({ status: 'at_or_below_threshold', remainingPercent: 30, projected: true });
   });
 
   it('keeps stale low source evidence actionable only until its known quota reset boundary', () => {
@@ -798,6 +834,47 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       quotaFreshnessMs: 300_000,
       burnProjection: burn ? { remainingPercentPerMs: burn.remainingPercentPerMs, horizonMs: 300_000 } : null,
     })).toMatchObject({ status: 'above_threshold', remainingPercent: 58 });
+  });
+
+  it('does not project a short-lived integer burn across the policy horizon', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const binding = { serviceId: 'claude-subscription', groupId: 'team-pool', profileId: 'active' } as const;
+    store.recordSnapshot({
+      ...binding,
+      snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt: 0, remainingPct: 50 }),
+    });
+    store.recordSnapshot({
+      ...binding,
+      snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt: 10_000, remainingPct: 49 }),
+    });
+
+    const burn = store.getRecentBurn({ ...binding, minObservationDurationMs: 300_000 });
+    expect(burn).toBeNull();
+    expect(resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        softSwitchRemainingPercent: 10,
+        probeIfSnapshotOlderThanMs: 300_000,
+      },
+      memberStatesByProfileId: store.buildMemberStates({ ...binding, capturedAtMs: 10_000 }),
+      nowMs: 10_000,
+      quotaFreshnessMs: 300_000,
+      burnProjection: burn ? { remainingPercentPerMs: burn.remainingPercentPerMs, horizonMs: 300_000 } : null,
+    })).toMatchObject({ status: 'above_threshold', remainingPercent: 49 });
+  });
+
+  it('clears the baseline after a replenishment before measuring a later burn', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const binding = { serviceId: 'claude-subscription', groupId: 'team-pool', profileId: 'active' } as const;
+    for (const [fetchedAt, remainingPct] of [[0, 80], [300_000, 40], [310_000, 90], [500_000, 70]] as const) {
+      store.recordSnapshot({
+        ...binding,
+        snapshot: quotaSnapshotWithRemaining({ profileId: 'active', fetchedAt, remainingPct }),
+      });
+    }
+
+    expect(store.getRecentBurn({ ...binding, minObservationDurationMs: 300_000 })).toBeNull();
   });
 
   it('returns no burn when remaining is flat or increasing (a reset)', () => {

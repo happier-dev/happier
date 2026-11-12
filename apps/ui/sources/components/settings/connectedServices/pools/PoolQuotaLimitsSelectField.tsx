@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import {
+    isConnectedServiceQuotaCreditMeter,
     resolveConnectedServiceQuotaMeterLimitIdentity,
     type ConnectedServiceAuthGroupQuotaLimitSelectionV1,
     type ConnectedServiceQuotaSnapshotV1,
@@ -37,6 +38,8 @@ export function buildPoolQuotaLimitCandidates(input: Readonly<{
     const byId = new Map<string, Aggregate>();
     input.snapshots.forEach((snapshot, snapshotIndex) => {
         for (const meter of snapshot?.meters ?? []) {
+            // Credits are account-wide spend that every selection keeps, not a selectable allowance.
+            if (isConnectedServiceQuotaCreditMeter(meter)) continue;
             const id = resolveConnectedServiceQuotaMeterLimitIdentity(meter);
             const meterTitle = meter.label.replace(/\s+·\s+(?:Primary|Secondary)$/i, '').trim();
             const fallbackTitle = formatProviderLimitId(id);

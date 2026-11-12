@@ -68,8 +68,8 @@ describe('Claude provider reset vertical', () => {
     expect(transport.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(posts);
   });
 
-  it('evaluates reset programs separately and preserves ordinary spend meters', async () => {
-    const transport = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => response(String(url).includes('?') ? evaluated : ordinary));
+  it('reads usage, spend and reset programs in one usage request', async () => {
+    const transport = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => response({ ...ordinary, ...evaluated }));
     vi.stubGlobal('fetch', transport);
     const snapshot = await fetcher().fetch({ record, now, signal });
     expect(ConnectedServiceQuotaSnapshotV1Schema.parse(snapshot).recoveryCredits).toMatchObject({
@@ -79,8 +79,9 @@ describe('Claude provider reset vertical', () => {
     expect(snapshot?.recoveryCreditDetails?.promo).toMatchObject({ remainingCount: 1,
       appliesToProviderLimitIds: ['five_hour', 'seven_day', 'seven_day_overage_included'] });
     expect(snapshot?.recoveryCredits?.credits[0]).toMatchObject({ title: 'Promotion', description: null });
-    const [url, init] = transport.mock.calls[1];
-    expect(String(url)).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1&skip_spend=1');
+    expect(transport.mock.calls).toHaveLength(1);
+    const [url, init] = transport.mock.calls[0];
+    expect(String(url)).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1');
     expect(init).toMatchObject({ headers: { 'User-Agent': 'claude-cli/2.1.296 (external, cli)', 'anthropic-beta': 'oauth-2025-04-20' } });
   });
 
@@ -95,11 +96,32 @@ describe('Claude provider reset vertical', () => {
     expect(snapshot?.recoveryCredits?.credits[0].status).not.toBe('available');
   });
 
-  it('preserves usage when supplemental discovery fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
-      if (String(url).includes('?')) throw new Error('network unavailable');
-      return response(ordinary);
-    }));
+  // Live shape (November 2026 authenticated read; Claude Code 2.1.319 picks a target per grant kind
+  // from each grant's own usable_now): next_grant_id names one default, not the only usable grant.
+  it('keeps every individually usable grant redeemable, not only the provider default', async () => {
+    const scopedRecord = ConnectedServiceCredentialRecordV1Schema.parse({
+      ...record, oauth: { ...record.oauth, raw: { claudeAiOauth: { organizationUuid: 'org-uuid' } } },
+    });
+    const weekly = { ...grant, id: 'full-reset', resets_total: 1, clears: ['seven_day', 'seven_day_overage_included'] };
+    const fable = { ...grant, id: 'launch-fable', resets_total: 1, clears: ['seven_day_overage_included'], gives_back_weekly: true };
+    const twoGrants = { cedar_ember: { eligible: true, grants: [weekly, fable], next_grant_id: 'full-reset', cooldown_until: null } };
+    const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/profile')) return response({ account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org-uuid' } });
+      if (init?.method === 'POST') return response({ result: 'reset', cleared: fable.clears });
+      return response(String(url).includes('?') ? twoGrants : ordinary);
+    });
+    vi.stubGlobal('fetch', transport);
+    const provider = fetcher();
+    const snapshot = await provider.fetch({ record, now, signal });
+    expect(snapshot?.recoveryCredits).toMatchObject({ availableCount: 2 });
+    expect(snapshot?.recoveryCreditDetails?.['launch-fable']?.unavailableReason).toBeUndefined();
+    expect(await provider.consumeRecoveryCredit!({ record: scopedRecord, now, signal, providerCreditId: 'launch-fable', idempotencyKey: 'fable-action' })).toBe('consumed');
+    const posts = transport.mock.calls.filter(([, init]) => init?.method === 'POST');
+    expect(posts.map(([, init]) => JSON.parse(String(init?.body)).grant_id)).toEqual(['launch-fable']);
+  });
+
+  it('preserves usage when the reset blocks are malformed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ ...ordinary, cedar_ember: { eligible: 'unknown' } })));
     const snapshot = await fetcher().fetch({ record, now, signal });
     expect(snapshot?.meters).toContainEqual(expect.objectContaining({ meterId: 'extra_usage', used: 23 }));
     expect(snapshot?.recoveryCredits).toBeUndefined();
@@ -162,6 +184,21 @@ describe('Claude provider reset vertical', () => {
     expect(transport.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
+  // Live shape: the Fable cap is limits[] weekly_scoped (our meter seven_day_fable) while the provider names it
+  // seven_day_overage_included in grants, cedar_ember.exhausted, and runtime rate-limit events.
+  it('automatically resets a Fable wall from the provider-reported exhausted limit', async () => {
+    const fableGrant = { ...grant, clears: ['seven_day_overage_included'] };
+    const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => response(init?.method === 'POST'
+      ? { result: 'reset' } : String(url).endsWith('/profile') ? { account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } }
+        : { limits: [{ kind: 'weekly_scoped', group: 'weekly', percent: 100, resets_at: '2026-10-15T00:00:00Z',
+          scope: { model: { id: null, display_name: 'Fable' } } }],
+        cedar_ember: { eligible: true, at_limit: true, exhausted: ['seven_day_overage_included'], next_grant_id: 'promo', grants: [fableGrant] } }));
+    vi.stubGlobal('fetch', transport);
+    expect(await fetcher().consumeRecoveryCredit!({ record, now, signal, providerCreditId: 'promo',
+      providerLimitIds: ['seven_day_overage_included'], idempotencyKey: 'fable-wall' })).toBe('consumed');
+    expect(transport.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+  });
+
   it('discovers and consumes Juniper only with an authoritative available reset arm', async () => {
     const juniper = { five_hour: ordinary.five_hour, cedar_ember: evaluated.cedar_ember, juniper_tide: { eligible: true, arm: 'reset', available: true,
       resets_per_week: 3, weekly_resets_at: '2026-10-18T00:00:00Z' } };
@@ -195,24 +232,13 @@ describe('Claude provider reset vertical', () => {
     expect(transport.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
   });
 
-  it('honors provider Retry-After from a failed supplemental read without erasing usage', async () => {
-    const transport = vi.fn(async (url: string | URL | Request) => String(url).includes('?')
-      ? new Response('', { status: 429, headers: { 'Retry-After': '1800' } }) : response(ordinary));
-    vi.stubGlobal('fetch', transport);
-    const provider = fetcher();
-    expect(await provider.fetch({ record, now, signal })).not.toBeNull();
-    expect(await provider.fetch({ record, now: now + 60_000, signal })).toBeNull();
-    expect(await provider.consumeRecoveryCredit!({ record, now: now + 60_000, signal, providerCreditId: 'promo', idempotencyKey: 'action' })).toBe('not_available');
-    expect(transport.mock.calls).toHaveLength(2);
-  });
-
   it('clears only the local failure cooldown after a confirmed reset so postconsume refresh can run', async () => {
-    let usageFails = true;
+    let usageFailures = 2; // The ordinary read plus its single 5xx retry.
     const transport = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (init?.method === 'POST') { usageFails = false; return response({ result: 'reset' }); }
+      if (init?.method === 'POST') return response({ result: 'reset' });
       if (String(url).endsWith('/profile')) return response({ account: { uuid: 'account-is-not-organization' }, organization: { uuid: 'org' } });
-      if (String(url).includes('?')) return response(evaluated);
-      return usageFails ? response({}, 500) : response(ordinary);
+      if (usageFailures > 0) { usageFailures -= 1; return response({}, 500); }
+      return response({ ...ordinary, ...evaluated });
     });
     vi.stubGlobal('fetch', transport);
     const provider = fetcher();

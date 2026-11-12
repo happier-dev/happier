@@ -1,5 +1,6 @@
 import {
   selectConnectedServiceAuthGroupCandidate,
+  hasConnectedServiceAuthGroupIncludedQuotaSelection,
   resolveConnectedServiceAuthGroupQuotaResetCandidates,
   type ConnectedServiceAuthGroupCandidateDecisionTrace,
   type ConnectedServiceAuthGroupMember,
@@ -1493,7 +1494,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           });
         }
       }
-      if (!selected.selected && loaded.policy.autoUseQuotaResetsWhenExhausted === true
+      // Banked free resets outrank paid credits, so a credits-only pick still tries them first.
+      if (!hasConnectedServiceAuthGroupIncludedQuotaSelection(selected) && loaded.policy.autoUseQuotaResetsWhenExhausted === true
         && (input.reason === 'usage_limit' || input.reason === 'same_provider_account_exhausted')
         && this.deps.consumeAvailableRecoveryCreditForProfile) {
         const unavailableProfileIds = new Set(selected.excluded.filter((entry) => entry.reason === 'credential_unavailable').map((entry) => entry.profileId));
@@ -1562,7 +1564,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           }
           const beforeResetPolicyResult = await reconsider();
           if (beforeResetPolicyResult) return beforeResetPolicyResult;
-          if (selected.selected || loaded.policy.autoUseQuotaResetsWhenExhausted !== true) break;
+          if (hasConnectedServiceAuthGroupIncludedQuotaSelection(selected) || loaded.policy.autoUseQuotaResetsWhenExhausted !== true) break;
           const currentResetCandidate = resetCandidates().find((member) => member.profileId === candidate.profileId);
           if (!currentResetCandidate) break;
           const reset = await this.deps.consumeAvailableRecoveryCreditForProfile({
@@ -1581,7 +1583,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           // receipts only permit normal selection after the quota owner publishes fresh evidence.
           const afterResetPolicyResult = await reconsider(reset.receipt);
           if (afterResetPolicyResult) return afterResetPolicyResult;
-          if (!selected.selected && ((!reset.ok && reset.errorCode === 'connected_service_quota_recovery_credit_not_available')
+          if (!hasConnectedServiceAuthGroupIncludedQuotaSelection(selected) && ((!reset.ok && reset.errorCode === 'connected_service_quota_recovery_credit_not_available')
             || reset.receipt?.status === 'not_available')) continue;
           break;
         }

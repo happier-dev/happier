@@ -1,4 +1,5 @@
 import {
+    isConnectedServiceQuotaCreditMeter,
     readConnectedServiceLimitCategoryV1,
     type ConnectedServiceAuthGroupQuotaLimitSelectionV1,
     type ConnectedServiceQuotaMeterV1,
@@ -202,6 +203,8 @@ function meterMatchesWindowMode(
 
 export function isConnectedServiceQuotaMeterPercentRankable(meter: ConnectedServiceQuotaMeterV1): boolean {
     if (meter.status === 'unavailable') return false;
+    // Provider credits pay after the included limits; they are never an included capacity.
+    if (isConnectedServiceQuotaCreditMeter(meter)) return false;
 
     const category = readPublicLimitCategory(meter);
     if (category && !['usage_limit', 'rate_limit'].includes(category)) {

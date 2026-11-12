@@ -328,6 +328,43 @@ describe('AccountBlock', () => {
         expect(screen.getTextContent()).toContain('connectedServices.subscription.endsInDays');
     });
 
+    it('shows an evidenced subscription as active when the provider exposes no renewal or end date', async () => {
+        quotaHookState.value = buildQuotaResult({
+            snapshot: buildSnapshot({
+                subscription: { status: 'subscribed', renewal: 'unknown', observedAtMs: NOW_MS, staleAfterMs: 60_000 },
+            }),
+        });
+
+        const screen = await renderAccountBlock();
+
+        expect(screen.getTextContent()).toContain('connectedServices.subscription.active');
+        expect(screen.getTextContent()).not.toContain('connectedServices.subscription.renewalUnknown');
+        expect(screen.findByTestId('acct:subscription:period')).toBeNull();
+    });
+
+    it('shows the credit balance and a credits-available state instead of a used-up account', async () => {
+        quotaHookState.value = buildQuotaResult({
+            snapshot: buildSnapshot({ meters: [
+                { meterId: 'weekly', label: 'Weekly', used: 100, limit: 100, unit: 'count', utilizationPct: 100, resetsAt: null, status: 'ok', details: {} },
+                { meterId: 'credits', label: 'Credits', used: null, limit: null, remaining: 16_845, unit: 'credits', utilizationPct: null, resetsAt: null, isExhausted: false, status: 'ok', details: {} },
+            ] }),
+        });
+
+        const screen = await renderAccountBlock();
+
+        expect(screen.findByTestId('acct:credits:balance')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('connectedServices.account.credits.balance');
+        expect(screen.findByTestId('acct:credits:included-used')).toBeTruthy();
+        expect(screen.findByTestId('acct:meter:credits')).toBeNull();
+    });
+
+    it('keeps an account without credits free of the credits section', async () => {
+        const screen = await renderAccountBlock();
+
+        expect(screen.findByTestId('acct:credits:balance')).toBeNull();
+        expect(screen.findByTestId('acct:credits:included-used')).toBeNull();
+    });
+
     it('moves pool membership into a labelled "Pools" section when expanded', async () => {
         // Detail variant defaults to expanded.
         const screen = await renderAccountBlock({ poolLabels: ['Team'] });

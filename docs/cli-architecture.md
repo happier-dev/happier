@@ -2258,6 +2258,12 @@ soft threshold. The quota intake precheck uses that same selector; a daemon
 restart cannot make stale or exhausted targets eligible. Failure-driven
 `usage_limit` and `same_provider_account_exhausted` selection retains its existing
 unknown-quota allowance, and pre-turn probes can establish fresh evidence.
+Predictive burn evidence uses the same `probeIfSnapshotOlderThanMs` value as its
+projection horizon. The runtime snapshot store anchors its baseline to the oldest
+observation in the matching generation, effective meter, provider-limit and reset
+context that spans that horizon; readings captured only seconds apart therefore do
+not extrapolate a multi-minute switch. A reset or context change starts a new
+baseline, and non-decreasing, stale or inconsistent observations fail closed.
 Selection also checks learned model exclusions against the requested and applied
 models of the group's live sessions. Generic turn success has no model identity
 and therefore cannot erase a model-specific rejection. This is learned evidence,

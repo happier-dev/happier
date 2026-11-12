@@ -99,7 +99,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       serviceId: 'claude-subscription',
       staleAfterMs: 321_000,
     });
-    expect(fetchMock).toHaveBeenCalledWith(usageUrl, expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith(`${usageUrl}?cedar_ember=1&at_wall=1`, expect.objectContaining({
       headers: expect.objectContaining({
         'User-Agent': 'claude-code/descriptor',
         'anthropic-beta': 'oauth-2025-04-20',
@@ -138,7 +138,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     await expect(fetcher.fetch({ record, now, signal: new AbortController().signal }))
       .resolves
       .toMatchObject({ serviceId: 'claude-subscription', profileId: 'work' });
-    expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.com/api/oauth/usage', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1', expect.objectContaining({
       method: 'GET',
       headers: expect.objectContaining({
         Authorization: 'Bearer at',
@@ -182,7 +182,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
 
     const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
     expect(snapshot?.meters.find((meter) => meter.meterId === 'five_hour')?.utilizationPct).toBe(20);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('fetches and parses Claude subscription oauth usage into a quota snapshot', async () => {
@@ -230,7 +230,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
     const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.planLabel).toBe('max');
+      expect(parsed.data.planLabel).toBe('Max 20x');
       expect(parsed.data.meters.map((m) => m.meterId)).toContain('five_hour');
       expect(parsed.data.meters.map((m) => m.meterId)).toContain('seven_day');
       expect(parsed.data.meters.map((m) => m.meterId)).toContain('extra_usage');
@@ -589,7 +589,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       signal: new AbortController().signal,
     });
 
-    expect(snapshot?.planLabel).toBe('team');
+    expect(snapshot?.planLabel).toBe('Team');
   });
 
   it('does not refresh oauth credentials when usage polling is unauthorized', async () => {
@@ -708,7 +708,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       if (!url.includes('/anthropic/oauth/usage')) {
         throw new Error(`Unexpected URL in test: ${url}`);
       }
-      if (!url.includes('?')) usageCalls += 1;
+      usageCalls += 1;
       const auth = (() => {
         const headers: unknown =
           init && typeof init === 'object' && 'headers' in init ? (init as { headers?: unknown }).headers : undefined;
@@ -944,7 +944,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
       if (!url.includes('/anthropic/oauth/usage')) {
         throw new Error(`Unexpected URL in test: ${url}`);
       }
-      if (!url.includes('?')) usageCalls += 1;
+      usageCalls += 1;
       if (usageCalls === 1) {
         return {
           ok: false,

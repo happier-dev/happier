@@ -379,3 +379,37 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
     })).toEqual({ ok: true });
   });
 });
+
+describe('quota lifecycle with provider credits', () => {
+  it('does not park sessions on a spent pool whose active account still has credits', () => {
+    const nowMs = 1_000_000;
+    const resetAtMs = nowMs + 600_000;
+    const group = createGroup();
+    const primarySpent = createUsageSnapshot({ profileId: 'primary', nowMs, remainingPct: 0, resetAtMs });
+    const backupSpent = createUsageSnapshot({ profileId: 'backup', nowMs, remainingPct: 0, resetAtMs });
+    const evaluate = (primary: ProviderAccountUsageSnapshotV1) => evaluateConnectedServiceAuthGroupQuotaLifecycle({
+      mode: 'live_account_usage_change',
+      group,
+      changedProfileId: 'primary',
+      changedGroupGeneration: group.generation,
+      previousState: { status: 'unblocked' },
+      snapshotsByProfileId: snapshotMap(primary, backupSpent),
+      activeSessionIds: ['session-1'],
+      nowMs,
+      quotaFreshnessMs: 300_000,
+    });
+
+    const withCredits = evaluate({ ...primarySpent, meters: [...primarySpent.meters, {
+      meterId: 'credits', label: 'Credits', used: null, limit: null, remaining: 16_845, unit: 'credits',
+      utilizationPct: null, resetsAt: null, isExhausted: false, status: 'ok', details: {},
+    }] });
+    expect(withCredits.edge).toEqual({ phase: 'no_edge' });
+    expect(withCredits.nextState).toEqual({ status: 'unblocked' });
+
+    const creditsSpent = evaluate({ ...primarySpent, meters: [...primarySpent.meters, {
+      meterId: 'credits', label: 'Credits', used: null, limit: null, remaining: 0, unit: 'credits',
+      utilizationPct: null, resetsAt: null, isExhausted: true, status: 'ok', details: {},
+    }] });
+    expect(creditsSpent.edge).toEqual(expect.objectContaining({ phase: 'blocked' }));
+  });
+});
