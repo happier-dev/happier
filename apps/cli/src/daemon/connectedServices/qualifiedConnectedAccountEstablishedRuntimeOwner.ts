@@ -117,6 +117,7 @@ export function createQualifiedConnectedAccountEstablishedRuntimeOwner<TRegistry
       'read' | 'secrets'
     >;
     configurationOwner?: ConnectedAccountConfigurationOwner;
+    enrichCredentialContext?: Parameters<typeof createConnectedAccountEstablishedRuntimeOwner>[0]['enrichCredentialContext'];
     randomBytes?: (length: number) => Uint8Array;
   }>,
 ): QualifiedConnectedAccountEstablishedRuntimeOwner & Pick<ReturnType<typeof createConnectedAccountEstablishedRuntimeOwner>, 'refreshExportProjection'> {

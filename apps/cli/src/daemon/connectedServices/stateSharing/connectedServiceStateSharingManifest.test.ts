@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as filesystem from 'node:fs/promises';
+
+// Observe atomic publication at the filesystem boundary.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
 
 import {
   readConnectedServiceStateSharingManifest,
@@ -12,6 +19,38 @@ import {
 } from './connectedServiceStateSharingManifest';
 
 describe('connectedServiceStateSharingManifest', () => {
+  it('retains exact delivered credential ownership beside native state across a reload', async () => {
+    const destination = await mkdtemp(join(tmpdir(), 'happier-team-native-manifest-'));
+    try {
+      const deliveries = [{ teamId: 'team-1', resourceId: 'share-1', credentialPaths: ['muse/auth.json'] }];
+      await writeConnectedServiceStateSharingManifest(destination, {
+        v: 1, requestedStateMode: 'isolated', effectiveStateMode: 'isolated', lastSyncAtMs: 0,
+        configEntries: ['muse/settings.json'], stateEntries: [], sessionFileMappings: [], diagnostics: [],
+        teamCredentialDeliveries: deliveries,
+      });
+      expect((await readConnectedServiceStateSharingManifest(destination)).teamCredentialDeliveries).toEqual(deliveries);
+    } finally { await rm(destination, { recursive: true, force: true }); }
+  });
+
+  it('publishes only changed sharing facts and repairs a missing canonical manifest', async () => {
+    const destination = await mkdtemp(join(tmpdir(), 'happier-unchanged-state-manifest-'));
+    try {
+      const manifest = { v: 1 as const, requestedStateMode: 'isolated' as const,
+        effectiveStateMode: 'isolated' as const, lastSyncAtMs: 1, configEntries: [], stateEntries: [],
+        sessionFileMappings: [], diagnostics: [] };
+      await writeConnectedServiceStateSharingManifest(destination, manifest);
+      vi.mocked(filesystem.rename).mockClear();
+      await writeConnectedServiceStateSharingManifest(destination, { ...manifest, lastSyncAtMs: 2 });
+      expect(filesystem.rename).toHaveBeenCalledTimes(0);
+      await writeConnectedServiceStateSharingManifest(destination, { ...manifest, configEntries: ['settings.json'] });
+      expect(filesystem.rename).toHaveBeenCalledTimes(1);
+      expect((await readConnectedServiceStateSharingManifest(destination)).configEntries).toEqual(['settings.json']);
+      await rm(join(destination, '.happier-state-sharing.json'));
+      await writeConnectedServiceStateSharingManifest(destination, manifest);
+      expect(filesystem.rename).toHaveBeenCalledTimes(2);
+    } finally { await rm(destination, { recursive: true, force: true }); }
+  });
+
   it('refuses a retention decision when the state manifest cannot be read or parsed', async () => {
     const destination = await mkdtemp(join(tmpdir(), 'happier-state-sharing-unreadable-'));
     try {

@@ -1,5 +1,6 @@
 import { lstat, readFile, readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { CONNECTED_ACCOUNT_NATIVE_HOME_STATE_FILES, parseConnectedAccountNativeHomeState, type ConnectedAccountNativeHomeState } from '@happier-dev/plugin-sdk/fs';
 
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -14,6 +15,13 @@ export type ConnectedServiceStateSharingSessionFileMappingV1 = Readonly<{
   verifiedAtMs: number | null;
 }>;
 
+/** Exact credential files produced for a Team delivery; native state remains home-owned. */
+export type TeamCredentialNativeHomeDelivery = Readonly<{
+  teamId?: string;
+  resourceId: string;
+  credentialPaths: readonly string[];
+}>;
+
 export type ConnectedServiceStateSharingManifestV1 = Readonly<{
   v: 1;
   requestedStateMode: ConnectedServiceStateSharingMode;
@@ -26,6 +34,7 @@ export type ConnectedServiceStateSharingManifestV1 = Readonly<{
   resumeStateEntries?: readonly string[];
   sessionFileMappings: readonly ConnectedServiceStateSharingSessionFileMappingV1[];
   diagnostics: readonly string[];
+  teamCredentialDeliveries?: readonly TeamCredentialNativeHomeDelivery[];
 }>;
 
 const EMPTY_MANIFEST: ConnectedServiceStateSharingManifestV1 = Object.freeze({
@@ -73,7 +82,25 @@ function parseManifest(value: unknown): ConnectedServiceStateSharingManifestV1 {
       : {}),
     sessionFileMappings: parseSessionFileMappings(record.sessionFileMappings),
     diagnostics: parseDiagnostics(record.diagnostics),
+    ...(record.teamCredentialDeliveries === undefined ? {} : {
+      teamCredentialDeliveries: parseTeamCredentialDeliveries(record.teamCredentialDeliveries),
+    }),
   };
+}
+
+function parseTeamCredentialDeliveries(value: unknown): readonly TeamCredentialNativeHomeDelivery[] {
+  if (!Array.isArray(value)) throw new Error('connected_service_state_sharing_manifest_invalid');
+  return value.map(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('connected_service_state_sharing_manifest_invalid');
+    const entry = item as Record<string, unknown>;
+    if (typeof entry.resourceId !== 'string' || !entry.resourceId.trim()
+      || entry.teamId !== undefined && (typeof entry.teamId !== 'string' || !entry.teamId.trim())
+      || !Array.isArray(entry.credentialPaths) || !entry.credentialPaths.every(isSafeConnectedServiceStateSharingEntry)) {
+      throw new Error('connected_service_state_sharing_manifest_invalid');
+    }
+    return { resourceId: entry.resourceId, ...(typeof entry.teamId === 'string' ? { teamId: entry.teamId } : {}),
+      credentialPaths: entry.credentialPaths };
+  });
 }
 
 function resolveManifestPath(destinationHome: string, manifestName = DEFAULT_MANIFEST_NAME): string {
@@ -133,16 +160,21 @@ async function tryReadParsedManifest(path: string): Promise<ConnectedServiceStat
   }
 }
 
+/** Presence is recognized by the same strict parser as every native-home reader. */
+export async function readExistingConnectedServiceStateSharingManifest(
+  destinationHome: string,
+  manifestName?: string,
+): Promise<ConnectedServiceStateSharingManifestV1 | null> {
+  const primary = await tryReadParsedManifest(resolveManifestPath(destinationHome, manifestName));
+  if (primary || manifestName) return primary;
+  return await tryReadParsedManifest(resolveManifestPath(destinationHome, LEGACY_CODEX_MANIFEST_NAME));
+}
+
 export async function readConnectedServiceStateSharingManifest(
   destinationHome: string,
   manifestName?: string,
 ): Promise<ConnectedServiceStateSharingManifestV1> {
-  const primary = await tryReadParsedManifest(resolveManifestPath(destinationHome, manifestName));
-  if (primary) return primary;
-  if (manifestName) return EMPTY_MANIFEST;
-  const legacy = await tryReadParsedManifest(resolveManifestPath(destinationHome, LEGACY_CODEX_MANIFEST_NAME));
-  if (legacy) return legacy;
-  return EMPTY_MANIFEST;
+  return await readExistingConnectedServiceStateSharingManifest(destinationHome, manifestName) ?? EMPTY_MANIFEST;
 }
 
 /** Local resume data outlives process/Run custody; shared native-home links do not. */
@@ -193,9 +225,22 @@ export async function writeConnectedServiceStateSharingManifest(
   destinationHome: string,
   manifest: ConnectedServiceStateSharingManifestV1,
   manifestName?: string,
+  existingManifest?: ConnectedServiceStateSharingManifestV1,
 ): Promise<void> {
   const normalized = parseManifest(manifest);
-  await writeJsonAtomic(resolveManifestPath(destinationHome, manifestName), normalized);
+  const path = resolveManifestPath(destinationHome, manifestName);
+  const previous = existingManifest ?? await tryReadParsedManifest(path);
+  // lastSyncAtMs is observation time, not a changed sharing fact.
+  const unchanged = previous && isDeepStrictEqual(
+    { ...previous, lastSyncAtMs: 0 }, { ...normalized, lastSyncAtMs: 0 },
+  );
+  const existing = unchanged ? await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+    throw error;
+  }) : null;
+  if (!existing?.isFile() || (process.platform !== 'win32' && (existing.mode & 0o077) !== 0)) {
+    await writeJsonAtomic(path, normalized);
+  }
   if (!manifestName || manifestName === DEFAULT_MANIFEST_NAME) {
     await rm(resolveManifestPath(destinationHome, LEGACY_CODEX_MANIFEST_NAME), { force: true });
   }

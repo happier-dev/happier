@@ -1,4 +1,5 @@
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
+import { projectConnectedPoolSourceResolution } from './sourceResolution';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { TeamCredentialSourceCandidateV1Schema, teamCredentialSourceCandidateIdV1, type TeamCredentialSourceCandidateV1 } from '@happier-dev/protocol/teams';
 
@@ -127,6 +128,7 @@ export async function listTeamCredentialSourceCandidatesInTx(
             label: account.label,
             memberCount: null,
             directExportSupport: account.directExportSupport,
+            ...(account.directExportFailure ? { directExportFailure: account.directExportFailure } : {}),
             offeredByResourceId: offeredByCandidateId.get(candidateId) ?? null,
         }));
     }
@@ -149,17 +151,8 @@ export async function listTeamCredentialSourceCandidatesInTx(
             groupId: source.data.target.groupId,
         });
         if (!snapshot || snapshot.incarnation !== source.data.poolIncarnation) continue;
-        const enabledMembers = snapshot.members.filter((member) => member.enabled);
-        const supportedMembers = enabledMembers.filter((member) => (
-            member.credentialRevision !== null
-            && member.directExportContract !== null
-            && member.contributionContractVersion !== null
-        ));
-        const directExportSupport = supportedMembers.length === 0
-            ? "unsupported" as const
-            : supportedMembers.length === enabledMembers.length
-                ? "supported" as const
-                : "mixed" as const;
+        const resolution = projectConnectedPoolSourceResolution(source.data, snapshot);
+        if (resolution.status !== 'current') continue;
         const candidateId = teamCredentialSourceCandidateIdV1(source.data);
         candidates.push(TeamCredentialSourceCandidateV1Schema.parse({
             source: source.data,
@@ -169,7 +162,8 @@ export async function listTeamCredentialSourceCandidatesInTx(
             // has nothing to select from, and reporting its full roster would
             // read as capacity the source owner has deliberately withdrawn.
             memberCount: pool.members.filter((member) => member.enabled).length,
-            directExportSupport,
+            directExportSupport: resolution.directExportSupport,
+            ...(resolution.directExportFailure ? { directExportFailure: resolution.directExportFailure } : {}),
             offeredByResourceId: offeredByCandidateId.get(candidateId) ?? null,
         }));
     }

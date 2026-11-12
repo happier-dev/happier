@@ -154,6 +154,9 @@ function answerRequestPolicySupport(serverId: string, modelId: string): void {
     });
 }
 
+// Load the real screen graph outside individual interaction deadlines.
+const { TeamCredentialCreateScreen } = await import('./TeamCredentialCreateScreen');
+
 async function renderCreate(
     serverId: string,
     sourceHint?: Readonly<
@@ -162,7 +165,6 @@ async function renderCreate(
         | { kind: 'provider_connection'; machineId: string; connectionId: string; credentialSlotId: string; connectionSecurityFingerprint: string }
     >,
 ) {
-    const { TeamCredentialCreateScreen } = await import('./TeamCredentialCreateScreen');
     return renderScreen(<TeamCredentialCreateScreen serverId={serverId} teamId="team-1" sourceHint={sourceHint} />);
 }
 
@@ -205,6 +207,24 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('TeamCredentialCreateScreen', () => {
+    it('shows the source refusal and keeps brokered sharing selectable', async () => {
+        const serverId = await addHome();
+        answerViewer(serverId, true);
+        const message = "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.";
+        const candidate = teamCredentialSourceCandidateFixture({ directExportSupport: 'supported',
+            directExportFailure: { code: 'access_only_expiry_unavailable', message } });
+        harness.answer(serverId, SOURCES_PATH, { body: { candidates: [candidate],
+            supportedKinds: ['connected_pool'], brokerPresentation: emptyBrokerPresentation() } });
+        if (candidate.source.kind !== 'connected_pool') throw new Error('expected pool fixture');
+        const screen = await renderCreate(serverId, { kind: 'connected_pool',
+            pluginId: candidate.source.target.service.pluginId, localId: candidate.source.target.service.localId,
+            groupId: candidate.source.target.groupId });
+        await waitForTestId(screen, 'team-credential-create-ceiling:direct_allowed');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId('team-credential-create-ceiling:direct_allowed')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('team-credential-create-ceiling:brokered_only')).not.toBeNull();
+        expect(screen.findByTestId('team-credential-create-ceiling:brokered_only')?.props.disabled).not.toBe(true);
+    });
     it('offers Machine Pools as accessible radio choices with the Home\u2019s availability, and lets a Pool be cleared', async () => {
         const serverId = await addHome({ machinePoolsEnabled: true });
         answerViewer(serverId, true);

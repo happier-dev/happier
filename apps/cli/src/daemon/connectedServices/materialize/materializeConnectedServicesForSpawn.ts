@@ -48,7 +48,7 @@ import type {
 import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/materialization/materializer';
 import { isConnectedServiceMaterializedHomeRetainedOnExit } from './cleanup/createConnectedServiceMaterializedHomeCleanupScheduler';
 import { copyConnectedServiceHomeEntry } from '../stateSharing/connectedServiceHomeEntrySync';
-import { readConnectedServiceStateSharingManifest, writeConnectedServiceStateSharingManifest } from '../stateSharing/connectedServiceStateSharingManifest';
+import { readConnectedServiceStateSharingManifest, writeConnectedServiceStateSharingManifest, type TeamCredentialNativeHomeDelivery } from '../stateSharing/connectedServiceStateSharingManifest';
 import { importConnectedServiceSessionFiles, type ConnectedServiceSessionFileImportRoot } from '../stateSharing/importConnectedServiceSessionFiles';
 import { verifyResumeReachableThroughCatalog } from '../catalogHooks';
 import { replaceDirectoryAtomically } from '@/utils/fs/replaceDirectoryAtomically';
@@ -677,6 +677,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               })
             : Object.freeze({});
           const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
+          const teamCredentialDeliveries: TeamCredentialNativeHomeDelivery[] = [];
           const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
           for (const scope of nativePurposes) {
             if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
@@ -734,6 +735,14 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               }
               nativeHomeFiles[fileId] = contents;
             }
+            const origin = snapshot?.directMaterialOrigins?.find(origin =>
+              qualifiedPurposeKey(origin.purpose) === qualifiedPurposeKey(scope.purpose));
+            if (origin) teamCredentialDeliveries.push({
+              resourceId: origin.resourceId,
+              ...(origin.teamId ? { teamId: origin.teamId } : {}),
+              credentialPaths: Object.keys(materialization.files).filter(fileId =>
+                stateSharingDescriptor.authIsolation.secretEntries.includes(fileId)),
+            });
           }
           if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
             snapshot, producedPurposeKeys, includeNativeHomeUses: true,
@@ -749,13 +758,20 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           }
 
           targetMaterializedRoot = nativeRoot;
-          await observeConnectedServiceMaterializationPhase(params, 'native_home_credential_write', () => writeArtifacts(() => materializeConnectedServiceNativeHomeCredentials({
-            targetRoot: nativeRoot,
-            declaredSecretEntries:
-              stateSharingDescriptor.authIsolation.secretEntries,
-            files: Object.freeze(nativeHomeFiles),
-            existingFiles: preparedCredentialFiles,
-          })));
+          await observeConnectedServiceMaterializationPhase(params, 'native_home_credential_write', () => writeArtifacts(async () => {
+            await materializeConnectedServiceNativeHomeCredentials({
+              targetRoot: nativeRoot,
+              declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+              files: Object.freeze(nativeHomeFiles),
+              existingFiles: preparedCredentialFiles,
+            });
+            if (teamCredentialDeliveries.length) {
+              const manifest = await readConnectedServiceStateSharingManifest(nativeRoot);
+              // Replace ownership with this admission's produced files. A prior
+              // share must never delete a newer share's or personal credential.
+              await writeConnectedServiceStateSharingManifest(nativeRoot, { ...manifest, teamCredentialDeliveries }, undefined, manifest);
+            }
+          }));
           if (params.agentLaunchTarget) {
             const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH);
             Object.assign(agentEnvironment, rewriteEnvRoot(env, nativeRoot, agentNativeHome), {

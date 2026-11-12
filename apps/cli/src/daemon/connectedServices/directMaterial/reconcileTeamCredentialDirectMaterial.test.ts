@@ -10,6 +10,7 @@ import {
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
+import { QualifiedConnectedAccountMaterialError } from '../qualifiedConnectedAccountMaterialError';
 import { reconcileTeamCredentialDirectMaterial } from './reconcileTeamCredentialDirectMaterial';
 import { TeamCredentialDirectMaterialHttpContractError, upsertTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialHttp';
 
@@ -96,7 +97,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
     },
   );
 
-  it.each(['missing', 'unavailable', 'changed', 'replacement_rejected'] as const)('withdraws the captured publication when source configuration is %s', async (failure) => {
+  it.each(['missing', 'unavailable', 'expiry_unavailable', 'changed', 'replacement_rejected'] as const)('withdraws the captured publication when source configuration is %s', async (failure) => {
     let published: string | null = 'source-v1';
     const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
       homeServerIdentityId: 'home', teamId: 'team', resourceId: 'resource', resourceRevision: 4,
@@ -109,6 +110,8 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       teamId: 'team', resourceId: 'resource', sourceMemberKey,
       fetchPreparation: async () => page,
       resolveSourceSnapshot: async () => {
+        if (failure === 'expiry_unavailable') throw new QualifiedConnectedAccountMaterialError(
+          'access_only_expiry_unavailable', 'Reconnect this imported login to share it natively.');
         if (failure === 'unavailable') throw new Error('Saved Secret access removed');
         if (failure === 'missing') return null;
         return { ...sourceSnapshot, currentness: { ...sourceSnapshot.currentness, isCurrent: async () => failure !== 'changed' } };
@@ -121,6 +124,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       },
     });
     expect(result.ok).toBe(false);
+    if (failure === 'expiry_unavailable') expect(result).toEqual({ ok: false, reason: 'access_only_expiry_unavailable', prepared: 0 });
     expect(published).toBeNull();
   });
 

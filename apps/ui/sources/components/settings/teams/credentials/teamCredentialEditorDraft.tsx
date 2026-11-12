@@ -647,10 +647,12 @@ export function withAudienceEntry(current: AudienceDraft['groups'], id: string, 
 export function offeredDeliveryModes(resource: Readonly<{
     deliveryPolicy: TeamCredentialResourceDraft['deliveryPolicy'];
     directExportSupport?: 'supported' | 'mixed' | 'unsupported';
+    directExportFailure?: TeamCredentialResourceSummaryV1['directExportFailure'];
 }>): readonly TeamCredentialDeliveryModeV1[] {
     const brokered = resource.deliveryPolicy.preferredAllowedModes.includes('brokered');
     const direct = resource.deliveryPolicy.preferredAllowedModes.includes('direct')
-        && resource.directExportSupport !== 'unsupported';
+        && resource.directExportSupport !== 'unsupported'
+        && resource.directExportFailure === undefined;
     return brokered && direct ? ['brokered', 'direct', 'both'] : direct ? ['direct'] : brokered ? ['brokered'] : [];
 }
 /** Presentation adapter for the existing broker/direct controls; `both` never means native. */

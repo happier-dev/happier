@@ -879,6 +879,16 @@ describe('TeamCredentialEditScreen broker placement', () => {
 });
 
 describe('TeamCredentialEditScreen disclosure narrowing', () => {
+    it('shows the source refusal while keeping brokered sharing available', async () => {
+        const message = "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.";
+        const { screen } = await renderEditor({ resourceOverrides: {
+            directExportSupport: 'supported', directExportFailure: { code: 'access_only_expiry_unavailable', message },
+        } });
+        expect(screen.getTextContent()).toContain(message);
+        expect(screen.findByTestId('team-credential-edit-ceiling:direct_allowed')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('team-credential-edit-ceiling:brokered_only')).not.toBeNull();
+        expect(screen.findByTestId('team-credential-edit-ceiling:brokered_only')?.props.disabled).not.toBe(true);
+    });
     // Child 01 §7.1 rule 5 and the §7.2 "Narrow direct ceiling" row: broker and
     // direct rights are independent, and narrowing withdraws only the direct
     // half. A direct-only grant ends; it never becomes broker use nobody chose.

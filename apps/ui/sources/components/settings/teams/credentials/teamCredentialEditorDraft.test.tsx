@@ -34,6 +34,8 @@ describe('normalized Team delivery draft', () => {
         const { offeredDeliveryModes, teamCredentialAudienceRoutesForMode } = editorDraft;
         expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['vendor-native'] } })).toEqual([]);
         expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['direct'] }, directExportSupport: 'supported' })).toEqual(['direct']);
+        expect(offeredDeliveryModes({ deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] }, directExportSupport: 'supported',
+            directExportFailure: { code: 'access_only_expiry_unavailable', message: 'Reconnect the source.' } })).toEqual(['brokered']);
         expect(teamCredentialAudienceRoutesForMode('both', null)).toEqual(['brokered', 'direct']);
         expect(teamCredentialAudienceRoutesForMode('brokered', ['vendor-native', 'direct'])).toEqual(['vendor-native', 'brokered']);
         expect(teamCredentialAudienceRoutesForMode('both', ['vendor-native', 'brokered'])).toEqual(['vendor-native', 'brokered', 'direct']);

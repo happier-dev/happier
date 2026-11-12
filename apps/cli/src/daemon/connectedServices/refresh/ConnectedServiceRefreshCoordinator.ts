@@ -1536,6 +1536,7 @@ export class ConnectedServiceRefreshCoordinator {
   }>): Promise<Readonly<{
     status: 'enriched' | 'unchanged' | 'unavailable';
     credentialRevision?: ConnectedServiceCredentialRevisionV1;
+    diagnostic?: Readonly<{ code: string; message?: string }>;
   }>> {
     input.signal?.throwIfAborted();
     const runtime = this.params.qualifiedConnectedAccountRuntime;
@@ -1577,10 +1578,12 @@ export class ConnectedServiceRefreshCoordinator {
       // nor recovered auth health or quota. Those remain with their existing owners.
       if (settlement.status === 'refreshed') {
         await this.notifyQualifiedConnectedAccountCredentialUpdated(input.account, { reason: 'provider_context' });
-        return { status: 'enriched', credentialRevision: settlement.credentialRevision };
+        return { status: 'enriched', credentialRevision: settlement.credentialRevision,
+          ...(settlement.result.diagnostic ? { diagnostic: settlement.result.diagnostic } : {}) };
       }
       if (settlement.status === 'unchanged') {
-        return { status: 'unchanged', credentialRevision: settlement.basis.credentialRevision };
+        return { status: 'unchanged', credentialRevision: settlement.basis.credentialRevision,
+          ...(settlement.result.diagnostic ? { diagnostic: settlement.result.diagnostic } : {}) };
       }
       logger.warn('[DAEMON RUN] Qualified Connected Account context enrichment did not settle', {
         service: input.account.service,
@@ -3115,11 +3118,12 @@ export class ConnectedServiceRefreshCoordinator {
     const legacyServiceId = resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(input.serviceId)
       ?? (legacyIngress.success ? legacyIngress.data : null);
     const binding = { serviceId: input.serviceId, profileId };
-    const changedTargets = this.runtimeRegistry.listRefreshTargets().filter((target) => target.activeBindings.some((candidate) =>
+    const changedTargets = this.runtimeRegistry.listRefreshTargets().filter((target) => target.bindings.some((candidate) =>
       candidate.profileId === profileId
       && (candidate.serviceId === input.serviceId || (legacyServiceId !== null
         && resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(candidate.serviceId) === legacyServiceId))
-      && candidate.credentialRevision !== input.credentialPresence.credentialRevision));
+      && target.activeBindings.find((active) => active.serviceId === candidate.serviceId
+        && active.profileId === candidate.profileId)?.credentialRevision !== input.credentialPresence.credentialRevision));
     if (changedTargets.length === 0) return;
     const affectedTargets = legacyServiceId
       ? (await this.rematerializeTargetsForBindingDetailed({ serviceId: legacyServiceId, profileId }, undefined, changedTargets)).rematerializedTargets

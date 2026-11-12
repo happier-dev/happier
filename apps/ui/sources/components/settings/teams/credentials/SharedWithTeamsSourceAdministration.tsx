@@ -28,6 +28,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
     credentialFailureMessage,
+    credentialDirectExportFailureMessage,
     resourceStateLabel,
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
@@ -278,7 +279,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 key={row.id}
                 testID={`shared-with-teams:resource:${row.id}`}
                 title={row.displayName}
-                subtitle={sharedState === null ? resourceStateLabel(row.readiness) : undefined}
+                subtitle={credentialDirectExportFailureMessage(row.directExportFailure) ?? (sharedState === null ? resourceStateLabel(row.readiness) : undefined)}
                 showChevron={false}
                 rightElement={actions.length > 0 ? (
                     <ItemRowActions title={row.displayName} actions={actions} overflowOnly

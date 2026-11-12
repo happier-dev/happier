@@ -90,7 +90,7 @@ const errors = { 400: TeamCredentialResourceErrorV1Schema,
     503: TeamCredentialResourceErrorV1Schema } as const;
 type ErrorReply = Readonly<{
     code: (status: 400 | 403 | 404 | 409 | 503) => {
-        send: (body: Readonly<{ error: TeamCredentialErrorCodeV1 }>) => void;
+        send: (body: Readonly<{ error: TeamCredentialErrorCodeV1; message?: string }>) => void;
     };
 }>;
 /**
@@ -99,10 +99,10 @@ type ErrorReply = Readonly<{
  * sent it. An unrecognized string keeps the previous default instead of becoming
  * a 500.
  */
-function fail(reply: ErrorReply, error: TeamCredentialErrorCodeV1): void {
+function fail(reply: ErrorReply, error: TeamCredentialErrorCodeV1, message?: string): void {
     const parsed = TeamCredentialErrorCodeV1Schema.parse(error);
     const status = teamCredentialErrorHttpStatusV1(parsed);
-    reply.code(status).send({ error });
+    reply.code(status).send({ error, ...(message === undefined ? {} : { message }) });
 }
 
 class TeamCredentialCreateProjectionFailure extends Error {
@@ -652,7 +652,8 @@ export function registerTeamCredentialResourceRoutes(
         const body = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(request.body);
         if (request.validationError || !params.success || !body.success
             || body.data.resourceId !== params.data.resourceId) return fail(reply, "invalid_resource_input");
-        if (body.data.consumer.kind === 'platform_operation' && !request.externalActionPlatformMaterialAdmission) {
+        if (body.data.consumer.kind === 'platform_operation' && !request.externalActionPlatformMaterialAdmission
+            || body.data.consumer.kind === 'action_operation' && !request.externalActionActionMaterialAdmission) {
             return reply.send(TeamCredentialDirectMaterialMineResponseV1Schema.parse({ status: 'unavailable', reason: 'access_removed' }));
         }
         const run = body.data.consumer.kind === "execution_run"
@@ -677,6 +678,7 @@ export function registerTeamCredentialResourceRoutes(
         const result = await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, {
             ...params.data,
             recipientAccountId: request.userId,
+            ...(request.externalActionActionMaterialAdmission ? { actionAdmission: request.externalActionActionMaterialAdmission } : {}),
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),
@@ -935,6 +937,7 @@ export function registerTeamCredentialResourceRoutes(
                 enabled: resource.enabled,
                 revision: resource.revision,
                 deliveryPolicy: resource.deliveryPolicy,
+                ...(resource.directExportFailure ? { directExportFailure: resource.directExportFailure } : {}),
                 brokerPlacement: resource.brokerPlacement,
                 brokerPresentation: resource.brokerPresentation,
                 readiness: resource.readiness,
@@ -1406,7 +1409,7 @@ export function registerTeamCredentialResourceRoutes(
                         requestPolicySupport,
                         ...body.data,
                     });
-                    if (!created.ok) return { ok: false as const, error: created.error };
+                    if (!created.ok) return created;
                     const projected = await projectTeamCredentialResourceSummaryInTx(tx, created.resourceId, request.userId);
                     if (!projected.ok) throw new TeamCredentialCreateProjectionFailure(projected.error);
                     return { ok: true as const, resource: projected.resource };
@@ -1462,7 +1465,7 @@ export function registerTeamCredentialResourceRoutes(
             }
         })();
         if (result === null) return;
-        if (!result.ok) return fail(reply, result.error);
+        if (!result.ok) return fail(reply, result.error, 'message' in result && typeof result.message === 'string' ? result.message : undefined);
         const [resource] = await projectTeamCredentialBrokerAdministrationReadiness(app, request.userId, [result.resource]);
         return reply.send(resource!);
     });
@@ -1484,7 +1487,7 @@ export function registerTeamCredentialResourceRoutes(
                 ? { resourceId: changed.resourceId, revision: changed.revision }
                 : changed;
         }, { isolationLevel: "ReadCommitted" /* The canonical Team guard serializes fresh audience authority and recipient cleanup with material production. */ });
-        if ('ok' in result && !result.ok) return fail(reply, result.error);
+        if ('ok' in result && !result.ok) return fail(reply, result.error, 'message' in result && typeof result.message === 'string' ? result.message : undefined);
         return reply.send(TeamCredentialResourceMutationResultV1Schema.parse(result));
     });
 
@@ -1538,7 +1541,7 @@ export function registerTeamCredentialResourceRoutes(
                 }
             }
         }
-        if ('ok' in result && !result.ok) return fail(reply, result.error);
+        if ('ok' in result && !result.ok) return fail(reply, result.error, 'message' in result && typeof result.message === 'string' ? result.message : undefined);
         return reply.send(TeamCredentialResourceMutationResultV1Schema.parse(result));
     });
 

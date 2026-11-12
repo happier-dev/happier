@@ -1,3 +1,4 @@
+import { ConnectedAccountDirectExportProjectionV1Schema } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { TeamCredentialResourceCustodianListInputV1Schema } from './resourceSelectionV1.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
@@ -444,6 +445,7 @@ export const TeamCredentialResourceSummaryV1Schema = lazyZodSchema(() => z.stric
   sourcePresentation: z.nullable(TeamCredentialResourceSourcePresentationV1Schema),
   /** Safe source-owner projection used to keep direct choices truthful. */
   directExportSupport: z._default(z.enum(['supported', 'mixed', 'unsupported']), 'unsupported'),
+  directExportFailure: ConnectedAccountDirectExportProjectionV1Schema.shape.directExportFailure,
   usageCapabilities: z.optional(TeamCredentialUsageCapabilitiesV1Schema),
   /** Enabled limits only; detailed evaluation remains owned by the limits API. */
   activeUsageLimitCount: z._default(z.number().check(z.int(), z.nonnegative()), 0),
@@ -623,7 +625,7 @@ export const TeamCredentialErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'team_authentication_required', 'team_authentication_policy_unavailable',
   'feature_disabled',
   'source_owner_required', 'source_replaced_or_missing', 'invalid_audience',
-  'disclosure_not_allowed', 'broker_unavailable', 'update_required', 'resource_corrupt',
+  'access_only_expiry_unavailable', 'disclosure_not_allowed', 'broker_unavailable', 'update_required', 'resource_corrupt',
   'resource_not_found', 'resource_forbidden',
   'member_not_eligible', 'session_policy_incompatible',
   'invalid_limit', 'limit_identity_immutable', 'subject_not_in_team',
@@ -643,6 +645,7 @@ export type TeamCredentialResourceDiscoveryPageV1 = z.infer<typeof TeamCredentia
 
 export const TeamCredentialResourceErrorV1Schema = lazyZodSchema(() => z.strictObject({
   error: TeamCredentialErrorCodeV1Schema,
+  message: z.optional(z.string()),
 }));
 
 /**

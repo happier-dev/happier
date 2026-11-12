@@ -30,6 +30,7 @@ import {
 export type UpdateTeamCredentialResourceInput = TeamCredentialResourceUpdateInputV1;
 
 export type UpdateTeamCredentialResourceResult =
+    | Readonly<{ ok: false; error: 'access_only_expiry_unavailable'; message?: string }>
     | Readonly<{ ok: true; resourceId: string; revision: number }>
     | Readonly<{ ok: false; error: "resource_not_found" | "resource_forbidden" | "resource_changed" | "invalid_resource_input" | "invalid_audience" | "invalid_limit" | "subject_not_in_team" | "token_limit_unavailable" | "cost_limit_unavailable" | "source_replaced_or_missing" | "disclosure_not_allowed" | "broker_unavailable" | "update_required" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
@@ -185,6 +186,9 @@ async function applyResourceReplacementInTx(
         source: nextSource,
     });
     if (source.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
+    if (nextDeliveryPolicy.preferredAllowedModes.includes('direct') && source.directExportFailure) {
+        return { ok: false, error: source.directExportFailure.code, message: source.directExportFailure.message };
+    }
     if (!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
         && nextDeliveryPolicy.preferredAllowedModes.includes('direct')
         && source.directExportSupport === "unsupported") {
@@ -552,6 +556,9 @@ export async function updateTeamCredentialResourceInTx(
             source: storedSource.data,
         });
         if (currentSource.status !== "current") return { ok: false, error: "source_replaced_or_missing" };
+        if (nextDeliveryPolicy.preferredAllowedModes.includes('direct') && currentSource.directExportFailure) {
+            return { ok: false, error: currentSource.directExportFailure.code, message: currentSource.directExportFailure.message };
+        }
         if (!storedDelivery.data.policy.preferredAllowedModes.includes('direct')
             && nextDeliveryPolicy.preferredAllowedModes.includes('direct')
             && currentSource.directExportSupport === "unsupported") return { ok: false, error: "disclosure_not_allowed" };

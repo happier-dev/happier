@@ -1,4 +1,4 @@
-import type { ConnectedAccountDirectExportContractV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import type { ConnectedAccountDirectExportContractV1, ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceAuthGroupMemberStateV1Schema, ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceAuthGroupStateV1Schema, parseConnectedServiceAuthGroupPolicy, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { clearConnectedServiceAuthGroupMemberRuntimeBlockers, readConnectedServiceManualActiveProfileRuntimeBlocker } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
@@ -348,6 +348,7 @@ export type QualifiedConnectedAccountGroupSourceSnapshot = Readonly<{
         authenticationModeId: string;
         status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
         directExportContract: ConnectedAccountDirectExportContractV1 | null;
+        directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
         contributionContractVersion: string | null;
         priority: number;
         enabled: boolean;
@@ -403,6 +404,7 @@ function projectQualifiedConnectedAccountGroupSourceSnapshot(
                     storedMember.credential.authenticationModeId,
                 status: sourceMetadata.status,
                 directExportContract: sourceMetadata.directExportContract,
+                ...(sourceMetadata.directExportFailure ? { directExportFailure: sourceMetadata.directExportFailure } : {}),
                 contributionContractVersion:
                     sourceMetadata.contributionContractVersion,
                 priority: member.priority,

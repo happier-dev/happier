@@ -23,6 +23,7 @@ export const TeamCredentialDirectMaterialReconcileOutputV1Schema = lazyZodSchema
       'upload_failed',
       'cancelled',
       'unsupported_direct_source',
+      'access_only_expiry_unavailable',
     ]),
   })),
 }));

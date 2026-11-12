@@ -221,9 +221,11 @@ describe('Agent launch runtime home', () => {
     const agentHome = await home();
     const launch = { ...payload(agentHome), selectedMaterials: [
       ...payload(agentHome).selectedMaterials,
-      { relativePath: 'native-home/auth.json', contentBase64: Buffer.from('selected-provider-credential').toString('base64') },
+      { relativePath: 'native-home/muse/auth.json', contentBase64: Buffer.from('{"access_token":"dummy-access","api_key":"dummy-member-key"}').toString('base64') },
     ] };
     await publishAgentLaunchMaterials(launch, agentHome);
+    const nativeSettings = join(launch.runtimeHome, 'native-home/muse/settings.json');
+    await writeFile(nativeSettings, 'member-settings', { mode: 0o600 });
     const nativeState = join(launch.runtimeHome, 'native-home/projects/workspace/session.jsonl');
     await mkdir(join(launch.runtimeHome, 'native-home/projects/workspace'), { recursive: true, mode: 0o700 });
     await writeFile(nativeState, 'provider-created-resume-state', { mode: 0o600 });
@@ -241,7 +243,8 @@ describe('Agent launch runtime home', () => {
     expect(result).toEqual({ code: 0, signal: null });
     expect(Buffer.concat(chunks)).toEqual(bytes);
     await expectTransientMaterialRemoved(launch);
-    await expect(stat(join(launch.runtimeHome, 'native-home/auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(join(launch.runtimeHome, 'native-home/muse/auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(nativeSettings, 'utf8')).toBe('member-settings');
     expect(await readFile(nativeState, 'utf8')).toBe('provider-created-resume-state');
   });
 

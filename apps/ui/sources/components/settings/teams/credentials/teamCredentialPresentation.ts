@@ -365,10 +365,18 @@ export {
  * limit, a stale revision and a departed Group member with the same non-answer.
  * Codes this domain does not own fall back to the shared Team vocabulary.
  */
+export function credentialDirectExportFailureMessage(failure: TeamCredentialResourceSummaryV1['directExportFailure']): string | undefined {
+    return failure === undefined ? undefined : failure.message ?? t('common.unavailable');
+}
+
 export function credentialFailureMessage(failure: HomeDomainFailure<string>): string {
     const reconnect = teamCredentialReconnectPresentation(failure.code);
     if (reconnect) return reconnect.message;
     switch (failure.code) {
+        case 'access_only_expiry_unavailable':
+            return failure.details && typeof failure.details === 'object'
+                && 'message' in failure.details && typeof failure.details.message === 'string'
+                ? failure.details.message : t('common.unavailable');
         case 'resource_changed':
             return t('teams.credentials.edit.conflict');
         case 'broker_unavailable':

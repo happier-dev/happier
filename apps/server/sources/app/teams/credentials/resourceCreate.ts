@@ -28,6 +28,7 @@ export interface CreateTeamCredentialResourceInput extends TeamCredentialResourc
 }
 
 export type CreateTeamCredentialResourceResult =
+    | Readonly<{ ok: false; error: 'access_only_expiry_unavailable'; message?: string }>
     | Readonly<{ ok: true; resourceId: string; revision: number }>
     | Readonly<{ ok: false; error: "forbidden" | "resource_changed" | "not_found_or_not_visible" | "invalid_resource_input" | "invalid_audience" | "disclosure_not_allowed" | "broker_unavailable" | "update_required" | "invalid_limit" | "subject_not_in_team" | "token_limit_unavailable" | "cost_limit_unavailable" | "source_owner_required" | "source_replaced_or_missing" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
@@ -105,6 +106,9 @@ export async function createTeamCredentialResourceInTx(tx: Tx, input: CreateTeam
         ...body.groupGrants.map(grant => grant.allowedRoutes),
         ...body.memberGrants.map(grant => grant.allowedRoutes),
     ].some(routes => routes?.includes('direct'));
+    if ((requestsDirect || body.deliveryPolicy.preferredAllowedModes.includes('direct')) && source.directExportFailure) {
+        return { ok: false, error: source.directExportFailure.code, message: source.directExportFailure.message };
+    }
     if (requestsDirect && source.directExportSupport === "unsupported") {
         return { ok: false, error: "disclosure_not_allowed" };
     }

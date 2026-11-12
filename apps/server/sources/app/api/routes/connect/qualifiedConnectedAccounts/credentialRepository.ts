@@ -568,6 +568,7 @@ export type QualifiedConnectedAccountSourceIdentity = Readonly<{
     authenticationModeId: string;
     status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
     directExportContract: ConnectedAccountDirectExportContractV1 | null;
+    directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
     contributionContractVersion: string | null;
 }>;
 
@@ -587,6 +588,7 @@ function projectQualifiedConnectedAccountSourceIdentity(
         authenticationModeId: current.authenticationModeId,
         status: projection.status,
         directExportContract: projection.directExportContract,
+        ...(projection.directExportFailure ? { directExportFailure: projection.directExportFailure } : {}),
         contributionContractVersion: projection.contributionContractVersion,
     };
 }
@@ -1831,6 +1833,7 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
     profile: QualifiedConnectedAccountProfileV4;
     incarnation: string;
     directExportSupport: "supported" | "unsupported";
+    directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
 }>>> {
     const refsByDigest = params.refs === undefined ? null : new Map(params.refs.map(ref => {
         const canonicalRef = QualifiedConnectedAccountRefSchema.parse(ref);
@@ -1943,6 +1946,7 @@ async function listQualifiedConnectedAccountEntriesByFilterInTx(
             });
         return {
             incarnation: row.id,
+            ...(metadata.directExportFailure ? { directExportFailure: metadata.directExportFailure } : {}),
             directExportSupport: metadata.directExportContract === null
                 || metadata.contributionContractVersion === null
                 ? "unsupported"
@@ -2013,12 +2017,13 @@ export async function listQualifiedConnectedAccountSourceOffersInTx(
     credentialIncarnation: string;
     label: string;
     directExportSupport: "supported" | "unsupported";
+    directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
 }>>> {
     const entries = await listQualifiedConnectedAccountEntriesByFilterInTx(
         tx,
         params,
     );
-    return entries.map(({ profile, incarnation, directExportSupport }) => {
+    return entries.map(({ profile, incarnation, directExportSupport, directExportFailure }) => {
         const serviceTitle = humanizeConnectedServiceIdentity(profile.ref.service.localId);
         const label = resolveConnectedAccountPrimaryNameV1({
             serviceTitle,
@@ -2032,6 +2037,7 @@ export async function listQualifiedConnectedAccountSourceOffersInTx(
             credentialIncarnation: incarnation,
             label,
             directExportSupport,
+            ...(directExportFailure ? { directExportFailure } : {}),
         };
     });
 }
@@ -2275,7 +2281,8 @@ async function readQualifiedCredentialHealthMutationInTx(
         previousHealth: projection.health,
         exportProjectionChanged: canonical.exportProjection !== undefined
             && (projection.directExportContract !== canonical.exportProjection.directExportContract
-                || projection.contributionContractVersion !== canonical.exportProjection.contributionContractVersion) };
+                || projection.contributionContractVersion !== canonical.exportProjection.contributionContractVersion
+                || !sameStrictJsonValue(projection.directExportFailure ?? null, canonical.exportProjection.directExportFailure ?? null)) };
 }
 
 const CREDENTIAL_HEALTH_CLOCK_FIELDS = new Set<keyof ConnectedServiceCredentialHealthV1>([
@@ -2529,6 +2536,7 @@ async function readQualifiedConnectedServiceCredentialInTx(
         metadata: projection.presentation,
         ...(!params.legacyReader && projection.contributionContractVersion !== null ? {
             exportProjection: { directExportContract: projection.directExportContract,
+                ...(projection.directExportFailure ? { directExportFailure: projection.directExportFailure } : {}),
                 contributionContractVersion: projection.contributionContractVersion },
         } : {}),
         ...(projection.health ? { health: projection.health } : {}),

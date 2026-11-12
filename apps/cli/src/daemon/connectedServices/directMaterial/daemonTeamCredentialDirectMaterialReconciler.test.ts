@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { accountSettingsParse, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { accountSettingsParse, type ActionExecutorDeps, type ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol';
 import {
   NO_TEAM_CAPABILITIES_V1,
   TeamCredentialResourcePageV1Schema,
@@ -92,7 +92,7 @@ const teamsPage = TeamsPageV1Schema.parse({
     archivedAt: null,
     recovery: null,
     policy: {
-      v: 2,
+      v: 1,
       sessionCreationPolicy: 'private_default',
       externalSharingPolicy: 'allowed',
       defaultSessionHistoryAccess: 'from_membership',
@@ -210,6 +210,7 @@ describe('daemon Team credential direct-material reconciler', () => {
       const source = { v: 1 as const, kind: 'connected_account' as const,
         target: { kind: 'account' as const, account }, credentialIncarnation: 'incarnation' };
       let credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+      let exportProjection: ConnectedAccountDirectExportProjectionV1 | undefined;
       let sourceReads = 0;
       const establishedRuntimeOwner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
         reloadController: admitted.controller, credentials: { token: 'synthetic', encryption: null },
@@ -218,9 +219,14 @@ describe('daemon Team credential direct-material reconciler', () => {
         // boundaries. Admission, opening and currentness stay with their real owner.
         readCredential: async () => { sourceReads++; return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
           ref: account, revisionSemantics: 'revisioned', credentialRevision, authenticationModeId: 'api-key', configurationRevision: null,
+          ...(exportProjection ? { exportProjection } : {}),
           content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
             payload: { v: 1, values: { token: 'synthetic' } }, randomBytes: length => new Uint8Array(length) }), metadata: { scopes: [] },
         }); },
+        mutateCredentialHealth: async input => {
+          exportProjection = input.patch.exportProjection;
+          return { success: true, credentialRevision: input.patch.expectedCredentialRevision, configurationRevision: null };
+        },
         configuration: { read: async () => null, secrets: { admit: async () => undefined, has: async () => false, read: async () => null } },
       });
       const material = await establishedRuntimeOwner.readMaterialSnapshot({ account });

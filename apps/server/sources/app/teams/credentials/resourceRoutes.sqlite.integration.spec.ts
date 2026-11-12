@@ -30,6 +30,7 @@ import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatal
 
 import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAccountIdentityDigest, createQualifiedConnectedAccountServiceDigest } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 import { createConnectedServiceCredentialRevision } from "@/app/api/routes/connect/credentials/credentialRevision";
+import { mutateQualifiedConnectedServiceCredential, mutateQualifiedConnectedServiceCredentialHealth } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { isRestrictedAuthTokenDeniedForRoute } from "@/app/api/utils/apiTokenRouteAdmission";
 import { getMachineSocketRoom, getSocketRooms, getUserMachinesSocketRoom } from "@/app/api/socketRooms";
@@ -69,6 +70,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "team-credential-resource-routes-",
             initAuth: false,
+            initEncrypt: true,
             env: {
                 HAPPIER_FEATURE_TEAMS__ENABLED: "1",
                 HAPPIER_SERVER_IDENTITY_ID: `srv_${'a'.repeat(32)}`,
@@ -283,6 +285,54 @@ describe("Team credential resource routes (SQLite integration)", () => {
     async function createAccount() {
         return await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
     }
+
+    it('refuses only direct sharing when the source reports unavailable access-only expiry', async () => {
+        const owner = await createAccount();
+        const team = await db.team.create({ data: { name: 'Access-only source' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const account = { service: { pluginId: 'test.connected-account', localId: 'subscription' }, accountId: 'imported' };
+        const message = "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.";
+        const directExportFailure = { code: 'access_only_expiry_unavailable' as const, message };
+        const directExportContract = 'happier.team-credential-access-only-connected-account-direct.v1' as const;
+        const created = await mutateQualifiedConnectedServiceCredential({
+            accountId: owner.id, ref: account, authenticationModeId: 'import', expectedCredentialRevision: null,
+            content: { t: 'plain', v: { accessToken: 'synthetic-credential' } }, metadata: { kind: 'oauth', scopes: [] },
+            directExportContract, contributionContractVersion: 'test-contribution',
+        });
+        if (created.status !== 'written') throw new Error(`unexpected credential create: ${created.status}`);
+        expect(await mutateQualifiedConnectedServiceCredentialHealth({ accountId: owner.id, ref: account,
+            expectedCredentialRevision: created.credentialRevision, expectedConfigurationRevision: created.configurationRevision,
+            health: { v: 1, status: 'connected', reconnectRequired: false },
+            exportProjection: { directExportContract, contributionContractVersion: 'test-contribution', directExportFailure },
+        })).toMatchObject({ status: 'written' });
+        const credential = await db.serviceAccountToken.findFirstOrThrow({ where: { accountId: owner.id } });
+        const source = { v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id };
+        const resourceId = `access-only-${owner.id}`;
+        const draft = { teamId: team.id, resourceId, displayName: 'Imported source', source,
+            deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] }, sessionUsePolicy: 'personal_allowed',
+            brokerPlacement: null, requestPolicy: null, allMembersAllowedRoutes: null,
+            groupGrants: [], memberGrants: [], usageLimits: [] };
+        const candidates = await post('/v1/teams/credential-resources/sources/list', owner.id, { teamId: team.id });
+        expect(candidates.statusCode, candidates.body).toBe(200);
+        expect(candidates.json()).toMatchObject({ candidates: [{ directExportSupport: 'supported', directExportFailure }] });
+        const refused = await post('/v1/teams/credential-resources/create', owner.id, draft);
+        expect(refused.statusCode, refused.body).toBe(400);
+        expect(refused.json()).toEqual({ error: directExportFailure.code, message });
+        const brokered = await post('/v1/teams/credential-resources/create', owner.id,
+            { ...draft, deliveryPolicy: { preferredAllowedModes: ['brokered'] } });
+        expect(brokered.statusCode, brokered.body).toBe(200);
+        const resource = await post('/v1/teams/credential-resources/get', owner.id, { resourceId });
+        expect(resource.statusCode, resource.body).toBe(200);
+        expect(resource.json()).toMatchObject({ directExportSupport: 'supported', directExportFailure });
+        const shared = await post('/v1/teams/credential-resources/source-resources/list', owner.id,
+            { source: { v: 1, kind: 'connected_account', target: { kind: 'account', account } } });
+        expect(shared.statusCode, shared.body).toBe(200);
+        expect(shared.json()).toMatchObject({ resources: [{ id: resourceId, directExportFailure }] });
+        const widened = await post('/v1/teams/credential-resources/update', owner.id, { resourceId,
+            expectedRevision: resource.json().revision, deliveryPolicy: draft.deliveryPolicy });
+        expect(widened.statusCode, widened.body).toBe(400);
+        expect(widened.json()).toEqual({ error: directExportFailure.code, message });
+    });
 
     it("discovers an Account's admitted Teams in one request while retaining per-Team refusals", async () => {
         const actor = await createAccount();

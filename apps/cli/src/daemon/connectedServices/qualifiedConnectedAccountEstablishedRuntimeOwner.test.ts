@@ -134,6 +134,105 @@ function plainEnvelope(kind: 'credential' | 'configuration', payload: unknown) {
 }
 
 describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
+  it.each(['known', 'unavailable'] as const)('enriches stored access-only expiry at natural acquisition without reconnecting (%s)', async expiry => {
+    const ref = { pluginId: 'external.oauth', localId: 'subscription' };
+    const account = { service: ref, accountId: 'imported-account' };
+    const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: ref.localId, title: 'Imported OAuth', authentication: { defaultModeId: 'native-import', modes: [{
+        id: 'native-import', kind: 'manual', fields: [], credentialOrigin: 'native_import', outcomeReconciliation: 'none', accessOnlyExport: {
+          contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1',
+          accessTokenKey: 'accountToken', expiresAtMsKey: 'expiresAtMs', metadataKeys: [],
+        },
+      }] },
+    });
+    let stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account, authenticationModeId: 'native-import', revisionSemantics: 'revisioned',
+      credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
+      content: plainEnvelope('credential', { v: 1, values: { accountToken: 'dummy-access', nativeExpiresAt: '9999999999' } }),
+      metadata: { scopes: [], kind: 'oauth' }, health: { v: 1, status: 'connected', reconnectRequired: false },
+    });
+    let enrichmentAttempts = 0;
+    let projectionPublications = 0;
+    let occurrence = 'declaration-1';
+    const enrichedRevision = 'csr_1123456789ABCDEFGHJKMNPQRS';
+    const runtime: ConnectedAccountRuntime = { status: async () => ({ status: 'connected' }) };
+    const runtimeLease = { ref, descriptor, occurrenceId: occurrence, runtime,
+      owner: 'host' as const, sourceCustody: { kind: 'host' as const }, isCurrent: () => true };
+    const invoker = createConnectedAccountHostRuntimeInvoker({
+      resolveRuntime: async () => ({ ...runtimeLease, occurrenceId: occurrence }),
+      resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
+      resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
+        createPluginInvocationServiceBinding('authority-generation', 'producer') }),
+      createServices: () => ({}) as PluginInvocationContext['services'],
+      registerRawForRedaction() {},
+    });
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: async () => ({ registry: { connectedAccountContributions: {
+          describe: () => ({ ref, descriptor, occurrenceId: occurrence, sourceCustody: { kind: 'host' as const }, isCurrent: () => true }),
+        }, resolveConnectedAccountRuntime: async () => ({ ...runtimeLease, occurrenceId: occurrence }),
+        connectedAccountRuntimeInvoker: invoker }, release: async () => {} }), isRuntimeRegistryCurrent: () => true,
+      },
+      credentials: { token: 'dummy-account-token', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+      readCredential: async () => stored, readConfiguration: async () => null,
+      mutateCredentialHealth: async input => {
+        projectionPublications++;
+        const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(input.patch);
+        stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored, exportProjection: patch.exportProjection });
+        return { success: true, credentialRevision: patch.expectedCredentialRevision, configurationRevision: null };
+      },
+      // Host persistence boundary: the metadata-only coordinator commits the plugin's staged expiry.
+      enrichCredentialContext: async input => {
+        enrichmentAttempts++;
+        expect(input.expectedCredentialRevision).toBe(requestAuthCredentialRevision);
+        if (expiry === 'unavailable') return { status: 'unchanged', diagnostic: {
+          code: 'access_only_expiry_unavailable', message: 'Reconnect this imported login to share it natively.',
+        } };
+        stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored,
+          credentialRevision: enrichedRevision,
+          content: plainEnvelope('credential', { v: 1, values: {
+            accountToken: 'dummy-access', nativeExpiresAt: '9999999999', expiresAtMs: '9999999999000',
+          } }),
+        });
+        return { status: 'enriched' };
+      },
+      configuration: { read: async () => null, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
+    });
+    const snapshot = await owner.readMaterialSnapshot({ account });
+    if (expiry === 'unavailable') {
+      expect(snapshot.directExportFailure).toEqual({ code: 'access_only_expiry_unavailable',
+        message: 'Reconnect this imported login to share it natively.' });
+      expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
+      await owner.refreshExportProjection({ account });
+      expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
+      await expect(owner.invoke({ account, operation: { kind: 'status' } })).resolves.toMatchObject({ status: 'connected' });
+      expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
+      await owner.readMaterialSnapshot({ account });
+      expect(projectionPublications).toBe(1);
+      occurrence = 'declaration-reloaded';
+      await owner.refreshExportProjection({ account });
+      expect(stored.exportProjection?.directExportFailure).toEqual(snapshot.directExportFailure);
+      expect(stored.health).toMatchObject({ status: 'connected', reconnectRequired: false });
+      expect(enrichmentAttempts).toBe(2);
+      stored = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...stored,
+        content: plainEnvelope('credential', { v: 1, values: { accountToken: 'dummy-access', expiresAtMs: '9999999999000' } }),
+      });
+      expect((await owner.readMaterialSnapshot({ account })).directExportFailure).toBeUndefined();
+      expect(stored.exportProjection?.directExportFailure).toBeUndefined();
+      expect(enrichmentAttempts).toBe(2);
+      expect(projectionPublications).toBe(3);
+      return;
+    }
+    expect(snapshot.credential.values).toMatchObject({
+      accountToken: 'dummy-access', expiresAtMs: '9999999999000',
+    });
+    expect(snapshot.credentialRevision).toBe(enrichedRevision);
+    expect((await owner.readMaterialSnapshot({ account })).credential.values.expiresAtMs).toBe('9999999999000');
+    expect(enrichmentAttempts).toBe(1);
+    expect(projectionPublications).toBe(1);
+    expect(stored.health).toMatchObject({ status: 'connected', reconnectRequired: false });
+  });
+
   it('repairs a pre-declaration OAuth account on metadata-only startup/reload and natural acquisition', async () => {
     const ref = { pluginId: 'external.oauth', localId: 'subscription' };
     const target = { service: ref, accountId: 'older-account' };

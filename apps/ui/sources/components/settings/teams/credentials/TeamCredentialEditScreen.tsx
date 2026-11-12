@@ -22,6 +22,7 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import {
     credentialApprovalFailureMessage,
     credentialFailureMessage,
+    credentialDirectExportFailureMessage,
     sessionUsePolicyLabel,
     teamCredentialBrokerPlacementsEqual,
 } from './teamCredentialPresentation';
@@ -272,6 +273,9 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
             (candidate) => candidate.candidate.offeredByResourceId === resourceId,
         ) ?? null
         : null);
+    const directExportFailure = selectedSourceCandidate
+        ? selectedSourceCandidate.candidate.directExportFailure
+        : draftSourceIdentity === JSON.stringify(resourceDraft.baseline.source) ? resource.directExportFailure : undefined;
     const requestPolicy = teamCredentialPolicyFromDraft(policyDraft);
     const requestPolicyChanged = JSON.stringify(policyDraft)
         !== JSON.stringify(resourceDraft.baseline.requestPolicy);
@@ -384,7 +388,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 is confirmed before it is drafted. */}
             {props.section === undefined && resource.capabilities.updateDeliveryPolicy ? <ItemGroup
                 title={t('teams.credentials.edit.ceilingLabel')}
-                description={t('teams.credentials.edit.ceilingNote')}
+                description={credentialDirectExportFailureMessage(directExportFailure) ?? t('teams.credentials.edit.ceilingNote')}
                 accessibilityRole="radiogroup"
                 accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}
             >
@@ -404,7 +408,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     accessibilityRole="radio"
                     webRole="radio"
                     selected={!nativeAllowed && ceiling === 'direct_allowed'}
-                    disabled={busy || nativeAllowed || !resource.capabilities.updateDeliveryPolicy}
+                    disabled={busy || nativeAllowed || directExportFailure !== undefined || !resource.capabilities.updateDeliveryPolicy}
                     onPress={() => {
                         if (ceiling === 'direct_allowed') return;
                         void (async () => {

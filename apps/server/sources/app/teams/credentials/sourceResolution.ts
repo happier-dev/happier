@@ -1,3 +1,4 @@
+import type { ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -31,6 +32,7 @@ export type TeamCredentialResourceSourceResolution =
         /** Opaque member attribution only when this source binding itself proves one exact member. */
         usageSourceMemberKey: string | null;
         directExportSupport: DirectExportSupport;
+        directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
         requestPolicyCurrentness: TeamCredentialResourceSourceCurrentness;
         metadata:
             | Readonly<{
@@ -76,6 +78,7 @@ export function projectConnectedAccountSourceResolution(
             || current.contributionContractVersion === null
             ? "unsupported"
             : "supported",
+        ...(current.directExportFailure ? { directExportFailure: current.directExportFailure } : {}),
         requestPolicyCurrentness: { kind: "connected_account", identity: current },
         usageSourceMemberKey: computeTeamCredentialSourceMemberKeyV1({
             kind: "connected_account",
@@ -100,11 +103,12 @@ export function projectConnectedPoolSourceResolution(
         return { status: "unavailable", reason: "source_changed" };
     }
     const enabled = current.members.filter(member => member.enabled);
-    const supported = enabled.filter(member => (
+    const exporting = enabled.filter(member => (
         member.credentialRevision !== null
         && member.directExportContract !== null
         && member.contributionContractVersion !== null
-    )).length;
+    ));
+    const supported = exporting.length;
     const directExportSupport: DirectExportSupport = supported === 0
         ? "unsupported"
         : supported === enabled.length ? "supported" : "mixed";
@@ -113,6 +117,8 @@ export function projectConnectedPoolSourceResolution(
         ...(current.members.some(member => member.enabled && member.account.accountId === current.activeConnectedAccountId && member.status === "needs_reauth")
             ? { authenticationFailure: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired } : {}),
         directExportSupport,
+        ...(exporting.length > 0 && exporting.every(member => member.directExportFailure !== undefined)
+            ? { directExportFailure: exporting[0]!.directExportFailure } : {}),
         requestPolicyCurrentness: { kind: "connected_pool", snapshot: current },
         usageSourceMemberKey: null,
         metadata: {

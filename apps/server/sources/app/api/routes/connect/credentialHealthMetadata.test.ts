@@ -10,6 +10,24 @@ import {
 const credentialRevision = "csr_abcdefghijklmnopqrstuvwxyz";
 
 describe("qualified Connected Account credential health metadata", () => {
+    it("publishes a source-owned export refusal independently of authentication and clears it after recovery", () => {
+        const current = parseQualifiedConnectedServiceCredentialStoredMetadataV4({
+            v: 4, storage: "stored_envelope_v1", credentialRevision, values: { scopes: [] },
+        });
+        const projection = {
+            directExportContract: 'happier.team-credential-access-only-connected-account-direct.v1' as const,
+            contributionContractVersion: 'test-contribution',
+            directExportFailure: { code: 'access_only_expiry_unavailable' as const,
+                message: "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively." },
+        };
+        const health = { v: 1 as const, status: 'connected' as const, reconnectRequired: false };
+        const unavailable = withQualifiedConnectedServiceCredentialHealth(current, health, projection);
+        expect(unavailable).toMatchObject({ directExportFailure: projection.directExportFailure });
+        expect(deriveConnectedServiceCredentialStatus(unavailable)).toBe('connected');
+        const { directExportFailure: _failure, ...recovered } = projection;
+        expect(withQualifiedConnectedServiceCredentialHealth(unavailable, health, recovered))
+            .not.toHaveProperty('directExportFailure');
+    });
     it("stores health beside strict V4 presentation metadata without rotating the credential revision", () => {
         const current = parseQualifiedConnectedServiceCredentialStoredMetadataV4({
             v: 4,

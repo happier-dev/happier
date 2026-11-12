@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod/mini";
-import { type ConnectedAccountDirectExportProjectionV1, ConnectedAccountDirectExportContractV1Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { type ConnectedAccountDirectExportProjectionV1, ConnectedAccountDirectExportProjectionV1Schema, ConnectedAccountDirectExportContractV1Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialRevisionV1Schema, type ConnectedServiceCredentialHealthV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
@@ -17,6 +17,7 @@ export const QualifiedConnectedServiceCredentialStoredMetadataV4Schema =
         storage: z.literal("stored_envelope_v1"),
         credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
         directExportContract: z.optional(ConnectedAccountDirectExportContractV1Schema),
+        directExportFailure: ConnectedAccountDirectExportProjectionV1Schema.shape.directExportFailure,
         contributionContractVersion: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
         /** Saved Secret resources the sealed credential references (ids only). */
         savedSecretResourceIds: z.optional(z.array(z.string().check(z.minLength(1), z.maxLength(128))).check(z.minLength(1), z.maxLength(64))),
@@ -42,9 +43,10 @@ export function withQualifiedConnectedServiceCredentialHealth(
     exportProjection?: ConnectedAccountDirectExportProjectionV1,
 ): QualifiedConnectedServiceCredentialStoredMetadataV4 {
     if (exportProjection) {
-        const { directExportContract: _contract, contributionContractVersion: _version, ...retained } = metadata;
+        const { directExportContract: _contract, contributionContractVersion: _version, directExportFailure: _failure, ...retained } = metadata;
         metadata = { ...retained,
             ...(exportProjection.directExportContract ? { directExportContract: exportProjection.directExportContract } : {}),
+            ...(exportProjection.directExportFailure ? { directExportFailure: exportProjection.directExportFailure } : {}),
             contributionContractVersion: exportProjection.contributionContractVersion };
     }
     return QualifiedConnectedServiceCredentialStoredMetadataV4Schema.parse({

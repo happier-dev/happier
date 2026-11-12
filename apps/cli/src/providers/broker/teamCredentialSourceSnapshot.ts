@@ -7,6 +7,7 @@ import type {
   QualifiedConnectedAccountMaterialSnapshot,
 } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { ProviderResolvedCredential } from '@/providers/spawn/credentials';
+import { QualifiedConnectedAccountMaterialError } from '@/daemon/connectedServices/qualifiedConnectedAccountMaterialError';
 import type {
   ProviderConnectionBrokerSourceSnapshot,
 } from './providerConnectionSource';
@@ -68,6 +69,10 @@ function accountMaterial(
 ): ConnectedAccountDirectMaterial | null {
   const declaration = snapshot.accessOnlyExport;
   if (declaration) {
+    if (snapshot.directExportFailure) {
+      throw new QualifiedConnectedAccountMaterialError(snapshot.directExportFailure.code,
+        snapshot.directExportFailure.message ?? snapshot.directExportFailure.code);
+    }
     const source = snapshot.credential.values;
     const token = source[declaration.accessTokenKey];
     const expiry = Number(source[declaration.expiresAtMsKey]);

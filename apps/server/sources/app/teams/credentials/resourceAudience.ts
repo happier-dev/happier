@@ -24,6 +24,7 @@ export type TeamCredentialAudienceInput = Readonly<{
 }>;
 
 export type TeamCredentialAudienceResult =
+    | Readonly<{ ok: false; error: 'access_only_expiry_unavailable'; message?: string }>
     | Readonly<{ ok: true; resourceId: string; revision: number }>
     | Readonly<{ ok: false; error: "resource_not_found" | "resource_forbidden" | "resource_changed" | "invalid_audience" | "disclosure_not_allowed" | "broker_unavailable" | "update_required" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
@@ -210,6 +211,9 @@ export async function setTeamCredentialAudienceInTx(
         }
         if (currentSource.directExportSupport === "unsupported") {
             return { ok: false, error: "disclosure_not_allowed" };
+        }
+        if (currentSource.directExportFailure) {
+            return { ok: false, error: currentSource.directExportFailure.code, message: currentSource.directExportFailure.message };
         }
     }
     if (!canManage) {

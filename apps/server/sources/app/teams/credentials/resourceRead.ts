@@ -5,7 +5,7 @@ import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { readTeamCredentialResourceCandidatesInTx, teamCredentialAudienceDeliveryWhere } from './resourceCandidateRead';
 import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
 import { readManagedNativeCredentialTargetInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
-import { TeamCredentialSourceResourceAdministrationV1Schema, isTeamPrincipalRoleV1, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
+import { TeamCredentialSourceResourceAdministrationV1Schema, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import type { Tx } from "@/storage/inTx";
@@ -23,9 +23,8 @@ import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { readTeamCredentialBrokerPlacement } from "./brokerPlacementResolver";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import {
-    hasCurrentTeamCredentialAudienceMatchInTx,
     projectTeamCredentialEntitlement,
-    resolveTeamCredentialEntitlementInTx,
+    type TeamCredentialEntitlementDecision,
 } from "./resourceAccess";
 import { isEffectiveTeamMembership, type TeamMembershipLifetimeContext } from "../memberships/effectiveMembership";
 import { isEffectiveTeamGroupMembership, type TeamGroupMembershipLifetimeContext } from "../groups/effectiveGroupMembership";
@@ -503,6 +502,8 @@ async function projectSummary(
                 service: source.kind === "connected_account" ? source.target.account.service : source.target.service,
             },
         directExportSupport,
+        ...(sourceOwnerView && sourceResolution?.status === 'current' && sourceResolution.directExportFailure
+            ? { directExportFailure: sourceResolution.directExportFailure } : {}),
         requestPolicy: authority.isQualifiedTeamManager && parsedRequestPolicy.success
             ? parsedRequestPolicy.data
             : null,
@@ -696,11 +697,10 @@ async function projectCatalogEntryInTx(
     source: TeamCredentialSourceBindingV1 | null,
     audience: ResourceAudience,
     actorAccountId: string,
-    prefetchedSourceResolution?: TeamCredentialResourceSourceResolution | null,
-    prefetchedEntitlement?: Awaited<ReturnType<typeof resolveTeamCredentialEntitlementInTx>>,
-    prefetchedAudienceMatch?: boolean,
+    prefetchedSourceResolution: TeamCredentialResourceSourceResolution | null | undefined,
+    entitlement: TeamCredentialEntitlementDecision,
     captureProjectionFacts?: (facts: Readonly<{
-        entitlement: Extract<Awaited<ReturnType<typeof resolveTeamCredentialEntitlementInTx>>, { ok: true }>;
+        entitlement: Extract<TeamCredentialEntitlementDecision, { ok: true }>;
         source: ReturnType<typeof TeamCredentialSourceBindingV1Schema.parse> | null;
         sessionUsePolicyValid: boolean;
         sourceIsCurrent: boolean;
@@ -734,10 +734,10 @@ async function projectCatalogEntryInTx(
         usageCapabilities,
     });
 
-    const entitlement = prefetchedEntitlement ?? await resolveTeamCredentialEntitlementInTx(tx, { resourceId: row.id, accountId: actorAccountId });
     if (!entitlement.ok) {
-        if ((entitlement.reason !== "resource_corrupt" && entitlement.reason !== "source_owner_required")
-            || !(prefetchedAudienceMatch ?? await hasCurrentTeamCredentialAudienceMatchInTx(tx, { resourceId: row.id, accountId: actorAccountId }))) return null;
+        // These failures are returned only after the shared owner matched an
+        // audience grant; unavailable source/delivery facts do not erase it.
+        if (entitlement.reason !== "resource_corrupt" && entitlement.reason !== "source_owner_required") return null;
         const policy = TeamCredentialResourceCatalogEntryV1Schema.shape.sessionUsePolicy.safeParse(row.sessionUsePolicy);
         const projected = TeamCredentialResourceCatalogEntryV1Schema.safeParse({
             id: row.id,
@@ -987,7 +987,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
     if (decoded?.status === 'invalid') return { ok: false as const, error: 'invalid_resource_input' as const };
     const after = decoded?.status === 'ok' ? decoded.cursor : null;
     const projected: Array<{ row: ResourceRow; resource: NonNullable<Awaited<ReturnType<typeof projectCatalogEntryInTx>>> }> = [];
-    const projectionFactsByResourceId = new Map<string, Parameters<NonNullable<Parameters<typeof projectCatalogEntryInTx>[8]>>[0]>();
+    const projectionFactsByResourceId = new Map<string, Parameters<NonNullable<Parameters<typeof projectCatalogEntryInTx>[7]>>[0]>();
     const candidateWindow = await readTeamCredentialResourceCandidatesInTx(tx, {
         selection: { kind: 'recipient', teamIds: input.teamIds, resourceId: input.resourceId }, after, limit,
     });
@@ -1053,12 +1053,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 custodianMembership: custodianRow ? projectExternalKeyMembership(custodianRow) : null,
                 groupMemberships: actorGroups,
             });
-            const audienceMatch = actorMembership?.effective === true && (
-                (row.allMembersDeliveryMode !== null && isTeamPrincipalRoleV1(actorMembership.role))
-                || audience.memberGrants.some(grant => grant.teamMembershipId === actorMembership.teamMembershipId)
-                || audience.groupGrants.some(grant => actorGroups.some(group => group.effective && group.teamGroupId === grant.teamGroupId))
-            );
-            return { row, index, audience, entitlement, audienceMatch,
+            return { row, index, audience, entitlement,
                 sourceOwnerDisplayName: custodianRow ? resolveAccountDisplayLabelV1(custodianRow.account) : null };
         });
         const usageEvaluations = await evaluateTeamCredentialUsageAdmissionLimitsForResourcesInTx(tx, {
@@ -1067,7 +1062,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
             )),
             actorAccountId: input.actorAccountId,
         });
-        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, audienceMatch, sourceOwnerDisplayName }) => ({
+        const page = await Promise.all(candidateProjectionInputs.map(async ({ row, index, audience, entitlement, sourceOwnerDisplayName }) => ({
             row,
             sourceOwnerDisplayName,
             resource: await projectCatalogEntryInTx(
@@ -1078,7 +1073,6 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 input.actorAccountId,
                 sourceResolutions[index],
                 entitlement,
-                audienceMatch,
                 facts => projectionFactsByResourceId.set(row.id, facts),
                 usageEvaluations.get(row.id) ?? null,
                 projectCurrentDirectMaterialReferences({
@@ -1515,6 +1509,7 @@ export async function readTeamCredentialSourceResourceAdministrationInTx(tx: Tx,
                 enabled: resource.enabled,
                 revision: resource.revision,
                 deliveryPolicy: resource.deliveryPolicy,
+                ...(resource.directExportFailure ? { directExportFailure: resource.directExportFailure } : {}),
                 brokerPlacement: resource.brokerPlacement,
                 brokerPresentation: resource.brokerPresentation,
                 readiness: resource.readiness,

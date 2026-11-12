@@ -11,7 +11,7 @@ import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDi
 import { t } from '@/text';
 
 import type { TeamSectionContext } from '../teamSectionContext';
-import { deliveryModeLabel } from './teamCredentialPresentation';
+import { credentialDirectExportFailureMessage, deliveryModeLabel } from './teamCredentialPresentation';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import {
     offeredDeliveryModes,
@@ -53,6 +53,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
     const modes = offeredDeliveryModes({
         deliveryPolicy: draft.deliveryPolicy,
         directExportSupport: resource.directExportSupport,
+        directExportFailure: resource.directExportFailure,
     });
     const savedGroupIds = React.useMemo(
         () => resource.groupGrants.map((grant) => grant.teamGroupId),
@@ -117,9 +118,9 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
         <>
             <ItemGroup
                 title={t('teams.credentials.audience.title')}
-                description={draft.deliveryPolicy.preferredAllowedModes.length === 1 && draft.deliveryPolicy.preferredAllowedModes[0] === 'brokered'
+                description={credentialDirectExportFailureMessage(resource.directExportFailure) ?? (draft.deliveryPolicy.preferredAllowedModes.length === 1 && draft.deliveryPolicy.preferredAllowedModes[0] === 'brokered'
                     ? t('teams.credentials.audience.ceilingBlocked')
-                    : t('teams.credentials.audience.limitsNote')}
+                    : t('teams.credentials.audience.limitsNote'))}
             >
                 <Item
                     testID="team-credential-audience-everyone"

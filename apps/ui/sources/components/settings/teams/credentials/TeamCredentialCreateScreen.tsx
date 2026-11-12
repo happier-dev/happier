@@ -23,7 +23,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamCredentialDetailPath } from '../teamsRoutes';
-import { credentialApprovalFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
+import { credentialApprovalFailureMessage, credentialDirectExportFailureMessage, credentialFailureMessage, deliveryModeLabel, limitMetricLabel, limitPeriodLabel, limitSubjectKindLabel, requestProtocolKindLabel, sessionUsePolicyLabel, sourceKindLabel } from './teamCredentialPresentation';
 import { TeamCredentialAudiencePicker } from './TeamCredentialAudiencePicker';
 import { TeamCredentialSourcePicker } from './TeamCredentialSourcePicker';
 import { confirmTeamCredentialDisclosure, confirmTeamCredentialDisclosureWidening, EMPTY_TEAM_CREDENTIAL_LIMIT_DRAFT, EMPTY_TEAM_CREDENTIAL_RESOURCE_DRAFT, narrowTeamCredentialResourceDraftToBrokeredOnly, offeredDeliveryModes, reconcileTeamCredentialPolicyDraftForModelCatalog, TEAM_CREDENTIAL_LIMIT_PERIODS, TEAM_CREDENTIAL_LIMIT_SUBJECT_KINDS, TeamCredentialBrokerPlacementSection, teamCredentialBrokerPlacementDraftLabel, TeamCredentialDeliveryModeChooser, teamCredentialLimitMaximumValid, teamCredentialLimitSubjectSelected, teamCredentialPolicyFromDraft, teamCredentialResourceDraftFingerprint, useTeamCredentialResourceDraft, withAudienceEntry, type TeamCredentialResourceDraft } from './teamCredentialEditorDraft';
@@ -262,10 +262,12 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
     if (projection.viewer === null && projection.error !== null) return <ItemGroup description={credentialFailureMessage(projection.error)}><Item testID="team-credential-create-retry" title={t('teams.unavailable.retry')} onPress={() => void projection.retry()} showChevron={false} /></ItemGroup>;
     if (projection.viewer === null) return <ItemGroup><Item testID="team-credential-create-loading" title={t('teams.credentials.create.title')} loading showChevron={false} /></ItemGroup>;
     if (!mayOffer || (!context.canMutate && !context.approvalPending)) return <ItemGroup description={t('teams.credentials.create.notAllowed')}><Item testID="team-credential-create-forbidden" title={t('teams.denied.title')} showChevron={false} /></ItemGroup>;
-    const directExportSupported = selected?.candidate.directExportSupport !== 'unsupported';
+    const directExportSupported = selected?.candidate.directExportSupport !== 'unsupported'
+        && selected?.candidate.directExportFailure === undefined;
     const modes = offeredDeliveryModes({
         deliveryPolicy,
         directExportSupport: selected?.candidate.directExportSupport,
+        directExportFailure: selected?.candidate.directExportFailure,
     });
     const chooseMode = async (
         mode: readonly TeamCredentialRouteV1[] | null,
@@ -330,8 +332,8 @@ const CredentialCreator = React.memo(function CredentialCreator(props: Readonly<
         {sources.error ? <ItemGroup description={credentialFailureMessage(sources.error)}><Item testID="team-credential-create-source-retry" title={t('teams.unavailable.retry')} onPress={() => void sources.reload()} showChevron={false} /></ItemGroup> : null}
         {providerConnections.error && sources.supportedKinds.includes('provider_connection') ? <ItemGroup description={t('teams.credentials.requestPolicy.catalogUnavailable')}><Item testID="team-credential-create-provider-source-retry" title={t('teams.unavailable.retry')} onPress={() => void providerConnections.refresh()} showChevron={false} /></ItemGroup> : null}
         <ItemGroup title={t('teams.credentials.edit.nameLabel')}><Item title={t('teams.credentials.edit.nameLabel')} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="team-credential-create-name" value={name} onChangeText={value => { setNameEdited(true); patchResourceDraft({ name: value }); }} placeholder={t('teams.credentials.edit.namePlaceholder')} accessibilityLabel={t('teams.credentials.edit.nameLabel')} maxLength={NAME_MAX_LENGTH} editable={!busy} />} /></ItemGroup>
-        <ItemGroup title={t('teams.credentials.edit.ceilingLabel')} description={t('teams.credentials.edit.ceilingNote')} accessibilityRole="radiogroup" accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}>
-            {(['brokered_only', 'direct_allowed'] as const).map(value => <Item key={value} testID={`team-credential-create-ceiling:${value}`} title={value === 'brokered_only' ? t('teams.credentials.edit.ceilingBrokeredOnly') : t('teams.credentials.edit.ceilingDirectAllowed')} accessibilityRole="radio" webRole="radio" selected={ceiling === value} disabled={busy} onPress={async () => { if (value === 'direct_allowed' && ceiling !== value && !await confirmTeamCredentialDisclosureWidening()) return; if (value === 'brokered_only') resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly); else patchResourceDraft({ deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] } }, true); }} showChevron={false} />)}
+        <ItemGroup title={t('teams.credentials.edit.ceilingLabel')} description={credentialDirectExportFailureMessage(selected?.candidate.directExportFailure) ?? t('teams.credentials.edit.ceilingNote')} accessibilityRole="radiogroup" accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}>
+            {(['brokered_only', 'direct_allowed'] as const).map(value => <Item key={value} testID={`team-credential-create-ceiling:${value}`} title={value === 'brokered_only' ? t('teams.credentials.edit.ceilingBrokeredOnly') : t('teams.credentials.edit.ceilingDirectAllowed')} accessibilityRole="radio" webRole="radio" selected={ceiling === value} disabled={busy || (value === 'direct_allowed' && !directExportSupported)} onPress={async () => { if (value === 'direct_allowed' && ceiling !== value && !await confirmTeamCredentialDisclosureWidening()) return; if (value === 'brokered_only') resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly); else patchResourceDraft({ deliveryPolicy: { preferredAllowedModes: ['brokered', 'direct'] } }, true); }} showChevron={false} />)}
         </ItemGroup>
         {managesResources ? <TeamCredentialBrokerPlacementSection
             scope={context.scope}

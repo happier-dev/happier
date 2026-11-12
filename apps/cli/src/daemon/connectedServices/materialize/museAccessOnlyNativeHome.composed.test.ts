@@ -15,6 +15,8 @@ import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { materializeConnectedServicesForSpawn } from './materializeConnectedServicesForSpawn';
 import { resolveConnectedServiceMaterializedRootDir } from './resolveConnectedServiceMaterializedRootDir';
+import { readConnectedServiceStateSharingManifest } from '../stateSharing/connectedServiceStateSharingManifest';
+import { reconcileTeamCredentialNativeHomeCredentials } from '../stateSharing/reconcileTeamCredentialNativeHomeCredentials';
 
 describe('Muse access-only native home', () => {
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
@@ -33,6 +35,7 @@ describe('Muse access-only native home', () => {
     const root = await mkdtemp(join(tmpdir(), 'muse-access-only-native-home-'));
     let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawn>> = null;
     let lease: { dispose(): void } | undefined;
+    const replacements: NonNullable<Awaited<ReturnType<typeof materializeConnectedServicesForSpawn>>>[] = [];
     try {
       const personalHome = join(root, 'personal-config');
       const personalAuth = JSON.stringify({ schema_version: 1, providers: { meta: {
@@ -73,7 +76,9 @@ describe('Muse access-only native home', () => {
         activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
         connectedAccountsOwner: selected.owner,
         connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [selected.binding], requestAuthPurposeBindings: [] },
-        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [selected.binding] },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [selected.binding], directMaterialOrigins: [{
+          teamId: 'member-team', resourceId: 'member-share', purpose: scope.purpose, disclosedMember: account,
+        }] },
         processEnv: { XDG_CONFIG_HOME: personalHome },
         accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
           v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
@@ -92,9 +97,41 @@ describe('Muse access-only native home', () => {
         access_token: 'synthetic-member-access', mechanism: 'oauth', expires_at: Math.floor(expiry / 1000),
         api_base_url: 'https://api.meta.ai/v1', obtained_via: 'device_code',
       } } });
+      expect((await readConnectedServiceStateSharingManifest(targetHome)).teamCredentialDeliveries).toEqual([{
+        teamId: 'member-team', resourceId: 'member-share', credentialPaths: ['muse/auth.json'],
+      }]);
       expect(auth.providers.meta).not.toHaveProperty('api_key');
       expect(auth.providers.meta).not.toHaveProperty('refresh_token');
       expect(await readFile(join(personalHome, 'muse', 'auth.json'), 'utf8')).toBe(personalAuth);
+
+      // The retained path is reused by a later admission. Withdrawing share A
+      // must leave share B's current credential, then a personal selection, alone.
+      const replacement = await materializeConnectedServicesForSpawn({ ...params,
+        qualifiedPurposeBindingSnapshot: { ...params.qualifiedPurposeBindingSnapshot,
+          directMaterialOrigins: [{ ...params.qualifiedPurposeBindingSnapshot.directMaterialOrigins[0]!, resourceId: 'replacement-share' }],
+        },
+      });
+      if (replacement) replacements.push(replacement);
+      await reconcileTeamCredentialNativeHomeCredentials({ baseDir: params.baseDir, homeDomainAction: async request => {
+        expect(request.input).toMatchObject({ resourceId: 'replacement-share' });
+        return { resources: [{ id: 'replacement-share', teamId: 'member-team', sourceOwnerDisplayName: null,
+          displayName: 'Replacement Muse', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+          mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current', sessionUsePolicy: null,
+          providerModels: [], connectedServiceSelections: [], sourcePresentation: { kind: 'connected_service', service: account.service },
+        }], nextCursor: null };
+      } });
+      expect((await readConnectedServiceStateSharingManifest(targetHome)).teamCredentialDeliveries?.map(row => row.resourceId))
+        .toEqual(['replacement-share']);
+      expect(await readFile(join(targetHome, 'muse/auth.json'), 'utf8')).toContain('synthetic-member-access');
+      const personal = await materializeConnectedServicesForSpawn({ ...params,
+        qualifiedPurposeBindingSnapshot: { ...params.qualifiedPurposeBindingSnapshot, directMaterialOrigins: [] },
+      });
+      if (personal) replacements.push(personal);
+      await reconcileTeamCredentialNativeHomeCredentials({ baseDir: params.baseDir, homeDomainAction: async () => {
+        throw new Error('Personal credentials do not need a Team entitlement read');
+      } });
+      expect((await readConnectedServiceStateSharingManifest(targetHome)).teamCredentialDeliveries).toBeUndefined();
+      expect(await readFile(join(targetHome, 'muse/auth.json'), 'utf8')).toContain('synthetic-member-access');
 
       credentials.set('expiresAtMs', String(Date.now() - 1));
       await expect(materializeConnectedServicesForSpawn({ ...params, materializationKey: `${sessionId}-expired` }))
@@ -103,6 +140,7 @@ describe('Muse access-only native home', () => {
     } finally {
       lease?.dispose();
       await result?.cleanupOnExit?.();
+      for (const replacement of replacements) await replacement.cleanupOnExit?.();
       await rm(root, { recursive: true, force: true });
     }
   });

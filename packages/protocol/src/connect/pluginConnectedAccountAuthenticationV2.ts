@@ -193,6 +193,11 @@ export type ConnectedAccountDirectExportContractV1 = z.infer<typeof ConnectedAcc
 export const ConnectedAccountDirectExportProjectionV1Schema = lazyZodSchema(() => z.strictObject({
   directExportContract: z.nullable(ConnectedAccountDirectExportContractV1Schema),
   contributionContractVersion: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  /** Source-owned availability, independent of personal or brokered authentication health. */
+  directExportFailure: z.optional(z.strictObject({
+    code: z.literal('access_only_expiry_unavailable'),
+    message: z.optional(z.string()),
+  })),
 }));
 export type ConnectedAccountDirectExportProjectionV1 = z.infer<typeof ConnectedAccountDirectExportProjectionV1Schema>;
 

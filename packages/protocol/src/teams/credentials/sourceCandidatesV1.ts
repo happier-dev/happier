@@ -1,3 +1,4 @@
+import { ConnectedAccountDirectExportProjectionV1Schema } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -60,6 +61,7 @@ export const TeamCredentialSourceResourceAdministrationV1Schema = lazyZodSchema(
   enabled: z.boolean(),
   revision: z.number().check(z.int(), z.nonnegative()),
   deliveryPolicy: TeamCredentialDeliveryPolicyV1Schema,
+  directExportFailure: ConnectedAccountDirectExportProjectionV1Schema.shape.directExportFailure,
   brokerPlacement: z.nullable(TeamCredentialBrokerPlacementV1Schema),
   brokerPresentation: TeamCredentialBrokerPresentationV1Schema,
   readiness: TeamCredentialResourceReadinessV1Schema,
@@ -153,6 +155,7 @@ export const TeamCredentialSourceCandidateV1Schema = lazyZodSchema(() => z.stric
   memberCount: z.nullable(z.number().check(z.int(), z.nonnegative())),
   /** Whether this exact source can safely export recipient-owned direct material. */
   directExportSupport: z._default(z.enum(['supported', 'mixed', 'unsupported']), 'unsupported'),
+  directExportFailure: ConnectedAccountDirectExportProjectionV1Schema.shape.directExportFailure,
   /**
    * The resource in this Team that already offers this exact source, if one
    * does. Offering the same source twice would give the Team two competing

@@ -1018,6 +1018,19 @@ describe("qualified Connected Account credential repository", () => {
             expect((await submit(patch)).statusCode).toBe(200);
             expect((await db.serviceAccountToken.findUniqueOrThrow({ where: { id: before.id } })).updatedAt).toEqual(after.updatedAt);
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
+            const failure = { code: 'access_only_expiry_unavailable', message: 'Reconnect the imported login.' };
+            const unavailableProjection = { ...exportProjection, directExportFailure: failure };
+            expect((await submit({ ...patch, exportProjection: unavailableProjection })).statusCode).toBe(200);
+            expect(await offers()).toMatchObject([{ directExportSupport: 'supported', directExportFailure: failure }]);
+            expect(await readQualifiedConnectedServiceCredential({ accountId: owner.id, ref }))
+                .toMatchObject({ status: 'resolved', credential: { exportProjection: unavailableProjection } });
+            const failureSequence = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
+            expect(failureSequence).toBeGreaterThan(sequence);
+            expect((await submit({ ...patch, exportProjection: unavailableProjection })).statusCode).toBe(200);
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(failureSequence);
+            expect((await submit(patch)).statusCode).toBe(200);
+            expect((await offers())[0]).not.toHaveProperty('directExportFailure');
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBeGreaterThan(failureSequence);
             expect((await submit({ ...patch, exportProjection: {
                 directExportContract: null, contributionContractVersion: "withdrawn-plugin-occurrence",
             } })).statusCode).toBe(200);

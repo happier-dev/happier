@@ -64,6 +64,22 @@ describe('Team credential source snapshots', () => {
       isPersistedSourceCurrent: async () => true })).toBeNull();
   });
 
+  it.each(['account', 'pool'] as const)('preserves the owner-issued missing-expiry cause for %s direct delivery', route => {
+    const input = { source: accountSource, authenticationKind: 'oauth' as const,
+      material: { ...material, directExportFailure: { code: 'access_only_expiry_unavailable' as const,
+        message: 'Reconnect this imported login to share it natively.' }, accessOnlyExport: {
+        contractVersion: 'happier.team-credential-access-only-connected-account-direct.v1' as const,
+        accessTokenKey: 'access', expiresAtMsKey: 'expiry', metadataKeys: [],
+      }, credential: { v: 1 as const, values: { access: 'synthetic-access' } } },
+      isPersistedSourceCurrent: async () => true };
+    expect(() => route === 'account' ? createConnectedAccountTeamCredentialSourceSnapshot(input)
+      : createConnectedPoolMemberTeamCredentialSourceSnapshot({ ...input,
+        source: { v: 1, kind: 'connected_pool', target: { kind: 'group', service, groupId: 'pool-1' }, poolIncarnation: 'pool-1' },
+        sourceAccount: account, sourceCredentialIncarnation: accountSource.credentialIncarnation, memberEnabled: true }))
+      .toThrowError(expect.objectContaining({ code: 'access_only_expiry_unavailable',
+        message: 'Reconnect this imported login to share it natively.' }));
+  });
+
   it('never falls back to exporting the entire vault when a selected export declaration is absent', () => {
     expect(createConnectedAccountTeamCredentialSourceSnapshot({ source: accountSource,
       material: { ...material, directExport: undefined, credential: { v: 1, values: { accountToken: 'synthetic-access',

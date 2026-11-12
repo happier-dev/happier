@@ -1,7 +1,7 @@
 import type { ConnectedServiceCredentialHealthV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { QualifiedConnectedAccountCredentialMetadataV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
-import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, type ConnectedAccountDirectExportContractV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, type ConnectedAccountDirectExportContractV1, type ConnectedAccountDirectExportProjectionV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
@@ -50,6 +50,7 @@ export type QualifiedConnectedAccountStoredMetadataProjection =
     status: CredentialStatus;
     directExportContract: ConnectedAccountDirectExportContractV1 | null;
     contributionContractVersion: string | null;
+    directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
     /** Non-empty when the credential's secrets are held by Saved Secret resources. */
     savedSecretResourceIds: readonly string[];
 }>;
@@ -114,6 +115,7 @@ export function resolveQualifiedConnectedAccountStoredMetadata(
             health: stored.health ?? null,
             status: deriveConnectedServiceCredentialStatus(stored),
             directExportContract: stored.directExportContract ?? null,
+            ...(stored.directExportFailure ? { directExportFailure: stored.directExportFailure } : {}),
             contributionContractVersion: stored.contributionContractVersion ?? null,
             savedSecretResourceIds: stored.savedSecretResourceIds ?? [],
         };

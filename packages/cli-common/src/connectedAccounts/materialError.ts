@@ -6,6 +6,7 @@ export const QUALIFIED_CONNECTED_ACCOUNT_MATERIAL_FAILURE_CODES = [
     'account_encryption_mode_unavailable', 'credential_content_unavailable',
     'configuration_content_unavailable', 'credential_snapshot_revision_mismatch',
     'configuration_secret_unavailable', 'connected_account_runtime_not_current',
+    'access_only_expiry_unavailable',
 ] as const;
 
 export type QualifiedConnectedAccountMaterialFailureCode = typeof QUALIFIED_CONNECTED_ACCOUNT_MATERIAL_FAILURE_CODES[number];

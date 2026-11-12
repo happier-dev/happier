@@ -4,6 +4,7 @@ import type { TeamCredentialDirectMaterialPreparationResponseV1, TeamCredentialD
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
 import { TeamCredentialDirectMaterialHttpContractError } from './teamCredentialDirectMaterialContractError';
+import { QualifiedConnectedAccountMaterialError } from '../qualifiedConnectedAccountMaterialError';
 
 type PreparationInput = Readonly<{
   teamId: string;
@@ -17,7 +18,7 @@ export type TeamCredentialDirectMaterialReconcileResult =
   | Readonly<{ ok: true; prepared: number }>
   | Readonly<{
       ok: false;
-      reason: 'source_changed' | 'source_unavailable' | 'recipient_unavailable' | 'upload_failed' | 'cancelled';
+      reason: 'source_changed' | 'source_unavailable' | 'recipient_unavailable' | 'upload_failed' | 'cancelled' | 'access_only_expiry_unavailable';
       prepared: number;
     }>;
 
@@ -84,9 +85,10 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
           sourceCredentialIncarnation: page.sourceCredentialIncarnation,
           ...(input.signal ? { signal: input.signal } : {}),
         });
-      } catch {
+      } catch (error) {
         await withdrawPublication();
-        return { ok: false, reason: 'source_unavailable', prepared };
+        return { ok: false, reason: error instanceof QualifiedConnectedAccountMaterialError
+          && error.code === 'access_only_expiry_unavailable' ? error.code : 'source_unavailable', prepared };
       }
       if (!sourceSnapshot) {
         await withdrawPublication();

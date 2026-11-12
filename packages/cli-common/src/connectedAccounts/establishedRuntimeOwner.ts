@@ -52,6 +52,7 @@ type RevisionedQualifiedConnectedAccountConfigurationSnapshotV4 = Extract<
 
 export type QualifiedConnectedAccountMaterialSnapshot = Readonly<{
   accessOnlyExport?: import('@happier-dev/protocol').PluginConnectedAccountAccessOnlyExportV1;
+  directExportFailure?: ConnectedAccountDirectExportProjectionV1['directExportFailure'];
   directExport?: import('@happier-dev/protocol').PluginConnectedAccountDirectExportV2;
   credential: QualifiedConnectedAccountCredentialPayloadV1;
   configuration: Readonly<{
@@ -395,6 +396,15 @@ export function createConnectedAccountEstablishedRuntimeOwner<
   }>) => Promise<Readonly<{ credentialRevision: string; configurationRevision: string | null }>>;
   configuration: Readonly<{ read(target: ConnectedAccountConfigurationTarget): Promise<ConnectedAccountConfigurationRecord | null>; secrets: ConnectedAccountConfigurationSecrets }>;
   configurationOwner?: ConnectedAccountConfigurationOwner;
+  /** The host's incumbent metadata-only credential CAS coordinator. */
+  enrichCredentialContext?(input: Readonly<{
+    account: QualifiedConnectedAccountRef;
+    expectedCredentialRevision: ConnectedServiceCredentialRevisionV1;
+    signal?: AbortSignal;
+  }>): Promise<Readonly<{
+    status: 'enriched' | 'unchanged' | 'unavailable';
+    diagnostic?: Readonly<{ code: string; message?: string }>;
+  }>>;
   openContent(input: Readonly<{ kind: 'credential' | 'configuration'; accountMode: 'plain' | 'e2ee'; envelope: QualifiedConnectedAccountCredentialSnapshotV4['content'] }>): unknown;
   sealCredentialContent(accountMode: 'plain' | 'e2ee', plaintext: unknown): QualifiedConnectedAccountCredentialSnapshotV4['content'];
   observePhase?: ConnectedAccountEstablishedPhaseObserver;
@@ -457,7 +467,9 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     const previous = snapshot.exportProjection;
     if (!params.publishCredentialHealth
       || (previous?.directExportContract === exportProjection.directExportContract
-        && previous.contributionContractVersion === exportProjection.contributionContractVersion)
+        && previous.contributionContractVersion === exportProjection.contributionContractVersion
+        && previous.directExportFailure?.code === exportProjection.directExportFailure?.code
+        && previous.directExportFailure?.message === exportProjection.directExportFailure?.message)
       || (!previous && exportProjection.directExportContract === null)) return;
     const result = await params.publishCredentialHealth({ patch: {
       ref: snapshot.ref, expectedCredentialRevision: snapshot.credentialRevision,
@@ -477,11 +489,22 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       const contribution = lease.registry.connectedAccountContributions?.describe(snapshot.ref.service);
       if (!contribution || !contribution.isCurrent() || !params.reloadController.isRuntimeRegistryCurrent(lease.registry)) return;
       const mode = contribution.descriptor.authentication.modes.find(candidate => candidate.id === snapshot.authenticationModeId);
-      await publishExportProjection(snapshot, {
-        directExportContract: mode ? resolveConnectedAccountDirectExportContractV1(mode, snapshot.metadata.kind) : null,
-        contributionContractVersion: contribution.occurrenceId,
-      }, signal);
+      const directExportContract = mode ? resolveConnectedAccountDirectExportContractV1(mode, snapshot.metadata.kind) : null;
+      await publishExportProjection(snapshot,
+        declarationExportProjection(snapshot, directExportContract, contribution.occurrenceId), signal);
     } finally { await lease.release(); }
+  }
+
+  function declarationExportProjection(
+    snapshot: RevisionedQualifiedConnectedAccountCredentialSnapshotV4,
+    directExportContract: ConnectedAccountDirectExportProjectionV1['directExportContract'],
+    contributionContractVersion: string,
+  ): ConnectedAccountDirectExportProjectionV1 {
+    // Metadata publication cannot supersede a material acquisition's evaluated failure.
+    return { directExportContract, contributionContractVersion,
+      ...(snapshot.exportProjection?.directExportContract === directExportContract
+        && snapshot.exportProjection.directExportFailure
+        ? { directExportFailure: snapshot.exportProjection.directExportFailure } : {}) };
   }
 
   async function readCredentialRevision(input: Readonly<{
@@ -514,28 +537,29 @@ export function createConnectedAccountEstablishedRuntimeOwner<
   async function readMaterialSnapshot(input: Readonly<{
     account: QualifiedConnectedAccountRef;
     signal?: AbortSignal;
-  }>): Promise<QualifiedConnectedAccountMaterialSnapshot> {
+  }>, prepareDirectExport = true): Promise<QualifiedConnectedAccountMaterialSnapshot> {
     assertNotAborted(input.signal);
     const accountMode = await runCurrentAccountRead(() => params.getAccountEncryptionMode(input.signal), input.signal);
     if (accountMode === 'unknown') {
       throw new QualifiedConnectedAccountMaterialError('account_encryption_mode_unavailable', 'Connected-account account encryption mode is unavailable');
     }
     const resolvedAccountMode: Exclude<ConnectedServiceAccountEncryptionMode, 'unknown'> = accountMode;
-    const snapshots = await readExactSnapshots(input.account, input.signal);
+    let snapshots = await readExactSnapshots(input.account, input.signal);
     requireCredentialAuthenticationMode(snapshots.credential);
     const authenticationModeId = snapshots.credential.authenticationModeId;
-    const storedCredential = parseQualifiedConnectedAccountCredentialPlaintextV1({
+    const openCredential = (snapshot: typeof snapshots.credential) => parseQualifiedConnectedAccountCredentialPlaintextV1({
       ref: input.account,
       authenticationModeId,
-      metadata: snapshots.credential.metadata,
+      metadata: snapshot.metadata,
       plaintext: params.openContent({
         kind: 'credential',
         accountMode,
-        envelope: snapshots.credential.content,
+        envelope: snapshot.content,
       }),
     });
-    const resolvedCredential = await resolveCredentialSecrets(storedCredential, params.configuration.secrets, input.signal);
-    const credential = resolvedCredential.credential;
+    let storedCredential = openCredential(snapshots.credential);
+    let resolvedCredential = await resolveCredentialSecrets(storedCredential, params.configuration.secrets, input.signal);
+    let credential = resolvedCredential.credential;
     const registryLease = await params.reloadController.acquireRuntimeRegistry();
     let contributionContractVersion: string;
     let mode: PluginConnectedAccountAuthenticationModeV2;
@@ -556,9 +580,42 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     } finally {
       await registryLease.release();
     }
-    const exportProjection = {
-      directExportContract: resolveConnectedAccountDirectExportContractV1(mode, snapshots.credential.metadata.kind),
+    const directExportContract = resolveConnectedAccountDirectExportContractV1(mode, snapshots.credential.metadata.kind);
+    const accessOnlyExport = directExportContract === mode.accessOnlyExport?.contractVersion ? mode.accessOnlyExport : undefined;
+    const expiryUnavailable = () => {
+      if (!accessOnlyExport) return false;
+      const expiry = Number(credential.values[accessOnlyExport.expiresAtMsKey]);
+      return !Number.isFinite(expiry) || expiry <= 0;
+    };
+    let enrichmentDiagnostic: Readonly<{ code: string; message?: string }> | undefined;
+    if (prepareDirectExport && expiryUnavailable() && params.enrichCredentialContext) {
+      const enrichment = await params.enrichCredentialContext({ account: input.account,
+        expectedCredentialRevision: snapshots.credential.credentialRevision, signal: input.signal });
+      enrichmentDiagnostic = enrichment.diagnostic;
+      if (enrichment.status === 'enriched') {
+        const enrichedSnapshots = await readExactSnapshots(input.account, input.signal);
+        requireCredentialAuthenticationMode(enrichedSnapshots.credential);
+        if (enrichedSnapshots.credential.authenticationModeId !== authenticationModeId) {
+          throw new Error('Connected-account authentication mode changed during context enrichment');
+        }
+        snapshots = enrichedSnapshots;
+        storedCredential = openCredential(enrichedSnapshots.credential);
+        resolvedCredential = await resolveCredentialSecrets(storedCredential, params.configuration.secrets, input.signal);
+        credential = resolvedCredential.credential;
+      }
+    }
+    const previousDirectExportFailure = snapshots.credential.exportProjection?.directExportContract === directExportContract
+      ? snapshots.credential.exportProjection.directExportFailure : undefined;
+    const failureMessage = enrichmentDiagnostic?.code === 'access_only_expiry_unavailable'
+      ? enrichmentDiagnostic.message : previousDirectExportFailure?.message;
+    const directExportFailure = prepareDirectExport && expiryUnavailable()
+      ? { code: 'access_only_expiry_unavailable' as const,
+        ...(failureMessage ? { message: failureMessage } : {}) }
+      : !prepareDirectExport ? previousDirectExportFailure : undefined;
+    const exportProjection: ConnectedAccountDirectExportProjectionV1 = {
+      directExportContract,
       contributionContractVersion,
+      ...(directExportFailure ? { directExportFailure } : {}),
     };
     await publishExportProjection(snapshots.credential, exportProjection, input.signal);
     const target = configurationTarget(input.account, mode);
@@ -626,6 +683,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
     return Object.freeze({
       credential,
       configuration,
+      ...(directExportFailure ? { directExportFailure } : {}),
       ...(exportProjection.directExportContract === mode.accessOnlyExport?.contractVersion ? { accessOnlyExport: mode.accessOnlyExport } : {}),
       ...(mode.kind === 'manual' && exportProjection.directExportContract === mode.directExport?.contractVersion ? { directExport: mode.directExport } : {}),
       authenticationModeId,
@@ -764,10 +822,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         if (!mode) {
           throw new Error('Connected-account authentication mode is unavailable in the current descriptor');
         }
-        const exportProjection: ConnectedAccountDirectExportProjectionV1 = {
-          directExportContract: resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind),
-          contributionContractVersion: runtimeLease.occurrenceId,
-        };
+        const exportProjection = declarationExportProjection(initial.credential,
+          resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind), runtimeLease.occurrenceId);
         await publishExportProjection(initial.credential, exportProjection, input.signal);
         const descriptorConfiguration =
           'configuration' in mode ? mode.configuration : undefined;
@@ -1259,7 +1315,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
   async function readQuotaSourceSnapshot(
     input: Parameters<QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota>['readQuotaSourceSnapshot']>[0],
   ) {
-    const materialSnapshot = await readMaterialSnapshot({ account: input.account, signal: input.signal });
+    const materialSnapshot = await readMaterialSnapshot({ account: input.account, signal: input.signal }, false);
     if (materialSnapshot.credentialRevision !== input.credentialRevision
       || materialSnapshot.configurationRevision !== input.configurationRevision
       || await params.getAccountEncryptionMode(input.signal, { usage: 'fresh-authority' }) !== input.accountMode) return null;

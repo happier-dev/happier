@@ -98,6 +98,19 @@ beforeEach(async () => {
 afterEach(standardCleanup);
 
 describe('SharedWithTeamsSourceAdministration', () => {
+    it('shows a source-owned direct refusal on an existing shared resource', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
+        await harness.selectHomes([serverId]);
+        const message = "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.";
+        const row = teamCredentialSourceResourceFixture({ directExportFailure: { code: 'access_only_expiry_unavailable', message } });
+        harness.answer(serverId, LIST_PATH, { body: { resources: [row] } });
+        const { SharedWithTeamsSourceAdministration } = await import('./SharedWithTeamsSourceAdministration');
+        const screen = await renderScreen(<SharedWithTeamsSourceAdministration scope={{ serverId, accountId: 'owner' }}
+            source={{ v: 1, kind: 'connected_account', target: { kind: 'account', account: {
+                service: { pluginId: 'test.connected-account', localId: 'subscription' }, accountId: 'imported' } } }} />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.findByTestId(`shared-with-teams:resource:${row.id}`)).not.toBeNull();
+    });
     it('reads readiness once across equal parent renders and re-reads a changed source', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://home.example', accountId: 'owner' });
         await harness.selectHomes([serverId]);
