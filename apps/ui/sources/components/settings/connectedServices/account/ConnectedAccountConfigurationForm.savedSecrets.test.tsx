@@ -104,6 +104,13 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
             serverUrl: 'https://secret-picker.example.test', accountId: 'account-a',
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
+                if ((init?.method ?? 'GET') === 'GET' && path === '/v1/account/saved-secrets/resources') {
+                    return Response.json({ resources: materialReply.resources.map(resource => resource.entry) });
+                }
+                if ((init?.method ?? 'GET') === 'GET' && path === '/v1/account/saved-secrets/resources/materials') {
+                    materialReads += 1;
+                    return Response.json(materialReply);
+                }
                 const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
                 if (bootstrap) return bootstrap;
                 if (path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
@@ -120,13 +127,6 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
                 if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
                     content: { t: 'plain', v: { secrets: [], experiments: true } }, version: 1,
                 }));
-                if (path === '/v1/account/saved-secrets/resources') {
-                    return Response.json({ resources: materialReply.resources.map(resource => resource.entry) });
-                }
-                if (path === '/v1/account/saved-secrets/resources/materials') {
-                    materialReads += 1;
-                    return Response.json(materialReply);
-                }
                 return new Response('{}', { status: 404 });
             },
         });
@@ -171,8 +171,10 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
         /></React.Profiler></ModalProvider>);
         const screen = await renderScreen(form(fields));
         await screen.pressByTestIdAsync('connected-account-manual:token:choose');
-        await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${privateRef}`)
-            .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
+        await vi.waitFor(() => {
+            expect(screen.findAllByTestId(`saved-secret-picker:saved:${privateRef}`)
+                .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false);
+        });
         commits = 0;
         await screen.pressByTestIdAsync(`saved-secret-picker:saved:${privateRef}`);
         const settledCommits = commits;
@@ -244,8 +246,10 @@ describe('ConnectedAccountConfigurationForm Saved Secrets', () => {
         /></ModalProvider>, { wrapper: React.StrictMode });
         const pick = async (ref: string) => {
             await screen.pressByTestIdAsync('connected-account-configuration:token:choose');
-            await vi.waitFor(() => expect(screen.findAllByTestId(`saved-secret-picker:saved:${ref}`)
-                .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false));
+            await vi.waitFor(() => {
+                expect(screen.findAllByTestId(`saved-secret-picker:saved:${ref}`)
+                    .find(node => typeof node.props.title === 'string')?.props.disabled).toBe(false);
+            });
             await screen.pressByTestIdAsync(`saved-secret-picker:saved:${ref}`);
         };
         expect(screen.findHostByTestId('connected-account-configuration:token')).toBeNull();
