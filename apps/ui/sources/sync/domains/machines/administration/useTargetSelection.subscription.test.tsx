@@ -28,6 +28,13 @@ vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
 
+// Direct store seeding bypasses applyMachines, which normally publishes the Home's presence answer.
+function createPublishedMachineFixture(overrides: Parameters<typeof createMachineFixture>[0] = {}) {
+    const machine = createMachineFixture(overrides);
+    publishMachineActivity(machine, { active: machine.active, activeAt: machine.activeAt }, []);
+    return machine;
+}
+
 let network: SessionOpsNetworkBoundary;
 beforeEach(async () => { network = await installSessionOpsNetworkBoundary(); });
 afterEach(async () => {
@@ -301,8 +308,8 @@ describe('machine administration target demand', () => {
         const accountScope = { serverId: source.id, accountId: source.accountId };
         const sourceTarget = { serverIdentityId: 'srv_source_account', machineId: 'source-machine' };
         const foreignTarget = { serverIdentityId: 'srv_foreign_account', machineId: 'foreign-machine' };
-        const sourceMachine = createMachineFixture({ id: sourceTarget.machineId, activeAt: Date.now() });
-        const foreignMachine = createMachineFixture({ id: foreignTarget.machineId, activeAt: Date.now() });
+        const sourceMachine = createPublishedMachineFixture({ id: sourceTarget.machineId, activeAt: Date.now() });
+        const foreignMachine = createPublishedMachineFixture({ id: foreignTarget.machineId, activeAt: Date.now() });
         await setActiveServerId(other.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         try {
@@ -394,17 +401,25 @@ describe('machine administration target demand', () => {
         const profile = await setServerProfileIdentityForUrl(url, 'srv_automatic_memory');
         if (!profile) throw new Error('Expected Home');
         const scope = { serverId: profile.id, accountId: 'automatic-target-account' };
+        const machine = createMachineFixture({ id: 'sole-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
         await network.addHome(url, scope.accountId);
         await setActiveServerId(profile.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         try {
             storage.setState(state => ({ profileScope: scope, settingsScope: scope,
-                machineListByServerId: { [profile.id]: [createMachineFixture({ id: 'sole-machine', activeAt: Date.now() })] },
+                machineListByServerId: { [profile.id]: [machine] },
                 machineListStatusByServerId: { [profile.id]: 'idle' },
                 settings: { ...state.settings, machineAdministrationTargetsLocalV1: {} } }));
             const settings = storage.getState().settings;
             const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents'));
             const target = { serverIdentityId: 'srv_automatic_memory', machineId: 'sole-machine' };
+            // A retained active bit is not an answer; the same row becomes selectable on live publication.
+            expect(hook.getCurrent().state.kind).toBe('unselected');
+            expect(hook.getCurrent().candidates).toMatchObject([{ availability: 'unknown' }]);
+            expect(hook.getCurrent().selectedTarget).toBeNull();
+            expect(hook.getCurrent().canExecute).toBe(false);
+            expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
+            await act(async () => publishMachineActivity(machine, { active: true, activeAt: machine.activeAt }, []));
             expect(hook.getCurrent().selectedTarget).toEqual(target);
             expect(hook.getCurrent().resolveExecutionTarget()?.target).toEqual(target);
             expect(storage.getState().settings).toBe(settings);
@@ -426,8 +441,8 @@ describe('machine administration target demand', () => {
         try {
             storage.setState({
                 settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: { agents: saved } },
-                machineListByServerId: { [scope.serverId]: [createMachineFixture({ id: saved.machineId, activeAt: Date.now() }),
-                    createMachineFixture({ id: 'other-machine', activeAt: Date.now() })] },
+                machineListByServerId: { [scope.serverId]: [createPublishedMachineFixture({ id: saved.machineId, activeAt: Date.now() }),
+                    createPublishedMachineFixture({ id: 'other-machine', activeAt: Date.now() })] },
                 machineListStatusByServerId: { [scope.serverId]: 'idle' },
             });
             const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents', { initialTarget: requested }));
@@ -484,7 +499,7 @@ describe('machine administration target demand', () => {
             storage.setState({
                 settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: { agents: saved } },
                 machineListByServerId: { [account.scope.serverId]: [saved, requested, chosen].map(target =>
-                    createMachineFixture({ id: target.machineId, activeAt: Date.now() })) },
+                    createPublishedMachineFixture({ id: target.machineId, activeAt: Date.now() })) },
                 machineListStatusByServerId: { [account.scope.serverId]: 'idle' },
             });
             const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents', { initialTarget: requested }));
@@ -532,8 +547,8 @@ describe('machine administration target demand', () => {
         await network.addHome(serverUrl, scope.accountId);
         await setActiveServerId(profile.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-        const machine = createMachineFixture({ id: 'online-plugin-machine', activeAt: Date.now() });
-        const other = createMachineFixture({ id: 'other-plugin-machine', activeAt: Date.now() });
+        const machine = createPublishedMachineFixture({ id: 'online-plugin-machine', activeAt: Date.now() });
+        const other = createPublishedMachineFixture({ id: 'other-plugin-machine', activeAt: Date.now() });
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins;
         try {
             storage.setState((state) => ({
@@ -555,13 +570,14 @@ describe('machine administration target demand', () => {
             });
             try {
                 expect(hook.getCurrent().pickerRows).toHaveLength(2);
+                expect(hook.getCurrent().candidates.map(candidate => candidate.availability)).toEqual(['online', 'online']);
                 expect(maxNameProjectionsPerRender).toBe(1);
                 expect(hook.getCurrent().pickerRows.every(row => hook.getCurrent().candidates.includes(row.candidate))).toBe(true);
                 expect(hook.getCurrent().selectedTarget).toBeNull();
                 expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
                 expect(storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey]).toBeUndefined();
                 await act(async () => storage.setState({ machineListByServerId: { [profile.id]: [other,
-                    createMachineFixture({ ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed machine' } }),
+                    createPublishedMachineFixture({ ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed machine' } }),
                 ] } }));
                 const updated = hook.getCurrent();
                 expect(updated.candidates.find(candidate => candidate.target.machineId === machine.id)?.displayName).toBe('Renamed machine');
@@ -608,8 +624,8 @@ describe('machine administration target demand', () => {
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers;
         const targetA = { serverIdentityId: profile.serverIdentityId!, machineId: 'machine-a' };
         const targetB = { serverIdentityId: profile.serverIdentityId!, machineId: 'machine-b' };
-        const machineA = createMachineFixture({ id: targetA.machineId, activeAt: Date.now(), daemonStateVersion: 1 });
-        const machineB = createMachineFixture({ id: targetB.machineId, activeAt: Date.now(), daemonStateVersion: 1 });
+        const machineA = createPublishedMachineFixture({ id: targetA.machineId, activeAt: Date.now(), daemonStateVersion: 1 });
+        const machineB = createPublishedMachineFixture({ id: targetB.machineId, activeAt: Date.now(), daemonStateVersion: 1 });
         const scope = { serverId: profile.id, accountId: 'administration-currentness-account' };
         await network.addHome(serverUrl, scope.accountId);
         await setActiveServerId(profile.id);
@@ -668,7 +684,7 @@ describe('machine administration target demand', () => {
             await act(async () => {
                 storage.setState({
                     machineListByServerId: {
-                        [profile.id]: [{ ...machineA, daemonStateVersion: 2 }, machineB],
+                        [profile.id]: [createPublishedMachineFixture({ ...machineA, daemonStateVersion: 2 }), machineB],
                     },
                 });
             });
@@ -679,19 +695,19 @@ describe('machine administration target demand', () => {
             });
             expect(initialBinding.resolveExactExecutionTarget(targetA)?.machine.daemonStateVersion).toBe(2);
             await act(async () => {
-                storage.setState({ machineListByServerId: { [profile.id]: [{
+                storage.setState({ machineListByServerId: { [profile.id]: [createPublishedMachineFixture({
                     ...machineA, daemonStateVersion: 2,
                     keyBasis: { metadataVersion: machineA.metadataVersion + 1, daemonStateVersion: 2, dataEncryptionKey: machineA.dataEncryptionKey ?? null },
-                }, machineB] } });
+                }), machineB] } });
             });
             expect(initialBinding.resolveExactExecutionTarget(targetA)).toBeNull();
             await act(async () => {
                 storage.setState({
                     machineListStatusByServerId: { [profile.id]: 'idle' },
-                    machineListByServerId: { [profile.id]: [{
+                    machineListByServerId: { [profile.id]: [createPublishedMachineFixture({
                         ...machineA, metadataVersion: machineA.metadataVersion + 1, daemonStateVersion: 2,
                         keyBasis: { metadataVersion: machineA.metadataVersion + 1, daemonStateVersion: 2, dataEncryptionKey: machineA.dataEncryptionKey ?? null },
-                    }, machineB] },
+                    }), machineB] },
                 });
             });
             expect(initialBinding.resolveExactExecutionTarget(targetA)?.machine.daemonStateVersion).toBe(2);
@@ -711,7 +727,7 @@ describe('machine administration target demand', () => {
         const profile = await setServerProfileIdentityForUrl(serverUrl, 'srv_memory_demand');
         if (!profile) throw new Error('Test profile was not created');
         const target = { serverIdentityId: 'srv_memory_demand', machineId: 'memory-machine' };
-        const machine = createMachineFixture({ id: target.machineId, activeAt: Date.now() });
+        const machine = createPublishedMachineFixture({ id: target.machineId, activeAt: Date.now() });
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.memory;
         const scope = { serverId: profile.id, accountId: 'memory-demand-account' };
         await network.addHome(serverUrl, scope.accountId);
@@ -740,7 +756,7 @@ describe('machine administration target demand', () => {
 
             await hook.rerender({ enabled: false });
             const settledRenders = renders;
-            const latest = { ...machine, updatedAt: 2, activeAt: Date.now() + 1 };
+            const latest = createPublishedMachineFixture({ ...machine, updatedAt: 2, activeAt: Date.now() + 1 });
             await act(async () => {
                 storage.setState({
                     machineListByServerId: { [profile.id]: [latest] },
