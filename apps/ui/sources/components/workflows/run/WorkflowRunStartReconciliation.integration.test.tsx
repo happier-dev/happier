@@ -369,7 +369,7 @@ describe('Run start response-loss through the real composer, authenticated HTTP 
         await act(async () => {});
         expect(h.readModals()).toEqual([]);
         expect(h.opened).not.toHaveBeenCalled();
-        expect(h.screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+        expect(h.screen.findHostByTestId('workflow-run-inputs-run')?.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
         expect(h.screen.findHostByTestId('workflow-run-inputs-reconciling')).not.toBeNull();
         await act(async () => { h.releaseFirstMissingRead(); await h.pending(); });
         await vi.waitFor(() => expect(h.opened).toHaveBeenCalled());
