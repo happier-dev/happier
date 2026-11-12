@@ -269,20 +269,19 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     // is the row's calm status mark at its end (ruling 2026-11-01: approval and draft the amber dot, a mention the
     // ink dot); unread news is the bold title alone.
     const preview = column ? readLatestPreview(discussion, props.viewerAccountId) : null;
+    // The amber dot alone says it needs the viewer (ruling 2026-11-01): the "Needs you" heading carries the meaning,
+    // and the word sits beside the dot only with status words on; the dot is also the request's peek.
     const statusGlyph = (column || requestRef !== null) && resolveWorkStatusRowMark(workStatus) !== 'none'
         && workStatus.state !== 'unread' ? workStatus : null;
-    // What needs the viewer is the column row's second line, in the attention ink (lab T2-L), in place of the
-    // conversation; the glyph stays at the end as the request's peek, without repeating the word.
-    const attentionLine = column && statusGlyph?.tone === 'attention' && statusGlyph.word ? statusGlyph.word : null;
-    // Then what the Discussion is, from the list's summary facts (round outcome, open comments); a Doc
+    // The second line is what the Discussion is, from the list's summary facts (round outcome, open comments); a Doc
     // conversation without one says so before its latest message (lab T2-L "On a doc").
     const summaryLine = column ? resolveDiscussionRowSummary(discussion, rowLabels) : null;
     const conversation = preview ?? subtitle.join(' · ');
-    const secondLine = attentionLine ?? summaryLine ?? (column && discussion.anchor?.kind === 'doc'
+    const secondLine = summaryLine ?? (column && discussion.anchor?.kind === 'doc'
         ? [rowLabels.onDoc, conversation].filter(Boolean).join(' · ')
         : conversation);
     const statusContent = statusGlyph ? <View style={styles.trailing}>
-        {props.statusWords && statusGlyph.word && !attentionLine ? <Text testID={`session-discussion-row-status-word-${discussion.id}`}
+        {props.statusWords && statusGlyph.word ? <Text testID={`session-discussion-row-status-word-${discussion.id}`}
             variant="meta" numberOfLines={1} style={workStatusWordStyle(statusGlyph.tone)}>{statusGlyph.word}</Text> : null}
         <WorkStatusRowMark status={statusGlyph} testIDSuffix={`discussion-${discussion.id}`} animationEnabled={props.presented !== false} />
     </View> : null;
@@ -372,7 +371,7 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
                 >
                     {title}
                 </Text>}
-            subtitle={<Text testID={`session-discussion-row-subtitle-${discussion.id}`} style={[styles.subtitle, attentionLine ? workStatusWordStyle('attention') : null]} numberOfLines={1}>{secondLine}</Text>}
+            subtitle={<Text testID={`session-discussion-row-subtitle-${discussion.id}`} style={styles.subtitle} numberOfLines={1}>{secondLine}</Text>}
             rightElement={trailing}
         />
     );

@@ -26,7 +26,7 @@ import { t } from '@/text';
  */
 
 const DISCLOSURE_WIDTH_PX = 14;
-/** The row's leading padding that sits left of the caret: the caret sits tight against the identity, pulled this far into the padding. */
+/** How far the hit area reaches past the caret's box into the row's leading edge. */
 const DISCLOSURE_LEADING_PAD_PX = 6;
 /**
  * The identity follows the caret with no gap, and the row's own press must keep it: the hit area reaches
@@ -53,13 +53,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('micro'),
         color: theme.colors.text.tertiary,
     },
-    // The caret sits in the row's leading edge, tight against the identity (lab `.cm-car`): the box ends
-    // where the identity begins, and its hit area takes the free space before it (`DISCLOSURE_HIT_REACH`).
+    // The caret hangs in the row's leading padding, tight against the identity (lab `.cm-car`): the box ends
+    // where the identity begins, so a lead with reports keeps its face on the same edge as every other row,
+    // and its hit area takes the free space before it (`DISCLOSURE_HIT_REACH`).
     disclosure: {
         alignSelf: 'center',
         width: DISCLOSURE_WIDTH_PX,
         height: 24,
-        marginLeft: -DISCLOSURE_LEADING_PAD_PX,
+        marginLeft: -DISCLOSURE_WIDTH_PX,
         borderRadius: 6,
         alignItems: 'center',
         justifyContent: 'center',

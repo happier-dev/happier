@@ -220,6 +220,27 @@ describe('SidebarMachinesPopoverContent', () => {
         expect(screen.findByTestId('sidebar-machines-working')?.props.children).toBe('machineDetailPage.work.working:3');
     });
 
+    it('names the instruments only while a listed machine is online to show them', async () => {
+        const { MachineSummaryCaption } = await import('@/components/machines/summary/MachineSummaryCaption');
+        // Reachability needs the signed-in Account the Home's machines are reached through.
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://popover-caption.test', serverIdentityId: HOME });
+        resourceRpc.mockImplementation(() => new Promise(() => {}));
+        try {
+            const online = await renderPopover();
+            await act(async () => { await vi.waitFor(() => expect(online.findAllByType(MachineSummaryCaption)).toHaveLength(1)); });
+            await online.unmount();
+            // Every machine away: no row carries a strip, so no caption promises CPU, memory or disk.
+            state.groups = [{ serverId: HOME, serverName: 'Home A', accountScope: SCOPE, status: 'idle', machines: [
+                machine('edge', { active: false, activeAt: 1 }), machine('old', { active: false, activeAt: 2 }),
+            ] }];
+            const offline = await renderPopover();
+            expect(offline.findAllByTestId('sidebar-machines-row.' + HOME + '.edge').length).toBeGreaterThan(0);
+            expect(offline.findAllByType(MachineSummaryCaption)).toHaveLength(0);
+        } finally {
+            machineResourceStore.reset(); resourceRpc.mockReset(); await connection.dispose();
+        }
+    });
+
     it('opens a machine and All machines through the rail door', async () => {
         const screen = await renderPopover();
         // The press measures the row's mark first (its rectangle travels to the page header), then navigates.

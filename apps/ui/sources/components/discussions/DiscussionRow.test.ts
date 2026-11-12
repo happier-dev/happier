@@ -234,20 +234,31 @@ describe('DiscussionRow summary line (lab T2-L)', () => {
         }
     });
 
-    async function renderColumn(discussion: DiscussionOpenedSummaryV1, factsOverride?: Pick<React.ComponentProps<typeof DiscussionRow>, 'attentionReason' | 'attentionType'>) {
+    async function renderColumn(discussion: DiscussionOpenedSummaryV1, factsOverride?: Pick<React.ComponentProps<typeof DiscussionRow>, 'attentionReason' | 'attentionType'>, statusWords?: boolean) {
         const screen = await renderScreen(React.createElement(DiscussionRow, { discussion, viewerAccountId: 'viewer', onOpenDiscussion: () => {},
-            geometry: 'column', ...(factsOverride ?? { attentionReason: null, attentionType: null }) }));
+            geometry: 'column', statusWords, ...(factsOverride ?? { attentionReason: null, attentionType: null }) }));
         const flat = (id: string) => JSON.stringify(screen.findByTestId(id)?.props.children ?? '');
         return { screen, subtitle: flat(`session-discussion-row-subtitle-${discussion.id}`) };
     }
 
-    it('shows the summary in the column row, and the attention word before it', async () => {
+    it('keeps the summary in the column row while it needs the viewer: the amber mark says so, the word only with status words on', async () => {
         const base = { ...discussionFixture(), unreadCount: 0, roundOutcomeV1: round('fresh_opinions', 3, true, false) };
         // The harness's `t` echoes keys with their params; the wording itself is covered per locale above.
         expect((await renderColumn(base)).subtitle).toContain('rowFreshOpinionsSynthesis(count=3)');
-        const attention = await renderColumn(base, { attentionReason: 'approval_pending', attentionType: 'approval' });
-        expect(attention.subtitle).not.toContain('rowFreshOpinions');
-        expect(attention.screen.findByTestId('session-discussion-row-many-unread')?.props.accessibilityLabel).toContain('rowFreshOpinionsSynthesis(count=3)');
+        const facts = { attentionReason: 'approval_pending', attentionType: 'approval' } as const;
+        const attention = await renderColumn(base, facts);
+        // Ruling 2026-11-01: needs you is the calm amber dot; the "Needs you" group heading carries the meaning.
+        expect(attention.subtitle).toContain('rowFreshOpinionsSynthesis(count=3)');
+        expect(attention.subtitle).not.toContain('approvalPending');
+        expect(attention.screen.findByTestId(`session-discussion-row-status-word-${base.id}`)).toBeFalsy();
+        expect(attention.screen.findByTestId('session-discussion-row-many-unread')?.props.accessibilityLabel).toContain('approvalPending');
+        const worded = await renderColumn(base, facts, true);
+        expect(worded.subtitle).toContain('rowFreshOpinionsSynthesis(count=3)');
+        const [word] = worded.screen.findAllHostsByTestId(`session-discussion-row-status-word-${base.id}`);
+        const text = (node: unknown): string => typeof node === 'string' ? node
+            : Array.isArray(node) ? node.map(text).join('')
+                : node && typeof node === 'object' && 'children' in node ? text((node as { children: unknown }).children) : '';
+        expect(text(word)).toContain('approvalPending');
     });
 
     it('falls back to the last message when a Doc has no open comments (an archived Discussion projects zero)', async () => {

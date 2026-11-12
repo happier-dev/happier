@@ -112,7 +112,6 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
     }), [collection.sections, needsYouKeys]);
     const machineCount = sections.reduce((count, section) => count + section.rows.length, 0) + needsYouKeys.size;
     // Values are live only while the popover is open: one batched demand for the online machines it lists.
-    const summary = useMachineSummarySettingValue();
     const presenceRows = React.useMemo(() => collection.sections.filter(section => !section.archived).flatMap(section => section.rows), [collection.sections]);
     const demandKeys = React.useMemo(() => presenceRows
         .filter(row => row.kind === 'machine')
@@ -242,14 +241,14 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
                 ) : null}
                 <MachinesSinceYouLastLooked entries={attention.entries} guardSeenAt={props.guardSeenAt} />
                 <MachinesNeedsYouGroup entries={attention.entries} nowMs={nowMs} onOpen={open}
-                    caption={<MachineSummaryCaption metrics={summary.metrics} style={summary.style} />} />
+                    caption={<OnlineInstrumentsCaption rows={presenceRows} />} />
                 {sections.filter(section => section.rows.length > 0).map((section, index, shown) => (
                     <MachinesPopoverSection
                         key={section.key}
                         section={section}
                         firstRowIndex={shown.slice(0, index).reduce((count, previous) => count + previous.rows.length, 0)}
                         // One caption names the instruments, on the first group's line (R7).
-                        caption={index === 0 && needsYouKeys.size === 0 ? <MachineSummaryCaption metrics={summary.metrics} style={summary.style} /> : null}
+                        caption={index === 0 && needsYouKeys.size === 0 ? <OnlineInstrumentsCaption rows={presenceRows} /> : null}
                         thisComputerMachineId={thisComputerMachineId}
                         onOpenRow={openRow}
                     />
@@ -267,6 +266,18 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         </RailPopoverRoster>
     );
 });
+
+/**
+ * The caption naming the instruments the rows' strips show ("CPU · memory free · …"). Only an online machine
+ * carries a strip, so with none online there is nothing for it to name. Read in its own leaf: presence changes
+ * re-render the caption, not the list.
+ */
+function OnlineInstrumentsCaption(props: Readonly<{ rows: readonly MachineCollectionRow[] }>) {
+    const summary = useMachineSummarySettingValue();
+    const rows = useMachineCollectionPresenceRows(props.rows);
+    if (summary.metrics.length === 0 || !rows.some(row => row.online)) return null;
+    return <MachineSummaryCaption metrics={summary.metrics} style={summary.style} />;
+}
 
 /** "20 working": every machine's working sessions, read in its own leaf so the list does not re-render. */
 const WorkingTotal = React.memo(function WorkingTotal() {
