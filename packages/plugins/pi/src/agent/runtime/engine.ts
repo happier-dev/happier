@@ -155,7 +155,7 @@ async function openPiSession(
           },
           ...(preparedTools ? { happierToolsExtension: preparedTools } : {}),
         }),
-        'provider runtime startup',
+        undefined, // The nested runtime owns the active startup phase.
         async (lateRuntime) => await lateRuntime.dispose('runtime_recovery'),
       );
       if (preparedTools) {
@@ -276,7 +276,7 @@ async function openPiExecutionRun(
             mcpServersStrictMode: request.mcpServersStrictMode,
             ...(preparedTools ? { happierToolsExtension: preparedTools } : {}),
           }),
-          'provider runtime startup',
+          undefined, // The nested runtime owns the active startup phase.
           async (lateRuntime) => await lateRuntime.dispose(),
         );
         if (preparedTools) {

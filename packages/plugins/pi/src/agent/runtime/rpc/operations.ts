@@ -86,7 +86,7 @@ const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
 const PI_SESSION_OPEN_TIMEOUT_MS = 5 * 60_000;
 
 class PiSessionOpenTimeoutError extends Error {
-  constructor(phase: string) {
+  constructor(readonly phase: string) {
     super(`Pi session open timed out during ${phase} after ${PI_SESSION_OPEN_TIMEOUT_MS}ms`);
     this.name = 'PiSessionOpenTimeoutError';
   }
@@ -97,7 +97,7 @@ export type PiSessionOpenLifecycle = Readonly<{
   remainingMs(phase: string, maximumMs?: number): number;
   waitFor<T>(
     operation: Promise<T>,
-    phase: string,
+    phase?: string,
     disposeLateResult?: (value: T) => void | Promise<void>,
   ): Promise<T>;
   dispose(): void;
@@ -110,26 +110,23 @@ export function createPiSessionOpenLifecycle(params: Readonly<{
   const startedAtMs = Date.now();
   const controller = new AbortController();
   let currentPhase = 'session open';
-  let timedOut = false;
   let disposed = false;
   const abortFromParent = () => controller.abort(params.signal?.reason);
   if (params.signal?.aborted) abortFromParent();
   else params.signal?.addEventListener('abort', abortFromParent, { once: true });
   const timeout = setTimeout(() => {
-    timedOut = true;
     controller.abort(new PiSessionOpenTimeoutError(currentPhase));
   }, PI_SESSION_OPEN_TIMEOUT_MS);
   timeout.unref?.();
 
-  const readAbortError = (phase: string): Error => {
-    if (timedOut) return new PiSessionOpenTimeoutError(phase);
+  const readAbortError = (): Error => {
     return controller.signal.reason instanceof Error
       ? controller.signal.reason
-      : new Error(`Pi session open was cancelled during ${phase}`);
+      : new Error(`Pi session open was cancelled during ${currentPhase}`);
   };
   const remainingMs = (phase: string, maximumMs?: number): number => {
     currentPhase = phase;
-    if (controller.signal.aborted) throw readAbortError(phase);
+    if (controller.signal.aborted) throw readAbortError();
     const remaining = PI_SESSION_OPEN_TIMEOUT_MS - (Date.now() - startedAtMs);
     if (remaining <= 0) throw new PiSessionOpenTimeoutError(phase);
     return maximumMs === undefined ? remaining : Math.min(remaining, maximumMs);
@@ -137,7 +134,7 @@ export function createPiSessionOpenLifecycle(params: Readonly<{
   return Object.freeze({
     signal: controller.signal,
     remainingMs,
-    async waitFor<T>(operation: Promise<T>, phase: string, disposeLateResult?: (value: T) => void | Promise<void>) {
+    async waitFor<T>(operation: Promise<T>, phase = currentPhase, disposeLateResult?: (value: T) => void | Promise<void>) {
       remainingMs(phase);
       return await new Promise<T>((resolve, reject) => {
         let settled = false;
@@ -148,7 +145,7 @@ export function createPiSessionOpenLifecycle(params: Readonly<{
           callback();
           return true;
         };
-        const onAbort = () => settle(() => reject(readAbortError(phase)));
+        const onAbort = () => settle(() => reject(readAbortError()));
         controller.signal.addEventListener('abort', onAbort, { once: true });
         if (controller.signal.aborted) onAbort();
         void operation.then(
