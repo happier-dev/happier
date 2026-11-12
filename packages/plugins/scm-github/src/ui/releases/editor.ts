@@ -3,6 +3,7 @@ import {
     type ForgeReleaseGeneratedNotesV1, type ForgeReleaseMountedIntentOperationV1,
     type ForgeReleaseMountedIntentResultV1, type ForgeReleaseMutationResultV1, type ForgeReleaseV1,
 } from '@happier-dev/triage-protocol/releases/v1';
+import { projectTriageSourceInvocationFailureV1, projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
@@ -65,7 +66,7 @@ export function createReleaseEditorV1(options: Readonly<{
             if (!state) return null;
             if (execution.status === 'idle' || execution.status === 'pending' || isPluginActionConfirmationDeclined(execution)) return null;
             if (execution.status === 'error' || execution.status === 'outcomeUnknown') {
-                const failure: TriageSourceFailureV1 = { class: 'transient', code: execution.code };
+                const failure = projectTriageSourceReadFailureV1(execution, 'github_release_action_unavailable', 'github_release_action_not_dispatched');
                 if (execution.status === 'outcomeUnknown'
                     && (op === 'createReleaseDraft' || op === 'editReleaseDraft' || op === 'publishReleaseDraft')) publish({ failure,
                     outcome: { kind: 'outcome_unknown', failure, ...(state.saved === null ? {} : { releaseId: state.saved.releaseId, webUrl: state.saved.webUrl }) } });
@@ -92,7 +93,11 @@ export function createReleaseEditorV1(options: Readonly<{
         if (!state || state.busy !== null) return null;
         publish({ busy: op, failure: null });
         try { return settle(op, await options.invoke(op, input)); }
-        catch { return settle(op, { status: 'outcomeUnknown', code: 'github_release_action_unavailable', message: 'github_release_action_unavailable' }); }
+        catch (error) {
+            const failure = projectTriageSourceInvocationFailureV1(error, 'github_release_action_unavailable');
+            return settle(op, { status: 'outcomeUnknown', code: failure.code, message: failure.code,
+                ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }) });
+        }
         finally { if (state) publish({ busy: null }); }
     }
     async function invoke(operation: ForgeReleaseMountedIntentOperationV1): Promise<ForgeReleaseMountedIntentResultV1> {

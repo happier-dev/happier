@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createForgeReleaseV1Fixture } from '@happier-dev/triage-protocol/releases/testing/v1';
 import { createReleaseEditorV1 } from './editor.js';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 
 describe('one controlled release editor', () => {
+  it('retains the host refusal code and Request ID for release failure presentation', async () => {
+    const release = createForgeReleaseV1Fixture();
+    const editor = createReleaseEditorV1({ target: { repository: release.repository }, initial: release,
+      invoke: async () => ({ status: 'error', code: 'unavailable', message: 'Source refused', retryable: false,
+        requestId: 'release-request', diagnostics: [{ code: 'source_permission_missing', severity: 'error' }] }) });
+    await editor.invoke({ kind: 'setField', field: 'body', value: 'Updated' });
+    await editor.save();
+    expect(editor.getSnapshot()?.failure).toMatchObject({ code: 'source_permission_missing', requestId: 'release-request' });
+    editor.dispose();
+  });
+  it('keeps correlation when an invoked release Action rejects before returning its settlement', async () => {
+    const release = createForgeReleaseV1Fixture();
+    const editor = createReleaseEditorV1({ target: { repository: release.repository }, initial: release,
+      invoke: async () => { throw new PluginError({ code: 'github_transport_failed', details: { requestId: 'release-thrown-request' } }); } });
+    await editor.invoke({ kind: 'setField', field: 'body', value: 'Updated' });
+    await editor.save();
+    expect(editor.getSnapshot()?.outcome).toMatchObject({ kind: 'outcome_unknown',
+      failure: { code: 'github_transport_failed', requestId: 'release-thrown-request' } });
+    editor.dispose();
+  });
   it('prepares a host Save without executing automation and settles the captured edit before a reviewed host Publish', async () => {
     const release = createForgeReleaseV1Fixture();
     const calls: string[] = [];
@@ -222,7 +243,7 @@ describe('one controlled release editor', () => {
       expect(after?.saved).toEqual(before?.saved);
       expect(after?.fields).toEqual(before?.fields);
       expect(after?.dirty).toBe(before?.dirty);
-      expect(after?.failure).toEqual(errorCode === 'denied' ? { class: 'transient', code: 'denied' } : null);
+      expect(after?.failure).toEqual(errorCode === 'denied' ? { class: 'permission', code: 'denied', retryable: false } : null);
       expect(await control.prepare({ signal: new AbortController().signal })).toEqual(prepared);
       editor.dispose();
   });

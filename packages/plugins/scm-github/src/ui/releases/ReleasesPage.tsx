@@ -635,7 +635,7 @@ function ReleasesBody(
             kind={copy.kind}
             title={copy.title}
             description={copy.description}
-            details={[contentFailure.code, contentFailure.detail].filter(Boolean).join('\n')}
+            details={[contentFailure.code, contentFailure.detail, contentFailure.requestId].filter(Boolean).join('\n')}
             {...(contentFailure.class === 'authentication'
               ? {
                   action: (
@@ -834,7 +834,7 @@ function ReleasesBody(
             <ErrorState
               layout="line"
               title={t('plugins.github.releases.pane.failed', 'Couldn’t read this release')}
-              details={[detail.status.failure.code, detail.status.failure.detail].filter(Boolean).join('\n')}
+              details={[detail.status.failure.code, detail.status.failure.detail, detail.status.failure.requestId].filter(Boolean).join('\n')}
               onRetry={() => { void detail.refresh(); }}
             />
           ) : (

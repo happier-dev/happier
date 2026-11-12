@@ -315,8 +315,8 @@ describe('the Releases Project page', () => {
     { listError: new PluginError({ code: 'unavailable', details: { layer: 'placement', phase: 'admission' },
       diagnostics: [{ code: 'plugin_action_origin_unavailable', severity: 'error' }] }),
       expected: 'plugin_action_origin_unavailable' },
-    { listResult: { kind: 'unavailable', failure: { class: 'transient', code: 'github_server_error', detail: 'status=503' } },
-      expected: 'github_server_error status=503' },
+    { listResult: { kind: 'unavailable', failure: { class: 'transient', code: 'github_server_error', detail: 'status=503', requestId: 'release-read-request' } },
+      expected: 'github_server_error status=503 release-read-request' },
   ])('shows exact mounted refusal or provider details: $expected', async ({ expected, ...response }) => {
     const calls: string[] = [];
     const page = await mountReleases({ rows: [], calls, ...response });

@@ -1,3 +1,4 @@
+import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { readTriageResponseHeaderV1, MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, projectTriageDisplayTextV1,
   type TriageSourceFailureClassV1 } from '@happier-dev/triage-protocol/v1';
 import { isBoundedInvocationDeadline, TriageSourceAuthorizationErrorV1 } from '@happier-dev/triage-sources/runtime';
@@ -187,6 +188,7 @@ export function describeGithubRateLimitFailure(retryNotBeforeMs: number | undefi
 
 /** A thrown transport/cancellation outcome, classified without inspecting a credential. */
 export function classifyGithubTransportFailure(error: unknown, requestId?: string): GithubResponseFailureV1 {
+  requestId ??= isPluginError(error) ? readPluginErrorRequestIdV1(error) : undefined;
   const failure = classifyGithubTransportOutcome(error);
   return requestId === undefined || failure.requestId !== undefined
     ? failure : Object.freeze({ ...failure, requestId });

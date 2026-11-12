@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -26,6 +27,11 @@ function response(input: Readonly<{
 }
 
 describe('GitHub response failure classification', () => {
+  it('keeps transported PluginError correlation through the shared GitHub classifier', () => {
+    const failure = classifyGithubTransportFailure(new PluginError({ code: 'github_credential_unavailable',
+      details: { requestId: 'github-request' } }));
+    expect(failure).toMatchObject({ class: 'authentication', code: 'github_credential_unavailable', requestId: 'github-request' });
+  });
   it('keeps the provider request ID with a settled withdrawn-resource failure and rejects malformed IDs', () => {
     const requestId = 'A89C:E6813:2EE25D2:4481C49:6AEB94CC';
     expect(classifyGithubResponseFailure(response({ status: 410,
