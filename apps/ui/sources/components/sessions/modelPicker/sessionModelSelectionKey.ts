@@ -1,4 +1,4 @@
-import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
+import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 export type SessionModelPickerValue = ProviderBoundModelRef | null;
@@ -22,5 +22,7 @@ export function sessionModelSelectionKey(value: SessionModelPickerOptionValue): 
         ? 'automatic'
         : isTeamCredentialProviderModelPickerValue(value)
             ? JSON.stringify(['team_resource', value.teamId, value.resourceId, value.expectedResourceRevision, value.deliveryMode, value.agentTargetKey, value.modelId])
-            : JSON.stringify([value.agentTargetKey, value.providerConnectionId, value.modelId]);
+            : isNativeAutomaticModelSelectionInputV1(value)
+                ? 'automatic'
+                : JSON.stringify([value.agentTargetKey, value.providerConnectionId, value.modelId]);
 }

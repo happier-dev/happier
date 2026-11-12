@@ -1,5 +1,5 @@
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
-import { serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { isNativeAutomaticModelSelectionInputV1, serializeModelVisibilityRefV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
@@ -139,7 +139,7 @@ export function sessionModelConnectionTitle(group: SessionModelProjectionGroup):
 }
 
 function nativeModelRef(agentTargetKey: string, modelId: string): ProviderBoundModelRef | null {
-    return modelId === 'default'
+    return isNativeAutomaticModelSelectionInputV1({ modelId })
         ? null
         : { agentTargetKey, providerConnectionId: null, modelId };
 }

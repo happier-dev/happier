@@ -67,6 +67,19 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('keeps a selected native default in the available Agent catalog', () => {
+        const selected = { agentTargetKey: 'agent:happier.agent.grok/grok', providerConnectionId: null, modelId: 'default' };
+        const nativeModels = [{ value: 'default', label: 'Agent default' }, { value: 'grok-4.7', label: 'Grok 4.7' }];
+        const input = { declarationContext: { kind: 'account' as const }, agentTargetKey: selected.agentTargetKey,
+            nativeModels, providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
+            providerProjectionAuthoritative: true, selected };
+        const sections = buildSessionModelPickerSections(input);
+        expect(sections.map(section => section.id)).toEqual(['native']);
+        expect(sections[0]?.options.find(option => sessionModelSelectionKey(option.value) === sessionModelSelectionKey(selected)))
+            .toMatchObject({ label: 'Agent default', availability: 'available' });
+        expect(buildSessionModelSelectedTriggerPresentation({ ...input, fallbackLabel: 'Missing', fieldLabel: 'Model' }))
+            .toEqual({ subtitle: 'Agent default' });
+    });
     it('keeps a selected managed model available in the closed trigger', () => {
         const group = providerGroup({ connectionId: 'connected-source:managed', modelId: 'source-model' });
         const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'managed/source-model' };
