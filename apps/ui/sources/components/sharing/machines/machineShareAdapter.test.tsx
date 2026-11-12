@@ -25,9 +25,24 @@ vi.mock('@legendapp/list/react-native', async () => {
     const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
     return createLegendListModuleMock({ renderItems: true });
 });
+const nativeReview = vi.hoisted(() => ({ answer: true }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ renderCustomModals: true, spies: { confirm: vi.fn(async () => true) } }).module;
+    const boundary = createModalModuleMock({ renderCustomModals: true, spies: { confirm: vi.fn(async () => true) } });
+    const show = boundary.spies.show.getMockImplementation()!;
+    boundary.spies.show.mockImplementation(config => {
+        const id = show(config);
+        if (config.chrome?.testID === 'actions.confirmation-review.modal') {
+            const answer = nativeReview.answer;
+            nativeReview.answer = true;
+            queueMicrotask(() => {
+                if (typeof config.props?.onAnswer === 'function') config.props.onAnswer(answer);
+                boundary.module.Modal.hide(id);
+            });
+        }
+        return id;
+    });
+    return boundary.module;
 });
 
 const bob = { kind: 'account' as const, accountId: 'bob' };
@@ -337,10 +352,86 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(Modal.confirm).not.toHaveBeenCalled();
         } finally { await home.dispose(); }
     });
+    it.each([
+        ['principal_not_found', 'session.access.subjectNotFound'],
+        ['principal_ineligible', 'session.access.subjectIneligible'],
+        ['unsupported_operation', 'machines.sharing.unsupportedOperation'],
+    ] as const)('keeps a stale %s recipient refusal out of the same-input retry path', async (code, reasonKey) => {
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-stale-principal.test', accountId: 'alice', settings: {
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.access.grant.set': ['ui'] } },
+        } }], route: request => {
+            if (request.path !== '/v1/machines/machine/access') return undefined;
+            if (request.method === 'GET') return Response.json(initial);
+            if (request.method === 'PUT') return Response.json({ kind: 'refused', code }, { status: 409 });
+            return undefined;
+        } });
+        let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useMachineShareController>>>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            hook = await renderHook(() => useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope }));
+            await vi.waitFor(() => expect(hook!.getCurrent().model.grants).toHaveLength(1));
+            await act(async () => { hook!.getCurrent().actions.setAccessLevel(bob, 'admin'); });
+            await vi.waitFor(() => expect(hook!.getCurrent().model.grants[0]?.operation).toMatchObject({
+                kind: 'error', error: { code, retryable: false, message: t(reasonKey) },
+            }));
+            expect(hook.getCurrent().response?.grants[0]?.level).toBe('view');
+            expect(hook.getCurrent().model.grants[0]?.level.value).toBe('admin');
+            await act(async () => { hook!.getCurrent().actions.retryMutation(bob); });
+            expect(home.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+        } finally { await hook?.unmount(); await home.dispose(); }
+    });
+
+    it.each([true, false])('keeps a stale acknowledgement from replay while offering a manual access check in StrictMode, persisted=%s', async persisted => {
+        let saved = initial;
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-uncertain-sharing.test', accountId: 'alice', settings: {
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.access.grant.set': ['ui'] } },
+        } }], route: request => {
+            if (request.path !== '/v1/machines/machine/access') return undefined;
+            if (request.method === 'GET') return Response.json(saved);
+            if (request.method === 'PUT') {
+                if (persisted) saved = { ...initial, grants: initial.grants.map(grant => ({ ...grant, level: 'admin' })) };
+                return Response.json({ kind: 'saved' }); // The acknowledgement does not establish whether the effect saved.
+            }
+            return undefined;
+        } });
+        let current: ReturnType<typeof useMachineShareController> | undefined;
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            function Surface() {
+                const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
+                current = controller;
+                return <ShareSheet model={controller.model} actions={controller.actions}
+                    adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
+                    presentation="full" testID="machine-share-editor" />;
+            }
+            screen = await renderScreen(<React.StrictMode><Surface /></React.StrictMode>);
+            await vi.waitFor(() => expect(current?.response?.grants).toHaveLength(1));
+            await act(async () => { current!.actions.setAccessLevel(bob, 'admin'); });
+            await vi.waitFor(() => expect(current?.model.grants[0]?.operation).toMatchObject({
+                kind: 'error', error: { code: 'outcome_unknown', retryable: false },
+            }));
+            expect(screen.getTextContent()).toContain(t('machines.sharing.outcomeUnknown'));
+            expect(screen.getTextContent()).toContain(t('common.refresh'));
+            const reads = home.requests.filter(request => request.method === 'GET').length;
+            await screen.pressByTestIdAsync('machine-share-notice-action');
+            await act(async () => { current!.actions.retryMutation(bob); });
+            await vi.waitFor(() => expect(current?.response?.grants[0]?.level).toBe(persisted ? 'admin' : 'view'));
+            await vi.waitFor(() => expect(current?.model.grants[0]?.operation.kind).toBe(persisted ? 'idle' : 'error'));
+            if (persisted) expect(current?.notice).toBeUndefined();
+            else {
+                expect(current?.notice?.code).toBe('outcome_unknown');
+                expect(current?.model.grants[0]?.level.value).toBe('admin');
+            }
+            expect(home.requests.filter(request => request.method === 'GET')).toHaveLength(reads + 1);
+            expect(home.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+        } finally { await screen?.unmount(); await home.dispose(); }
+    });
+
     it('returns a row to its saved level, with no error, when the person cancels the change', async () => {
         const { Modal } = await import('@/modal');
-        vi.mocked(Modal.confirm).mockClear();
-        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        vi.mocked(Modal.show).mockClear();
+        nativeReview.answer = false;
         const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-cancel-upgrade.test', accountId: 'alice' }],
             route: request => request.path === '/v1/machines/machine/access' && request.method === 'GET' ? Response.json(initial) : undefined });
         let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useMachineShareController>>>> | undefined;
@@ -349,7 +440,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             hook = await renderHook(() => useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope }));
             await vi.waitFor(() => expect(hook!.getCurrent().model.grants).toHaveLength(1));
             await act(async () => { hook!.getCurrent().actions.setAccessLevel(bob, 'admin'); });
-            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledTimes(1));
             await vi.waitFor(() => expect(hook!.getCurrent().model.grants[0]?.level.value).toBe('view'));
             expect(JSON.stringify(hook.getCurrent().model.grants[0])).not.toContain(t('machines.sharing.unavailable', { machine: 'Devbox' }));
             expect(home.requests.filter(request => request.path === '/v1/machines/machine/access' && request.method !== 'GET')).toHaveLength(0);
@@ -754,6 +845,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
     it.each(['reduction', 'widening', 'new'] as const)('confirms named sharing exposure but applies a reduction directly (%s)', async scenario => {
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
+        vi.mocked(Modal.show).mockClear();
         let snapshot: MachineAccessGrantsListResponseV1 = { ...initial, grants: scenario === 'new' ? [{
             ...initial.grants[0]!, principal: { kind: 'account', accountId: 'cara' }, level: 'admin', display: { name: 'Cara' },
             audience: [{ accountId: 'cara', displayName: 'Cara', readiness: 'ready', reason: null, canPrepareKeys: false }],
@@ -804,11 +896,14 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             if (scenario === 'reduction') {
                 await vi.waitFor(() => expect(screen.findByTestId('machine-share-level:account:bob:view')?.props.disabled).toBe(false));
                 expect(Modal.confirm).not.toHaveBeenCalled();
+                expect(Modal.show).not.toHaveBeenCalled();
                 return;
             }
-            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
-            const [title, message] = vi.mocked(Modal.confirm).mock.calls[0]!;
-            expect(vi.mocked(Modal.confirm).mock.calls[0]?.[2]?.confirmText).toBe('Share a machine');
+            await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledTimes(1));
+            const review = vi.mocked(Modal.show).mock.calls[0]![0];
+            const title = review.chrome?.title ?? '';
+            const message = review.chrome?.subtitle ?? '';
+            expect(review.props?.confirmLabel).toBe('Share a machine');
             expect(title).toContain('Devbox');
             expect(message).toContain('Bob');
             expect(message).toContain(t(level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use'));

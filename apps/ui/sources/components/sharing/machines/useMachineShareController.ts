@@ -11,6 +11,7 @@ import { MachineAccessGrantsListResponseV1Schema, MachineAccessRefusalV1Schema, 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
+import { confirmActionReview } from '@/components/approvals/ActionConfirmationReview';
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -56,6 +57,10 @@ function failure(code: string, machine: string, person = t('shareSheet.person'),
     if (code === 'content_unpublished') return { code, message: t('machines.sharing.unpublished', { machine }), retryable: false };
     if (code === 'custodian_only') return { code, message: t('machines.sharing.custodianOnly', { machine }), retryable: false };
     if (code === 'daemon_upgrade_required') return { code, message: t('machines.sharing.upgradeRequired', { machine }), retryable: false };
+    if (code === 'principal_not_found') return { code, message: t('session.access.subjectNotFound'), retryable: false };
+    if (code === 'principal_ineligible') return { code, message: t('session.access.subjectIneligible'), retryable: false };
+    if (code === 'unsupported_operation') return { code, message: t('machines.sharing.unsupportedOperation'), retryable: false };
+    if (code === 'outcome_unknown') return { code, message: t('machines.sharing.outcomeUnknown'), retryable: false };
     if (code === 'recipient_encryption_incompatible' || code === 'recipient_incompatible') return { code,
         message: t('machines.sharing.incompatible', { machine, person }), retryable: false };
     if (isAuthorityLoss(code) || code === 'custodian_protected') return { code,
@@ -115,24 +120,24 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     // The grant confirmation is worded after commit; it reads the current placement, not a render-time copy.
     const guestExecutionRef = React.useRef(guestExecution);
     guestExecutionRef.current = guestExecution;
-    const responseRef = React.useRef(response);
-    responseRef.current = response;
+    const stateRef = React.useRef(state);
+    stateRef.current = state;
     // The Action policy decides whether a confirmation shows; this only words it. A grant names the
     // machine, the person and the role it gives, so "Share a machine" is never a bare question.
-    confirmUserAction.current = async ({ actionId, input, context }) => {
-        const presentation = presentActionApproval({ actionId, actionArgs: input, kind: 'confirmation', subject: machineName });
+    confirmUserAction.current = async ({ actionId, input, context, preview }) => {
+        const presentation = presentActionApproval({ actionId, actionArgs: input, preview, kind: 'confirmation', subject: machineName });
         const grant = actionId === 'machines.access.grant.set' ? MachineAccessGrantSetInputV1Schema.safeParse(input) : null;
-        let message = presentation.summary ?? '';
+        let message: string | null = null;
         if (grant?.success) {
             const trust = describeMachineShareTrust(guestExecutionRef.current.placement, false, machineName, guestExecutionRef.current.isolation);
             message = [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
                 t(grant.data.level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use')}`,
                 trust.lead, trust.detail].join('\n\n');
         }
-        return Modal.confirm(presentation.title ?? t('approvals.untitled'), message,
-            { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
-                ...(presentation.destructive ? { destructive: true } : {}),
-                ...(context.signal ? { signal: context.signal } : {}) });
+        return confirmActionReview({ actionId, actionArgs: input, preview,
+            title: presentation.title ?? t('approvals.untitled'), summary: message,
+            confirmLabel: presentation.confirmLabel ?? t('approvals.approve'), irreversible: presentation.destructive === true,
+            serverId: context.serverId ?? scope.serverId, ...(context.signal ? { signal: context.signal } : {}) });
     };
     const target = React.useMemo(() => ({ serverId: scope.serverId, machineId }), [scope.serverId, machineId]);
     const context = React.useMemo(() => ({ surface: 'ui' as const, source: 'ui_button' as const, authority: 'present_user' as const,
@@ -150,13 +155,34 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         pending.current?.abort();
         const lifetime = lifetimeRef.current;
         if (!lifetime || lifetime.signal.aborted) return;
+        const unknownIntents = Object.entries(stateRef.current.operations).flatMap(([key, operation]) => {
+            const intent = intents.current.get(key);
+            return operation.kind === 'error' && operation.error.code === 'outcome_unknown' && intent
+                ? [{ key, operation, intent }] : [];
+        });
         const request = new AbortController();
         pending.current = request;
         const result = await execute('machines.access.grants.list', target, { ...context, signal: request.signal }).catch(() => null);
         if (request.signal.aborted || lifetime.signal.aborted) return;
         const parsed = result?.ok ? MachineAccessGrantsListResponseV1Schema.safeParse(result.result) : null;
         if (parsed?.success && parsed.data.machineId === machineId) {
-            setState(previous => retainDeep<State>(previous, { ...previous, response: parsed.data, phase: 'ready', issue: undefined }));
+            // Only the requested outcome in the authoritative census resolves an
+            // unacknowledged write. A different or partial result keeps the intent.
+            const confirmedOperations = unknownIntents.filter(({ key, intent }) => {
+                if (intents.current.get(key) !== intent) return false;
+                const grant = parsed.data.grants.find(row => sessionAccessSubjectKey(row.principal) === key);
+                return intent.actionId === 'machines.access.grant.set' ? grant?.level === intent.level
+                    : intent.actionId === 'machines.access.grant.remove' ? grant === undefined
+                        : intent.actionId === 'machines.access.leave' ? !parsed.data.ownDirectGrant : false;
+            });
+            for (const { key } of confirmedOperations) intents.current.delete(key);
+            setState(previous => {
+                const operations = { ...previous.operations };
+                for (const { key, operation } of confirmedOperations) {
+                    if (operations[key] === operation) delete operations[key];
+                }
+                return retainDeep<State>(previous, { ...previous, response: parsed.data, phase: 'ready', issue: undefined, operations });
+            });
         } else {
             const refusal = result?.ok ? MachineAccessRefusalV1Schema.safeParse(result.result) : null;
             const code = result?.ok ? refusal?.success ? refusal.data.code : 'machine_access_invalid_response' : errorCode(result);
@@ -239,7 +265,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
                 });
                 return;
             }
-            const row = responseRef.current?.grants.find(candidate => sessionAccessSubjectKey(candidate.principal) === key);
+            const row = stateRef.current.response?.grants.find(candidate => sessionAccessSubjectKey(candidate.principal) === key);
             const issue = failure(code, machineName, names.current.get(key) ?? row?.display.name ?? undefined,
                 mutation.actionId === 'machines.access.grant.set' && row && row.level !== mutation.level
                     ? { draft: mutation.level, current: row.level } : undefined);
@@ -378,8 +404,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             }),
         })) },
     };
+    const unknownOperation = Object.values(state.operations).find(operation => operation.kind === 'error' && operation.error.code === 'outcome_unknown');
     return { model, actions, response, guestExecution, viewerRow, inherited, canLeave, loading: state.phase === 'initial' || readSettling, issue: readSettling ? undefined : state.issue,
-        notice, retryContent: load, approvalId: approval.approvalId,
+        notice: unknownOperation?.kind === 'error' ? unknownOperation.error : notice, retryContent: load, approvalId: approval.approvalId,
         prepareKeys: (ref: PrincipalRefV1) => { if (canWrite && response?.grants.some(row =>
             sessionAccessSubjectKey(row.principal) === sessionAccessSubjectKey(ref) && row.audience.some(member => member.canPrepareKeys)))
             void mutate({ actionId: 'machines.access.prepareKeys', principal: ref }); } };
