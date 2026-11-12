@@ -1676,6 +1676,7 @@ function renderPluginSurfaceUnavailable(
     state: Extract<PluginSurfacePresentationState, 'loading' | 'unavailable'> = 'unavailable',
     onRetry?: () => void,
     subjectName?: string,
+    diagnosticDetail?: string,
 ): React.ReactElement {
     return (
         <PluginSurfaceFallback
@@ -1683,6 +1684,7 @@ function renderPluginSurfaceUnavailable(
             state={state}
             reasonCode={reasonCode}
             subjectName={subjectName}
+            diagnosticDetail={diagnosticDetail}
             action={action}
             onRetry={onRetry}
             accessibilitySemantics="status"
@@ -3497,6 +3499,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         reason: string,
         state: Extract<PluginSurfacePresentationState, 'loading' | 'unavailable'> = 'unavailable',
         onRetry?: () => void,
+        diagnosticDetail?: string,
     ): React.ReactElement => (
         state !== 'loading' && embeddedFallback !== undefined
             ? <>{embeddedFallback}</>
@@ -3504,7 +3507,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             // (a page-shaped skeleton would sit in the thread), keeping only the hidden QA marker.
             : state === 'loading' && composerMount
                 ? <PluginSurfaceLoadingMarker reason={reason} />
-                : renderPluginSurfaceUnavailable(reason, props.unavailableAction, state, onRetry, projectedBrand?.displayName)
+                : renderPluginSurfaceUnavailable(reason, props.unavailableAction, state, onRetry, projectedBrand?.displayName, diagnosticDetail)
     );
     const renderAccountEncryptionModeReadiness = (): React.ReactElement => (
         accountEncryptionModeReadiness.status === 'loading'
@@ -3809,7 +3812,9 @@ function PluginSurfaceHostMount(props: Readonly<(
         if (canonicalHostedSource && hostedWebTechnicalAdmission?.kind !== 'available') {
             return renderUnavailable(hostedWebTechnicalAdmission?.kind === 'unavailable'
                 ? hostedWebTechnicalAdmission.code
-                : 'artifact_technical_admission_unavailable');
+                : 'artifact_technical_admission_unavailable', 'unavailable', undefined,
+                hostedWebTechnicalAdmission?.kind === 'unavailable' && hostedWebTechnicalAdmission.code === 'required_host_methods_unavailable'
+                    ? hostedWebTechnicalAdmission.missingHostMethods.join(', ') : undefined);
         }
 
         const hostedArtifactAdmission = hostedWebTechnicalAdmission?.kind === 'available'
@@ -4076,7 +4081,9 @@ function PluginSurfaceHostMount(props: Readonly<(
         if (reactNativeTechnicalAdmission?.kind !== 'available') {
             return renderUnavailable(reactNativeTechnicalAdmission?.kind === 'unavailable'
                 ? reactNativeTechnicalAdmission.code
-                : 'artifact_technical_admission_unavailable');
+                : 'artifact_technical_admission_unavailable', 'unavailable', undefined,
+                reactNativeTechnicalAdmission?.kind === 'unavailable' && reactNativeTechnicalAdmission.code === 'required_host_methods_unavailable'
+                    ? reactNativeTechnicalAdmission.missingHostMethods.join(', ') : undefined);
         }
         const renderOccurrenceId = readOptionalString(baseControllerFacts.occurrenceId);
         const canonicalRenderIdentity = {

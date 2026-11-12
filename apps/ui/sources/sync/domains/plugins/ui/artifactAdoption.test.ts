@@ -133,13 +133,13 @@ describe('PluginUiArtifactAdoptionOwner', () => {
         const blockedAdmissions = blockedArtifactResolvers.map((resolveSourceAdmission) => (
             resolvePluginUiRendererTechnicalAdmission({
                 resolveSourceAdmission,
-                requiredHostMethods: ['watchResource'],
+                requiredHostMethods: ['readResource', 'watchResource', 'publishCurrentUiContext'],
                 structuralHostMethods,
             })
         ));
         expect(blockedAdmissions).toEqual([
-            { kind: 'unavailable', code: 'required_host_methods_unavailable' },
-            { kind: 'unavailable', code: 'required_host_methods_unavailable' },
+            { kind: 'unavailable', code: 'required_host_methods_unavailable', missingHostMethods: ['watchResource', 'publishCurrentUiContext'] },
+            { kind: 'unavailable', code: 'required_host_methods_unavailable', missingHostMethods: ['watchResource', 'publishCurrentUiContext'] },
         ]);
         for (const resolveArtifactAdmission of blockedArtifactResolvers) {
             expect(resolveArtifactAdmission).not.toHaveBeenCalled();

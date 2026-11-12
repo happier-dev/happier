@@ -84,6 +84,8 @@ export function PluginSurfaceFallback(props: Readonly<{
     state?: PluginSurfaceFallbackState;
     /** Raw host/runtime diagnostic; the shared presentation owner localizes it. */
     reasonCode?: string | null;
+    /** Content-free host cause, disclosed only in Details. */
+    diagnosticDetail?: string | null;
     /** Already-localized declaration text; never an untrusted runtime diagnostic. */
     reason?: string;
     /** Caller-owned plugin management route; shown only when management is the fix. */
@@ -140,6 +142,7 @@ export function PluginSurfaceFallback(props: Readonly<{
             reason={props.reason ?? card.reason}
             reasonContent={(props.reason ?? card.reason) ? props.renderText?.('reason', (props.reason ?? card.reason)!) : undefined}
             diagnosticCode={presentation.diagnosticCode}
+            diagnosticDetail={props.diagnosticDetail}
             action={resolvePluginSurfaceStateAction({
                 recoveryAction: presentation.recoveryAction,
                 onRetry: props.onRetry,

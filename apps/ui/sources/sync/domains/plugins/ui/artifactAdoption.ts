@@ -602,7 +602,12 @@ export type PluginUiRendererTechnicalAdmission<SourceAdmission> =
     }>
     | Readonly<{
         kind: 'unavailable';
-        code: 'artifact_technical_admission_unavailable' | 'required_host_methods_unavailable';
+        code: 'artifact_technical_admission_unavailable';
+    }>
+    | Readonly<{
+        kind: 'unavailable';
+        code: 'required_host_methods_unavailable';
+        missingHostMethods: readonly PluginUiHostMethodV1[];
     }>;
 
 /**
@@ -618,8 +623,10 @@ export function resolvePluginUiRendererTechnicalAdmission<SourceAdmission>(input
     resolveSourceAdmission: () => SourceAdmission | null;
 }>): PluginUiRendererTechnicalAdmission<SourceAdmission> {
     const requiredHostMethods = input.requiredHostMethods ?? [];
-    if (!requiredHostMethods.every((method) => input.structuralHostMethods.includes(method))) {
-        return Object.freeze({ kind: 'unavailable', code: 'required_host_methods_unavailable' });
+    const missingHostMethods = requiredHostMethods.filter((method) => !input.structuralHostMethods.includes(method));
+    if (missingHostMethods.length > 0) {
+        return Object.freeze({ kind: 'unavailable', code: 'required_host_methods_unavailable',
+            missingHostMethods: Object.freeze(missingHostMethods) });
     }
     const sourceAdmission = input.resolveSourceAdmission();
     if (sourceAdmission === null) {

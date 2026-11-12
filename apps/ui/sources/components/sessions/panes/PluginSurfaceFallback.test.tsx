@@ -233,4 +233,14 @@ describe('PluginSurfaceFallback', () => {
             'plugin-surface-unavailable-diagnostic-hosted_web_bridge_timeout',
         )).toBeTruthy();
     });
+
+    it('preserves the host missing-method cause in the diagnostic disclosure', async () => {
+        const screen = await renderScreen(<PluginSurfaceFallback
+            testID="plugin-surface-unavailable"
+            reasonCode="required_host_methods_unavailable"
+            diagnosticDetail="publishCurrentUiContext"
+        />);
+        await act(async () => screen.findByTestId('plugin-surface-unavailable-details-toggle')?.props.onPress());
+        expect(screen.getTextContent()).toContain('publishCurrentUiContext');
+    });
 });
