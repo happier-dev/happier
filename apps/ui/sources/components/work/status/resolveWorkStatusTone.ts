@@ -180,7 +180,7 @@ export type WorkStatusInput =
         agentName?: string | null;
     }> }>
     /** An execution run, sub-agent or teammate, in the agent-activity vocabulary. */
-    | Readonly<{ kind: 'agent_activity'; facts: Readonly<{ status: AgentActivityStatusV1; isActive?: boolean; word: string }> }>;
+    | Readonly<{ kind: 'agent_activity'; facts: Readonly<{ status: AgentActivityStatusV1; isActive?: boolean; machineReachable?: boolean; word: string }> }>;
 
 type StatusShape = Readonly<{ bucket: WorkStatusBucket; tone: WorkStatusTone }>;
 
@@ -472,6 +472,9 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
             // finished, a failure is danger and a timeout (interrupted, not chosen) is attention, as a
             // worker update's timeout reads; `unknown` claims neither working nor finished.
             const { status, isActive, word } = input.facts;
+            if (input.facts.machineReachable === false && !isTerminalAgentActivityStatus(status)) {
+                return workStatus('disconnected', { bucket: 'offline', tone: 'neutral' }, word);
+            }
             if (status === 'waiting') return workStatus(status, { bucket: 'needs_you', tone: 'attention' }, word, 'decision');
             if (status === 'running' && isActive === false) return workStatus(status, { bucket: 'idle', tone: 'neutral' }, word);
             if (isInProgressAgentActivityStatus(status)) return workStatus(status, { bucket: 'working', tone: 'neutral' }, word);

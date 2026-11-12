@@ -16,6 +16,9 @@ function source(overrides: Partial<InboxCountSource> = {}): InboxCountSource {
 }
 
 describe('Inbox counts', () => {
+    it('does not count unavailable Runs absent from an open Inbox projection', () => {
+        expect(countInboxNeedsYou(source({ items: [], workflowAttention: { runIds: ['offline-run'] } }))).toBe(0);
+    });
     it('keeps Machine reminders in Needs you and reachability in Updates', () => {
         const model = source({ machineDeletionEntries: [{}], machineReachabilityEntries: [{}] });
         expect(countInboxNeedsYou(model)).toBe(1);

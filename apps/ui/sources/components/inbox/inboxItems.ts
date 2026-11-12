@@ -48,7 +48,7 @@ export type InboxExecutionRunAddress = Readonly<{ serverId: string } & (
     { sessionId: string; machineId?: never } | { machineId: string; sessionId?: never }
 )>;
 export type InboxExecutionRun = Readonly<{ address: InboxExecutionRunAddress; run: ExecutionRunPublicState;
-    persistent?: boolean; onceDeliveries?: readonly PersonalRunFollowOnceOccurrenceV1[] }>;
+    unavailable?: 'target_unavailable'; persistent?: boolean; onceDeliveries?: readonly PersonalRunFollowOnceOccurrenceV1[] }>;
 /** A fulfilled permission is actionable only while its exact source request still exists. */
 export function readInboxExecutionRunOnceDeliveries(entry: InboxExecutionRun): readonly PersonalRunFollowOnceOccurrenceV1[] {
     return (entry.onceDeliveries ?? []).filter(delivery => {
@@ -268,7 +268,9 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             createdAt: run.startedAtMs, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
             phase: type === 'approval' ? 'attention' : 'live',
             workStatus: resolveWorkStatusTone({ kind: 'agent_activity', facts: { status: activityStatus,
-                word: resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run)).label } }),
+                machineReachable: entry.unavailable ? false : undefined,
+                word: entry.unavailable && isExecutionRunActive(run) ? t('status.offline')
+                    : resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run)).label } }),
             source: { kind: 'execution_run', id: run.runId, serverId: address.serverId, displayName: title,
                 ...(onceDeliveries.length ? { onceDeliveries } : {}) } });
     }

@@ -906,7 +906,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         const { InboxContent } = await import('./InboxContent');
         const loading = await renderScreen(<InboxContent model={{ ...createModel(), isLoading: true }} view="needs_you" />,
             { wrapper: PagePresentation });
-        expect(loading.findByTestId('inbox.type.decision')).not.toBeNull();
+        expect(loading.findByTestId('inbox.type.approval')).not.toBeNull();
         expect(loading.findByTestId('inbox.loading_rest')).not.toBeNull();
         await loading.unmount();
 

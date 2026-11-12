@@ -157,7 +157,7 @@ function useCreateSource(detailsDemanded: boolean): Source {
                 const run = header?.run ?? (!sourceFailed && address.sessionId !== undefined
                     ? rosters.get(sessionAddressKey({ serverId: address.serverId, sessionId: address.sessionId }))?.runs.find(run => run.runId === follow.source.runId) : undefined);
                 if (!run) continue;
-                const entry = { address, run, persistent: follow.following && follow.persistent,
+                const entry = { address, run, unavailable: header?.unavailable, persistent: follow.following && follow.persistent,
                     onceDeliveries: follow.onceDeliveries ?? [] };
                 const deliveries = readInboxExecutionRunOnceDeliveries(entry);
                 // A source outage cannot erase a delivered, already-readable terminal notice.
@@ -201,8 +201,10 @@ function useCreateSource(detailsDemanded: boolean): Source {
         const countable = new Set(entries.map(entry => sourceKey({ kind: 'execution_run', runId: entry.run.runId,
             ...(entry.address.sessionId !== undefined ? { sessionId: entry.address.sessionId } : { machineId: entry.address.machineId }) })));
         for (const follow of follows ?? []) {
-            if (follow.source.kind === 'execution_run' ? headerReads.owner?.read(follow.source).failed
-                : workflowFailed(follow.source.runId)) continue;
+            if (follow.source.kind === 'execution_run') {
+                const header = headerReads.owner?.read(follow.source);
+                if (header?.failed || header?.unavailable) continue;
+            } else if (workflowFailed(follow.source.runId)) continue;
             if (follow.source.kind === 'execution_run' && follow.onceDeliveries?.some(delivery => delivery.event.kind !== 'needs_you')) countable.add(sourceKey(follow.source));
             if (workflowAttention.available && follow.source.kind === 'workflow_run' && !workflowAttention.runIds.includes(follow.source.runId)
                 && follow.onceDeliveries?.some(delivery => delivery.event.kind !== 'needs_you')) countable.add(sourceKey(follow.source));

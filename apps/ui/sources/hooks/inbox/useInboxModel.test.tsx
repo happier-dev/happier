@@ -1390,6 +1390,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(model!.showCaughtUp).toBe(!sourceFailed);
         expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
         expect(cold.findByTestId(`inbox.run.${run.runId}`)).toBeNull();
+        expect(model!.executionRunAttention.count).toBe(0);
         const followReads = executionRunBoundary.follows.mock.calls.length;
         const sourceReads = executionRunBoundary.get.mock.calls.length;
         executionRunBoundary.get.mockResolvedValue({ run });

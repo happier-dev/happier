@@ -8,7 +8,7 @@ import { admittedInboxDiscussionOccurrences, inboxItemView, type InboxDiscussion
  * projections, and an open Inbox feeds it from its model.
  *
  * What counts is what asks for the person: a session the Inbox classifier admits, a run in the
- * attention window (by id, whether or not its row has loaded yet), an open approval or usage notice,
+ * attention window (by id before detail demand, by admitted row while open), an open approval or usage notice,
  * an operation, a friend request. Rows the list also draws but that ask for nothing now (snoozed,
  * stalled) are not counted anywhere.
  */
@@ -64,14 +64,12 @@ export type InboxCountSource = Readonly<{
 /** The "Needs you" view's share of the count. */
 export function countInboxNeedsYou(model: InboxCountSource): number {
     if (model.items) {
-        const workflowUpdates = new Set<unknown>(model.items.filter(item => item.source.kind === 'workflow_run' && !isInboxNeedsYouItem(item))
-            .map(item => item.source.id));
         return countInboxItems({
         sessions: model.items.filter(item => item.producer === 'live' && item.source.kind !== 'approval'
             && item.source.kind !== 'workflow_run' && item.source.kind !== 'automation_run'
             && isInboxNeedsYouItem(item)).length,
-        workflowRuns: Array.from(model.workflowAttention.runIds).filter(runId => !workflowUpdates.has(runId)).length,
-        automationRuns: model.automationAttention.runIds.length - model.items.filter(item => item.source.kind === 'automation_run' && !isInboxNeedsYouItem(item)).length,
+        workflowRuns: model.items.filter(item => item.source.kind === 'workflow_run' && isInboxNeedsYouItem(item)).length,
+        automationRuns: model.items.filter(item => item.source.kind === 'automation_run' && isInboxNeedsYouItem(item)).length,
         approvalsAndNotices: model.openApprovals.length + model.items.filter(item => item.producer === 'notice' && isInboxNeedsYouItem(item)).length,
         operations: model.actionOperationEntries.length, friendRequests: 0,
         });

@@ -373,6 +373,9 @@ describe('one Inbox row projection', () => {
         expect(row!.pageRoute).toBe('/runs?serverId=home-a&machineId=machine-one&runId=detached-run');
         expect(readInboxItemFocus(createInboxItemRoute(row!.focus).params.item)).toEqual(row!.focus);
         expect(projectInboxReadItemV1(row!)).toMatchObject({ focus: row!.focus, producer: 'live' });
+        const offline = buildInboxItems({ ...emptyInput, executionRuns: [{ ...entry, unavailable: 'target_unavailable' }] }, [row!]);
+        expect(offline[0]?.workStatus).toMatchObject({ state: 'disconnected', bucket: 'offline', tone: 'neutral' });
+        expect(buildInboxItems({ ...emptyInput, executionRuns: [entry] }, offline)[0]?.workStatus).toEqual(row!.workStatus);
     });
     it('does not turn an answered one-shot permission into a running Update', () => {
         const run = ExecutionRunPublicStateSchema.parse({ runId: 'permission-run', callId: 'call', sidechainId: 'sidechain',
