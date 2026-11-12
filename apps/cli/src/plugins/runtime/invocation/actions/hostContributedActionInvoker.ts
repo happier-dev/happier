@@ -80,6 +80,7 @@ export function createHostContributedActionInvoker(params: Readonly<{
         if (executionOrigin === null) return callerNoLongerCurrent();
         const result = await params.invokeContributedAction({
             action,
+            ...(context.operationRequestId === undefined ? {} : { requestId: context.operationRequestId }),
             ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
             ...(parsedInput === undefined ? { input: undefined } : { input: parsedInput.data }),
             surface: 'plugin',

@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import axios from '@/api/client/credentialAxios';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema,
@@ -182,6 +184,7 @@ export type AccountPluginActivationSources = Readonly<{
     contributes: ResolvedContributionRegistry;
     sourcesByPluginId: ReadonlyMap<string, PluginActivationSource<PluginDaemonModuleNamespace>>;
     isCurrent: (pluginId: string) => boolean;
+    /** False is confirmed retirement; cancellation and unavailable custody reads reject. */
     revalidate: (pluginId: string, signal?: AbortSignal) => Promise<boolean>;
     /** Captured strict census outcome; execution still revalidates custody. */
     readSelection: (pluginId: string) => PluginAccountExecutionSelectionV1 | null;
@@ -203,6 +206,8 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
     const retired = new Set<string>();
     const isCurrent = (pluginId: string) => input.isCurrent() && sourcesByPluginId.has(pluginId) && !retired.has(pluginId);
     const revalidate = async (pluginId: string, signal?: AbortSignal): Promise<boolean> => {
+        const admissionSignal = signal ?? input.signal;
+        admissionSignal?.throwIfAborted();
         if (!isCurrent(pluginId)) return false;
         const admitted = selected.get(pluginId)!;
         try {
@@ -219,10 +224,14 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                 return false;
             }
             return true;
-        } catch {
-            // Only an authoritative custody answer retires the selected Account
-            // release; a cancelled or failed read refuses this one admission.
-            return false;
+        } catch (error) {
+            admissionSignal?.throwIfAborted();
+            if (isPluginError(error)) throw error;
+            // A failed read refuses this admission without asserting retirement
+            // or retaining transport content that may contain credentials.
+            throw new PluginError({ code: 'plugin_account_execution_unavailable',
+                message: 'Account execution custody is unavailable',
+                failureCause: projectActionFailureCauseV1(error, 'plugin.account_execution.revalidate') });
         }
     };
     const external: LoadedPlugin[] = [];

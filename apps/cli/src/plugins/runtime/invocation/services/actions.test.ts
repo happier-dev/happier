@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { logger } from '@/ui/logger';
 import {
     ApiTokenGrantV1Schema,
     AutomationRunCauseSchema,
@@ -10,7 +11,7 @@ import {
     type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
@@ -2166,6 +2167,71 @@ describe('plugin invocation ActionsService', () => {
         }));
     });
 
+    it.each([true, false])('retains the initiating request identity when a real contributed target retires (request supplied: %s)', async supplied => {
+        let effects = 0;
+        let current = true;
+        let callerCurrent = true;
+        let failHandler = false;
+        const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const occurrenceId = createPluginRuntimeOccurrenceId('acme.target');
+        let targets: ReturnType<typeof createTargetActionInvocationRegistry>;
+        const invokeContributedAction: InvokeContributedAction = async request => {
+            const result = await targets.invoke({
+                pluginId: request.action.pluginId, localId: request.action.localId,
+                input: request.input, surface: request.surface, invocationSurface: request.surface,
+                caller: request.caller, signal: request.signal,
+                ...(request.requestId === undefined ? {} : { requestId: request.requestId }),
+            });
+            if (result.status === 'deferred') throw new Error('Safe fixture must not request approval');
+            return result;
+        };
+        const owners = createProductionPluginInvocationServiceOwners({
+            actionExecutor: createContributedActionExecutorForTest(invokeContributedAction), invokeContributedAction,
+        });
+        targets = createTargetActionInvocationRegistry({
+            actions: [{ pluginId: 'acme.target', pluginVersion: '1.0.0', occurrenceId,
+                sourceCustody: createManagedPluginSourceCustody('target'), localId: 'inspect',
+                definition: { id: 'inspect', dangerLevel: 'safe', scopes: ['global'], surfaces: ['plugin'], inputSchema: { type: 'object' }, resultSchema: {} },
+                handler: async () => {
+                    if (failHandler) throw new PluginError({ code: 'fixture_target_failed', message: 'Private author failure' });
+                    effects++; return { accepted: true };
+                },
+            }],
+            resolveAuthorizationFacts: target => ({ generation: { targetGeneration: target.occurrenceId,
+                desiredGeneration: target.occurrenceId, appliedGeneration: target.occurrenceId },
+                resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [] }),
+            createServices: owners.createServices, resolveHostBinding: owners.resolveHostBinding,
+            readCurrentPluginOccurrenceId: pluginId => pluginId === 'acme.target' && current ? occurrenceId : null,
+        });
+        const service = createContributedActionServiceForTest({ seed: {
+            plugin: { id: 'acme.caller', version: '1.0.0' },
+            contribution: { id: 'caller', qualifiedId: 'acme.caller/actions/caller' },
+            occurrenceId: 'caller-current', sourceCustody: createManagedPluginSourceCustody('caller'),
+            surface: 'plugin', correlationId: 'traced-invocation',
+            ...(supplied ? { requestId: 'initiating-request' } : {}),
+            signal: new AbortController().signal, isOccurrenceCurrent: () => callerCurrent,
+        }, invokeContributedAction });
+        try {
+            await expect(service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {})).resolves.toEqual({ accepted: true });
+            failHandler = true;
+            const failed: unknown = await service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}).catch(error => error);
+            const requestId = supplied ? 'initiating-request' : 'traced-invocation';
+            expect(readPluginErrorRequestIdV1(failed)).toBe(requestId);
+            expect(warning.mock.calls.filter(call => call[0] === 'Plugin Action failed')).toEqual([
+                ['Plugin Action failed', { pluginId: 'acme.target', localId: 'inspect', code: 'fixture_target_failed', requestId }],
+            ]);
+            current = false;
+            const error: unknown = await service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}).catch(error => error);
+            expect(error).toMatchObject({ code: 'plugin_action_generation_retired' });
+            expect(readPluginErrorRequestIdV1(error)).toBe(supplied ? 'initiating-request' : 'traced-invocation');
+            callerCurrent = false;
+            const retiredCaller: unknown = await service.execute({ pluginId: 'acme.target', localId: 'inspect' }, {}).catch(error => error);
+            expect(retiredCaller).toMatchObject({ code: 'plugin_action_generation_retired' });
+            expect(readPluginErrorRequestIdV1(retiredCaller)).toBe(requestId);
+            expect(effects).toBe(1);
+        } finally { warning.mockRestore(); targets.dispose(); await owners.dispose(); }
+    });
+
     it('reads only the canonical projected fields when reconstructing a contributed action failure', async () => {
         const cause = new Error('provider credential is secret');
         const original = new PluginError({
@@ -2232,14 +2298,21 @@ describe('plugin invocation ActionsService', () => {
         });
     });
 
-    it('carries a target plugin canonical error retryable and data across a plugin-to-plugin failure', async () => {
+    it.each([
+        { details: { requestId: 'target-request', field: 'title', attempted: 2 } },
+        { details: { field: 'title', attempted: 2 } },
+        { details: 'author-defined-details' },
+        { details: ['author-defined-details'] },
+        { details: { requestId: 'target-request' }, direct: true },
+    ] satisfies ReadonlyArray<{ details: JsonValue; direct?: true }>)('carries a target plugin canonical error retryable and data across a plugin-to-plugin failure ($details, direct: $direct)', async scenario => {
+        const { details } = scenario;
         // Plugins are trusted code. A target's own published failure payload is
         // the failure its caller receives, not a bare taxonomy code.
         const target = new PluginError({
             code: 'fixture_provider_failed',
             message: 'provider rejected the publish',
             retryable: true,
-            details: { field: 'title', attempted: 2 },
+            details,
             remediation: { kind: 'openSettings', path: 'accounts/acme' },
             diagnostics: [{ code: 'fixture_diagnostic', severity: 'error', message: 'quota exhausted' }],
         });
@@ -2247,6 +2320,7 @@ describe('plugin invocation ActionsService', () => {
         const service = createContributedActionServiceForTest({
             seed: {
                 plugin: { id: 'acme.caller', version: '1.0.0' },
+                requestId: 'caller-request', correlationId: 'caller-trace',
                 contribution: { id: 'caller', qualifiedId: 'acme.caller/actions/caller' },
                 occurrenceId: 'caller-occurrence-1', sourceCustody: { kind: 'development', registeredRootId: 'caller-root' },
                 surface: 'agent',
@@ -2263,10 +2337,11 @@ describe('plugin invocation ActionsService', () => {
             })),
         });
 
-        const received = await service.execute(
-            { pluginId: 'acme.target', localId: 'publish' },
-            { title: 'Ready' },
-        ).catch((error: unknown) => error);
+        const action = { pluginId: 'acme.target', localId: 'publish' };
+        const input = { title: 'Ready' };
+        const received = await ('direct' in scenario
+            ? service.execute('action.invoke', { action, input })
+            : service.execute(action, input)).catch((error: unknown) => error);
 
         expect(received).toBeInstanceOf(PluginError);
         expect(received).not.toBe(target);
@@ -2274,7 +2349,7 @@ describe('plugin invocation ActionsService', () => {
             code: 'fixture_provider_failed',
             message: 'provider rejected the publish',
             retryable: true,
-            details: { field: 'title', attempted: 2 },
+            details,
             remediation: { kind: 'openSettings', path: 'accounts/acme' },
             diagnostics: [{ code: 'fixture_diagnostic', severity: 'error', message: 'quota exhausted' }],
         });

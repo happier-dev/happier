@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
@@ -79,7 +79,12 @@ describe('admitted targeted-operation execution', () => {
         await subscription.dispose();
         expect(active).toBe(0);
     });
-    it.each(['target-retired', 'role-removed'] as const)('rechecks the original operation after an asynchronous dispatch wait (%s)', async change => {
+    it.each([
+        { change: 'target-retired', beforeAdmission: false, withOrigin: false },
+        { change: 'role-removed', beforeAdmission: false, withOrigin: false },
+        { change: 'target-retired', beforeAdmission: true, withOrigin: false },
+        { change: 'target-retired', beforeAdmission: true, withOrigin: true },
+    ] as const)('retains the original operation failure identity ($change, before admission: $beforeAdmission, with origin: $withOrigin)', async ({ change, beforeAdmission, withOrigin }) => {
         const inputSchema = defineProtocolObject({ key: defineProtocolString() }, { policy: 'closed' });
         const resultSchema = defineProtocolObject({ accepted: defineProtocolLiteral(true) }, { policy: 'closed' });
         const protocol = defineContributionProtocol({ id: 'dispatch-fence', version: 1, operations: {
@@ -111,6 +116,7 @@ describe('admitted targeted-operation execution', () => {
             plugin: { id: target.manifest.id, version: target.manifest.version },
             contribution: { id: 'aggregate', qualifiedId: `${target.manifest.id}/actions/aggregate` },
             occurrenceId: `${target.manifest.id}:current`, sourceCustody: createManagedPluginSourceCustody(target.manifest.id),
+            correlationId: 'admitted-operation-trace', requestId: 'admitted-operation-request',
             surface: 'plugin', signal, isOccurrenceCurrent: () => true,
             readCurrentTargetedDeclarations: async () => declarations,
         }, actionExecutor: { execute: vi.fn() },
@@ -128,15 +134,23 @@ describe('admitted targeted-operation execution', () => {
             const snapshot = await observation.readCurrent();
             const operation = snapshot.contributions[0]?.operations.inspect;
             if (!operation) throw new Error('Expected the public source role');
-            const invoking = service.executeAdmittedTargetedOperation(operation, { key: 'value' });
-            await Promise.race([waiting, invoking.then(() => { throw new Error('Operation settled before the dispatch wait'); })]);
-            declarations = declarations.map(row => row.manifest.id === (change === 'target-retired' ? target.manifest.id : source.manifest.id)
+            const retire = () => { declarations = declarations.map(row => row.manifest.id === (change === 'target-retired' ? target.manifest.id : source.manifest.id)
                 ? change === 'target-retired' ? { ...row, occurrenceId: 'replacement-target' }
                     : { ...row, manifest: { ...row.manifest, contributes: { ...row.manifest.contributes, targetedPluginContributions: [] } } }
-                : row);
+                : row); };
+            if (beforeAdmission) retire();
+            const invoking = withOrigin
+                ? service.executeAdmittedTargetedOperationWithExecutionOrigin(operation, { key: 'value' })
+                : service.executeAdmittedTargetedOperation(operation, { key: 'value' });
+            if (!beforeAdmission) {
+                await Promise.race([waiting, invoking.then(() => { throw new Error('Operation settled before the dispatch wait'); })]);
+                retire();
+            }
             releaseDispatch();
-            await expect(invoking).rejects.toMatchObject({ code: change === 'target-retired'
+            const error: unknown = await invoking.catch(error => error);
+            expect(error).toMatchObject({ code: change === 'target-retired'
                 ? 'plugin_action_generation_retired' : 'plugin_admitted_targeted_operation_handle_invalid', actionHandlerInvocation: 'notStarted' });
+            expect(readPluginErrorRequestIdV1(error)).toBe('admitted-operation-request');
             expect(effects).toBe(0);
         } finally { releaseDispatch(); observation.dispose(); await providerHost.dispose(); }
     });

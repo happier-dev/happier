@@ -1106,6 +1106,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     if (fact.status === 'failed') {
                         logger.warnLocalFile('Plugin Action failed', {
                             pluginId: invocation.pluginId, localId: invocation.localId, code: fact.code,
+                            requestId: invocation.requestId ?? correlationId,
                         });
                     }
                 },

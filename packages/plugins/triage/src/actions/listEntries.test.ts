@@ -431,6 +431,33 @@ describe('the aggregate list coverage claim', () => {
             failure: { class: 'unsupportedContract', code: 'triage/sortUnsupported' } });
     });
 
+    it('preserves the originating Request ID when configured scope metadata is rejected', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
+        })));
+        const admitted: TriageAdmittedSourceV1 = { ...ADMITTED_SOURCE,
+            descriptor: { ...ADMITTED_SOURCE.descriptor,
+                scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' } },
+            operations: { ...ADMITTED_SOURCE.operations,
+                // Only the real host can mint an admitted execution handle.
+                listScopeUnits: {} as NonNullable<TriageAdmittedSourceV1['operations']['listScopeUnits']> },
+        };
+        const requestId = 'scope-metadata-request-1';
+        const code = 'plugin_action_caller_unavailable';
+        const result = TriageListEntriesResultV1Schema.parse(await listTriageEntries({ v: 1,
+            sources: await selectTestkitConfiguredSources([INSTANCE_ID], collections.sourceInstances),
+            limit: 0, order: 'newest',
+        }, {
+            sourceInstances: collections.sourceInstances, readAdmittedSources: async () => [admitted],
+            executeScopeUnits: async () => { throw new PluginError({ code, details: { requestId } }); },
+            executeScan: finishedWalk, nowMs: () => 1000,
+        }));
+        expect(result.configuredSources.find(source => source.sourceInstanceId === INSTANCE_ID)?.scope?.projection).toEqual({
+            kind: 'failed', failure: { class: 'unknown', code, requestId },
+        });
+    });
+
     it.each(['selected', 'allConfigured'] as const)('merges every %s source beyond the metadata transport batch', async selection => {
         const { collections, control } = createTestkitCorpusCollections();
         const ids = Array.from({ length: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1 }, (_, index) => numberedInstanceId(index));

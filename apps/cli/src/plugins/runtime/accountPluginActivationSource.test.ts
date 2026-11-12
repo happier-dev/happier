@@ -89,16 +89,19 @@ describe('Account activation source assembly', () => {
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-resource-cancel.test' });
         try {
+            const controller = new AbortController();
             const sources = await resolveAccountPluginActivationSources({
                 contributes: createResolvedContributionRegistry({}), paths: resolvePluginStorePaths({ happyHomeDir: home }),
                 credentials: { token: 'fixture', encryption: null }, serverUrl: 'http://account-resource-cancel.test',
-                isCurrent: () => true, resolveBundledActivationSource: () => null,
+                signal: controller.signal, isCurrent: () => !controller.signal.aborted, resolveBundledActivationSource: () => null,
             });
             const aborted = new AbortController();
             aborted.abort();
-            expect(await sources.revalidate(fixture.pluginId, aborted.signal)).toBe(false);
+            await expect(sources.revalidate(fixture.pluginId, aborted.signal)).rejects.toMatchObject({ name: 'AbortError' });
             expect(sources.isCurrent(fixture.pluginId)).toBe(true);
             expect(await sources.revalidate(fixture.pluginId)).toBe(true);
+            controller.abort();
+            await expect(sources.revalidate(fixture.pluginId)).rejects.toMatchObject({ name: 'AbortError' });
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
     it('loads Account modules under the request admission and does not latch a transient custody read failure', async () => {
@@ -131,7 +134,11 @@ describe('Account activation source assembly', () => {
             expect(intentReads).toBe(0);
 
             failNextIntentRead = true;
-            expect(await sources.revalidate(pluginId)).toBe(false);
+            await expect(sources.revalidate(pluginId)).rejects.toMatchObject({
+                code: 'plugin_account_execution_unavailable',
+                data: { failureCause: { phase: 'plugin.account_execution.revalidate', errorClass: 'AxiosError',
+                    errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503 } },
+            });
             expect(sources.isCurrent(pluginId)).toBe(true);
             expect(await sources.revalidate(pluginId)).toBe(true);
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
@@ -199,10 +206,17 @@ describe('Account activation source assembly', () => {
             expect(selected.isCurrent()).toBe(false);
         } finally { await runtime?.dispose(); restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
-    it('reads the selected portable Resource without a Machine and refuses disabled Account custody', async () => {
+    it('preserves portable Resource custody after a transient refusal and retires it on disable', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-portable-resource-'));
         const app = fastify();
         const fixture = await registerAuthoredAccountActionRelease(app, 'owner');
+        let failNextIntentRead = false;
+        app.addHook('onRequest', async (request, reply) => {
+            if (failNextIntentRead && request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
+                failNextIntentRead = false;
+                return reply.code(503).send({ error: 'unavailable' });
+            }
+        });
         app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
@@ -218,6 +232,13 @@ describe('Account activation source assembly', () => {
             const request = { callerPluginId: fixture.pluginId, expectedCallerOccurrenceId: occurrenceId, resourceId: 'personal-context' };
             const result = await runtime.readUiResource?.(request);
             expect(JSON.parse(new TextDecoder().decode(result?.bytes))).toEqual({ kind: 'global' });
+            failNextIntentRead = true;
+            await expect(runtime.readUiResource?.(request)).rejects.toMatchObject({ code: 'plugin_account_execution_unavailable',
+                data: { failureCause: { phase: 'plugin.account_execution.revalidate', errorClass: 'AxiosError',
+                    errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503 } } });
+            expect(runtime.readPluginOccurrenceId?.(fixture.pluginId)).toBe(occurrenceId);
+            const recovered = await runtime.readUiResource?.(request);
+            expect(JSON.parse(new TextDecoder().decode(recovered?.bytes))).toEqual({ kind: 'global' });
             await runtime.openUiResourceWatch?.({ ...request, subscriptionId: 'portable-watch' });
             fixture.setEnabled(false);
             await expect(runtime.pollUiResourceWatch?.({ callerPluginId: fixture.pluginId,

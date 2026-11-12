@@ -1,10 +1,13 @@
 import {
     PluginError,
+    isPluginError,
+    readPluginErrorRequestIdV1,
     type JsonValue,
     type PluginInvocationCaller,
     type PluginInvocationContributionIdentity,
     type PluginInvocationOriginSurface,
 } from '@happier-dev/plugin-sdk';
+import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/cli-common/plugins/errors';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -385,6 +388,23 @@ export function createPluginInvocationActionsService(params: Readonly<{
     actionExecutor: PluginActionsHostExecutor;
     invokeContributedAction: InvokeContributedAction;
 }>): ActionsService {
+    const requestId = params.seed.requestId ?? params.seed.correlationId;
+    const withRequestId = <TArgs extends readonly unknown[], TResult>(invoke: (...args: TArgs) => Promise<TResult>) =>
+        async (...args: TArgs): Promise<TResult> => {
+            try {
+                return await invoke(...args);
+            } catch (error) {
+                if (!requestId || !isPluginError(error) || readPluginErrorRequestIdV1(error) !== undefined) throw error;
+                // Exec owns its distinct pre-launch advisory and error projection.
+                if (error.execLaunch === 'notStarted' || error.data.execLaunch === 'notStarted') throw error;
+                // Published author details are opaque, including closed object schemas.
+                if (error.details !== undefined) throw error;
+                const data = { ...error.data, details: { requestId } };
+                throw isPluginActionHandlerInvocationNotStartedAdvisory(error)
+                    ? createPluginActionHandlerNotStartedError(data)
+                    : new PluginError(data);
+            }
+        };
     // A contributed Action keeps its initiating surface as provenance; it is
     // plugin code, not an Agent runtime bound to that surface's current Session.
     // Use only the host-stamped canonical identity, never absence of a turn reader:
@@ -474,7 +494,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(params.seed.presentUserIntent ? { presentUserIntent: params.seed.presentUserIntent } : {}),
             caller,
             initiatingActionCaller: actionCaller,
-            ...(params.seed.requestId === undefined ? {} : { requestId: params.seed.requestId }),
+            ...(requestId === undefined ? {} : { requestId }),
             ...(invocationContext ? { approvalContext: invocationContext } : {}),
             ...(params.seed.resolveAccountSourceMachine ? { resolveAccountSourceMachine: params.seed.resolveAccountSourceMachine } : {}),
             ...(captureExecutionOrigin ? { captureExecutionOrigin: true as const } : {}),
@@ -773,6 +793,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                 : {}),
             ...(sessionAddress ? { serverId: sessionAddress.serverId, expectedSessionAddress: sessionAddress } : {}),
             surface: executionSurface,
+            ...(canonicalActionId !== 'action.invoke' || requestId === undefined ? {} : { operationRequestId: requestId }),
             authority: 'account_automation',
             actionCaller,
             ...(executionSurface === 'agent'
@@ -825,7 +846,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             : undefined;
         throwIfInactive(params.seed, signal, inactiveStartDetails);
         if (!result.ok) {
-            if (contributionRef) {
+            if (canonicalActionId === 'action.invoke') {
                 const failure = projectContributedActionExecuteResult(result);
                 if (failure.status !== 'executed' && failure.data) throw contributedActionFailureError(failure);
             }
@@ -960,6 +981,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
         });
     };
 
+    const executeWithRequestId = withRequestId(execute);
     return Object.freeze({
         async getCurrentExecutionRouting(options?: PluginCancellationOptions): Promise<PluginMachineExecutionRoutingV1 | null> {
             const signal = composeActionSignal(params.seed.signal, options?.signal);
@@ -970,11 +992,12 @@ export function createPluginInvocationActionsService(params: Readonly<{
             if (!origin || signal.aborted || !params.seed.isOccurrenceCurrent()) return null;
             return Object.freeze(getPluginMachineExecutionRouting(origin));
         },
-        execute,
-        observe,
-        executeAdmittedTargetedOperation,
-        observeAdmittedTargetedOperation,
-        executeWithExecutionOrigin,
-        executeAdmittedTargetedOperationWithExecutionOrigin,
+        execute: (...args: Parameters<typeof execute>) => typeof args[0] !== 'string' || args[0] === 'action.invoke'
+            ? executeWithRequestId(...args) : execute(...args),
+        observe: withRequestId(observe),
+        executeAdmittedTargetedOperation: withRequestId(executeAdmittedTargetedOperation),
+        observeAdmittedTargetedOperation: withRequestId(observeAdmittedTargetedOperation),
+        executeWithExecutionOrigin: withRequestId(executeWithExecutionOrigin),
+        executeAdmittedTargetedOperationWithExecutionOrigin: withRequestId(executeAdmittedTargetedOperationWithExecutionOrigin),
     }) as ActionsService;
 }
