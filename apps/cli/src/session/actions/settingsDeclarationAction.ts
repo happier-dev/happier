@@ -1,9 +1,10 @@
+import { getSettingsDeclarationCatalogV1, readSettingsCatalogDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
 import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { listApprovalProfilesV1 } from '@happier-dev/protocol/actions';
-import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, readPortableDomainSettingBindingV1,
+import { readPortableDomainSettingBindingV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
   hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,
 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
@@ -25,7 +26,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { readAccountSettingsV2Raw, updateAccountSettingsV2Once, updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import type { executeCliSettingMutationReversal } from './settingMutationReversal';
-import type { createCliSettingsCatalogServices, createCliVoiceSettingsBindingContext } from './settingsCatalogServices';
+import type { createCliSettingsCatalogServices } from './settingsCatalogServices';
 import { createVoiceSettingsPersistenceOwner } from '@happier-dev/protocol/voice/settings/voiceSettingsPersistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -111,9 +112,12 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
         throw error;
       }
     }
+    const voiceBindingContext = params.voiceBindingContext
+      ?? (await import('./settingsCatalogServices')).createCliVoiceSettingsBindingContext();
+    const declarations = getSettingsDeclarationCatalogV1(voiceBindingContext.registry);
     if (actionId === 'settings.list') {
       const requested = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
-      const items: SettingsDeclarationDescriptorV1[] = BUILT_IN_SETTINGS_DECLARATIONS_V1
+      const items: SettingsDeclarationDescriptorV1[] = declarations
         .filter(item => !requested.pageId || item.pageId === requested.pageId).map(item => {
           const sensitive = item.sensitive || item.storage?.access === 'sensitive';
           const unsupportedHost = item.storage?.kind === 'atmospherePictureLibrary';
@@ -134,7 +138,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       return { items };
     }
     const parsed = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
-    const declaration = readBuiltInSettingDeclarationV1(parsed.anchor);
+    const declaration = readSettingsCatalogDeclarationV1(declarations, parsed.anchor);
     if (!declaration) return refuse('setting_not_found');
     // A UI draft is the answering client's captured controller, never an Account preference.
     if ('target' in parsed && parsed.target?.kind === 'public_profile_draft') {
@@ -189,6 +193,9 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     if (declaration.storage?.scope === 'local') return clientActionUnavailable(actionId);
     if ('key' in parsed && parsed.key !== undefined && !(actionId === 'settings.reset'
       && readPortableAccountSettingBindingV1(declaration)?.reset)) return refuse('setting_key_unsupported');
+    // Contribution mutations retain their activated App callbacks (endpoint consent,
+    // provider opt-ins and catalog operations). Native discovery and reads use the same catalog.
+    if (declaration.contribution && actionId !== 'settings.get') return clientActionUnavailable(actionId);
     if (actionId === 'settings.invoke'
       || declaration.storage?.scope === 'project' || declaration.storage?.prerequisite === 'ui_picture_catalog'
       || declaration.storage?.prerequisite === 'ui_account_encryption_requirement') return clientActionUnavailable(actionId);
@@ -254,9 +261,9 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
     const portableBinding = readPortableAccountSettingBindingV1(declaration);
     const preparedBinding = portableBinding && 'prepare' in portableBinding ? portableBinding : undefined;
     const scalarCatalogBinding = readPortableCatalogAccountSettingBindingV1<AccountSettings>(declaration);
-    const [{ bootstrapAccountSettingsContext }, { readAccountSettingsV2Raw }, { createCliVoiceSettingsBindingContext }] = await Promise.all([import("@/settings/accountSettings/bootstrapAccountSettingsContext"), import("@/settings/accountSettings/updateAccountSettingsV2WithRetry"), import("./settingsCatalogServices")]);
+    const [{ bootstrapAccountSettingsContext }, { readAccountSettingsV2Raw }] = await Promise.all([import("@/settings/accountSettings/bootstrapAccountSettingsContext"), import("@/settings/accountSettings/updateAccountSettingsV2WithRetry")]);
     const voiceContext = !ordinaryBinding && !scalarCatalogBinding
-      ? params.voiceBindingContext ?? createCliVoiceSettingsBindingContext() : undefined;
+      ? voiceBindingContext : undefined;
     const voicePersistence = voiceContext ? createVoiceSettingsPersistenceOwner({ voiceOwner: voiceContext.owner }) : undefined;
     const catalogBinding = scalarCatalogBinding ?? (voiceContext
       ? readPortableCatalogAccountSettingBindingV1<AccountSettings>(declaration, voiceContext) : null);

@@ -17,6 +17,9 @@ import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/conn
 import { getEnabledAgentIds } from '../../../../ui/sources/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '../../../../ui/sources/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { voiceAgentCatalogSelectionValueV1 } from '@happier-dev/protocol/voice/settings/voiceAgentSelection';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createCliVoiceSettingsBindingContext } from './settingsCatalogServices';
 
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
@@ -78,6 +81,48 @@ describe('CLI declared Account settings', () => {
   }
   const user = { surface: 'cli', authority: 'present_user', actionsSettings,
     presentUserConfirmation: { actionId: 'settings.set' } } as const;
+
+  it('lists the same declarations as the UI for the same loaded provider registry', async () => {
+    const { createDefaultVoiceProviderRegistry } = await import('../../../../ui/sources/voice/registry/defaultRegistry');
+    const { getVoiceContributedSettingsDeclarations } = await import('../../../../ui/sources/voice/settings/voiceContributedSettingsDeclarations');
+    const { voiceSettingsOwner } = await import('../../../../ui/sources/sync/domains/settings/voiceSettings');
+    const { BUILT_IN_SETTINGS_DECLARATIONS_V1 } = await import('@happier-dev/protocol/actions/settings/settingsDeclarations');
+    const { createCliSettingsDeclarationActionFixture } = await import('./settingsDeclarationAction.test-support');
+    const registry = createDefaultVoiceProviderRegistry();
+    const action = createCliSettingsDeclarationActionFixture({ voiceBindingContext: { registry, owner: voiceSettingsOwner } });
+    const result = await action({ actionId: 'settings.list', input: {}, context: user });
+    const listed = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(result);
+    const uiAnchors = new Set([
+      ...BUILT_IN_SETTINGS_DECLARATIONS_V1.map(row => row.anchor),
+      ...getVoiceContributedSettingsDeclarations(registry).flatMap(page => Object.values(page.settings).map(ref => ref.anchor)),
+    ]);
+    expect(listed.items.map(row => row.anchor).sort()).toEqual([...uiAnchors].sort());
+  });
+
+  it('reads a plugin-contributed field through the CLI Action and keeps credential fields redacted', async () => {
+    const { createDefaultVoiceProviderRegistry } = await import('../../../../ui/sources/voice/registry/defaultRegistry');
+    const { voiceSettingsOwner } = await import('../../../../ui/sources/sync/domains/settings/voiceSettings');
+    const { createCliSettingsDeclarationActionFixture } = await import('./settingsDeclarationAction.test-support');
+    const registry = createDefaultVoiceProviderRegistry();
+    const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    const descriptor = registry.get(providerId)?.providerSettings;
+    if (!descriptor) throw new Error('Missing contributed provider fixture');
+    content = { t: 'plain', v: { voice: { providers: { [providerId]: { schemaVersion: descriptor.schemaVersion, config: { ...descriptor.defaultConfig, agentId: 'fixture-agent' } } } } } };
+    const action = createCliSettingsDeclarationActionFixture({ credentials: { token: 'settings-parity-test', encryption: null },
+      serverId: 'settings-home', serverHttpBaseUrl: 'https://settings-home.test', voiceBindingContext: { registry, owner: voiceSettingsOwner } });
+    expect(await action({ actionId: 'settings.get', input: { anchor: `voiceConversations.provider.${providerId}.agentId` }, context: user }))
+      .toMatchObject({ value: 'fixture-agent' });
+    expect(await action({ actionId: 'settings.get', input: { anchor: `voiceConversations.provider.${providerId}.credential` }, context: user }))
+      .toMatchObject({ ok: false, errorCode: 'setting_sensitive' });
+    const listed = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(
+      await action({ actionId: 'settings.list', input: { pageId: 'voiceConversations' }, context: user }));
+    expect(listed.items.find(row => row.anchor === `voiceConversations.provider.${providerId}.credential`))
+      .toMatchObject({ sensitive: true, readable: false, writable: false });
+    const writes = vi.mocked(axios.post).mock.calls.length;
+    expect(await action({ actionId: 'settings.set', input: { anchor: `voiceConversations.provider.${providerId}.agentId`, value: 'replacement' }, context: user }))
+      .toMatchObject({ ok: false, errorCode: 'unavailable', details: { reason: 'client_unavailable' } });
+    expect(vi.mocked(axios.post).mock.calls.length).toBe(writes);
+  });
 
   it('accepts every bundled Voice picker choice through the public Action with automatic computer selection, one write per choice and no idle requests', async () => {
     content = { t: 'plain', v: { favoriteMachines: ['neighbor'], voice: { providerId: 'local_conversation' } } };
@@ -517,7 +562,7 @@ describe('CLI declared Account settings', () => {
     { anchor: 'sourceControl.explainChanges', baseline: true, value: false },
     { anchor: 'sourceControl.investigateSurroundingFiles', baseline: false, value: true },
     { anchor: 'sourceControl.outputLanguage', baseline: '', value: 'fr' },
-    { anchor: 'sourceControl.summaryModel', baseline: '', value: '' },
+    { anchor: 'sourceControl.summaryModel', baseline: null, value: null },
     { anchor: 'sourceControl.prepareAfterTurn', baseline: false, value: false },
   ])('uses the real Settings Action and declaration to capture and reverse $anchor', async ({ anchor, baseline, value }) => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'settings-account' })).toString('base64url')}.signature`;
@@ -548,10 +593,11 @@ describe('CLI declared Account settings', () => {
       { anchor: 'sourceControl.outputLanguage', value: 'not a language' },
     ]) expect(await owner.execute('settings.set', { ...input, reversal: { kind: 'capture' } }, user))
       .toMatchObject({ ok: false, errorCode: 'invalid_setting_value' });
-    content = { t: 'plain', v: { favoriteMachines: ['neighbor'], 'scm.diffSummary.modelProfileOverride': 'invented-model' } };
+    const invented = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'invented-model' } };
+    content = { t: 'plain', v: { favoriteMachines: ['neighbor'], 'scm.diffSummary.runnerV1': invented } };
     const before = content;
     for (const input of [
-      { anchor: 'sourceControl.summaryModel', value: 'invented-model' },
+      { anchor: 'sourceControl.summaryModel', value: invented },
       { anchor: 'sourceControl.prepareAfterTurn', value: true },
     ]) expect(await owner.execute('settings.set', { ...input, reversal: { kind: 'capture' } }, user))
       .toMatchObject({ ok: false, errorCode: 'setting_value_unavailable' });
@@ -587,7 +633,9 @@ describe('CLI declared Account settings', () => {
       const token = `e30.${Buffer.from(JSON.stringify({ sub: 'settings-account' })).toString('base64url')}.signature`;
       const owner = executor(token);
       for (const [anchor, value, baseline] of [
-        ['sourceControl.summaryModel', model.catalogId, ''],
+        // The stored choice is a runner, never the catalog's display id.
+        ['sourceControl.summaryModel', { v: 1, modelSelection: model.modelSelector?.modelSelection
+          ?? { agentTargetKey: model.modelSelector!.backendTargetKey!, providerConnectionId: null, modelId: model.modelSelector!.modelId! } }, null],
         ['sourceControl.prepareAfterTurn', true, false],
       ] as const) {
         const changed = await owner.execute('settings.set', { anchor, value, reversal: { kind: 'capture' } }, user);
@@ -777,5 +825,24 @@ describe('CLI declared Account settings', () => {
     expect(await executor().execute('settings.set', { anchor: 'delegation.approvalReviewerEnabled', value: true }, agent)).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
     expect(accountSettingsParse(content.t === 'plain' ? content.v : {}).approvalReviewerEnabled).toBe(false);
     expect(version).toBe(1);
+  });
+
+  it('reads an admitted native contribution through the production CLI registry producer', async () => {
+    const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: [] } });
+    try {
+      const providerId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+      const descriptor = createCliVoiceSettingsBindingContext().registry.get(providerId)?.providerSettings;
+      if (!descriptor) throw new Error('Missing admitted native Voice declaration');
+      content = { t: 'plain', v: { voiceSettingsV1: { providers: { [providerId]: { schemaVersion: descriptor.schemaVersion,
+        config: { ...descriptor.defaultConfig, agentId: 'native-fixture-agent' } } } } } };
+      const anchor = `voiceConversations.provider.${providerId}.agentId`;
+      expect(await executor().execute('settings.list', { pageId: 'voiceConversations' }, user))
+        .toMatchObject({ ok: true, result: { items: expect.arrayContaining([expect.objectContaining({ anchor, readable: true })]) } });
+      expect(await executor().execute('settings.get', { anchor }, user))
+        .toMatchObject({ ok: true, result: { anchor, value: 'native-fixture-agent' } });
+    } finally {
+      await admitted.dispose();
+    }
   });
 });

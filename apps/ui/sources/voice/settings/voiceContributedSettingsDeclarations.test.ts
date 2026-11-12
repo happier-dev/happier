@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
+import { getSettingsDeclarationCatalogV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
 
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { getVoiceContributedSettingsDeclarations } from './voiceContributedSettingsDeclarations';
+// Compile the real default declaration graph during collection, before test execution.
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -11,27 +14,32 @@ vi.mock('@/text', async () => {
 
 describe('contributed Voice settings declaration admission', () => {
     it('exposes one Dictation language owner while retaining conversation engine language', async () => {
-        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
-        const { VOICE_DICTATION_SETTINGS } = await import('./voiceSettingsDeclarations');
-        const pages = getVoiceContributedSettingsDeclarations(createDefaultVoiceProviderRegistry());
+        const registry = createDefaultVoiceProviderRegistry();
+        const pages = getVoiceContributedSettingsDeclarations(registry);
         const field = 'provider.happier.voice.google/gemini-stt.language';
         const dictationFields = Object.assign({}, ...pages.filter(page => page.pageId === 'voiceDictation').map(page => page.settings));
         const conversationFields = Object.assign({}, ...pages.filter(page => page.pageId === 'voiceConversations').map(page => page.settings));
         expect(dictationFields[field]).toBeUndefined();
         expect(conversationFields[field]?.storage).toBeDefined();
-        expect(VOICE_DICTATION_SETTINGS.settings).toHaveProperty('language');
-        expect(VOICE_DICTATION_SETTINGS.settings).not.toHaveProperty('sttLanguage');
+        const catalog = getSettingsDeclarationCatalogV1(registry);
+        expect(catalog.filter(row => row.anchor === 'voiceDictation.language')).toHaveLength(1);
+        expect(catalog.some(row => row.anchor === 'voiceDictation.sttLanguage')).toBe(false);
     });
     it('exposes typed selection for API-key-only providers and declarative Connected Account pickers', async () => {
-        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
         const pages = getVoiceContributedSettingsDeclarations(createDefaultVoiceProviderRegistry());
         const fields = Object.assign({}, ...pages.map(page => page.settings));
         for (const key of ['provider.happier.voice.google/gemini-stt.credential',
             'provider.happier.voice.openai/realtime-openai.credential',
             'provider.happier.agent.codex/realtime-codex.globalConnectedServices']) {
             expect(fields[key]?.operation, key).toMatchObject({ kind: 'invoke', requiresHumanInteraction: false });
+            const operation = fields[key]?.operation;
+            expect(operation?.kind === 'invoke' ? operation.uiConfirmation : null, key)
+                .toBe(key.endsWith('.globalConnectedServices') ? undefined : 'direct');
+            expect(fields[key], key).toMatchObject({ sensitive: true });
+            expect(fields[key]?.storage, key).toBeUndefined();
         }
     });
+
     it.each([false, true])('admits a provider presentation once per projection while preserving field validation (invalid presentation: %s)', (invalidPresentation) => {
         const pluginId = 'fixture.voice';
         const providerId = `${pluginId}/speech`;

@@ -1,4 +1,5 @@
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { isBackendTargetDisabledByAccountSettings, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride, type ScmDiffSummaryCatalogMutationServicesV1,
     type ScmDiffSummaryCatalogUnavailableTargetV1 } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
@@ -30,7 +31,7 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { readProviderStateSharingRiskAgentIdsV1, type ProviderStateSharingAgentV1 } from '@happier-dev/protocol/actions/settings/providerStateSharingMutations';
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
-import { resolveSpawnConnectedServicesDefaultDisposition } from '@/session/services/spawnConnectedServicesDefaults';
+import { readAgentConnectedDefaultRoutes } from '@/session/services/agentConnectedDefaultRoutes';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
@@ -66,7 +67,7 @@ export function createCliVoiceSettingsBindingContext(): PortableVoiceSettingsBin
         const providerId = buildQualifiedPluginContributionKey(contribution.identity);
         const declaration = contribution.definition;
         const providerSettings = declaration.settings ? createExternalVoiceProviderSettingsDescriptor(declaration.settings) : null;
-        entries.set(providerId, Object.freeze({ providerId,
+        entries.set(providerId, Object.freeze({ providerId, pluginId: contribution.pluginId, declaration,
             kind: declaration.kind === 'conversation' ? 'voice.conversation-provider.v1' : 'voice.speech-engine.v1',
             ...projectVoiceProviderDeclarationRegistryBase({ declaration, providerSettings,
                 ...(contribution.provenance === 'first_party' ? { selectionOptions: BUNDLED_FIRST_PARTY_VOICE_SELECTION_OPTIONS[providerId] } : {}),
@@ -135,7 +136,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
             ? await refreshActiveAcpCatalog({ credentials: params.credentials, signal: params.signal, operationContext }) : undefined) : undefined;
         if (configured && acpCatalog?.status !== 'ready') return null;
         const lifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-        const probe = await probeSummaryModels({ agentId, cwd: process.cwd(), accountSettings: settings,
+        const probe = await probeSummaryModels({ agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
             catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target), bypassCache,
             ...(params.credentials ? { credentials: params.credentials } : {}),
             ...(acpCatalog ? { acpCatalogSnapshot: acpCatalog } : {}), ...(params.signal ? { signal: params.signal } : {}),
@@ -311,11 +312,11 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                 const unavailableTargets: ScmDiffSummaryCatalogUnavailableTargetV1[] = [];
                 const probeFailures: Array<{ backendTargetKey: string; spawnFailure: SpawnFailureV1 }> = [];
                 const routingIds = indexAgentRoutingIdsByContributionIdentity(agents);
-                const purposeCatalog = params.credentials ? await readActiveConnectedAccountCatalog({
-                    credentials: params.credentials, key: 'purposes', signal: params.signal,
-                    operationContext, authorizeRequest: params.authorizeConnectedAccountRequest,
-                    readMode: 'admitted',
-                }) : null;
+                // The same connected-default read the Agent backend inventory uses for readiness.
+                const { purposeCatalog, dispositions } = await readAgentConnectedDefaultRoutes({
+                    credentials: params.credentials, settings, signal: params.signal, operationContext,
+                    authorizeRequest: params.authorizeConnectedAccountRequest, agentIds: agents.map(entry => entry.id),
+                });
                 const profiles = (await Promise.all(agents.map(async entry => {
                     const targets = entry.identity ? listAgentExecutionTargetsV1(entry.identity)
                         .filter(target => !isBackendTargetDisabledByAccountSettings(settings, target)) : [];
@@ -323,9 +324,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                     if (targets.length === 0) return [];
                     const targetKeys = targets.map(buildBackendTargetKeyV2);
                     for (const key of targetKeys) discoveryTargetKeys.add(key);
-                    const defaultAuth = purposeCatalog ? resolveSpawnConnectedServicesDefaultDisposition({
-                        accountSettings: settings, agentId: entry.id, purposeCatalog,
-                    }) : null;
+                    const defaultAuth = dispositions.get(entry.id) ?? null;
                     const connected = defaultAuth?.kind === 'connected';
                     // Run admission consumes this same default-auth owner. A
                     // signed-out native CLI does not withdraw a connected route.
@@ -345,7 +344,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                         const target = readBackendTargetRefV2({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' });
                         if (isBackendTargetDisabledByAccountSettings(settings, target)) return [];
                         const observation = staticModels.length ? null : await probeSummaryModels({
-                            agentId, cwd: process.cwd(), accountSettings: settings,
+                            agentId, cwd: sessionWorkingDirectory(), accountSettings: settings,
                             catalogEntry: registry.catalogEntriesById[agentId], backendTarget: convertBackendTargetRefV2ToV1(target),
                             ...(params.credentials ? { credentials: params.credentials } : {}), signal: params.signal,
                         });

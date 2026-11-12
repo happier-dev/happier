@@ -5,6 +5,7 @@ import { scmDiffSummarySettingBinding, SCM_DIFF_SUMMARY_SETTING_KEYS, type ScmDi
 import { createVoiceSettingBindingsV1, type VoiceSettingsMutationServicesV1 } from '../../voice/settings/voiceSettingBindings.js';
 import type { VoiceSettingsOwner, VoiceSettings } from '../../voice/settings/voiceSettings.js';
 import type { VoiceSettingsRegistry } from '../../voice/settings/providerRegistry.js';
+import { createVoiceProviderFieldBinding } from '../../voice/settings/providerFieldBinding.js';
 
 export const PORTABLE_SETTING_VALUE_UNAVAILABLE = Symbol('setting_value_unavailable');
 export type CatalogAccountSettingsV1 = ScmDiffSummarySettingsV1 & Readonly<{ voice: unknown }>;
@@ -40,6 +41,19 @@ export function readPortableCatalogAccountSettingBindingV1<T extends CatalogAcco
             ? { ...scmDiffSummarySettingBinding<T>(argument), access: storage.access } : null;
     }
     if (!voiceContext) return null;
+    if (storage.owner === 'voiceProviderFieldBinding') {
+        const path = storage.options?.[1];
+        const entry = typeof argument === 'string' ? voiceContext.registry.get(argument) : null;
+        if (!entry || typeof path !== 'string') return null;
+        const binding = createVoiceProviderFieldBinding<T & { voice: VoiceSettings }>({
+            entry, path, ...voiceContext,
+            unavailableValue: voiceContext.unavailableValue ?? PORTABLE_SETTING_VALUE_UNAVAILABLE,
+        });
+        if (!binding) return null;
+        const normalize = (settings: T) => ({ ...settings, voice: voiceContext.owner.voiceSettingsParse(settings.voice) });
+        return { ...binding, read: settings => binding.read(normalize(settings)),
+            mutate: (settings, value) => binding.mutate(normalize(settings), value) as Partial<T> | null };
+    }
     const bindings = createVoiceSettingBindingsV1<T & { voice: VoiceSettings }>({ ...voiceContext,
         unavailableValue: voiceContext.unavailableValue ?? PORTABLE_SETTING_VALUE_UNAVAILABLE });
     let binding: ReturnType<typeof bindings.voiceSettingBinding> | undefined;

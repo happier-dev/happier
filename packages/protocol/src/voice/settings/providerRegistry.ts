@@ -22,6 +22,8 @@ export type VoiceProviderSelectionOption = Readonly<{
 /** The declaration-owned settings slice of a host's activated Voice registry. */
 export type VoiceSettingsRegistryEntry = Readonly<{
     providerId: string;
+    pluginId?: string;
+    declaration?: VoiceProviderContribution;
     kind: 'voice.conversation-provider.v1' | 'voice.speech-engine.v1' | 'voice.turn-support.v1';
     roles: readonly VoiceReadinessRole[];
     requirements?: readonly VoiceReadinessRequirement[];
