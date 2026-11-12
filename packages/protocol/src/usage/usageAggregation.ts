@@ -32,7 +32,9 @@ export function addUsageTokens(left: UsageObservationTokens, right: UsageObserva
         cacheWrite: addUsageMeasurements(left.cacheWrite, right.cacheWrite), total: addUsageMeasurements(left.total, right.total) };
     const fields = Object.keys(total) as Array<keyof UsageObservationTokens>;
     if (!hasUsageMoneyProvenance(left) && !hasUsageMoneyProvenance(right)
-        && fields.every(field => Number.isSafeInteger(left[field]) && Number.isSafeInteger(right[field]) && Number.isSafeInteger(total[field]))) return total;
+        && fields.every(field => (left[field] === null || Number.isSafeInteger(left[field]))
+            && (right[field] === null || Number.isSafeInteger(right[field]))
+            && (total[field] === null || Number.isSafeInteger(total[field])))) return total;
     return withUsageMoney(total, Object.fromEntries(fields.flatMap(field => {
         const a = left[field];
         const b = right[field];

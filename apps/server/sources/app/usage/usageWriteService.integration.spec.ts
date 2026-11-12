@@ -165,7 +165,7 @@ describe("usageWriteService", () => {
             const rows = await tx.usageEvent.findMany({ where: { accountId: account.id }, orderBy: { observedAt: 'asc' } });
             return projectUsageAnalytics({ ...captured, rows }, query);
         }, { readOnly: true, isolationLevel: 'Serializable' });
-        expect(JSON.stringify(maintained)).toBe(JSON.stringify(scalar));
+        expect(maintained).toEqual(scalar);
     });
 
     it('removes retained usage from the persisted accounting result when the retention rule deletes its event', async () => {

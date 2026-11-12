@@ -3306,15 +3306,17 @@ inputs consume this inventory; the client Project display-key owner folds unname
 anchors and absent Project usage into the same “No project name” group as the
 Work ledger. Inventory stays summary-only, without per-event contributions.
 
-The 0.3 development query owner captures `UsageEvent` and retained
-`UsageReport` facts in the canonical read snapshot shared by the direct service,
-v1, v2 and batch routes. Ordinary bounded PostgreSQL queries capture thin pre-end history
-and a conservative set of complete candidate histories in two event statements;
-unbounded queries capture full history in one. Only in-window metadata is admitted
-inside a bounded PostgreSQL snapshot to identify candidate subjects. Historical
-metadata admission, replay and body projection run after commit. Candidate
-selection consumes the accounting owner's typed identities and uses conservative
-storage hints; the replay owner alone decides historical subject membership.
+The 0.3 development query owner captures coherent `UsageEvent` and retained
+`UsageReport` facts for the direct service, v1, v2 and batch routes. Ordinary
+PostgreSQL batches use one accounting statement, without an interactive
+transaction. Bounded queries capture thin pre-end history and a conservative set
+of complete candidate histories; unbounded queries capture full history. SQL
+uses raw storage hints only to overselect candidates. Metadata admission, replay
+and body projection run after the read, and the replay owner alone decides
+historical subject membership. Tariff configuration and catalog bytes are read
+independently of accounting, using the Home configuration snapshot owner and a
+direct catalog read. Transcript publication/message counts use a separate short
+snapshot only when requested; Session access is admitted before capture.
 Historical identity and coverage evidence preserve legacy
 suppression and global replay order. Only accounting subjects that can contribute
 to the requested windows and Session or dimension filters enter body projection,
@@ -3342,17 +3344,23 @@ unchanged estimates. Calendar targets with identical atomic pricing operands and
 ordered membership reuse selected money before merging and pricing. Changed
 price inputs refresh the priced checkpoint without
 replaying events.
-Public populations and mixed rich/detail demands use the ordinary path.
+Public populations and mixed rich/detail demands for the same population use
+the ordinary path. Several compact output requests for one population also
+share the ordinary capture. A compact activity population and a distinct ordinary
+population keep their own coherent captures; the compact witness/hydration
+snapshot never encloses the ordinary accounting statement.
 Conditional publication follows the read snapshot; startup and event writes
 perform no summary maintenance. Existing migrations are unchanged.
 
 Development pages and multi-slice CLI/agent Usage Actions acquire their distinct
-accounting slices through `POST /v2/usage/query-batch`. The server admits and
-captures a batch in one read transaction, then releases it before aggregation,
-pricing, projection and serialization. A single Action accounting slice retains
+accounting slices through `POST /v2/usage/query-batch`. The server admits each
+selection once and captures ordinary PostgreSQL accounting inputs in one
+statement, with independent tariff and publication/count reads as described
+above. All reads finish before aggregation, pricing, projection and
+serialization. A single Action accounting slice retains
 the scalar route. Identical
-queries are returned once. One capture supplies the common accounting population
-and tariff; each query keeps its own range, filters, publication-bounded message
+queries are returned once. One ordinary capture supplies the common accounting
+population, and the batch shares captured tariff inputs; each query keeps its own range, filters, publication-bounded message
 counts and Session access admission. An unreadable Session selection returns
 `{ query, error: 'not_found' }` without withholding readable siblings.
 Raw contributions default to omitted. Presence of `contributionQueries` opts into

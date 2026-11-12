@@ -90,14 +90,19 @@ Startup sequence:
 
 Shutdown hooks are registered for DB disconnect and activity-cache flush.
 
-In 0.3 development source, Usage reads capture `UsageEvent` and retained
-`UsageReport` facts and reconcile them after the read transaction commits.
-Bounded reads capture historical identity and coverage evidence once, then load
-token and monetary bodies only for accounting subjects with an event in the
-requested windows. Those subjects retain their full pre-window history and
-canonical global ordering. Unbounded members retain the full-history read.
-Batch projection services pending I/O between accounting subjects; synchronous
-callers drain the same reconciler steps without changing their return contract.
+In 0.3 development source, ordinary PostgreSQL Usage batches capture coherent
+`UsageEvent` and retained `UsageReport` facts in one statement without an
+interactive transaction. Bounded reads capture historical identity and coverage
+evidence alongside conservative candidate token and monetary bodies. Canonical
+metadata admission and reconciliation follow the read; selected subjects retain
+their full pre-window history and global ordering. Unbounded members retain the
+full-history read. Tariff configuration uses the Home snapshot owner, followed
+by a direct catalog read. Transcript publication/message counts have a separate
+short snapshot only when requested, and Session access is admitted before
+capture. SQLite and MySQL retain the composing accounting snapshot reader.
+Service, v1, v2 and batch projection service pending I/O through the same
+cooperative accounting and pricing owner; synchronous internal projectors drain
+the same reconciler steps.
 Usage writes update those authoritative facts without maintaining a reconciled
 projection. In the 0.3 development implementation, compact private activity
 requests with Session membership lazily materialize canonical grouped pricing,
@@ -122,7 +127,9 @@ money provenance; changed projections calculate tariffs only for new operands.
 Calendar targets also reuse selected money when complete atomic pricing inputs
 and ordered membership are equal, skipping unchanged merges and money folds.
 Price-input changes reprice and replace that checkpoint without replaying events. Public populations and mixed rich/detail demands
-retain the ordinary path. Publication happens after the read snapshot, with
+for the same population retain the ordinary path. Distinct compact and ordinary
+populations use separate coherent captures, so the compact witness/hydration
+snapshot does not retain the ordinary accounting read. Publication happens after the read snapshot, with
 conditional replacement and atomic source witnesses; startup and event writes
 perform no projection maintenance. No schema or migration change is required.
 

@@ -19,6 +19,7 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAccountUsageRoutes } from '@/app/api/routes/account/registerAccountUsageRoutes';
 import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
+import { captureUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 
 type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number;
     metadataReads?: number; metadataReadIds?: Set<string> };
@@ -46,10 +47,11 @@ function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
                     count.reads += 1;
                     count.rowCounts?.push(rows.length);
                     if (count.bodyRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'totalTokens')) {
-                        count.bodyRows += rows.length;
+                        count.bodyRows += rows.filter(row => !Object.hasOwn(row, 'captureKind')
+                            || Reflect.get(row, 'captureKind') === 'body').length;
                     }
                     if (count.metadataRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'metadata')) {
-                        count.metadataRows += rows.length;
+                        count.metadataRows += rows.filter(row => Reflect.get(row, 'captureKind') !== 'report').length;
                     }
                     if (count.metadataReads !== undefined) for (const row of rows) {
                         const metadata = Reflect.get(row, 'metadata');
@@ -97,29 +99,90 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
-    it('captures 51 accounting slices through one PostgreSQL transaction', async () => {
+    it('captures 53 accounting slices including filtered TODAY without acquiring an interactive PostgreSQL transaction', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),
-            agentId: 'codex', source: 'runtime', scope: 'turn_delta', totalTokens: 7 } });
+            agentId: 'codex', machineId: 'today-machine', source: 'runtime', scope: 'turn_delta', totalTokens: 7 } });
         // Observe the real persistent boundary; all route, capture, and projection logic stays real.
         const transaction = db.$transaction;
         // db forwards to the real client through a Proxy without own descriptors.
-        const acquire = vi.fn(transaction);
-        db.$transaction = acquire as typeof db.$transaction;
+        let accountingReadsInTransaction = 0;
+        const acquire = vi.fn(async (read: (tx: Tx) => Promise<unknown>, options?: Parameters<typeof transaction>[1]) =>
+            transaction(tx => read(new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property !== '$queryRaw') return Reflect.get(target, property, receiver);
+                    return async (...args: unknown[]) => {
+                        const query = args[0] as { strings?: readonly string[] };
+                        if (query.strings?.join('').includes('"UsageEvent"')) accountingReadsInTransaction++;
+                        return Reflect.apply(target.$queryRaw, target, args);
+                    };
+                },
+            })), options));
+        // This database-boundary observer handles the interactive overload used by the real snapshot owner.
+        db.$transaction = acquire as unknown as typeof db.$transaction;
         try {
             await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
                 const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                     headers: { 'x-test-user-id': account.id }, payload: {
-                        queries: Array.from({ length: 51 }, (_, index) => ({
+                        queries: [...Array.from({ length: 51 }, (_, index) => ({
                             dateRange: { startMs: 0, endMs: 200 + index }, includeSeries: false,
-                        })), includeContributions: true,
+                        })),
+                        { dateRange: { startMs: 0, endMs: 51_840_000 }, includeSeries: false },
+                        { dateRange: { startMs: 0, endMs: 51_840_000 }, includeSeries: false,
+                            filters: { machineIds: ['today-machine'] } }], includeContributions: true,
                     } });
                 expect(response.statusCode, response.body).toBe(200);
                 const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
-                expect(batch.results).toHaveLength(51);
+                expect(batch.results).toHaveLength(53);
                 expect(batch.results.every(row => 'value' in row && row.value.totals.tokens.total === 7)).toBe(true);
-                expect(acquire).toHaveBeenCalledTimes(1);
+                expect(accountingReadsInTransaction).toBe(0);
+                expect(acquire).not.toHaveBeenCalled();
             });
+        } finally { db.$transaction = transaction; }
+    });
+
+    it('keeps same-population detail in one accounting capture and isolates distinct compact-summary snapshots', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),
+            agentId: 'codex', source: 'runtime', scope: 'turn_delta', totalTokens: 7 } });
+        const activity = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: 200 },
+            granularity: 'day', includeActivity: true, includeSeries: false });
+        const detail = UsageAnalyticsQueryRequestSchema.parse({ ...activity, includeActivity: false, includeSeries: true });
+        const transaction = db.$transaction;
+        let normalAccountingReadsInTransaction = 0;
+        const acquire = vi.fn(async (read: (tx: Tx) => Promise<unknown>, options?: Parameters<typeof transaction>[1]) =>
+            transaction(tx => read(new Proxy(tx, {
+                get(target, property, receiver) {
+                    if (property !== '$queryRaw') return Reflect.get(target, property, receiver);
+                    return async (...args: unknown[]) => {
+                        const query = args[0] as { strings?: readonly string[] };
+                        if (query.strings?.join('').includes('"captureKind"')) normalAccountingReadsInTransaction++;
+                        return Reflect.apply(target.$queryRaw, target, args);
+                    };
+                },
+            })), options));
+        // This database-boundary observer handles the interactive overload used by the real snapshot owner.
+        db.$transaction = acquire as unknown as typeof db.$transaction;
+        try {
+            const shared = await captureUsageAnalyticsBatch(account.id, [activity, detail], undefined,
+                { contributionQueries: [detail], sessionQueries: [activity] });
+            expect(shared.activitySummary).toBeUndefined();
+            const sharedSnapshots = [...shared.snapshots.values()];
+            expect(sharedSnapshots[0]!.rows).toBe(sharedSnapshots[1]!.rows);
+            const otherCompact = { ...activity, timeZoneOffsetMinutes: 60 };
+            const compactSiblings = await captureUsageAnalyticsBatch(account.id, [activity, otherCompact], undefined,
+                { contributionQueries: [], sessionQueries: [activity, otherCompact] });
+            expect(compactSiblings.activitySummary).toBeUndefined();
+            const compactSnapshots = [...compactSiblings.snapshots.values()];
+            expect(compactSnapshots[0]!.rows).toBe(compactSnapshots[1]!.rows);
+            const distinct = { ...detail, dateRange: { startMs: 50, endMs: 200 } };
+            const split = await captureUsageAnalyticsBatch(account.id, [activity, distinct], undefined,
+                { contributionQueries: [distinct], sessionQueries: [activity] });
+            expect(split.activitySummary?.query).toEqual(activity);
+            expect(split.snapshots.size).toBe(2);
+            expect(normalAccountingReadsInTransaction).toBe(0);
+            expect(projectUsageAnalytics(sharedSnapshots[1]!, detail).totals.tokens.total).toBe(7);
+            expect(projectUsageAnalytics([...split.snapshots.values()][0]!, distinct).totals.tokens.total).toBe(7);
         } finally { db.$transaction = transaction; }
     });
 
@@ -194,7 +257,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const scalarSnapshot = { ...captured, rows: baseline };
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(scalarSnapshot, request, undefined,
             projectUsageAnalyticsPopulation(scalarSnapshot, request)));
-        expect(ordinaryCount).toEqual({ reads: 2, ormRows: 0 });
+        expect(ordinaryCount).toEqual({ reads: 1, ormRows: 0 });
         const emptyCount: EventReadCount = { reads: 0, ormRows: 0 };
         const empty = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, emptyCount),
             account.id, UsageAnalyticsQueryRequestSchema.parse({ dateRange: { endMs: 100 } })),
@@ -232,7 +295,8 @@ describe('Usage analytics PostgreSQL event transport', () => {
             includeSeries: true, includeActivity: true, breakdowns: ['source'] });
         const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request),
             { readOnly: true, isolationLevel: 'Serializable' });
-        expect(captured.rows, 'unrelated histories sharing a native producer stay in storage').toHaveLength(4);
+        expect(prepareUsageAnalyticsSnapshot(captured, request).rows,
+            'canonical admission excludes conservative SQL competitors sharing Session attribution').toHaveLength(4);
         const control = { ...captured, rows: await inTx(tx => loadUsageEventsForQuery(tx, account.id, request)),
             rawEvidenceRows: undefined, evidenceRows: undefined, replayContext: undefined, normalizedEvidenceById: undefined };
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(control, request));
@@ -343,6 +407,6 @@ describe('Usage analytics PostgreSQL event transport', () => {
             rows: baselineRows, legacyReports: captured.legacyReports, priceCatalog: captured.priceCatalog,
             messageCountsBySession: undefined,
         }, request));
-        expect(count).toMatchObject({ reads: 2, ormRows: 0, rowCounts: [33_658, 7_262], metadataRows: 33_658, bodyRows: 7_262 });
+        expect(count).toMatchObject({ reads: 1, ormRows: 0, rowCounts: [33_658], metadataRows: 33_658, bodyRows: 7_262 });
     });
 });

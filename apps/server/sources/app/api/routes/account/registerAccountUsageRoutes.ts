@@ -5,7 +5,7 @@ import { z } from "zod/mini";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { readDatabaseErrorCode } from "@/storage/transactionErrors";
 import { log } from "@/utils/logging/log";
-import { captureUsageAnalyticsInTx, projectUsageAnalytics } from "@/app/usage/usageQueryService";
+import { captureUsageAnalytics, projectUsageAnalyticsAsync } from "@/app/usage/usageQueryService";
 import { recordLegacyUsageReport, recordUsageEvent, deleteNativeUsageHistory } from "@/app/usage/usageWriteService";
 import { LegacyUsageReportRouteBodySchema } from "@/app/usage/legacyUsageReportSchema";
 import { type Fastify } from "../../types";
@@ -14,7 +14,7 @@ import { readUsageModelPriceCatalog, refreshUsageModelPriceCatalog } from '@/app
 import { readCurrentSessionIdsInTx } from '@/app/session/access/sessionReadAdmission';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
-import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from '@/app/usage/query/readUsageAnalyticsBatch';
+import { captureUsageAnalyticsBatch, projectUsageAnalyticsBatch } from '@/app/usage/query/readUsageAnalyticsBatch';
 import { Readable } from 'node:stream';
 import { collectUsageAnalyticsBatchDelivery, encodeUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
     readUsageContributionEncoding, readUsageContributionProjection } from '@happier-dev/protocol/usage/usageCost';
@@ -80,17 +80,13 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                     ...(endTime ? { endMs: endTime * 1000 + 1 } : {}),
                 } : undefined,
             });
-            const snapshot = await inReadSnapshot(async tx => {
-                if (sessionId) {
-                    if (!await ensureReadableSessionIds(tx, userId, [sessionId], readSessionAccessAuthenticationFromRequest(request))) {
-                        return null;
-                    }
-                }
-                return captureUsageAnalyticsInTx(tx, userId, query, () => reply.raw.destroyed);
-            });
+            const admitted = !sessionId || await inReadSnapshot(tx =>
+                ensureReadableSessionIds(tx, userId, [sessionId], readSessionAccessAuthenticationFromRequest(request)));
+            if (!admitted) return reply.code(404).send({ error: 'Session not found' });
+            const snapshot = await captureUsageAnalytics(userId, query, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
-            if (!snapshot) return reply.code(404).send({ error: 'Session not found' });
-            const result = projectUsageAnalytics(snapshot, query);
+            const result = await projectUsageAnalyticsAsync(snapshot, query);
+            if (reply.raw.destroyed) { reply.hijack(); return; }
             return reply.send({
                 usage: (result.series ?? []).map((bucket) => ({
                     timestamp: Math.floor(bucket.bucketStartMs / 1000), tokens: bucket.tokens,
@@ -124,20 +120,16 @@ export function registerAccountUsageRoutes(app: Fastify): void {
                 && !await isServerFeatureEnabledForHome('account.publicProfiles', { request })) {
                 return reply.code(404).send({ error: 'not_found' });
             }
-            const snapshot = await inReadSnapshot(async tx => {
-                if (request.body.filters?.sessionIds?.length) {
-                    const isReadable = await ensureReadableSessionIds(tx, request.userId, request.body.filters.sessionIds,
-                        readSessionAccessAuthenticationFromRequest(request));
-                    if (!isReadable) {
-                        return null;
-                    }
-                }
-
-                return captureUsageAnalyticsInTx(tx, request.userId, request.body, () => reply.raw.destroyed);
-            });
+            const sessionIds = request.body.filters?.sessionIds;
+            if (sessionIds?.length && !await inReadSnapshot(tx => ensureReadableSessionIds(tx, request.userId,
+                sessionIds, readSessionAccessAuthenticationFromRequest(request)))) {
+                return reply.code(404).send({ error: 'Session not found' });
+            }
+            const snapshot = await captureUsageAnalytics(request.userId, request.body, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
-            if (!snapshot) return reply.code(404).send({ error: 'Session not found' });
-            return reply.send(projectUsageAnalytics(snapshot, request.body));
+            const result = await projectUsageAnalyticsAsync(snapshot, request.body);
+            if (reply.raw.destroyed) { reply.hijack(); return; }
+            return reply.send(result);
         } catch (error) {
             if (reply.raw.destroyed) { reply.hijack(); return; }
             if (readDatabaseErrorCode(error)) throw error;
@@ -158,18 +150,18 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         const queries = [...new Map(request.body.queries.map(query => [getUsageAnalyticsQueryRequestKey(query), query])).values()];
         const publicEnabled = queries.some(query => query.population === 'public_eligible_personal')
             ? await isServerFeatureEnabledForHome('account.publicProfiles', { request }) : false;
-        const captured = await inReadSnapshot(async tx => {
+        const captured = await (async () => {
             const sessionIds = [...new Set(queries.flatMap(query => query.filters?.sessionIds ?? []))];
-            const readable = sessionIds.length ? await readCurrentSessionIdsInTx(tx, { accountId: request.userId,
-                sessionIds, authentication: readSessionAccessAuthenticationFromRequest(request) }) : new Set<string>();
+            const readable = sessionIds.length ? await inReadSnapshot(tx => readCurrentSessionIdsInTx(tx, { accountId: request.userId,
+                sessionIds, authentication: readSessionAccessAuthenticationFromRequest(request) })) : new Set<string>();
             const admitted = queries.filter(query => (query.population !== 'public_eligible_personal' || publicEnabled)
                 && (query.filters?.sessionIds ?? []).every(id => readable.has(id)));
             const readStart = performance.now();
             try {
-                return { admitted, snapshot: admitted.length ? await captureUsageAnalyticsBatchInTx(tx, request.userId, admitted,
+                return { admitted, snapshot: admitted.length ? await captureUsageAnalyticsBatch(request.userId, admitted,
                     () => reply.raw.destroyed, request.body) : undefined };
             } finally { timing.durations.read += performance.now() - readStart; }
-        }).catch(error => {
+        })().catch(error => {
             if (reply.raw.destroyed) { reply.hijack(); return null; }
             throw error;
         });

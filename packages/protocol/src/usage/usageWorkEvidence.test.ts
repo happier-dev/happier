@@ -315,8 +315,12 @@ describe('Usage shared work evidence', () => {
         } } } };
         expect(workEvidence.projectUsageSessionMessageProjection(child)).toMatchObject({ nativeAgentId: 'claude', sidechainIds: ['task'], tools: [] });
         expect(JSON.stringify(workEvidence.projectUsageSessionMessageProjection(child))).not.toContain('private child prose');
-        const malformed = { id: 'bad', createdAt: 210, content: { role: 'agent', content: { type: 'acp', agentId: 'codex',
+        const imported = { id: 'imported', createdAt: 210, content: { role: 'agent', content: { type: 'acp', agentId: 'codex',
             data: { type: 'tool-call', callId: 'call', name: 'Read', input: {} } } } };
+        expect(workEvidence.projectUsageSessionMessageProjection(imported)).toMatchObject({ nativeAgentId: 'codex',
+            tools: [{ kind: 'call', id: 'call', name: 'Read' }] });
+        const malformed = { ...imported, id: 'bad', content: { ...imported.content, content: { ...imported.content.content,
+            data: { ...imported.content.content.data, callId: 37 } } } };
         expect(workEvidence.projectUsageSessionMessageProjection(malformed)).toMatchObject({ nativeAgentId: null, sidechainIds: [], tools: [] });
         expect(projectSessionUsageWorkEvidence(session, undefined, { messageProjections: [] })).toEqual(projectSessionUsageWorkEvidence(session, []));
     });

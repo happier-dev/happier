@@ -56,7 +56,7 @@ export const usageReportSelect = {
 export type UsageQueryEvent = Omit<Prisma.UsageEventGetPayload<{ select: typeof usageEventSelect }>, 'metadata'>
     & Pick<ScopedUsageEventDbRow, 'metadata' | 'accountingEvidence'>;
 
-const usageEventEvidenceSelect = {
+export const usageEventEvidenceSelect = {
     id: true, sessionId: true, observedAt: true, createdAt: true, agentId: true, backendMode: true,
     modelId: true, projectKey: true, workspaceId: true, machineId: true, source: true, metadata: true,
     scope: true, isCumulative: true, teamCredentialResourceId: true, teamCredentialActorAccountId: true,
@@ -66,11 +66,6 @@ const usageEventEvidenceSelect = {
 function usageEventWhere(accountId: string, endMs: number | undefined): Prisma.UsageEventWhereInput {
     return { accountId, observedAt: endMs === undefined ? undefined : { lt: new Date(endMs) },
         source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES] } };
-}
-
-/** A covering window can use the single history read instead of evidence plus body hydration. */
-export async function hasUsageEventHistoryBefore(tx: Tx, accountId: string, startMs: number): Promise<boolean> {
-    return await tx.usageEvent.findFirst({ where: usageEventWhere(accountId, startMs), select: { id: true } }) !== null;
 }
 
 function usageEventReadSql(accountId: string, endMs: number | undefined,

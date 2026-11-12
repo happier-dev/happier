@@ -94,23 +94,30 @@ function page(rows: UsageAnalyticsContribution[]) {
     cost: aggregateUsageContributionCosts(rows, 'auto') } }, 'auto');
 }
 
-it('adds safe integer token fields after one precision-provenance read per operand', () => {
+it.each([
+  { name: 'fully measured', left: tokens(10), right: tokens(20), expected: tokens(30) },
+  { name: 'unmeasured categories', left: { ...tokens(10), reasoning: null },
+    right: { ...tokens(20), reasoning: null }, expected: { ...tokens(30), reasoning: null } },
+  { name: 'unmeasured operand', left: createEmptyUsageTokens(), right: tokens(0), expected: tokens(0) },
+  { name: 'unmeasured population', left: createEmptyUsageTokens(), right: createEmptyUsageTokens(), expected: createEmptyUsageTokens() },
+])('adds $name safe integer token fields after one precision-provenance read per operand', ({ left, right, expected }) => {
   let precisionReads = 0;
   const tracked = (value: UsageObservationTokens) => new Proxy(Object.freeze(value), { get(target, key, receiver) {
     if (typeof key === 'symbol') precisionReads++;
     return Reflect.get(target, key, receiver);
   } });
-  const total = addUsageTokens(tracked(tokens(10)), tracked(tokens(20)));
+  const total = addUsageTokens(tracked(left), tracked(right));
   expect(precisionReads, 'ordinary token counts do not need six decimal-provenance reads per operand').toBe(2);
-  expect(total).toEqual(tokens(30));
+  expect(total).toEqual(expected);
 });
 
-it('retains fractional and unsafe-integer precision when public token sums round to integers', () => {
-  const fractional = addUsageTokens(tokens(0.10000000000000003), tokens(0.9));
+it.each([false, true])('retains fractional and unsafe-integer precision with unmeasured categories=%s', unmeasured => {
+  const operand = (input: number) => ({ ...tokens(input), reasoning: unmeasured ? null : 0 });
+  const fractional = addUsageTokens(operand(0.10000000000000003), operand(0.9));
   expect(fractional.input).toBe(1);
-  expect(readUsageMoney(addUsageTokens(fractional, tokens(1)), 'input', 2))
+  expect(readUsageMoney(addUsageTokens(fractional, operand(1)), 'input', 2))
     .toEqual({ units: 200000000000000003n, scale: 17 });
-  const unsafe = addUsageTokens(addUsageTokens(tokens(Number.MAX_SAFE_INTEGER), tokens(1)), tokens(1));
+  const unsafe = addUsageTokens(addUsageTokens(operand(Number.MAX_SAFE_INTEGER), operand(1)), operand(1));
   expect(readUsageMoney(unsafe, 'input', unsafe.input)).toEqual({ units: 9007199254740993n, scale: 0 });
   expect(usageMoneyFromNumber(1000000000000000100)).toEqual({ units: 1000000000000000100n, scale: 0 });
 });

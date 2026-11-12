@@ -1,7 +1,7 @@
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import type { Tx } from '@/storage/inTx';
+import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { prepareUsageAnalyticsProjectionSteps, type UsageAnalyticsProjectionContext, type UsageAnalyticsSnapshot } from '../usageQueryService';
-import { captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
+import { captureUsageModelPriceCatalog, captureUsageModelPriceCatalogInTx, resolveCapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
 import { hasUsageMessageCountDemand, loadUsageMessageCountsBySessionInTx } from './loadUsageMessageStatsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulationSteps, type UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation';
 import { completeUsageAnalyticsProjection, projectUsageAnalyticsDemands } from './projectUsageAnalyticsDemands';
@@ -10,11 +10,11 @@ import { createUsagePricingReuse, repriceUsageAnalyticsResponseSteps } from '@ha
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 import { projectUsageCoverageEvidence } from './projectUsageCoverageEvidence';
-import { hasUsageEventHistoryBefore, loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
+import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsageEventsForQuery } from './loadUsageEventsForQuery';
 import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
-import { loadUsageEventCandidatesForQuery } from './loadUsageEventCandidatesForQuery';
+import { loadUsageAccountingRowsForQuery, type CapturedUsageAccountingRow } from './loadUsageAccountingRowsForQuery';
 import { canSummarizeUsageActivity, captureUsageActivitySummaryInTx, publishUsageActivitySummary,
     projectUsageActivitySummarySteps, type CapturedUsageActivitySummary } from './usageActivitySummary';
 import type { CapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
@@ -95,16 +95,95 @@ function* prepareUsageBatchActivity(summary: CapturedUsageActivitySummary,
     return priced.value;
 }
 
-/** Capture the common population once, preserving each query's exact transcript-count range. */
+function selectUsageActivitySummaryQuery(queries: readonly UsageAnalyticsQueryRequest[],
+    deliveryDemand?: Pick<UsageAnalyticsQueryBatchRequest, 'contributionQueries' | 'sessionQueries'>) {
+    const detailKeys = new Set(deliveryDemand?.contributionQueries?.map(getUsageAnalyticsQueryRequestKey));
+    const sessionKeys = new Set(deliveryDemand?.sessionQueries?.map(getUsageAnalyticsQueryRequestKey));
+    return deliveryDemand?.contributionQueries !== undefined ? queries.find(query => canSummarizeUsageActivity(query)
+        && sessionKeys.has(getUsageAnalyticsQueryRequestKey(query)) && !detailKeys.has(getUsageAnalyticsQueryRequestKey(query))
+        && queries.every(other => other === query
+            || getUsageAnalyticsPopulationKey(other) !== getUsageAnalyticsPopulationKey(query))) : undefined;
+}
+
+async function captureUsageBatchMessageCountsInTx(tx: Tx, accountId: string, queries: readonly UsageAnalyticsQueryRequest[]) {
+    const ranges = new Map(queries.filter(hasUsageMessageCountDemand)
+        .map(query => [JSON.stringify(query.dateRange ?? {}), query]));
+    const counts = new Map<string, NonNullable<UsageAnalyticsSnapshot['messageCountsBySession']>>();
+    for (const [rangeKey, query] of ranges) counts.set(rangeKey,
+        await loadUsageMessageCountsBySessionInTx(tx, accountId, query));
+    return counts;
+}
+
+async function captureUsageBatchSupportInTx(tx: Tx, accountId: string, queries: readonly UsageAnalyticsQueryRequest[]) {
+    const [priceCatalog, counts] = await Promise.all([
+        captureUsageModelPriceCatalogInTx(tx), captureUsageBatchMessageCountsInTx(tx, accountId, queries),
+    ]);
+    return { priceCatalog, counts };
+}
+
+function assemblePostgresUsageBatch(captured: readonly CapturedUsageAccountingRow[],
+    queries: readonly UsageAnalyticsQueryRequest[], support: Awaited<ReturnType<typeof captureUsageBatchSupportInTx>>,
+    isReaderClosed?: () => boolean): UsageAnalyticsBatchSnapshot {
+    if (isReaderClosed?.()) throw new Error('Usage reader closed');
+    const rows: UsageAnalyticsSnapshot['rows'] = [];
+    const rawEvidenceRows: NonNullable<UsageAnalyticsSnapshot['rawEvidenceRows']>[number][] = [];
+    const legacyReports: UsageAnalyticsSnapshot['legacyReports'] = [];
+    for (const row of captured) {
+        if (row.captureKind === 'report') legacyReports.push({ id: row.id, sessionId: row.sessionId,
+            key: row.reportKey, data: row.reportData, createdAt: row.createdAt, updatedAt: row.reportUpdatedAt });
+        else {
+            rawEvidenceRows.push(row);
+            if (row.captureKind === 'body') rows.push(row);
+        }
+    }
+    const snapshots = new Map<string, UsageAnalyticsSnapshot>();
+    for (const query of queries) snapshots.set(getUsageAnalyticsQueryRequestKey(query), {
+        rows, rawEvidenceRows, legacyReports, priceCatalog: support.priceCatalog,
+        messageCountsBySession: hasUsageMessageCountDemand(query)
+            ? support.counts.get(JSON.stringify(query.dateRange ?? {})) : undefined,
+    });
+    return { snapshots, priceCatalog: support.priceCatalog };
+}
+
+/** Accounting inputs are atomic in one PostgreSQL statement; CPU work holds no transaction. */
+export async function captureUsageAnalyticsBatch(accountId: string, queries: readonly UsageAnalyticsQueryRequest[],
+    isReaderClosed?: () => boolean,
+    deliveryDemand?: Pick<UsageAnalyticsQueryBatchRequest, 'contributionQueries' | 'sessionQueries'>): Promise<UsageAnalyticsBatchSnapshot> {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) !== 'postgres') {
+        return inReadSnapshot(tx => captureUsageAnalyticsBatchInTx(tx, accountId, queries, isReaderClosed, deliveryDemand));
+    }
+    const summaryQuery = selectUsageActivitySummaryQuery(queries, deliveryDemand);
+    if (summaryQuery) {
+        const summaryCapture = inReadSnapshot(tx => captureUsageActivitySummaryInTx(tx, accountId, summaryQuery));
+        const remaining = queries.filter(query => query !== summaryQuery);
+        if (!remaining.length) {
+            const activitySummary = await summaryCapture;
+            return { snapshots: new Map([[getUsageAnalyticsQueryRequestKey(summaryQuery), activitySummary.snapshot]]),
+                priceCatalog: activitySummary.snapshot.priceCatalog, activitySummary };
+        }
+        // The summary's witness snapshot never encloses another population's full accounting read.
+        const [activitySummary, captured] = await Promise.all([
+            summaryCapture, captureUsageAnalyticsBatch(accountId, remaining, isReaderClosed),
+        ]);
+        captured.snapshots.set(getUsageAnalyticsQueryRequestKey(summaryQuery), activitySummary.snapshot);
+        return { ...captured, activitySummary };
+    }
+    const [captured, priceCatalog, counts] = await Promise.all([
+        queries.length ? inReadSnapshot(tx => loadUsageAccountingRowsForQuery(tx, accountId, queries), { singleStatementRead: true }) : [],
+        captureUsageModelPriceCatalog(),
+        // Only publication/count demand needs a composing read snapshot.
+        queries.some(hasUsageMessageCountDemand)
+            ? inReadSnapshot(tx => captureUsageBatchMessageCountsInTx(tx, accountId, queries))
+            : new Map<string, NonNullable<UsageAnalyticsSnapshot['messageCountsBySession']>>(),
+    ]);
+    return assemblePostgresUsageBatch(captured, queries, { priceCatalog, counts }, isReaderClosed);
+}
+
+/** Composing snapshot readers use the same accounting statement, without another admission path. */
 export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, queries: readonly UsageAnalyticsQueryRequest[],
     isReaderClosed?: () => boolean,
     deliveryDemand?: Pick<UsageAnalyticsQueryBatchRequest, 'contributionQueries' | 'sessionQueries'>): Promise<UsageAnalyticsBatchSnapshot> {
-    const detailKeys = new Set(deliveryDemand?.contributionQueries?.map(getUsageAnalyticsQueryRequestKey));
-    const sessionKeys = new Set(deliveryDemand?.sessionQueries?.map(getUsageAnalyticsQueryRequestKey));
-    const summaryQuery = deliveryDemand?.contributionQueries !== undefined ? queries.find(query => canSummarizeUsageActivity(query)
-        && sessionKeys.has(getUsageAnalyticsQueryRequestKey(query)) && !detailKeys.has(getUsageAnalyticsQueryRequestKey(query))
-        && queries.every(other => getUsageAnalyticsPopulationKey(other) !== getUsageAnalyticsPopulationKey(query)
-            || (canSummarizeUsageActivity(other) && !detailKeys.has(getUsageAnalyticsQueryRequestKey(other))))) : undefined;
+    const summaryQuery = selectUsageActivitySummaryQuery(queries, deliveryDemand);
     if (summaryQuery) {
         const activitySummary = await captureUsageActivitySummaryInTx(tx, accountId, summaryQuery);
         const remaining = queries.filter(query => query !== summaryQuery);
@@ -116,6 +195,12 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     }
     if (queries.length === 0) return { snapshots: new Map<string, UsageAnalyticsSnapshot>(),
         priceCatalog: await captureUsageModelPriceCatalogInTx(tx) };
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
+        const [captured, support] = await Promise.all([
+            loadUsageAccountingRowsForQuery(tx, accountId, queries), captureUsageBatchSupportInTx(tx, accountId, queries),
+        ]);
+        return assemblePostgresUsageBatch(captured, queries, support, isReaderClosed);
+    }
     const ends = queries.map(query => query.dateRange?.endMs);
     const endMs = ends.some(end => end === undefined) ? undefined
         : ends.reduce<number>((latest, end) => Math.max(latest, end ?? -Infinity), -Infinity);
@@ -123,40 +208,22 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     const allHistory = queries.some(query => query.dateRange?.startMs === undefined);
     const readEvents = async (): Promise<{ rows: UsageAnalyticsSnapshot['rows'] }
         | { evidence: Awaited<ReturnType<typeof loadUsageEventEvidenceForQuery>> }> => {
-        const startMs = queries.reduce((earliest, query) => Math.min(earliest, query.dateRange?.startMs ?? -Infinity), Infinity);
-        // PostgreSQL's window candidates include every in-window event. If there
-        // is no earlier personal history, both phases would return the same rows.
-        const coveredHistory = allHistory || (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres'
-            && !await hasUsageEventHistoryBefore(tx, accountId, startMs));
-        return coveredHistory ? { rows: await loadUsageEventsForQuery(tx, accountId, range) }
+        return allHistory ? { rows: await loadUsageEventsForQuery(tx, accountId, range) }
             : { evidence: await loadUsageEventEvidenceForQuery(tx, accountId, range) };
     };
-    const [events, legacyReports, priceCatalog] = await Promise.all([
+    const [events, legacyReports, support] = await Promise.all([
         readEvents(),
         loadRetainedLegacyUsageReports(tx, accountId, range),
-        captureUsageModelPriceCatalogInTx(tx),
+        captureUsageBatchSupportInTx(tx, accountId, queries),
     ]);
+    const { priceCatalog, counts } = support;
     if (isReaderClosed?.()) throw new Error('Usage reader closed');
     let rows: UsageAnalyticsSnapshot['rows'];
     let evidenceRows: ScopedUsageEvidenceRow[] | undefined;
-    let rawEvidenceRows: UsageAnalyticsSnapshot['rawEvidenceRows'];
-    let windowEvidenceById: ReadonlyMap<string, ScopedUsageEvidenceRow> | undefined;
     const preparedPopulations = new Map<string, UsageAnalyticsSnapshot>();
     // Subject selection feeds later reads in this snapshot. Do not yield while
     // holding its connection; the committed projection below owns cooperative work.
-    if ('evidence' in events && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
-        rawEvidenceRows = events.evidence;
-        const windowRows: ScopedUsageEvidenceRow[] = [];
-        for (const row of events.evidence) {
-            const observedAtMs = row.observedAt.getTime();
-            if (queries.some(query => observedAtMs >= query.dateRange!.startMs!
-                && (query.dateRange?.endMs === undefined || observedAtMs < query.dateRange.endMs))) {
-                windowRows.push(toScopedUsageEvidenceRow(row));
-            }
-        }
-        windowEvidenceById = new Map(windowRows.map(row => [row.id, row]));
-        rows = await loadUsageEventCandidatesForQuery(tx, accountId, queries, windowRows, legacyReports);
-    } else if ('evidence' in events) {
+    if ('evidence' in events) {
         evidenceRows = [];
         for (const row of events.evidence) {
             const evidence = toScopedUsageEvidenceRow(row);
@@ -179,11 +246,6 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     } else rows = events.rows;
     // SQL captures counts by Session; the committed accounting population
     // selects which Session counts contribute to each response.
-    const ranges = new Map(queries.filter(hasUsageMessageCountDemand)
-        .map(query => [JSON.stringify(query.dateRange ?? {}), query]));
-    const counts = new Map<string, NonNullable<UsageAnalyticsSnapshot['messageCountsBySession']>>();
-    for (const [rangeKey, query] of ranges) counts.set(rangeKey,
-        await loadUsageMessageCountsBySessionInTx(tx, accountId, query));
     // Output variants of one population share the same body array/admission.
     for (const prepared of preparedPopulations.values()) {
         prepared.rows = rows.filter(row => prepared.replayContext!.selectedEventIds.has(row.id));
@@ -194,7 +256,7 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
         const messageCountsBySession = hasUsageMessageCountDemand(query)
             ? counts.get(JSON.stringify(query.dateRange ?? {})) : undefined;
         snapshots.set(getUsageAnalyticsQueryRequestKey(query), {
-            ...(prepared ?? { evidenceRows, rawEvidenceRows, normalizedEvidenceById: windowEvidenceById, legacyReports }),
+            ...(prepared ?? { evidenceRows, legacyReports }),
             rows: prepared?.rows ?? rows,
             preparedQueryKey: prepared ? getUsageAnalyticsQueryRequestKey(query) : undefined,
             priceCatalog, messageCountsBySession });

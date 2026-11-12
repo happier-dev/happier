@@ -1,7 +1,7 @@
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsContribution, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { matchesUsageFilters } from './usageQueryFilters';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
-import { LegacyUsageReportDataSchema, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
+import { LegacyUsageReportDataSchema, legacyUsageReportAgentId, readLegacyUsageReportKey } from '../legacyUsageReportSchema';
 import { normalizeLegacyUsageCost, normalizeLegacyUsageTokens } from '../usageMetrics';
 import { prepareScopedUsageReplayContext, resolveScopedUsageContributionsSteps, usageAccountingSubjectKey,
     type ScopedUsageContribution, type ScopedUsageEventRow } from './resolveScopedUsageContributions';
@@ -36,7 +36,7 @@ export function resolveUsageLegacyReportRows(reports: UsageAnalyticsSnapshot['le
         if (!parsed.success) return [];
         return [{ id: `legacy-report:${report.id}`, sessionId: report.sessionId,
             observedAt: report.updatedAt, createdAt: report.createdAt,
-            agentId: 'legacy', backendMode: null, modelId: null, projectKey: null, workspaceId: null,
+            agentId: legacyUsageReportAgentId, backendMode: null, modelId: null, projectKey: null, workspaceId: null,
             machineId: null, source: 'legacy_usage_report', scope: 'turn_delta', isCumulative: false,
             turnId: null, contextUsedTokens: null, contextWindowTokens: null,
             tokens: normalizeLegacyUsageTokens(parsed.data.tokens), cost: normalizeLegacyUsageCost(parsed.data.cost),

@@ -43,11 +43,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                         return async (...args: unknown[]) => {
                             const rows: unknown = await Reflect.apply(target.$queryRaw, target, args);
                             if (Array.isArray(rows) && rows[0] && Object.hasOwn(rows[0], 'observedAt')) {
-                                if (Object.hasOwn(rows[0], 'totalTokens')) {
-                                    cost.bodyRows += rows.length;
-                                    cost.bodyMetadataRows += rows.filter(row => typeof row === 'object' && row !== null
-                                        && Reflect.get(row, 'metadata') != null).length;
-                                } else cost.evidenceRows += rows.length;
+                                for (const row of rows) {
+                                    if (typeof row !== 'object' || row === null) continue;
+                                    if (Reflect.get(row, 'captureKind') === 'body') {
+                                        cost.bodyRows++;
+                                        if (Reflect.get(row, 'metadata') != null) cost.bodyMetadataRows++;
+                                    } else if (Reflect.get(row, 'captureKind') === 'evidence') cost.evidenceRows++;
+                                }
                             }
                             return rows;
                         };
@@ -78,8 +80,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
             expect(windowedResult.value.totals.tokens.total,
                 'native metadata must retain the historical cumulative baseline after body hydration').toBe(eventCount + 20);
             expect(windowedResult.value.coverage?.sources.some(source => source.source === 'historical')).toBe(true);
-            expect(windowed.cost, 'candidate bodies reuse captured metadata and exclude unrelated historical bodies')
-                .toEqual({ evidenceRows: eventCount + 3, bodyRows: eventCount + 2, bodyMetadataRows: 0 });
+            expect(windowed.cost, 'one tagged row carries each body or thin evidence without transferring metadata twice')
+                .toEqual({ evidenceRows: 1, bodyRows: eventCount + 2, bodyMetadataRows: eventCount + 2 });
 
             const narrow = await capture(160);
             expect(narrow.cost, 'a changed window keeps complete coverage evidence without hydrating unrelated bodies')

@@ -381,8 +381,9 @@ describe('compact Usage summary', () => {
 
     it('admits ranked pricing operands once when a breakdown and leader consume the same dimension', () => {
         const measure = (count: number, withLeaders: boolean) => {
-            const rich = response(Array.from({ length: count }, (_, index) => contribution(index,
-                { modelId: index % 2 ? 'model' : 'other' })));
+            // Wire consumers have no process-local admitted pricing partitions.
+            const rich = UsageAnalyticsQueryResponseSchema.parse(response(Array.from({ length: count }, (_, index) => contribution(index,
+                { modelId: index % 2 ? 'model' : 'other' }))));
             const models = rich.breakdowns!.model!;
             if (withLeaders) rich.leaders = { models };
             let costReads = 0;
@@ -399,11 +400,12 @@ describe('compact Usage summary', () => {
             }
             return costReads;
         };
-        // Read-only QA census: 66,114 events (r108-measurements.json, 2026-11-04).
-        for (const count of [128, 66_114]) {
-            expect(measure(count, true), 'another output of an admitted dimension must not revisit contribution money')
-                .toBe(measure(count, false));
-        }
+        const small = measure(128, true);
+        const large = measure(256, true);
+        expect(small).toBeGreaterThan(0);
+        expect(small, 'another output of an admitted dimension must not revisit contribution money').toBe(measure(128, false));
+        expect(large, 'another output of an admitted dimension must not revisit contribution money').toBe(measure(256, false));
+        expect(large, 'money admission scales with contributions rather than output combinations').toBe(small * 2);
     });
 
     it('preserves separate ranked frontiers and metadata while sharing their monetary operands', () => {

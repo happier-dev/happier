@@ -6,7 +6,7 @@ import { readHomeConfigEnv, readHomeConfigEnvInTx } from '@/app/home/settings/ho
 import { createOutboundFetch } from '@/app/net/outboundIdentityFetch';
 import { OutboundIdentityEndpointError } from '@/app/net/outboundIdentityNetworkPolicy';
 import { USAGE_PRICE_SERVER_CONFIG } from './usagePriceServerConfig';
-import { inTx, type Tx } from '@/storage/inTx';
+import type { Tx } from '@/storage/inTx';
 
 export const USAGE_MODEL_PRICE_CACHE_KEY = 'usage:model-price-catalog:v1';
 
@@ -36,7 +36,7 @@ async function isFetchEnabled(tx?: Tx): Promise<boolean> {
 
 /** Query and price reads never fetch. Disabling selects bundled prices without discarding the cache. */
 export async function readUsageModelPriceCatalog(): Promise<UsageModelPriceCatalog> {
-    return resolveCapturedUsageModelPriceCatalog(await inTx(captureUsageModelPriceCatalogInTx, { readOnly: true }));
+    return resolveCapturedUsageModelPriceCatalog(await captureUsageModelPriceCatalog());
 }
 
 export interface CapturedUsageModelPriceCatalog {
@@ -44,7 +44,13 @@ export interface CapturedUsageModelPriceCatalog {
     stored: string | null;
 }
 
-/** Capture cache bytes with the accounting rows; decode after releasing the connection. */
+/** Current tariff inputs are independent reads; Home configuration owns its coherent singleton snapshot. */
+export async function captureUsageModelPriceCatalog(): Promise<CapturedUsageModelPriceCatalog> {
+    const fetchEnabled = await isFetchEnabled();
+    return { fetchEnabled, stored: fetchEnabled ? await readFromSimpleCache(USAGE_MODEL_PRICE_CACHE_KEY) : null };
+}
+
+/** Composing readers capture tariff bytes in their existing snapshot and decode afterwards. */
 export async function captureUsageModelPriceCatalogInTx(tx: Tx): Promise<CapturedUsageModelPriceCatalog> {
     const fetchEnabled = await isFetchEnabled(tx);
     return { fetchEnabled, stored: fetchEnabled ? await readFromSimpleCache(USAGE_MODEL_PRICE_CACHE_KEY, tx) : null };

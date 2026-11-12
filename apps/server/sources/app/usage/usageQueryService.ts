@@ -1,6 +1,6 @@
 import { getUsageAnalyticsRankedDimensions, type UsageAnalyticsPricingPartitions } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsBreakdownDimension, type UsageAnalyticsBreakdowns, type UsageAnalyticsQueryRequest, type UsageAnalyticsQueryResponse, type UsageAnalyticsSeriesBucket, type UsageAnalyticsTotals, type UsageObservationContext } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { inReadSnapshot, type Tx } from "@/storage/inTx";
+import type { Tx } from "@/storage/inTx";
 import {
     buildUsageActivity,
     buildUsageEngineTimeline,
@@ -23,7 +23,7 @@ import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageMo
 import { projectUsageAnalyticsPopulation, type UsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 import type { UsageQueryTiming } from './query/usageQueryTiming';
 import type { ScopedUsageEvidenceRow } from './query/scopedUsageEventRow';
-import { captureUsageAnalyticsBatchInTx } from './query/readUsageAnalyticsBatch';
+import { captureUsageAnalyticsBatch, captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 import { selectUsageScopeKeys, usageScopeFilterDimensions } from '@happier-dev/protocol/usage/usageFilterOptions';
 
 const scopeDimensions = new Set<UsageAnalyticsBreakdownDimension>(Object.values(usageScopeFilterDimensions));
@@ -82,13 +82,20 @@ export async function queryUsageAnalytics(
     accountId: string,
     request: UsageAnalyticsQueryRequest,
 ): Promise<UsageAnalyticsQueryResponse> {
-    const snapshot = await inReadSnapshot(tx => captureUsageAnalyticsInTx(tx, accountId, request));
-    return projectUsageAnalytics(snapshot, request);
+    const snapshot = await captureUsageAnalytics(accountId, request);
+    return projectUsageAnalyticsAsync(snapshot, request);
+}
+
+/** All standalone reads share the batch owner's accounting and supporting snapshots. */
+export async function captureUsageAnalytics(accountId: string, request: UsageAnalyticsQueryRequest,
+    isReaderClosed?: () => boolean): Promise<UsageAnalyticsSnapshot> {
+    const captured = await captureUsageAnalyticsBatch(accountId, [request], isReaderClosed);
+    return captured.snapshots.get(getUsageAnalyticsQueryRequestKey(request))!;
 }
 
 export interface UsageAnalyticsSnapshot {
     rows: UsageQueryEvent[];
-    /** PostgreSQL capture leaves historical metadata opaque until commit. */
+    /** PostgreSQL capture leaves historical metadata opaque until the read completes. */
     rawEvidenceRows?: readonly import('./query/scopedUsageEventRow').ScopedUsageEvidenceDbRow[];
     evidenceRows?: readonly ScopedUsageEvidenceRow[];
     normalizedEvidenceById?: ReadonlyMap<string, ScopedUsageEvidenceRow>;
@@ -115,7 +122,7 @@ export function selectUsageMessageCounts(
         count + (messageCountsBySession.get(sessionId) ?? 0), 0) };
 }
 
-/** Ownership admission and every DB reader share the caller's transaction. No result computation or reply runs here. */
+/** Composing readers retain the caller's snapshot; standalone entry points use captureUsageAnalytics. */
 export async function captureUsageAnalyticsInTx(
     tx: Tx,
     accountId: string,
@@ -126,7 +133,19 @@ export async function captureUsageAnalyticsInTx(
     return captured.snapshots.get(getUsageAnalyticsQueryRequestKey(request))!;
 }
 
-/** Reconcile, price and aggregate only committed captured rows, without retaining a pooled connection. */
+/** Live scalar requests use the batch owner's cooperative fold, pricing and projection. */
+export async function projectUsageAnalyticsAsync(snapshot: UsageAnalyticsSnapshot,
+    request: UsageAnalyticsQueryRequest): Promise<UsageAnalyticsQueryResponse> {
+    const batch = await projectUsageAnalyticsBatch({
+        snapshots: new Map([[getUsageAnalyticsQueryRequestKey(request), snapshot]]),
+        priceCatalog: snapshot.priceCatalog,
+    }, [request], true);
+    const result = batch.results[0];
+    if (!result || !('value' in result)) throw new Error('Usage analytics projection failed');
+    return { ...result.value, priceCatalog: batch.priceCatalog };
+}
+
+/** Pure synchronous consumers drain the same projection steps without retaining a pooled connection. */
 export function projectUsageAnalytics(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
     priceCatalog: UsageModelPriceCatalog = resolveCapturedUsageModelPriceCatalog(snapshot.priceCatalog),
     population: UsageAnalyticsPopulation = projectUsageAnalyticsPopulation(snapshot, request)): UsageAnalyticsQueryResponse {

@@ -12,7 +12,7 @@ import { db } from "@/storage/db";
 import { requireDbProviderFromEnv } from "@/storage/prisma";
 import { jsonPathEquals } from "@/storage/jsonPathFilter";
 import { AsyncLock } from "@/utils/runtime/lock";
-import { LegacyUsageReportDataSchema, legacyUsageReportCanonicalOrder, readLegacyUsageReportKey } from "./legacyUsageReportSchema";
+import { LegacyUsageReportDataSchema, legacyUsageReportAgentId, legacyUsageReportCanonicalOrder, readLegacyUsageReportKey } from "./legacyUsageReportSchema";
 import {
     normalizeLegacyUsageCost,
     normalizeLegacyUsageTokens,
@@ -658,7 +658,7 @@ function buildLegacyDeltaRequest(
     return {
         sessionId: params.sessionId ?? '',
         observedAt: params.observedAtMs,
-        agentId: 'legacy',
+        agentId: legacyUsageReportAgentId,
         backendMode: null,
         modelId: null,
         projectKey: null,

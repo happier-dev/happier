@@ -1,6 +1,8 @@
 import { z } from "zod/mini";
 import type { Prisma } from "@prisma/client";
 
+export const legacyUsageReportAgentId = 'legacy';
+
 // Nullable Session uniqueness was not enforced on retained Account reports.
 // Both reads and the existing write consolidation select the same survivor.
 export const legacyUsageReportCanonicalOrder = [
