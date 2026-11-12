@@ -615,6 +615,7 @@ export async function createPluginTestkit(
                 return [[registration.localId, createPluginActionInvocation({
                     pluginId: manifest.id,
                     localId: registration.localId,
+                    declaration: definition,
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
                     ...(inputParser === undefined ? {} : { inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),

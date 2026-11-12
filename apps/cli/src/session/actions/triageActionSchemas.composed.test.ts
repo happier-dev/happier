@@ -33,7 +33,10 @@ it('serves published Triage Session Action schemas through the daemon RPC and UI
             expect(response.inputSchema).toBeDefined();
             expect(response.outputSchema).toBeDefined();
             expect(structuredClone(response)).toEqual(response);
+            const declaration = fixture.registry.contributes.actionsById?.get(`${pluginId}/${localId}`)?.definition;
+            if (!declaration) throw new Error('Action declaration missing');
             const invocation = createPluginActionInvocation({ pluginId, localId, inputSchema: response.inputSchema,
+                declaration,
                 occurrenceSignal: new AbortController().signal, isCurrent: () => true });
             expect(invocation.prepare({ v: 1, sessionId: 42 }).kind).toBe('settled');
             const input = { v: 1, sessionId: 'c111111111111111111111111',

@@ -2,7 +2,7 @@ import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionExecutorContext, ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
-import { buildApprovalExecutionOriginV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalExecutionOriginV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, type HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { randomUUID } from 'node:crypto';
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
@@ -38,7 +38,7 @@ import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult 
 import type { TargetActionOperationProgressPort } from '@/plugins/runtime/invocation/targetActionRegistry';
 import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings, isSharedRequesterActionV1, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { isSharedRequesterActionV1, resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -333,6 +333,8 @@ export async function executeContributedAction(params: Readonly<{
   daemonHoldsApprovalWaiter?: true;
   /** Private admitted host context; never supplied through Action input. */
   approvalContext?: ActionExecutorContext;
+  /** Exact native review; consumed only after target admission, without granting role-policy admission. */
+  reviewedChild?: HostReviewedChildPortV1;
   /** Equality-only precondition from ActionsService.executeWithExecutionOrigin only. */
   expectedExecutionOrigin?: PluginMachineExecutionOriginV1;
   /** Placement-only equality precondition; never a target selector. */
@@ -769,7 +771,7 @@ export async function executeContributedAction(params: Readonly<{
     const sharedRequester = params.approvalContext !== undefined && isSharedRequesterActionV1(params.approvalContext);
     const requestCurrentIntent = params.requestCurrentIntent
       ? async (request: TargetActionCurrentIntentRequest): Promise<TargetActionCurrentIntentResult> => {
-          const liveOnly = accountTarget || params.context.approvalInputCustody === 'live_only';
+          const liveOnly = params.context.approvalInputCustody === 'live_only';
           const requestedSurface = request.invocationSurface ?? request.surface;
           const deferredSurface = requestedSurface === 'api' || requestedSurface === 'cli'
             || requestedSurface === 'agent' || requestedSurface === 'mcp' ? requestedSurface : null;
@@ -887,6 +889,8 @@ export async function executeContributedAction(params: Readonly<{
       : params.requestCurrentIntent;
     const exactPurposeBindingSubjectId = params.admittedManagedProviderOperation?.exactPurposeBindingSubjectId
       ?? params.admittedConnectedAccountPurposeBinding?.exactPurposeBindingSubjectId;
+    const executeBrokeredAction = params.admittedManagedProviderOperation?.executeBrokeredAction
+      ?? params.admittedConnectedAccountPurposeBinding?.executeBrokeredAction;
     const nativeCredentials = params.admittedManagedProviderOperation?.managedNativeCredentials;
     const requestId = params.context.operationRequestId ?? params.approvalContext?.actionRequestId;
     const requesterAccount = readRequesterAccountActionContext(
@@ -894,8 +898,20 @@ export async function executeContributedAction(params: Readonly<{
         ?? params.context.operationRpcContext?.externalActionExecutionAuthorization
         ?? params.context.operationRpcContext?.callerInputAuthorization,
     )?.savedSecretOperationContext;
+    // Native consent answers review only. The target's original context still
+    // admits its Session, availability and host-access policy below.
+    const reviewContext = params.reviewedChild
+      ? { ...params.approvalContext, hostReviewedChild: params.reviewedChild }
+      : params.approvalContext;
+    const admittedReviewOperation = params.reviewedChild && contributedActionSettingsId !== null
+      ? readHostReviewedChildOperationV1(reviewContext, contributedActionSettingsId, reviewedInput)
+      : reviewedOperation;
+    const reviewAdmitted = params.reviewedChild && contributedActionSettingsId !== null
+      ? isHostAdmittedReviewedChildPolicyV1(admittedReviewOperation, contributedActionSettingsId, reviewedInput)
+      : hasAdmittedReview;
     const targetInvocation = {
       ...(requestId === undefined ? {} : { requestId }),
+      ...(executeBrokeredAction ? { executeBrokeredAction } : {}),
       pluginId,
       localId: action.definition.id,
       input: validatedInput === null ? params.input : validatedInput.value,
@@ -954,6 +970,9 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.admittedManagedProviderOperation?.onProcessOutput === undefined
         ? {}
         : { execOutputObserver: params.admittedManagedProviderOperation.onProcessOutput }),
+      ...(params.admittedManagedProviderOperation?.bindProcessInput === undefined
+        ? {}
+        : { execChannelInput: params.admittedManagedProviderOperation.bindProcessInput }),
       ...(params.admittedManagedProviderOperation?.execTimeoutMs === undefined
         ? {}
         : { execInvocationTimeoutMs: params.admittedManagedProviderOperation.execTimeoutMs }),
@@ -969,9 +988,6 @@ export async function executeContributedAction(params: Readonly<{
       ...(nativeCredentials
         ? { managedNativeCredentials: nativeCredentials }
         : {}),
-      ...(['acquire', 'rebuild', 'reconcile'].includes(params.admittedManagedProviderOperation?.role ?? '')
-        ? { retainHandlerResultAfterCancellation: true as const }
-        : {}),
       ...(replayPlacement ? { replayPlacement } : {}),
       ...(params.expectedApprovalReplayPlacement === undefined
         ? {}
@@ -983,32 +999,21 @@ export async function executeContributedAction(params: Readonly<{
             environmentAdmission?: import('@happier-dev/protocol/actions/actionApprovalPolicy').ActionEnvironmentApprovalScopeAdmissionV1) => {
             // The target owner parsed this invocation before asking policy.
             // Consent binds its semantic operand, not schema-produced defaults.
-            const semanticInput = params.input ?? null;
-            const reviewedRoleOperation = readHostReviewedChildOperationV1(params.approvalContext, contributedActionSettingsId, semanticInput);
             const settings = actionSettingsProvider.getActionsSettings();
-            const requiredByPolicy = isApprovalRequiredByActionsSettings(
-              contributedActionSettingsId,
-              settings,
-              { surface: reviewedRoleOperation ? params.approvalContext?.surface : actionSurface },
-              undefined,
-              manifestDefault || sharedRequester && action.definition.dangerLevel === 'writesRemote'
-                && pluginActionDeclarationRequiresConfirmationForInput(action.definition, invocationSurface, parsedInput, params.approvalContext?.authority),
-              reviewedRoleOperation ? semanticInput : parsedInput,
-              undefined,
-              undefined,
-              reviewedRoleOperation,
-              environmentAdmission?.scope ?? undefined,
-            );
-            return resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: contributedActionSettingsId,
-              spec: getActionSpec('action.invoke'), settings, requiredByPolicy,
+            const routing = resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: contributedActionSettingsId,
+              spec: getActionSpec('action.invoke'), settings,
               approvalScope: environmentAdmission?.scope ?? undefined,
-              defaultSafety: action.definition.safety, input: reviewedRoleOperation ? semanticInput : parsedInput,
-              context: { ...params.approvalContext,
-                surface: reviewedRoleOperation ? params.approvalContext?.surface : actionSurface,
-                // The exact host-issued role already consumed its original review.
-                ...(reviewedRoleOperation ? { bypassApprovals: true } : {}),
+              defaultSafety: action.definition.safety, input: admittedReviewOperation ? reviewedInput : parsedInput,
+              defaultUiConfirmation: manifestDefault,
+              defaultConfirmation: manifestDefault || sharedRequester && action.definition.dangerLevel === 'writesRemote'
+                && pluginActionDeclarationRequiresConfirmationForInput(action.definition, invocationSurface, parsedInput, params.approvalContext?.authority),
+              reviewAdmitted,
+              approvedOperation: admittedReviewOperation,
+              context: { ...reviewContext,
+                surface: admittedReviewOperation ? reviewContext?.surface : actionSurface,
               },
-            }).required;
+            });
+            return routing.required || routing.uiConfirmationRequired === true;
           },
         }),
       ...(requestCurrentIntent ? { requestCurrentIntent } : {}),
@@ -1070,6 +1075,9 @@ export async function executeContributedAction(params: Readonly<{
       const rawTitle = action.definition.title;
       const observed = await observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
         operation: trackedOperation, input: targetInvocation.input,
+        ...((invocationSurface === 'agent' || invocationSurface === 'mcp')
+          && !params.approvalContext?.approvedActionReplay && !params.expectedApprovalReplayPlacement
+          ? { response: 'admission' as const } : {}),
         failureResult: contributedActionFailureResult,
         ...(params.context.operationRpcContext ?? params.approvalContext
           ? { rpcContext: params.context.operationRpcContext ?? params.approvalContext } : {}),

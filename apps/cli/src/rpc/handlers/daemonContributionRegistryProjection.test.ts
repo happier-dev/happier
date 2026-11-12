@@ -1903,6 +1903,7 @@ describe('daemon contribution registry projection rpc handler', () => {
             expect(schemas.inputSchema).toEqual(inputSchema);
             const invocation = createPluginActionInvocation({
                 pluginId, localId: 'check', inputSchema: schemas.inputSchema,
+                declaration: action.definition,
                 occurrenceSignal: new AbortController().signal, isCurrent: () => true,
             });
             const outcome = await invocation.invoke(undefined, { handler: ({ input }) => ({ received: input }) });

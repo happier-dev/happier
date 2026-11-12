@@ -507,6 +507,7 @@ describe('plugin webhook claimed delivery worker', () => {
     const action = createPluginActionInvocation({
       pluginId: 'acme.github',
       localId: 'handle-webhook',
+      declaration: { readOnly: true },
       occurrenceSignal: generation.signal,
       isCurrent: () => true,
     });
@@ -577,6 +578,7 @@ describe('plugin webhook claimed delivery worker', () => {
     const action = createPluginActionInvocation({
       pluginId: 'acme.github',
       localId: 'handle-webhook',
+      declaration: { readOnly: true },
       occurrenceSignal: generation.signal,
       isCurrent: () => true,
     });

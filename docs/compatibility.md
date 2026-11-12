@@ -1,5 +1,36 @@
 # Compatibility and version skew
 
+## Deployment joining settlement (unreleased 0.3)
+
+The closed V1 deployment transition accepts optional `servingDeploymentId` for a
+successful joining settlement with `expectedTargetLinkRevision`. The controller
+derives it from fresh, complete native observations of the current retained
+release. The existing transition signature binds the field; the server compares
+it with the locked link's serving pointer and commits membership while retaining
+that pointer. Omission preserves the ordinary new-receipt pointer update.
+
+Protocol, CLI producer and server parser load together under the unpublished 0.3
+direct cut. Earlier strict development readers reject the operand; it is not
+safely ignorable. Unknown fields remain rejected, and no new epoch, persisted
+format, signature system or predecessor adapter is introduced. The inspected
+`../0.2` frontier `7b0f74960b1393886b994dbda71dcb3439c1ab57` has no
+`packages/protocol/src/deployments/deploymentActionsV1.ts` contract or scoped
+working changes to that path.
+
+## Action mutation outcomes after cancellation (unreleased 0.3)
+
+The Protocol invocation owner derives cancellation settlement from the Action's
+existing input-sensitive `readOnly` declaration. Started mutations retain their
+handler's exact success, native failure or typed unknown outcome while their IO
+signal remains cancelled. Read-only Actions, observations and cancellation
+before dispatch retain their existing behavior. CLI, UI and SDK testkit hosts
+pass the declaration to this one owner; the managed-role retention opt-in is
+removed. These development hosts refresh together under the unpublished 0.3
+direct cut. Action envelopes, persisted formats and wire epochs are unchanged.
+The inspected `../0.2` frontier
+`7b0f74960b1393886b994dbda71dcb3439c1ab57` has no scoped Protocol invocation
+module or working change for that path; no predecessor adapter is introduced.
+
 ## Resource finite-page delivery (unreleased 0.3)
 
 Resource subscriptions add a generic `pages` event carrying the same finite
@@ -8107,6 +8138,20 @@ has no tracked source-declaration protocol at this path and no scoped working
 changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 direct Machine RPC removes `maxCalls` from the closed grant scope.
+Home signs `callerAuthority` on every V2 Machine RPC grant; the requester reuses
+that credential-bound admission until its existing signed expiry or disconnect.
+Ordinary methods no longer consume the one-use ledger, while explicitly listed
+high-risk methods and native Workspace Sync keep their existing single-use
+semantics. The V1/V2 grant and nested scope/proof envelopes remain closed: unknown
+fields are rejected, never retained as authority. Matching Protocol, UI, Home and
+CLI reload together; older strict development readers require `maxCalls` and
+cannot consume the new shape. This approved direct development cut adds no wire
+epoch, capability or migration. The scoped-clean `../0.2` frontier
+`7b0f74960b1393886b994dbda71dcb3439c1ab57` has neither this peer-mediation scope
+module nor its direct RPC receiver, so no predecessor adapter is added.
+
 
 Unreleased 0.3 `deployments.publish.prepare` adds optional `recommendation` to
 its closed prepared result. The nested target, evidence, uncertainty, correction

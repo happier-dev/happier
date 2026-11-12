@@ -336,7 +336,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 function awaitPluginActionHandlerSettlementOrAbort(
   signal: AbortSignal,
   invoke: () => unknown | Promise<unknown>,
-  retainHandlerResultAfterCancellation?: () => boolean,
+  retainHandlerResultAfterCancellation = false,
 ): Promise<PluginActionHandlerSettlement> {
   return new Promise<PluginActionHandlerSettlement>((resolve) => {
     let settled = false;
@@ -353,9 +353,9 @@ function awaitPluginActionHandlerSettlementOrAbort(
       resolve(settlement);
     }
     function onAbort(): void {
-      // Issued managed acquisition must retain its native outcome for cleanup.
-      // The signal still cancels IO; it cannot retract an already-issued purchase.
-      if (retainHandlerResultAfterCancellation?.() === true) return;
+      // Cancellation still reaches IO, but cannot retract a started mutation.
+      // Its handler owns the exact native success, failure or unknown outcome.
+      if (retainHandlerResultAfterCancellation) return;
       if (enteringHandler) {
         abortedDuringHandlerEntry = true;
         return;
@@ -872,8 +872,6 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
 
 type PluginActionInvocationOptions = Readonly<{
   signal?: AbortSignal;
-  /** Host-private check that a managed acquire was actually issued; never new effect authority. */
-  retainHandlerResultAfterCancellation?: () => boolean;
   /** Host-only admission that runs after input validation, before handler effects. */
   preDispatch?(input: PluginActionInvocationHandlerInput): (
     | PluginActionInvocationPreDispatchResult
@@ -903,6 +901,7 @@ type PluginActionInvocationPreparation = Readonly<
 export function createPluginActionInvocation(params: Readonly<{
   pluginId: string;
   localId: string;
+  declaration: Pick<PluginActionContributionV2, 'readOnly'>;
   inputSchema?: object;
   inputParser?: PluginActionInputParser;
   resultSchema?: object;
@@ -912,6 +911,7 @@ export function createPluginActionInvocation(params: Readonly<{
 }>): Readonly<{
   qualifiedId: string;
   prepare(input: unknown, options?: PluginActionInvocationInputOptions): PluginActionInvocationPreparation;
+  projectResult(value: unknown): PluginActionInvocationResult;
   invoke(input: unknown, options: PluginActionInvocationOptions): Promise<PluginActionInvocationResult>;
 }> {
   const qualifiedId = formatQualifiedPluginActionId({
@@ -946,6 +946,24 @@ export function createPluginActionInvocation(params: Readonly<{
       resultValidator: resultParser ? null : compileSchema(params.resultSchema),
       resultParser,
     });
+  };
+
+  const projectResult = (value: unknown, schemas = prepareResultSchemas()): PluginActionInvocationResult => {
+    const { resultValidator, resultParser } = schemas;
+    const parsedResult = AgentRuntimeJsonValueV1Schema.safeParse(value === undefined ? null : value);
+    if (!parsedResult.success) return invalidResult('Plugin action result must be JSON-safe');
+    let normalizedResult = parsedResult.data;
+    if (resultParser) {
+      let semanticResult: PluginActionInputParserResult;
+      try { semanticResult = resultParser(parsedResult.data); }
+      catch { return resultSchemaProjectionMismatch; }
+      if (!semanticResult.success) return invalidResult(semanticResult.issues[0]?.message ?? 'Plugin action result does not match its executable result schema');
+      const parsedNormalizedResult = AgentRuntimeJsonValueV1Schema.safeParse(semanticResult.data);
+      if (!parsedNormalizedResult.success) return resultSchemaProjectionMismatch;
+      normalizedResult = parsedNormalizedResult.data;
+    }
+    if (!validates(resultValidator, normalizedResult)) return invalidResult('Plugin action result does not match its manifest resultSchema');
+    return Object.freeze({ status: 'executed', value: normalizedResult });
   };
 
   const prepare = (input: unknown, options: PluginActionInvocationInputOptions = {}): PluginActionInvocationPreparation => {
@@ -1062,7 +1080,7 @@ export function createPluginActionInvocation(params: Readonly<{
             actionHandlerStarted = true;
             return options.handler(handlerInput);
           },
-          options.retainHandlerResultAfterCancellation,
+          !observation && !pluginActionDeclarationIsReadOnlyForInput(params.declaration, normalizedInput),
         );
         if (settlement.kind === 'aborted') {
           const unavailableAfterCancellation = actionHandlerStarted
@@ -1100,33 +1118,10 @@ export function createPluginActionInvocation(params: Readonly<{
           });
         }
         if (resultSchemas === null) return Object.freeze({ status: 'executed', value: null });
-        const { resultValidator, resultParser } = resultSchemas;
-        const value = settlement.value;
         // A fulfilled handler settlement already won the cancellation race.
         // Retirement afterwards cannot rewrite that known effect as unavailable,
         // or callers may blindly retry a mutation that already ran.
-        const rawResult = value === undefined ? null : value;
-        const parsedResult = AgentRuntimeJsonValueV1Schema.safeParse(rawResult);
-        if (!parsedResult.success) return invalidResult('Plugin action result must be JSON-safe');
-        let normalizedResult = parsedResult.data;
-        if (resultParser) {
-          let semanticResult: PluginActionInputParserResult;
-          try {
-            semanticResult = resultParser(parsedResult.data);
-          } catch {
-            return resultSchemaProjectionMismatch;
-          }
-          if (!semanticResult.success) {
-            return invalidResult(semanticResult.issues[0]?.message ?? 'Plugin action result does not match its executable result schema');
-          }
-          const parsedNormalizedResult = AgentRuntimeJsonValueV1Schema.safeParse(semanticResult.data);
-          if (!parsedNormalizedResult.success) return resultSchemaProjectionMismatch;
-          normalizedResult = parsedNormalizedResult.data;
-        }
-        if (!validates(resultValidator, normalizedResult)) {
-          return invalidResult('Plugin action result does not match its manifest resultSchema');
-        }
-        return Object.freeze({ status: 'executed', value: normalizedResult });
+        return projectResult(settlement.value, resultSchemas);
       } finally {
         linked.dispose();
       }
@@ -1134,6 +1129,7 @@ export function createPluginActionInvocation(params: Readonly<{
   return Object.freeze({
     qualifiedId,
     prepare,
+    projectResult,
     async invoke(input, options) {
       const preparedInput = prepare(input, options);
       return preparedInput.kind === 'settled' ? preparedInput.result : await preparedInput.invoke(options);

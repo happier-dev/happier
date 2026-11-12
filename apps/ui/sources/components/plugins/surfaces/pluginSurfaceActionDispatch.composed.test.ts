@@ -148,7 +148,7 @@ const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixt
 const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
 const { createPluginHostedWebHostApiBridgeHandler } = await import('@/components/plugins/hostApi/hostedWebAdapter');
 const { machinePluginStructuredMessageActionExecute, resetMachineProjectionReadsForTests } = await import('@/sync/ops/machineContributionRegistryProjection');
-const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry, readObservedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { getMachineContributionRegistryProjectionRevision } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 const { resolveReasonCopy } = await import('@/sync/domains/surfaces/copy');
 const { createCanonicalPluginReactNativeHostApiAdapter } = await import('@/components/plugins/reactNative/hostApi');
@@ -723,6 +723,8 @@ function createClientActionActivation(input: Readonly<{
         activate,
         projection,
         action: projectedAction as PluginProjectedActionV2,
+        daemonAction: PluginProjectedActionV2Schema.parse({ ...action, occurrenceId: projectedAction.occurrenceId,
+            authorization: projectedAction.authorization }),
         composition: getInstalledPluginUiClientExecutableComposition(),
     });
 }
@@ -750,6 +752,16 @@ function resolveDaemonTargetAction(
         available: true,
     };
 }
+
+// Collect the cross-package source graph before timing the mounted gesture.
+await Promise.all([
+    import('@/sync/ops/actions/defaultActionExecutor'),
+    import('@/dev/testkit/harness/externalActionAccountHttpBoundary'),
+    import('../../../../../cli/src/daemon/externalActions/externalActionRuntime.testkit'),
+    import('../../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker'),
+    import('../../../../../cli/src/daemon/externalActions/executeExternalAction'),
+    import('../../../../../cli/src/session/actions/approvals/targetActionCurrentIntent'),
+]);
 
 describe('mounted picker approval through the Account relay to the daemon', () => {
     it.each(['source', 'account'] as const)('retires an unbound raw confirmation with its mounted %s lifetime', async change => {
@@ -791,6 +803,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
     it.each([
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
         { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
+        { name: 'confirms a contributed Action.Control', change: 'contributed-control' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
         { name: 'does not execute a declined picker mutation', change: 'decline' },
         { name: 'executes the approved operands after the trusted Account source changes', change: 'source' },
@@ -818,6 +831,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         let secondArtifacts = 0;
         let receivedCaller: unknown;
         let receivedAuthority: unknown;
+        let boundaryFailure: unknown;
         const accountSource = change === 'bundled'
             ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
             : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
@@ -901,12 +915,29 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const machine = boundary.machine;
         const callerOrigin = await runtime.resolveCurrentPluginExecutionOrigin!(pluginId);
         if (!callerOrigin) throw new Error('Expected the fixture runtime caller origin');
-        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-        const visible = createMachineFixture({ id: machine.id, activeAt: Date.now(), access: machine.access });
-        getStorage().setState({ machines: { [machine.id]: visible }, machineListByServerId: { [home.id]: [visible] },
-            machineListStatusByServerId: { [home.id]: 'idle' } });
-        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
-            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const visible = createHydratedPlainMachineFixture({ id: machine.id, accountId: lifetime.scope.accountId,
+            machine: { activeAt: Date.now(), access: machine.access } });
+        getStorage().getState().applyMachines([visible], true, { sourceServerId: home.id });
+        network.setHttpResponder(async (url, init) => {
+            try {
+                return await boundary.handle(new URL(String(url)), init)
+                    ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init);
+            } catch (error) {
+                boundaryFailure = error && typeof error === 'object' ? {
+                    name: 'name' in error ? error.name : undefined,
+                    code: 'code' in error ? error.code : undefined,
+                    frames: 'stack' in error && typeof error.stack === 'string'
+                        ? error.stack.split('\n').slice(1, 5) : undefined,
+                    issues: 'issues' in error && Array.isArray(error.issues) ? error.issues.map((issue: unknown) =>
+                        issue && typeof issue === 'object' ? {
+                            path: 'path' in issue ? issue.path : undefined,
+                            code: 'code' in issue ? issue.code : undefined,
+                        } : null) : undefined,
+                } : null;
+                throw error;
+            }
+        });
         const activation = createClientActionActivation({ pluginId, localId, accountPlacement: true, accountLifetime: lifetime,
             dangerLevel: 'writesRemote', surfaces: ['ui', 'plugin'], accountActionDeclaration: declaration,
             omitProjectedAccountDeclaration: change === 'cold-declaration', occurrenceId: selectedColdOccurrence ?? published.selection.custodyId,
@@ -918,6 +949,11 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             }), accountHandler: () => { throw new Error('Browser must relay'); } });
         await activation.composition.unload();
         await activation.composition.reconcile([activation.activation]);
+        if (change === 'contributed-control') daemonRpc.mockImplementation(async (request: { method: string }) =>
+            request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+                ? { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {},
+                    actionsById: { [buildQualifiedPluginContributionKey({ pluginId, localId })]: activation.daemonAction } }) }
+                : answerActionSchemasRead(request));
         let confirmations = 0;
         nestedActionConfirmation.onShow = (confirm, cancel) => { confirmations++; queueMicrotask(change === 'decline' ? cancel : confirm); };
         accountBrowserRelay.enabled = true;
@@ -928,7 +964,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             actionInputSelectionFactsKey: createPluginActionInputSelectionFactsPublication().publish({ targetPluginId: pluginId }),
             pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
         } }));
-        const { PropertyList, useExecutePluginAction } = await import('@happier-dev/plugin-ui');
+        const { Action, PropertyList, useExecutePluginAction } = await import('@happier-dev/plugin-ui');
         const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
         const controller = hook.getCurrent();
         const surface = createPluginSurfaceContextFixture({ mount: { kind: 'destination',
@@ -938,6 +974,11 @@ describe('mounted picker approval through the Account relay to the daemon', () =
             handleRequest: controller.hostApi.handleRequest });
         let settledStatus = 'idle';
         let settledExecution: unknown;
+        const unregisterControlPort = change === 'contributed-control'
+            ? registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+                invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+                reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            })) : () => {};
         function AssignmentPicker() {
             const action = useExecutePluginAction({ pluginId, localId });
             settledStatus = action.execution.status;
@@ -946,8 +987,15 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 editor: { kind: 'choice', value: null, choices: [{ id: 'alice', label: 'Alice' }],
                     onCommit: async selected => { await action.execute({ ...input, assignee: selected }); } } }] });
         }
+        function ContributedControl() {
+            return React.createElement(Action.Control, { action: { pluginId, localId }, title: 'Assign reviewer',
+                controller: { prepare: () => ({ input }), onSettled: execution => {
+                    settledExecution = execution;
+                    settledStatus = execution.ok ? 'success' : 'error';
+                } } });
+        }
         const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface },
-            React.createElement(AssignmentPicker)));
+            React.createElement(change === 'contributed-control' ? ContributedControl : AssignmentPicker)));
         try {
             await act(async () => {
                 if (rawHost) {
@@ -957,19 +1005,30 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                         serverId: home.id, accountLifetime: lifetime, presentUserIntent: 'confirmed',
                     });
                     expect(result).toMatchObject({ supported: true, result: { ok: change === 'raw-host' } });
+                } else if (change === 'contributed-control') {
+                    const controls = controller.actionControls;
+                    if (!controls) throw new Error('Mounted host Action controls missing');
+                    expect(controls.getSnapshot()).toHaveLength(1);
+                    await controls.press(controls.getSnapshot()[0]!.id);
                 } else {
                     const editor = screen.root.findByType(PropertyList).props.items[0].editor;
                     await editor.onCommit('alice');
                 }
             });
-            if (change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source') {
-                expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, requests: network.httpRequests.map(request => ({ method: request.method, path: new URL(request.url).pathname })), execution: settledExecution })).toMatchObject({ status: 'success' });
+            if (change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'contributed-control') {
+                const receiver = readObservedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: home.id,
+                    accountLifetime: lifetime, sections: ['actionsById'] });
+                expect(settledExecution, JSON.stringify({ confirmations, effects, secondArtifacts, receivedCaller, receivedAuthority, boundaryFailure,
+                    receiver: receiver && { kind: receiver.kind, reason: receiver.kind === 'error' ? receiver.reason : undefined },
+                    daemonRequests: network.requests.map(request => ({ method: request.method, machineId: request.targetId })),
+                    requests: network.httpRequests.map(request => ({ method: request.method, path: new URL(request.url).pathname })),
+                    execution: settledExecution })).toMatchObject(change === 'contributed-control' ? { ok: true } : { status: 'success' });
             }
-            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host'
+            expect({ settledStatus, effects, secondArtifacts }).toEqual(change === 'none' || change === 'cold-declaration' || change === 'bundled' || change === 'source' || change === 'raw-host' || change === 'contributed-control'
                 ? { settledStatus: change === 'raw-host' ? 'idle' : 'success', effects: 1, secondArtifacts: 0 }
                 : { settledStatus: rawHost ? 'idle' : 'error', effects: 0, secondArtifacts: 0 });
             expect({ confirmations, execution: settledExecution }).toMatchObject({ confirmations: rawHost ? 0 : 1 });
-            if (rawHost) {
+            if (rawHost || change === 'contributed-control') {
                 expect(receivedCaller).toEqual({ kind: 'host' });
                 expect(receivedAuthority).toBe('present_user');
             } else if (change !== 'decline') {
@@ -979,6 +1038,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         } finally {
             accountBrowserRelay.enabled = false;
             nestedActionConfirmation.onShow = null;
+            unregisterControlPort();
             await screen.unmount(); await hook.unmount(); await activation.composition.unload(); lifetime.retire(); getStorage().setState(previous, true);
         }
     });
@@ -2428,7 +2488,8 @@ describe('Account Action placement through the executable dispatcher', () => {
         network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
             ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
         try {
-            const invocation = createPluginActionInvocation({ pluginId: 'acme.releases', localId: 'publish',
+            const declaration = { readOnly: false };
+            const invocation = createPluginActionInvocation({ pluginId: 'acme.releases', localId: 'publish', declaration,
                 occurrenceSignal: new AbortController().signal, isCurrent: () => true });
             const result = await invocation.invoke({}, { handler: () => executeAccountActionAtRuntimeHost({
                 accountScope: lifetime.scope, action: { pluginId: 'acme.releases', localId: 'publish' },
@@ -2439,7 +2500,7 @@ describe('Account Action placement through the executable dispatcher', () => {
             }) });
             expect(result.status).toBe('failed');
             if (result.status === 'executed') throw new Error('Expected refusal');
-            const outcome = projectClientActionInvocationFailure(result, { readOnly: false }, {});
+            const outcome = projectClientActionInvocationFailure(result, declaration, {});
             expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
                 .toEqual({ kind: 'refused', reason: code });
         } finally { lifetime.retire(); }
@@ -4269,7 +4330,7 @@ describe('client Action declared SessionTarget admission', () => {
                     // reproduces the registry's refusal before any plugin effect can run.
                     execute: async (_machineId, options) => {
                         const { createPluginActionInvocation } = await import('@happier-dev/protocol/plugins/actions/invocation');
-                        const invocation = createPluginActionInvocation({ ...identity, inputSchema,
+                        const invocation = createPluginActionInvocation({ ...identity, declaration: action, inputSchema,
                             occurrenceSignal: new AbortController().signal, isCurrent: () => true });
                         const prepared = invocation.prepare(options.input);
                         if (prepared.kind !== 'settled') throw new Error('Private input must be requested before dispatch');
@@ -6758,7 +6819,7 @@ describe('plugin-surface action branch selection', () => {
             abort.abort();
             resume();
             await finished;
-            expect(await invocation).toMatchObject({ ok: false, reason: 'plugin_ui_action_outcome_unknown' });
+            expect(await invocation).toEqual({ ok: true, result: null });
             expect(navigation).not.toHaveBeenCalled();
             expect(navigationError).toMatchObject({ code: 'plugin_action_aborted' });
         } finally {
@@ -7137,9 +7198,10 @@ describe('plugin-surface action branch selection', () => {
         const cancellation = new AbortController();
         let handlerEntered!: () => void;
         const handlerEnteredPromise = new Promise<void>((resolve) => { handlerEntered = resolve; });
+        let finishHandler!: (result: { committed: true }) => void;
         const handler = vi.fn(() => {
             handlerEntered();
-            return new Promise<never>(() => {});
+            return new Promise<{ committed: true }>(resolve => { finishHandler = resolve; });
         });
         const clientHandler: PluginClientActionHandler = () => handler();
         const accountLifetime = accountPlacement ? clientAccountLifetime() : undefined;
@@ -7159,14 +7221,20 @@ describe('plugin-surface action branch selection', () => {
             await handlerEnteredPromise;
             cancellation.abort(new Error('caller stopped after the client handler started'));
 
-            await expect(pending).resolves.toEqual({
-                ok: false,
-                code: 'timeout',
-                reason: 'plugin_ui_action_outcome_unknown',
-                layer: 'transport',
-                phase: 'settlement',
-                retryable: readOnly,
-            });
+            if (readOnly) {
+                await expect(pending).resolves.toEqual({
+                    ok: false,
+                    code: 'timeout',
+                    reason: 'plugin_ui_action_outcome_unknown',
+                    layer: 'transport',
+                    phase: 'settlement',
+                    retryable: true,
+                });
+                finishHandler({ committed: true });
+            } else {
+                finishHandler({ committed: true });
+                await expect(pending).resolves.toEqual({ ok: true, result: { committed: true } });
+            }
             expect(handler).toHaveBeenCalledOnce();
         } finally {
             await activation.composition.unload();
@@ -9882,4 +9950,85 @@ describe('external author Doc collaboration through physical SDK carriers', () =
             expect(homes.artifacts(serverId).read(created.artifactId)?.bodyVersion).toBe(created.revision.bodyVersion + 1);
         } finally { await carrier.dispose(); host.dispose?.(); account.dispose(); await homes.reset(); }
     });
+});
+
+it('preserves GitHub Settings caller and admitted source for Account Triage create without source id', async () => {
+    const [{ PLUGIN_MANIFEST: triage }, { PLUGIN_MANIFEST: github }, { resolveTriageCallerSource }] = await Promise.all([
+        import('../../../../../../packages/plugins/triage/src/manifest'),
+        import('../../../../../../packages/plugins/scm-github/src/manifest'),
+        import('../../../../../../packages/plugins/triage/src/actions/callerSource'),
+    ]);
+    const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
+    const manifests = [triage, github].map(manifest => {
+        const parsed = ingestPluginManifestV2(manifest);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed));
+        return parsed.manifest;
+    });
+    replacePluginAccountAvailabilityProjection({ scope: accountLifetime.scope, snapshot: {
+        availabilityCursor: 1, materializations: [], snapshots: [], intentReads: manifests.map(manifest => ({ pluginId: manifest.id, response: {
+            availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+            intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+            release: { ref: { pluginId: manifest.id, version: manifest.version },
+                archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                collectionContracts: [], uiSlots: [],
+                packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+        } })),
+    } });
+    const availability = readPluginAccountAvailability(accountLifetime.scope);
+    const target = availability.readCurrentAccountExecution(triage.id);
+    const source = availability.readCurrentAccountExecution(github.id);
+    if (target.kind !== 'available' || source.kind !== 'available') throw new Error('Expected admitted Account releases');
+    let receivedCaller: unknown;
+    let resolution: unknown;
+    let receivedRequestId: string | undefined;
+    const normalizedTarget = manifests[0]!;
+    const declaration = normalizedTarget.contributes.actions.find(action => action.id === 'sources/administer-v1')!;
+    if (declaration.execution.target !== 'account') throw new Error('Expected Account administration');
+    const activation = createClientActionActivation({ pluginId: triage.id, localId: 'sources/administer-v1',
+        accountPlacement: true, accountLifetime, // Load only this real declaration in the diagnostic executable; admission above uses both complete manifests.
+        accountManifest: { ...normalizedTarget, contributes: { ...normalizedTarget.contributes, actions: [declaration], resources: [] } }, occurrenceId: target.custodyId,
+        inputSchema: declaration.inputSchema,
+        artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+            artifactId: declaration.execution.account.artifactId, executable: { exports: [declaration.execution.account.exportName] },
+            entry: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle`,
+            files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle` })) }),
+        accountHandler: async (_value, context) => {
+            receivedCaller = context.caller;
+            receivedRequestId = context.requestId;
+            const resolved = await resolveTriageCallerSource(context);
+            resolution = resolved.kind === 'source' ? { kind: 'source', source: resolved.caller.source } : resolved;
+            return { kind: 'invalidCaller' };
+        } });
+    await activation.composition.unload();
+    nestedActionConfirmation.onShow = approve => approve();
+    try {
+        expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+        const controller = createBoundPluginSurfaceController({ facts: {
+            ...surfaceContext(github.id), contributionId: 'triage-sources',
+            serverId: accountLifetime.scope.serverId, occurrenceId: source.custodyId,
+            accountExecutionOrigin: { ...accountLifetime.scope, custodyId: source.custodyId, sourceCustody: source.sourceCustody },
+            accountLifetime, interactionEnabled: true, daemonInteractionEnabled: false,
+            pluginUiProjection: activation.projection,
+            resolveContributedAction: createPluginUiProjectedActionResolver(activation.projection.actionsById),
+        } });
+        onTestFinished(() => controller.dispose());
+        const outcome = await controller.hostApi.handleRequest({ version: 1, method: 'executeAction',
+            requestId: 'source-caller-create', surface: controller.surfaceContext,
+            payload: { action: { pluginId: triage.id, localId: activation.action.id },
+            input: { v: 1, kind: 'create', draft: { v: 1,
+                binding: { purpose: 'triage-source', account: { service: { pluginId: github.id, localId: 'github' }, accountId: 'cli-login' } },
+                localInstanceKey: 'happier-dev/triage-qa-sandbox', keyStability: 'stable',
+                configuration: { v: 1, token: 'routing-token' }, locator: { v: 1, displayLabel: 'happier-dev/triage-qa-sandbox' } } },
+            },
+        });
+        expect(outcome).toEqual({ kind: 'invalidCaller' });
+        expect(receivedCaller).toMatchObject({ kind: 'plugin', pluginId: github.id, contribution: { id: 'triage-sources' } });
+        expect(resolution).toEqual({ kind: 'source', source: { pluginId: github.id, localId: 'github-forge' } });
+        expect(receivedRequestId).toBe('source-caller-create');
+        expect(outcome).toEqual({ kind: 'invalidCaller' });
+    } finally {
+        nestedActionConfirmation.onShow = null;
+        await activation.composition.unload(); accountLifetime.retire(); clearPluginAccountAvailabilityProjection();
+    }
 });

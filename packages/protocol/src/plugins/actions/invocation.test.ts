@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
+import type { PluginActionContributionV2 } from './v2.js';
 
 import {
   PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
@@ -65,10 +66,12 @@ function createInvocation(params: Readonly<{
   inputParser?: TestProtocolParser;
   resultSchema?: object;
   resultParser?: TestProtocolParser;
+  declaration?: Pick<PluginActionContributionV2, 'readOnly'>;
 }> = {}) {
   return createPluginActionInvocation({
     pluginId: 'acme.action',
     localId: 'commit',
+    declaration: params.declaration ?? {},
     occurrenceSignal: params.occurrenceSignal ?? new AbortController().signal,
     isCurrent: params.isCurrent ?? (() => true),
     ...(params.inputSchema === undefined ? {} : { inputSchema: params.inputSchema }),
@@ -79,6 +82,60 @@ function createInvocation(params: Readonly<{
 }
 
 describe('createPluginActionInvocation', () => {
+  it.each([undefined, false, { op: 'eq', path: 'mode', value: 'read' }] as const)(
+    'retains a started mutation outcome after cancellation (readOnly=%j)', async (readOnly) => {
+      const caller = new AbortController();
+      let resolveHandler!: (value: { nativeId: string }) => void;
+      let handlerSignal!: AbortSignal;
+      const pending = createInvocation({ declaration: { readOnly } }).invoke({ mode: 'write' }, {
+        signal: caller.signal,
+        handler: ({ signal }) => {
+          handlerSignal = signal;
+          return new Promise<{ nativeId: string }>((resolve) => { resolveHandler = resolve; });
+        },
+      });
+      caller.abort();
+      expect(handlerSignal.aborted).toBe(true);
+      resolveHandler({ nativeId: 'native-1' });
+      await expect(pending).resolves.toEqual({ status: 'executed', value: { nativeId: 'native-1' } });
+    },
+  );
+
+  it('retains a started mutation native failure after cancellation', async () => {
+    const caller = new AbortController();
+    let rejectHandler!: (error: Error) => void;
+    const pending = createInvocation({ declaration: {} }).invoke(null, {
+      signal: caller.signal,
+      handler: () => new Promise<never>((_resolve, reject) => { rejectHandler = reject; }),
+    });
+    caller.abort();
+    const data = { name: 'PluginError', code: 'native_outcome_unknown', message: 'Native outcome is unknown', retryable: false };
+    rejectHandler(Object.assign(new Error(data.message), data, { data }));
+    await expect(pending).resolves.toEqual({ status: 'failed', code: data.code, message: data.message, retryable: false, data });
+  });
+
+  it('lets cancellation win for a matching input-sensitive read after input normalization', async () => {
+    const caller = new AbortController();
+    const pending = createInvocation({
+      declaration: { readOnly: { op: 'eq', path: 'mode', value: 'read' } },
+      inputParser: () => ({ success: true, data: { mode: 'read' } }),
+    }).invoke({ mode: 'write' }, {
+      signal: caller.signal,
+      handler: () => new Promise<never>(() => {}),
+    });
+    caller.abort();
+    await expect(pending).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' });
+  });
+
+  it('cancels an open observation independently of its Action mutation declaration', async () => {
+    const caller = new AbortController();
+    const prepared = createInvocation({ declaration: {} }).prepare(null);
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted observation input');
+    const pending = prepared.observe({ signal: caller.signal, handler: () => new Promise<never>(() => {}) });
+    caller.abort();
+    await expect(pending).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_action_aborted' });
+  });
+
   it('retains content-free field repair facts for general JSON Schema input refusals', async () => {
     const invocation = createInvocation({ inputSchema: {
       type: 'object', definitions: { scope: { type: 'string', enum: ['diff', 'all'] } },
@@ -854,7 +911,6 @@ describe('createPluginActionInvocation', () => {
     const handler = vi.fn(() => ({ committed: true }));
     const pending = createInvocation().invoke(null, {
       signal: caller.signal,
-      retainHandlerResultAfterCancellation: () => true,
       preDispatch,
       handler,
     });
@@ -871,13 +927,12 @@ describe('createPluginActionInvocation', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('retains the validated outcome of an issued host-managed allocation after cancellation', async () => {
+  it('retains the validated outcome of a started mutation after cancellation', async () => {
     const caller = new AbortController();
     let resolveHandler!: (value: { nativeId: string }) => void;
     const resultSchema = defineProtocolObject({ nativeId: defineProtocolString() }, { policy: 'closed' });
-    const pending = createInvocation({ resultSchema: resultSchema.jsonSchema }).invoke(null, {
+    const pending = createInvocation({ declaration: {}, resultSchema: resultSchema.jsonSchema }).invoke(null, {
       signal: caller.signal,
-      retainHandlerResultAfterCancellation: () => true,
       handler: ({ signal }) => new Promise<{ nativeId: string }>((resolve) => {
         resolveHandler = resolve;
         expect(signal.aborted).toBe(false);
@@ -886,8 +941,7 @@ describe('createPluginActionInvocation', () => {
     caller.abort(new Error('creation was canceled after native submission'));
     resolveHandler({ nativeId: 'paid-native-1' });
     await expect(pending).resolves.toEqual({ status: 'executed', value: { nativeId: 'paid-native-1' } });
-    await expect(createInvocation({ resultSchema: resultSchema.jsonSchema }).invoke(null, {
-      retainHandlerResultAfterCancellation: () => true,
+    await expect(createInvocation({ declaration: {}, resultSchema: resultSchema.jsonSchema }).invoke(null, {
       handler: () => ({ unrelated: true }),
     })).resolves.toMatchObject({ status: 'invalid' });
   });
@@ -1011,7 +1065,7 @@ describe('createPluginActionInvocation', () => {
     const handler = vi.fn(() => new Promise<{ committed: true }>((resolve) => {
       resolveHandler = resolve;
     }));
-    const pending = createInvocation().invoke(null, { signal: caller.signal, handler });
+    const pending = createInvocation({ declaration: { readOnly: true } }).invoke(null, { signal: caller.signal, handler });
     expect(handler).toHaveBeenCalledOnce();
 
     caller.abort(new Error('caller stopped'));
@@ -1030,7 +1084,7 @@ describe('createPluginActionInvocation', () => {
       caller.abort(new Error('caller stopped during handler entry'));
       return Promise.resolve({ committed: true });
     });
-    const pending = createInvocation().invoke(null, { signal: caller.signal, handler });
+    const pending = createInvocation({ declaration: { readOnly: true } }).invoke(null, { signal: caller.signal, handler });
 
     await expect(pending).resolves.toMatchObject({
       status: 'unavailable',
@@ -1044,7 +1098,7 @@ describe('createPluginActionInvocation', () => {
     const handler = vi.fn(() => new Promise<never>((_resolve, reject) => {
       rejectHandler = reject;
     }));
-    const pending = createInvocation().invoke(null, { signal: caller.signal, handler });
+    const pending = createInvocation({ declaration: { readOnly: true } }).invoke(null, { signal: caller.signal, handler });
     expect(handler).toHaveBeenCalledOnce();
 
     caller.abort(new Error('caller stopped'));
@@ -1062,7 +1116,7 @@ describe('createPluginActionInvocation', () => {
     const caller = new AbortController();
     const generation = new AbortController();
     const handler = vi.fn(() => new Promise<never>(() => {}));
-    const pending = createInvocation({ occurrenceSignal: generation.signal }).invoke(null, {
+    const pending = createInvocation({ declaration: { readOnly: true }, occurrenceSignal: generation.signal }).invoke(null, {
       signal: caller.signal,
       handler,
     });
@@ -1081,7 +1135,7 @@ describe('createPluginActionInvocation', () => {
     const caller = new AbortController();
     const generation = new AbortController();
     const handler = vi.fn(() => new Promise<never>(() => {}));
-    const pending = createInvocation({ occurrenceSignal: generation.signal }).invoke(null, {
+    const pending = createInvocation({ declaration: { readOnly: true }, occurrenceSignal: generation.signal }).invoke(null, {
       signal: caller.signal,
       handler,
     });

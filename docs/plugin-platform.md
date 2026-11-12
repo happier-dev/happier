@@ -52,6 +52,15 @@ sharing bytes. UI row reuse and equal-page publication suppression remain in
 
 Bundled and installed plugins contribute through the same manifest, registration and projection contracts. The host owns installation, admission, currentness, invocation and cleanup; a plugin owns its integration's declarations and executable leaves. The SDK exposes that boundary without becoming another runtime or persistence owner.
 
+### First-party npm namespace (unreleased 0.3)
+
+Registry-installed plugins may use a `happier.*` id only when the resolved npm
+package name belongs to `@happier-dev/`. The npm scope is the publishing trust
+anchor; a manifest cannot grant itself first-party authority. These plugins use
+the ordinary installed-plugin lifecycle and public manifest policy, and cannot
+replace any bundled plugin id. Local and bundled namespace behavior is unchanged.
+Standalone archives do not establish npm scope ownership.
+
 ### Partial runtime adoption (unreleased 0.3)
 
 Cold startup, registry preparation and prepared-registry adoption share the
@@ -61,7 +70,16 @@ The manifest reference resolver identifies and excludes its dependent plugins,
 including transitive dependents, through the existing manifest admission exclusion
 and activation-failure projections. The admission exclusion also marks dependents
 without daemon entrypoints unavailable in the catalog.
-Healthy plugins remain admitted. Logs name the blocking plugin ids and codes;
+Healthy plugins remain admitted. In unreleased 0.3 load admission, an Agent or
+managed Provider account purpose with explicit `required: false` loses only its
+unavailable service entry. The catalog retains the owning declaration and reports
+`plugin_optional_reference_unavailable` with the contribution identity, reference
+path and original dangling/wrong-family reason. Required purposes (including an
+omitted `required`) still withdraw the declaration. Author validation stays strict;
+re-admission of the original manifest restores a reference once its producer is
+available. This decision belongs to Protocol's contribution catalog and load
+admission; runtime and UI consumers use their admitted projection.
+Logs name the blocking plugin ids and codes;
 dependent diagnostics retain those causes. Static declarations remain available
 for diagnosis and repair. Existing predecessor retirement and lease custody still
 govern changed plugins.
@@ -2039,6 +2057,15 @@ occurrence and host-stamped Session context. The target must declare
 actual input before invoking the target, so one mixed read/write Action can
 admit its read operands while refusing its mutation operands. The result keeps
 the ordinary Action success/failure envelope and existing permission checks.
+
+In unreleased 0.3 source, the Protocol Action invoker also owns cancellation
+settlement. Once a non-read handler starts, cancellation still reaches its IO
+signal, while the invoker awaits the handler's exact success, native failure or
+typed unknown outcome. The same input-sensitive `readOnly` declaration decides
+this policy; hosts and the SDK testkit pass that declaration to the invoker
+without a provider or role opt-in. Cancellation before handler entry still
+prevents dispatch. Read-only Actions and Resource observations retain their
+abort-wins lifecycle.
 
 `options.observeAction(ref, input, invalidate, { signal })` installs dependencies
 without running the read handler. The target registers `observeRead` beside
@@ -11936,7 +11963,12 @@ for the complete SDK package closure. When the CLI runs from the source
 workspace, preparation first asks the canonical source-development publisher to
 prepare the requested public packages and their dependencies; copying an older
 `dist` tree into a new author root does not establish source freshness.
-Packaged hosts and admitted source bundles use their supplied package closure.
+Packaged hosts and admitted source bundles use their supplied package closure. In 0.3 development, the synchronous closure
+publisher runs in a finite binary-safe CLI child, so copying the SDK cannot block
+the daemon heartbeat and lose an activation acknowledgement. The parent awaits
+the existing publisher's result; native failure codes and messages cross this
+private boundary unchanged. Dependency selection, installation and activation
+remain with their existing owners.
 Repeated preparations reuse its pnpm
 virtual-store identity; the transient workspace config selects pnpm's native
 immediate orphan pruning when the closure changes. Both temporary package roots

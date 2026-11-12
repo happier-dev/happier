@@ -20,7 +20,7 @@ import { normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResol
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
 import { readActionSecretInputAdmission } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -993,11 +993,9 @@ function readClientActionCurrentUiContext(
 }
 
 /**
- * The person's effective Action approval setting for this invocation. The daemon applies
- * the same Account policy at admission; if the two ever disagree, a daemon that
- * requires a decision refuses a request that carries none (fail closed).
+ * Adapt the shared Action disposition to the contributed current-intent presenter.
  */
-function isApprovalRequiredByActionSettings(
+function requiresContributedActionCurrentIntent(
     identity: PluginContributionIdentityV1,
     invocationSurface: PluginSurfaceActionInvocationSurface,
     action: Pick<PluginUiActionProjection, 'dangerLevel' | 'confirmation' | 'confirmationWhen'>,
@@ -1005,15 +1003,23 @@ function isApprovalRequiredByActionSettings(
     invocationAuthority?: ActionRequiredAuthority,
     context?: ActionExecutorContext,
     environmentAdmission?: ActionEnvironmentApprovalScopeAdmissionV1,
+    reviewRequired = false,
 ): boolean {
     try {
-        return isApprovalRequiredByActionsSettings(
-            formatQualifiedPluginActionId({ pluginId: identity.pluginId, localId: identity.localId }),
-            context?.actionsSettings ?? resolveActionsSettingsV1FromState(getStorage().getState()),
-            { surface: invocationSurface, callerSurface: context?.callerSurface }, undefined,
-            pluginActionRequiresPresentUserIntent(action, invocationSurface, normalizedInput, invocationAuthority),
-            undefined, undefined, undefined, undefined, environmentAdmission?.scope ?? undefined,
-        );
+        const declarationDefault = pluginActionRequiresPresentUserIntent(action, invocationSurface, normalizedInput, invocationAuthority);
+        const routing = resolveActionApprovalRouting({
+            actionId: 'action.invoke',
+            profileActionId: formatQualifiedPluginActionId(identity),
+            spec: getActionSpec('action.invoke'),
+            settings: context?.actionsSettings ?? resolveActionsSettingsV1FromState(getStorage().getState()),
+            context: { ...context, surface: invocationSurface, authority: invocationAuthority },
+            input: normalizedInput,
+            defaultConfirmation: declarationDefault,
+            defaultUiConfirmation: declarationDefault,
+            approvalScope: environmentAdmission?.scope ?? undefined,
+            reviewRequired,
+        });
+        return routing.required || routing.uiConfirmationRequired === true;
     } catch {
         // An unreadable settings snapshot cannot waive the person's decision.
         return true;
@@ -1114,6 +1120,7 @@ async function settleDaemonActionPresentUserIntent(
             ?? failure('unavailable', 'plugin_surface_action_schemas_unavailable');
         const invocation = createPluginActionInvocation({
             pluginId: identity.pluginId, localId: identity.localId,
+            declaration: projectedAction,
             inputSchema: schemas.result.inputSchema,
             occurrenceSignal: input.signal ?? new AbortController().signal,
             isCurrent: () => input.isCurrent?.() !== false,
@@ -1129,15 +1136,8 @@ async function settleDaemonActionPresentUserIntent(
     // The receiving daemon owns Environment admission. Its typed no-handler
     // refusal can ask this UI for a person's decision on a fresh request.
     if (projectedAction.approvalScope === 'environment' && !requestedByDaemon) return { ok: true };
-    const approvalRequiredByActionSettings = requestedByDaemon || isApprovalRequiredByActionSettings(identity, invocationSurface, projectedAction, normalizedInput, invocationAuthority, input.hostAction?.context);
-    if (!pluginActionRequiresPresentUserIntent({
-        dangerLevel: projectedAction.dangerLevel,
-        ...(projectedAction.confirmation === undefined
-            ? {}
-            : { confirmation: projectedAction.confirmation }),
-        ...(projectedAction.confirmationWhen === undefined ? {} : { confirmationWhen: projectedAction.confirmationWhen }),
-        approvalRequiredByActionSettings,
-    }, invocationSurface, normalizedInput, invocationAuthority)) {
+    if (!requiresContributedActionCurrentIntent(identity, invocationSurface, projectedAction, normalizedInput,
+        invocationAuthority, input.hostAction?.context, undefined, requestedByDaemon)) {
         return { ok: true };
     }
     if (input.hostAction?.context?.interactivePresentation === 'unavailable') {
@@ -1243,6 +1243,7 @@ async function prepareClientContributedAction(
     const invocation = createPluginActionInvocation({
         pluginId: identity.pluginId,
         localId: identity.localId,
+        declaration: accountDeclaration ?? projectedAction,
         inputSchema,
         ...(readPluginActionInputParser(initial.registration.registration.value) === undefined
             ? {}
@@ -1512,7 +1513,7 @@ async function executeClientContributedAction(
                         ? {}
                         : { confirmation: current.action.confirmation }),
                     ...(current.action.confirmationWhen === undefined ? {} : { confirmationWhen: current.action.confirmationWhen }),
-                    approvalRequiredByActionSettings: isApprovalRequiredByActionSettings(identity, invocationSurface, current.action, normalizedInput, invocationAuthority, input.hostAction?.context, environmentAdmission),
+                    approvalRequiredByActionSettings: requiresContributedActionCurrentIntent(identity, invocationSurface, current.action, normalizedInput, invocationAuthority, input.hostAction?.context, environmentAdmission),
                     authorization: current.authorization,
                     ...(accountAvailability ? { availability: {
                         status: accountAvailability.outcome === 'hidden' ? 'unavailable' as const : accountAvailability.outcome,
@@ -1538,10 +1539,6 @@ async function executeClientContributedAction(
         ...(admittedAccountInvocationLifetime
             ? { signal: admittedAccountInvocationLifetime.signal }
             : input.signal ? { signal: input.signal } : {}),
-        ...(!input.readObservation && initial.action.execution.target === 'account'
-            ? { retainHandlerResultAfterCancellation: () => initial.registration.lifecycle.isCurrent()
-                && initial.registration.accountLifetime?.isCurrent() !== false }
-            : {}),
         preDispatch: async (handlerInput) => {
             normalizedInput = handlerInput.input;
             const admission = await presentUserGate.admit({
@@ -2398,7 +2395,7 @@ async function executeContributedAction(
                     ?? clientActionFailure('plugin_surface_action_schemas_unavailable')
                 : clientActionFailure('plugin_surface_action_schemas_unavailable');
             const invocation = createPluginActionInvocation({ pluginId: identity.pluginId, localId: identity.localId,
-                inputSchema: schemas.result.inputSchema, occurrenceSignal: input.signal ?? new AbortController().signal,
+                declaration: projectedAction, inputSchema: schemas.result.inputSchema, occurrenceSignal: input.signal ?? new AbortController().signal,
                 isCurrent: () => input.isCurrent?.() !== false });
             const prepared = invocation.prepare(normalizedInput);
             if (prepared.kind === 'settled') return clientActionFailure(prepared.result.code);

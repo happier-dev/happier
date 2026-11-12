@@ -449,6 +449,7 @@ describe('configured action execution through the shared Session owner', () => {
         const nativeLinks: JsonValue[] = [];
         // The real browser Action front door rejects non-JSON input before its handler runs.
         const linkAdmission = createPluginActionInvocation({ pluginId: 'happier.triage', localId: 'sessions/link-entry-v1',
+            declaration: {},
             inputSchema: TriageLinkEntryToSessionInputV1Schema.jsonSchema,
             occurrenceSignal: new AbortController().signal, isCurrent: () => true });
         const host = {

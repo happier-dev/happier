@@ -148,6 +148,7 @@ describe('bootstrap credential failure Action settlement', () => {
             return null;
         };
         const action = createPluginActionInvocation({ pluginId: 'acme.native', localId: 'bootstrap',
+            declaration: {},
             occurrenceSignal: lifetime.signal, isCurrent: () => true });
         return { run, invoke: () => action.invoke(null, { handler: run }), lifetime,
             reads: () => reads, effectAttempted: () => effectAttempted };

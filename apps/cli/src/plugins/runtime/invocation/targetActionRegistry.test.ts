@@ -2107,8 +2107,8 @@ describe('target action invocation registry', () => {
         const beta = vi.fn(async () => ({ echoed: 'beta healthy' }));
         const registry = createRegistry({
             actions: [
-                { ...action(), handler: alpha },
-                { ...action(), pluginId: 'acme.beta', handler: beta },
+                { ...action({ readOnly: true }), handler: alpha },
+                { ...action({ readOnly: true }), pluginId: 'acme.beta', handler: beta },
             ],
         });
         const invokeAlpha = (signal?: AbortSignal) => registry.invoke({
@@ -2456,9 +2456,9 @@ describe('target action invocation registry', () => {
         expect(invalidResult).toHaveBeenCalledTimes(1);
     });
 
-    it('does not preserve ordinary or schema-invalid settlements when private cleanup fails', async () => {
+    it('preserves validated success but rejects schema-invalid settlements when private cleanup fails', async () => {
         const unavailableServices = createUnavailablePluginServicesFactory();
-        for (const [retainIssuedResult, validResult] of [[false, true], [true, false]] as const) {
+        for (const validResult of [true, false]) {
             // The disposer is the genuine private-file OS boundary. Registry,
             // result validation and invocation lifetime remain real.
             const removalFailure = Object.assign(new Error('Private lease removal refused'), { code: 'EACCES' });
@@ -2469,10 +2469,11 @@ describe('target action invocation registry', () => {
                 },
                 actions: [{ ...action(), handler: async (): Promise<JsonValue> => validResult ? { echoed: 'x' } : { wrong: true } }],
             });
-            await expect(registry.invoke({
+            const invocation = registry.invoke({
                 pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
-                ...(retainIssuedResult ? { retainHandlerResultAfterCancellation: true } : {}),
-            })).rejects.toMatchObject({ name: 'AggregateError', errors: [removalFailure] });
+            });
+            if (validResult) await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'x' } });
+            else await expect(invocation).rejects.toMatchObject({ name: 'AggregateError', errors: [removalFailure] });
         }
     });
 
@@ -2587,7 +2588,25 @@ describe('target action invocation registry', () => {
         expect(schemaReads).toBeGreaterThan(compiledOnce);
     });
 
-    it('links caller and generation cancellation and rejects stale results after retirement', async () => {
+    it('uses changed read metadata after refreshing an otherwise identical invocation', async () => {
+        let resolveHandler!: (value: { echoed: string }) => void;
+        const handler = vi.fn(() => new Promise<{ echoed: string }>((resolve) => { resolveHandler = resolve; }));
+        const original = { ...action({ readOnly: true }), handler };
+        let actions: Parameters<typeof createTargetActionInvocationRegistry>[0]['actions'] = [original];
+        const registry = createRegistry({ actions, readActions: () => actions });
+        actions = [{ ...original, definition: { ...original.definition, readOnly: false } }];
+        registry.refresh();
+        const caller = new AbortController();
+        const invocation = registry.invoke({
+            pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
+        });
+        await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+        caller.abort();
+        resolveHandler({ echoed: 'native-result' });
+        await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'native-result' } });
+    });
+
+    it('retains a started mutation result after retirement and rejects later invocations', async () => {
         let resolveHandler!: (value: { echoed: string }) => void;
         const handler = vi.fn(() => new Promise<{ echoed: string }>((resolve) => {
             resolveHandler = resolve;
@@ -2599,10 +2618,7 @@ describe('target action invocation registry', () => {
         resolveHandler({ echoed: 'x' });
 
         const retiredAfterHandlerStart = await invocation;
-        expect(retiredAfterHandlerStart).toMatchObject({
-            status: 'unavailable',
-            code: 'plugin_action_generation_retired',
-        });
+        expect(retiredAfterHandlerStart).toEqual({ status: 'executed', value: { echoed: 'x' } });
         expect(retiredAfterHandlerStart).not.toHaveProperty('actionHandlerInvocation');
         expect(handler).toHaveBeenCalledTimes(1);
 
@@ -2625,7 +2641,7 @@ describe('target action invocation registry', () => {
         const handler = vi.fn((_input, context) => new Promise<never>((_resolve, reject) => {
             context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true });
         }));
-        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const registry = createRegistry({ actions: [{ ...action({ readOnly: true }), handler }] });
         const invocation = registry.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
         });
@@ -2645,8 +2661,8 @@ describe('target action invocation registry', () => {
         const registry = createRegistry({
             completeDiagnosticScope,
             actions: [
-                { ...action(), handler: alpha },
-                { ...action(), pluginId: 'acme.beta', handler: beta },
+                { ...action({ readOnly: true }), handler: alpha },
+                { ...action({ readOnly: true }), pluginId: 'acme.beta', handler: beta },
             ],
         });
         const invocation = registry.invoke({
@@ -2683,7 +2699,7 @@ describe('target action invocation registry', () => {
         const handler = vi.fn(() => new Promise<never>((_resolve, reject) => {
             rejectHandler = reject;
         }));
-        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const registry = createRegistry({ actions: [{ ...action({ readOnly: true }), handler }] });
         const invocation = registry.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli', signal: caller.signal,
         });
@@ -2702,7 +2718,7 @@ describe('target action invocation registry', () => {
 
     it('settles a generation retirement without waiting for an abort-ignoring handler', async () => {
         const handler = vi.fn(() => new Promise<never>(() => {}));
-        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const registry = createRegistry({ actions: [{ ...action({ readOnly: true }), handler }] });
         const invocation = registry.invoke({
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
         });
@@ -2716,7 +2732,7 @@ describe('target action invocation registry', () => {
         });
     });
 
-    it('discards a successful handler result that settles after caller cancellation', async () => {
+    it('retains a successful mutation result that settles after caller cancellation', async () => {
         let resolveHandler!: (value: { echoed: string }) => void;
         const caller = new AbortController();
         const registry = createRegistry({
@@ -2732,10 +2748,7 @@ describe('target action invocation registry', () => {
         caller.abort(new Error('caller stopped'));
         resolveHandler({ echoed: 'x' });
 
-        await expect(invocation).resolves.toMatchObject({
-            status: 'unavailable',
-            code: 'plugin_action_aborted',
-        });
+        await expect(invocation).resolves.toEqual({ status: 'executed', value: { echoed: 'x' } });
     });
 
     it('retains a successful result that settled before caller cancellation', async () => {
@@ -2768,6 +2781,7 @@ describe('SDK testkit and production action invocation parity', () => {
         contributes: {
             actions: [{
                 id: 'run',
+                readOnly: true,
                 title: 'Run',
                 scopes: ['global'],
                 surfaces: ['cli'],
@@ -2795,7 +2809,7 @@ describe('SDK testkit and production action invocation parity', () => {
         input: unknown,
         signal?: AbortSignal,
     ) {
-        const registry = createRegistry({ actions: [{ ...action(), handler }] });
+        const registry = createRegistry({ actions: [{ ...action({ readOnly: true }), handler }] });
         try {
             return await registry.invoke({
                 pluginId: 'acme.alpha',
@@ -2915,7 +2929,7 @@ describe('SDK testkit and production action invocation parity', () => {
                 resolveHandler = resolve;
             }));
             if (path === 'production') {
-                const registry = createRegistry({ actions: [{ ...action(), handler }] });
+                const registry = createRegistry({ actions: [{ ...action({ readOnly: true }), handler }] });
                 const invocation = registry.invoke({
                     pluginId: 'acme.alpha',
                     localId: 'run',

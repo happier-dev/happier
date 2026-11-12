@@ -240,12 +240,12 @@ export type InvokeTargetActionParams = Readonly<{
     executeBrokeredAction?: TargetActionConnectedAccountOperationBinding['executeBrokeredAction'];
     /** Host-only streaming observer for an admitted managed native Exec role. */
     execOutputObserver?: (output: import('@happier-dev/plugin-sdk/exec').PluginProcessOutput) => void;
+    /** Host-only input of an admitted managed native `stream` channel. */
+    execChannelInput?: (process: Pick<import('@happier-dev/plugin-sdk/exec').PluginProcessHandle, 'write' | 'closeStdin'>) => () => void;
     execInvocationTimeoutMs?: number | null;
     /** Host-private exact admitted row material; never projected into SDK context. */
     managedBootstrapCredential?: ManagedBootstrapCredentialInvocationBinding;
     managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
-    /** Host-private cleanup retention for an issued, custody-admitted managed acquire. */
-    retainHandlerResultAfterCancellation?: true;
 }>;
 
 export type TargetActionInvocationPreparation = Readonly<
@@ -420,7 +420,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
      * `refresh()` re-indexes every Action, so recompiling an unchanged Action occurrence wastes
      * preparation even when another plugin is the one that changed.
      *
-     * `createPluginActionInvocation` reads only the ids, the two schemas and the registry
+     * `createPluginActionInvocation` reads the ids, read effect, schemas and the registry
      * signal. When all of those are the identical values the previous entry was prepared from,
      * a recompilation can only reproduce the validators it already holds.
      */
@@ -435,6 +435,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             && previous.registration.occurrenceId === registration.occurrenceId
             && previous.registration.definition.inputSchema === registration.definition.inputSchema
             && previous.registration.definition.resultSchema === registration.definition.resultSchema
+            && previous.registration.definition.readOnly === registration.definition.readOnly
             && previous.registration.inputParser === registration.inputParser
             && previous.registration.resultParser === registration.resultParser;
     }
@@ -501,6 +502,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 : createPluginActionInvocation({
                     pluginId: registration.pluginId,
                     localId: registration.localId,
+                    declaration: definition,
                     ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
                     ...(registration.inputParser === undefined ? {} : { inputParser: registration.inputParser }),
                     ...(definition.resultSchema === undefined ? {} : { resultSchema: definition.resultSchema }),
@@ -564,9 +566,6 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
         let readDataRole: PluginInvocationServicesSeed['readDataRole'];
         const result = await invokePrepared({
             ...(invocation.signal ? { signal: invocation.signal } : {}),
-            ...(invocation.retainHandlerResultAfterCancellation
-                ? { retainHandlerResultAfterCancellation: () => actionHandlerInvocation === undefined }
-                : {}),
             ...(params.revalidateActionFormInput
                 ? {
                     preDispatch: async ({ input, signal }) => {
@@ -803,13 +802,15 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     const exactPurposeBindingSubjectId = invocation.exactPurposeBindingSubjectId
                         ?? connectedAccountOperationBinding?.exactPurposeBindingSubjectId;
                     const effectiveServiceBinding = exactPurposeBindingSubjectId !== undefined
-                        || invocation.execOutputObserver !== undefined || invocation.execInvocationTimeoutMs !== undefined
+                        || invocation.execOutputObserver !== undefined || invocation.execChannelInput !== undefined
+                        || invocation.execInvocationTimeoutMs !== undefined
                         ? Object.freeze({
                             ...serviceBinding,
                             ...(exactPurposeBindingSubjectId === undefined ? {} : { exactPurposeBindingSubjectId }),
                             ...(connectedAccountOperationBinding?.connectedAccountsOwner
                                 ? { connectedAccountsOwner: connectedAccountOperationBinding.connectedAccountsOwner } : {}),
                             ...(invocation.execOutputObserver === undefined ? {} : { execOutputObserver: invocation.execOutputObserver }),
+                            ...(invocation.execChannelInput === undefined ? {} : { execChannelInput: invocation.execChannelInput }),
                             ...(invocation.execInvocationTimeoutMs === undefined ? {} : { execInvocationTimeoutMs: invocation.execInvocationTimeoutMs }),
                         })
                         : serviceBinding;
@@ -1306,7 +1307,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         } catch (error) {
                             // An issued, validated native fact remains true
                             // when releasing its private local lease fails.
-                            if (!invocation.retainHandlerResultAfterCancellation || result.status !== 'executed') throw error;
+                            if (result.status !== 'executed') throw error;
                             logger.warn('Plugin invocation private cleanup failed', {
                                 code: 'plugin_invocation_private_cleanup_failed',
                                 pluginId: diagnosticScope.pluginId,
