@@ -34,8 +34,7 @@ export async function readMemberAgentInstallExecutor(context: RpcHandlerContext,
   const placement = resolveMachineAgentExecutionPlacementV1({
     policy: deps.agentIsolation?.read() ?? { enabled: false }, platform: deps.platform ?? process.platform,
   });
-  if (context.machineAdmission?.actorAccountId === context.machineAdmission?.custodianAccountId
-    && placement !== 'member') return undefined;
+  if (placement !== 'member') return undefined;
   if ((deps.platform ?? process.platform) !== 'linux' || !deps.agentIsolation?.readMember || !deps.nativeOperationRuntime) return null;
   const homeServerIdentityId = deps.resolveHostHomeServerIdentityId
     ? await deps.resolveHostHomeServerIdentityId() : context.callerInputAuthorization?.binding.serverIdentityId;

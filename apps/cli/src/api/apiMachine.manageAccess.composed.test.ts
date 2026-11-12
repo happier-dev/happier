@@ -138,7 +138,7 @@ it('refuses Can-use Machine administration through real Home before installed ef
   expect(await relay.invokeUi(RPC_METHODS.DAEMON_AGENTS_INSTALL_START,
     DaemonAgentInstallStartRequestSchema.parse({ agentId: 'unavailable-agent', definitionId: 'unavailable-definition',
       expectedDefinitionVersion: '1', intent: 'install', consent: { vendorRecipe: true } }), { actorAccountId: 'member-use' }))
-    .toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
+    .toMatchObject({ ok: false, errorCode: 'install_unavailable' });
   for (const { name, method, request } of requests) {
     expect.soft(await relay.invokeUiRaw(method, request, { actorAccountId: 'member-use' }), name)
       .toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });

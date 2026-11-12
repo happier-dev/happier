@@ -17,21 +17,25 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it.each(['linux', 'darwin', 'win32'] as const)('refuses member install without an existing isolated native user on %s before creating a job', async platform => {
+it.each(['linux', 'darwin', 'win32'] as const)('admits member install with machine execution when separate users are off on %s', async platform => {
   const handlers = new Map<string, RpcHandler>();
   const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
     readRegistry: () => ({ agents: [{ id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
       sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none',
       manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false } }] }) });
-  registerMachineAgentInstallJobRpcHandlers({ owner, deps: { platform }, rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
   const member: RpcHandlerContext = { signal: new AbortController().signal, verifyMachineAdmissionCurrent: async () => true,
     machineAdmission: { actorAccountId: 'member', custodianAccountId: 'custodian', machineId: 'machine',
       installationId: 'installation', role: 'use', encryptionMode: 'plain' } };
   try {
-    const result = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'install',
-      consent: { vendorRecipe: true } }, member);
-    expect(DaemonAgentInstallStartResponseSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
-    expect(owner.list('member')).toEqual({ ok: true, jobs: [] });
+    for (const enabled of [false, true]) {
+      registerMachineAgentInstallJobRpcHandlers({ owner, deps: { platform, agentIsolation: {
+        read: () => ({ enabled, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }),
+      } }, rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } } });
+      const result = await handlers.get(RPC_METHODS.DAEMON_AGENTS_INSTALL_START)!({ agentId: 'fixture', intent: 'install',
+        consent: { vendorRecipe: true } }, member);
+      expect(DaemonAgentInstallStartResponseSchema.parse(result)).toMatchObject({ ok: true });
+      expect(owner.list('member')).toMatchObject({ ok: true, jobs: expect.arrayContaining([expect.objectContaining({ executionScope: 'machine' })]) });
+    }
   } finally { await owner.shutdown(); }
 });
 

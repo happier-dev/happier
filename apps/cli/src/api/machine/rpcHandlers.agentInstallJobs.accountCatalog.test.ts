@@ -97,11 +97,6 @@ it.each(['custodian', 'guest'] as const)('isolates the admitted %s Account pin f
       storedCredentials.mockResolvedValue(credentials);
     }
     const accepted = DaemonAgentInstallStartResponseSchema.parse(await start(input, context));
-    if (caller === 'guest') {
-      expect(accepted).toMatchObject({ ok: false, errorCode: 'member_install_unavailable' });
-      expect(owner.list(accountId)).toEqual({ ok: true, jobs: [] });
-      return;
-    }
     expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true });
     if (!accepted.ok) return;
     const read = () => owner.read({ jobId: accepted.jobId, cursor: 0 }, accountId);
