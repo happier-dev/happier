@@ -337,7 +337,8 @@ export async function getQualifiedConnectedAccountQuotaV4(
     if (
       error
       && typeof error === 'object'
-      && (error as { code?: unknown }).code === 'connect_quotas_not_found'
+      && ((error as { code?: unknown }).code === 'connect_quotas_not_found'
+        || (error as { code?: unknown }).code === 'no_usage_observed')
     ) {
       return null;
     }

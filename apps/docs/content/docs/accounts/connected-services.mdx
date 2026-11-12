@@ -164,11 +164,12 @@ until you remove them deliberately.
 The unreleased Muse integration is being validated with three connection methods:
 Meta device sign-in, an API key, and explicit import of a complete native login
 from the machine you choose. Device sign-in mints an inference key once while
-connecting. Launching a session or reading usage does not mint another key.
+connecting. At session startup, Muse refreshes subscription usage once and may
+mint an inference key. Reading saved usage does not mint a key.
 
-Device and imported accounts use a private Muse login file. API-key accounts
-deliver the selected key through the environment and keep their key identity;
-they do not imply a subscription allowance. Native-default launches keep your
+Selected Muse accounts use a private native credential file. Device and imported
+logins retain their account identity; API-key accounts retain key mode and do not
+imply a subscription allowance. Native-default launches keep your
 original configuration location. Selected native accounts preserve settings and
 trust, and link other existing top-level configuration entries. New top-level
 configuration folders created during that session remain private to its home.
@@ -406,6 +407,14 @@ A supported account-scoped usage-limit error that actually fails the Agent's mai
 operation still follows the pool's configured switching rules and limits. Use
 separate pools when sessions need different quota filters; provider-enforced usage
 and spending limits still apply.
+
+Provider credits count as usable capacity. When an account's included limits are
+used up but the provider can still bill credits (Codex credits, Claude extra usage),
+the account shows its remaining credits and "Included limits used · credits available"
+instead of looking used up. Pools keep a session working on that account and prefer
+it only after every account that still has included quota. Happier never buys
+credits or changes whether your provider spends them; if the provider itself reports
+a usage limit, the pool switches as usual.
 
 Pool member capacity, usage rows, and session usage badges use the pool's selected
 allowances. Account-wide facts such as the plan, subscription identity, and reset

@@ -151,6 +151,18 @@ describe('apiQualifiedConnectedAccountsV4', () => {
         }
     });
 
+    it('preserves observed absence from the quota HTTP boundary as no snapshot', async () => {
+        const ref = { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'work' };
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+            const path = new URL(String(input)).pathname;
+            if (isServerReadinessProbe(path)) return Response.json({ ok: true });
+            expect(path).toBe('/v4/connect/qualified/quotas');
+            return Response.json({ error: 'no_usage_observed' }, { status: 404 });
+        }));
+        const api = await import('./apiQualifiedConnectedAccountsV4');
+        await expect(api.getQualifiedConnectedAccountQuotaV4(credentials, ref)).resolves.toBeNull();
+    });
+
     it('attributes credential, configuration and quota reads with existing diagnostic purposes', async () => {
         const ref = { service, accountId: 'work' };
         const credential = { ref, authenticationModeId: 'token', revisionSemantics: 'revisioned',
