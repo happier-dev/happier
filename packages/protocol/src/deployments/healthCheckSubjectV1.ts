@@ -9,8 +9,11 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 export const MachineServiceHealthCheckSubjectV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('machineService'), machineId: id, serviceId: id,
 }));
+export const EnvironmentHealthCheckSubjectV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('environment'), environmentId: id,
+}));
 export const HealthCheckSubjectV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('environment'), environmentId: id }),
+  EnvironmentHealthCheckSubjectV1Schema,
   MachineServiceHealthCheckSubjectV1Schema,
 ]));
 export type HealthCheckSubjectV1 = z.infer<typeof HealthCheckSubjectV1Schema>;
