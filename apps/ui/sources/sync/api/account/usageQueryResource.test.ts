@@ -12,11 +12,11 @@ import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActio
 import { UsageHistoryReadStateSchema, type UsageHistoryReadInput } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import * as usageSessionEvidence from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { UsageWorkEvidence } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmWorkEvidenceSessionResult } from '@happier-dev/protocol/scm';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery, resolveEffectiveUsageCostUsd } from '@happier-dev/protocol/usage/usageCost';
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { scmFallbackError } from '@/sync/ops/scm/scmRpcFailure';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources, mergeRetainedUsageAllowance, readUiUsageQueryBatch } from './usageQueryResource';
@@ -99,6 +99,9 @@ import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 
 const scmTransport = vi.hoisted(() => vi.fn());
+function workBatch(request: { payload: ScmWorkEvidenceReadRequest }, result: Omit<ScmWorkEvidenceSessionResult, 'sessionId'>) {
+  return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(session => ({ sessionId: session.sessionId, ...result })) });
+}
 // These Homes are served at the HTTP boundary; prevent real Engine.IO dials
 // from withdrawing their admitted Machine presence during Resource reads.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -2001,8 +2004,7 @@ describe('usage query captured Resource adapter', () => {
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
-    scmTransport.mockResolvedValue({ success: true, branches: [], branchEvidence: [], branchEvidenceStatus: 'partial',
-      pullRequests: [witness.pullRequest], workEvidence: [witness, witness], workEvidenceStatus: 'partial' });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness, witness], branchEvidence: [] }));
     const summary = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, projects: ['historical-project'], includeWorkEvidence: true, workProjection: 'summary',
       includeSessionEvidence: true, includeTranscriptEvidence, includeQuotaHistory: false, includeActivity: true,
       includeComparison: false, includeSeries: false, includeInsights: false, includeLeaders: false,
@@ -2565,7 +2567,7 @@ describe('usage query captured Resource adapter', () => {
     expect(UsageQueryBatchResultSchema.safeParse(final).success).toBe(true);
   });
 
-  it('retains Work after repeated HTTP failures while real SCM failure normalization still quarantines denial', async () => {
+  it('retains Work after repeated HTTP failures while batch transport refusal quarantines denial', async () => {
     let status = 200;
     let hasEvidence = true;
     const branchEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
@@ -2574,22 +2576,19 @@ describe('usage query captured Resource adapter', () => {
     const captured = await context(request => {
       if (!request.path.startsWith('/test/work/')) return undefined;
       if (status !== 200) return Response.json({ error: status === 403 ? 'denied' : 'unavailable' }, { status });
-      return request.path.endsWith('/scm.branch.list')
-        ? Response.json({ success: true, branches: [], branchEvidence: hasEvidence ? [branchEvidence] : [], branchEvidenceStatus: 'partial' })
-        : Response.json({ success: true, pullRequests: [], workEvidence: [], workEvidenceStatus: 'partial' });
+      return Response.json(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'work-session',
+        status: 'partial', evidence: [], branchEvidence: hasEvidence ? [branchEvidence] : [] }] }));
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeSessionEvidence: false });
     const accounting = [{ query, value: { ...value, contributions: [workContribution] }, status: 'available' as const }];
     const read = async (previous?: ReturnType<typeof resolveUsagePageAggregation>) => {
       const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {
         if (!captured.accountLifetime.isCurrent()) throw new Error('retired');
-      }, readSession: async () => async (method, input) => {
-        try {
-          const response = await captured.request(`/test/work/${method}`, { method: 'POST', body: JSON.stringify(input) });
-          if (response.status >= 500) throw new RetryableServerResponseError(response.status, 'unavailable');
-          if (!response.ok) throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
-          return await response.json();
-        } catch (error) { return scmFallbackError(error, { method, request: {} }); }
+      }, resolveSession: async () => ({ machineId: 'work-machine', cwd: '/repo' }), readMachine: async (_machineId, input) => {
+        const response = await captured.request('/test/work/scm.workEvidence.read', { method: 'POST', body: JSON.stringify(input) });
+        if (response.status >= 500) throw new RetryableServerResponseError(response.status, 'unavailable');
+        if (!response.ok) throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
+        return await response.json();
       } });
       return resolveUsagePageAggregation({ queries: [query], accounting, work, previous });
     };
@@ -3023,10 +3022,7 @@ describe('usage query captured Resource adapter', () => {
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => ({ success: true,
-      branches: [], branchEvidence: [], branchEvidenceStatus: 'partial',
-      pullRequests: request.payload.state === 'merged' ? [witness.pullRequest] : [],
-      workEvidence: request.payload.state === 'merged' ? [witness] : [], workEvidenceStatus: 'partial' }));
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness], branchEvidence: [] }));
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
@@ -3140,6 +3136,47 @@ describe('usage query captured Resource adapter', () => {
         'a withdrawal while closed must reach the existing Account admission').toBe(4);
       expect(home!.requests.filter(row => row.path === '/v2/usage/query')).toHaveLength(initialPosts + 3);
     } finally { release(); }
+  });
+
+  it('revisits the same resolved accounting demand without reads when only its presentation changes after an unrelated push', async () => {
+    let now = Date.UTC(2026, 10, 12, 12);
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, session: 'retained-session',
+      includeQuota: false, includeQuotaHistory: false, includeComparison: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+      includeActivity: false, includeModelTimeline: false });
+    const store = getUsageQueryResourceStore(captured);
+    const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+    const visit = async (selected: typeof query) => {
+      const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [selected] }) });
+      const release = entry.subscribe(() => {}, true);
+      try {
+        await flushHookEffects({ cycles: 20 });
+        await expect.poll(() => entry.getSnapshot().value !== undefined && entry.getSnapshot().pending === 'idle').toBe(true);
+        expect(entry.getSnapshot().error).toBeUndefined();
+        return decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+      } finally { release(); }
+    };
+    const first = await visit(query);
+    expect(reads()).toBe(1);
+    now += 1500;
+    publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['other-session'], {
+      changeKinds: ['session'], usageAccountingChange: { sessionId: 'other-session' },
+    });
+    const reopened = await visit(query);
+    expect(reopened.accounting).toEqual(first.accounting);
+    expect.soft(reads(), 'Reopening the same resolved request makes zero new accounting reads').toBe(1);
+    for (const metric of ['cost', 'sessions', 'busy'] as const) {
+      const presented = await visit(normalizeUsageQuery({ ...query, metric }));
+      expect(presented.accounting).toEqual(first.accounting);
+      expect.soft(reads(), 'Presentation-only metric changes retain the same accounting admission and instant').toBe(1);
+    }
+    publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['retained-session'], {
+      changeKinds: ['session'], usageAccountingChange: { sessionId: 'retained-session' },
+    });
+    await visit(normalizeUsageQuery({ ...query, metric: 'cost' }));
+    expect(reads(), 'A relevant accounting change still replaces the retained answer').toBe(2);
   });
 
   it('reuses accounting across Usage views with connected quota history until accounting changes or refresh is requested', async () => {
@@ -4924,7 +4961,7 @@ describe('usage query captured Resource adapter', () => {
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true,
       serverId: captured.accountLifetime.scope.serverId, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })]);
     storage.getState().applyMachines([createMachineFixture({ id: 'work-machine' })]);
-    scmTransport.mockImplementation(() => held ? work.promise : Promise.resolve({ success: true, pullRequests: [] }));
+    scmTransport.mockImplementation(async request => held ? work.promise : workBatch(request, { status: 'unsupported' }));
     const query = normalizeUsageQuery({ ...(explicit ? { session: 'work-session' } : {}), period: { startMs: 0, endMs: 1000 } });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
     const release = entry.subscribe(() => {}, false);
@@ -4945,12 +4982,12 @@ describe('usage query captured Resource adapter', () => {
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources)
         .toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
       retireActiveServerAccountScopeLifetime();
-      work.resolve({ success: true, pullRequests: [] });
+      work.resolve(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'work-session', status: 'unsupported' }] }));
       privateSession.resolve(Response.json({ error: 'not_found' }, { status: 404 }));
       await refreshing;
       await flushHookEffects();
       expect(entry.getSnapshot().value).toBeUndefined();
-    } finally { work.resolve({ success: true, pullRequests: [] }); privateSession.resolve(Response.json({ error: 'not_found' }, { status: 404 })); release(); }
+    } finally { work.resolve(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'work-session', status: 'unsupported' }] })); privateSession.resolve(Response.json({ error: 'not_found' }, { status: 404 })); release(); }
   });
 
   it('reads chosen Account night hours through the recorded activity query without inventing private busy duration', async () => {
@@ -5961,7 +5998,7 @@ describe('usage query captured Resource adapter', () => {
       expect(decodeUsageQueryResource(initial!).results[0]).toMatchObject({ accounting,
         sources: expect.arrayContaining([{ source: 'work', status: 'pending' }, { source: 'how_you_work', status: 'pending' }]),
       });
-      work.resolve({ success: true, pullRequests: [] });
+      work.resolve(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'staged-session', status: 'unsupported' }] }));
       session.resolve(Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'staged-session',
         createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
         metadataVersion: 1, metadata: { path: '', host: '', name: 'Opened' }, agentStateVersion: 1 }) }));
@@ -7960,10 +7997,14 @@ describe('usage query Work composition', () => {
         machineId: 'work-machine', path: '/repo', host: 'test', homeDir: '/home/test',
       } })]);
     storage.getState().applyMachines([createMachineFixture({ id: 'work-machine' })]);
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => ({ success: true,
-      pullRequests: request.payload.state === 'open' ? [witness.pullRequest] : [],
-      workEvidence: request.payload.state === 'open' ? [witness] : [], workEvidenceStatus: 'partial' }));
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [witness] }));
+    storage.setState({ settings: { ...storage.getState().settings, scmGitRepoPreferredBackend: 'sapling' } });
     const result = await readUiUsageQueryBatch(captured, { queries: [query, other, workOnly, accountingOnly] });
+    expect(scmTransport).toHaveBeenCalledTimes(2);
+    expect(scmTransport).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'work-machine', method: 'scm.workEvidence.read',
+      payload: { sessions: [{ sessionId: 'session', cwd: '/repo', turnIds: ['turn'] }], backendPreference: { kind: 'prefer', backendId: 'sapling' } },
+      authorization: { kind: 'scm.workEvidence', sessionIds: ['session'] },
+      ...captured.accountLifetime.scope }));
     const evidenceDemands = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
     const transcriptDemands = () => evidenceDemands().filter(demand => demand.query.includeTranscriptEvidence);
@@ -8035,7 +8076,7 @@ describe('usage query Work composition', () => {
       const beforeHostFlip = home!.requests.filter(request => request.path === '/v2/usage/query').length;
       // The next native read answers a changed partial inventory, so this
       // proves Machine invalidation reaches Work without re-reading accounting.
-      scmTransport.mockResolvedValue({ success: true, pullRequests: [], workEvidence: [], workEvidenceStatus: 'partial' });
+      scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [] }));
       // No pool is open. Only this admitted Session makes its Machine a consumer.
       recordMachineRequestFailed({ ...captured.accountLifetime.scope, machineId: machine.id });
       await flushHookEffects();
@@ -8052,27 +8093,22 @@ describe('usage query Work composition', () => {
         'Machine reachability changes Work evidence, not the Account accounting answer').toBe(beforeHostFlip);
     } finally { release(); recordMachineRequestSucceeded({ ...captured.accountLifetime.scope, machineId: machine.id }); }
     const merged = { ...witness, pullRequest: { ...witness.pullRequest, state: 'merged' as const } };
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => ({ success: true,
-      pullRequests: request.payload.state === 'merged' ? [merged.pullRequest] : [],
-      workEvidence: request.payload.state === 'merged' ? [merged] : [], workEvidenceStatus: 'partial' }));
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [merged] }));
     const native = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(transcriptDemands(), 'repeating the original window reuses its admitted private projection')
       .toHaveLength(admittedTranscripts.length);
     expect(transcriptDemands()).toEqual(expect.arrayContaining(admittedTranscripts));
     expect(native.results[0]?.work?.allocations[0]).toMatchObject({ reason: 'allocated',
       outcome: { repositoryKey: 'repo', pullRequest: { state: 'merged' } } });
-    // Exercise the real Session → Machine SCM transport normalizer before Work's
-    // quarantine/retention owner; only the actual RPC boundary rejects here.
+    // The Machine batch boundary preserves failures for the shared Work retention owner.
     scmTransport.mockRejectedValue(new RetryableServerResponseError(503, 'Unavailable'));
     const outage = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, native);
     expect(outage.results[0]?.work?.allocations[0]?.reason).toBe('allocated');
     expect(outage.results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'stale' }));
-    for (const allReadsRefused of [true, false]) {
-      scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => {
-        if (allReadsRefused || request.payload.state === 'closed') throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
-        return request.payload.state === undefined
-          ? { success: true, branches: [], branchEvidence: [], branchEvidenceStatus: 'partial' }
-          : { success: true, pullRequests: [merged.pullRequest], workEvidence: [merged], workEvidenceStatus: 'partial' };
+    for (const transportRefusal of [true, false]) {
+      scmTransport.mockImplementation(async request => {
+        if (transportRefusal) throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
+        return workBatch(request, { status: 'error', evidence: [], branchEvidence: [], errorCode: RPC_ERROR_CODES.FORBIDDEN });
       });
       const refused = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, outage);
       expect(refused.results[0]?.work?.allocations[0]).toMatchObject({ reason: 'missing_evidence', outcome: null, evidence: [] });
@@ -8083,9 +8119,7 @@ describe('usage query Work composition', () => {
     }
     const { pullRequest: _pullRequest, ...checkpoint } = witness;
     const branchWitness = { ...checkpoint, branch: { ref: 'refs/heads/standalone', headSha: 'b'.repeat(40) } };
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => request.payload.state === undefined
-      ? { success: true, branches: [], branchEvidence: [branchWitness], branchEvidenceStatus: 'partial' }
-      : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No hosting provider for this local repository' });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [], branchEvidence: [branchWitness] }));
     const standalone = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(standalone.results[0]?.work?.branchAllocations[0]).toMatchObject({ reason: 'allocated', contribution,
       branch: { repositoryKey: 'repo', branch: { ref: 'refs/heads/standalone' } } });
@@ -8097,9 +8131,7 @@ describe('usage query Work composition', () => {
     // A local branch remains readable without a remote. Unsupported hosting
     // does not become a failed Work read or poison its exact branch evidence.
     expect(standalone.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number) });
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => request.payload.state === 'closed'
-      ? { success: false, errorCode: 'COMMAND_FAILED', error: 'Native hosting read failed' }
-      : { success: true, pullRequests: [merged.pullRequest], workEvidence: [merged], workEvidenceStatus: 'partial' });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [merged], errorCode: 'COMMAND_FAILED' }));
     const partial = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(partial.results[0]?.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number) });
     expect(partial.results[0]?.work?.allocations[0]?.reason).toBe('allocated');
@@ -8113,16 +8145,14 @@ describe('usage query Work composition', () => {
     expect(workProgress.length).toBeGreaterThan(0);
     expect(workProgress.every(source => source === observedWork), 'equal Work rereads never clear and republish the failure').toBe(true);
     expect(retried.results[0]!.sources.find(source => source.source === 'work')).toBe(observedWork);
-    scmTransport.mockResolvedValue({ success: true, pullRequests: [witness.pullRequest] });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'unsupported' }));
     const unsupported = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(unsupported.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported', asOfMs: expect.any(Number) });
     expect(unsupported.results[0]?.work?.allocations[0]).toMatchObject({ reason: 'missing_evidence', outcome: null, evidence: [] });
-    scmTransport.mockResolvedValue({ success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'No supported backend' });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'unsupported', errorCode: 'FEATURE_UNSUPPORTED' }));
     const unavailableBackend = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(unavailableBackend.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported', asOfMs: expect.any(Number) });
-    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => request.payload.state === 'closed'
-      ? { success: false, errorCode: 'INVALID_REQUEST', workEvidence: [merged] }
-      : { success: true, pullRequests: [merged.pullRequest], workEvidence: [merged], workEvidenceStatus: 'partial' });
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'error', evidence: [], branchEvidence: [], errorCode: 'INVALID_REQUEST' }));
     const denied = await readUiUsageQueryBatch(captured, { queries: [query] });
     expect(denied.results[0]?.work?.outcomes).toEqual([]);
     expect(denied.results[0]?.work?.allocations[0]?.evidence).toEqual([]);
@@ -8140,7 +8170,7 @@ describe('usage query Work composition', () => {
     }, true);
     await flushHookEffects({ cycles: 30 });
     expect(observed).toContainEqual({ pending: true, accounting: true, allocated: false });
-    detail.resolve({ success: true, pullRequests: [witness.pullRequest], workEvidence: [witness], workEvidenceStatus: 'partial' });
+    detail.resolve(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'session', status: 'partial', evidence: [witness] }] }));
     await flushHookEffects({ cycles: 30 });
     expect(observed.at(-1)).toEqual({ pending: false, accounting: true, allocated: true });
     unsubscribe();

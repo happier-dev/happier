@@ -200,6 +200,7 @@ export function UsageWidgetBatchProvider(
   // Filter choices consume accounting membership, never private work detail.
   const inventoryQuery = React.useMemo(() => props.inventoryQuery
     ? normalizeUsageQuery({ ...props.inventoryQuery,
+      includeContributions: false,
       includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
       includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeQuota: false,
@@ -327,6 +328,9 @@ function resolveQuery(
       || widgetId === 'usage_recap' && style !== 'personalRecords');
     const rhythmMetric = queryInput.metric ?? 'tokens';
     const query = normalizeUsageQuery({ ...clauses, ...queryInput, includeAccounting: true,
+      // Bodies own their evidence demand; page clauses cannot force raw rows
+      // into a summary body or turn a detailed Work body into a summary.
+      includeContributions: false, workProjection: 'detail',
       includeSeries: false, includeInsights: false, includeActivity: false, activityResolution: 'both',
       includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
       includeTranscriptEvidence: false, includeCoach: false, includeQuota: false,

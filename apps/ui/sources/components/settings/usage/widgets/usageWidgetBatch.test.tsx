@@ -173,6 +173,11 @@ describe('Usage page batch', () => {
           recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: nowMs, staleAfterMs: 600_000 });
         if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: record },
           metadata: { fetchedAt: nowMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+        if (request.method === 'PUT' && request.path === '/v2/sessions/switch-session/system-records'
+          && request.body !== null && typeof request.body === 'object' && 'address' in request.body && 'content' in request.body) {
+          return Response.json({ record: { id: 'usage-facts', address: request.body.address, content: request.body.content,
+            revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', createdAt: new Date(nowMs).toISOString(), updatedAt: new Date(nowMs).toISOString() } });
+        }
         if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
           features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
         }));
@@ -183,24 +188,32 @@ describe('Usage page batch', () => {
         }
         if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
           const input = UsageSessionEvidenceRequestSchema.parse(request.body);
-          return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
-            results: [{ sessionId: 'switch-denied', detail: { status: 403, body: { error: 'forbidden' } } },
-              { sessionId: 'switch-session', workFacts: { session: {
-              id: 'switch-session', seq: revision, createdAt: nowMs - 1_000, updatedAt: nowMs,
-              active: false, metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
-              encryptionMode: 'plain', dataEncryptionKey: null, viewerRole: 'owner',
-              access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
-            }, content: { t: 'plain', v: { v: 1, seq: revision, metadataVersion: 1, agentStateVersion: 1,
-              session: { metadata: null, ownerMetadata: null, agentTarget: null },
-              // Many overlapping native witnesses still describe one interval.
-              // A zero-visit switch must stay independent of this population.
-              evidence: { status: 'partial', facts: Array.from({ length: 64 }, (_, index) => ({ workId: JSON.stringify(['switch-session', 'turn']),
-                evidenceId: `turn-${index}`, agentId: 'codex', machineId: null, kind: 'busy',
-                startMs: nowMs - 900, endMs: nowMs - 900 + agentTimeMs })) } } } },
-              turns: { status: 200, body: { v: 1, sessionId: 'switch-session', updatedAt: nowMs, turns: [{
-                turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+          const workFact = { v: 1, kind: 'work' as const, seq: revision, metadataVersion: 1, agentStateVersion: 1,
+            session: { metadata: null, ownerMetadata: null, agentTarget: null },
+            // Many overlapping native witnesses still describe one interval.
+            // A retained revisit must stay independent of this population.
+            evidence: { status: 'partial' as const, facts: Array.from({ length: 64 }, (_, index) => ({ workId: JSON.stringify(['switch-session', 'turn']),
+              evidenceId: `turn-${index}`, agentId: 'codex', machineId: null, kind: 'busy' as const,
+              startMs: nowMs - 900, endMs: nowMs - 900 + agentTimeMs })) } };
+          const factRecords = (input.workFactKinds ?? ['work']).map(kind => kind === 'work'
+            ? { kind, content: { t: 'plain' as const, v: workFact } }
+            : { kind, content: { t: 'plain' as const, v: { v: 1 as const, kind: 'coach' as const, seq: revision,
+              metadataVersion: 1, agentStateVersion: 1, evidence: { compositionCoverage: 'unknown' as const } } } });
+          const rows = [
+            { sessionId: 'switch-denied', detail: { status: 403 as const, body: { error: 'forbidden' } } },
+            { sessionId: 'switch-session', workFacts: { session: {
+                id: 'switch-session', seq: revision, createdAt: nowMs - 1_000, updatedAt: nowMs,
+                active: false, metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
+                encryptionMode: 'plain' as const, dataEncryptionKey: null, viewerRole: 'owner' as const,
+                access: { v: 1 as const, level: 'owner' as const, sources: [{ kind: 'owner' as const }], capabilities: createSessionAccessFixture().capabilities },
+              }, records: factRecords },
+              turns: { status: 200 as const, body: { v: 1 as const, sessionId: 'switch-session', updatedAt: nowMs, turns: [{
+                turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: nowMs - 900,
                 terminalAt: nowMs - 900 + agentTimeMs, updatedAt: nowMs,
-              }] } } }].filter(row => !input.requests[0]?.sessionIds || input.requests[0].sessionIds.includes(row.sessionId))
+              }] } } },
+          ];
+          return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
+            results: rows.filter(row => !input.requests[0]?.sessionIds || input.requests[0].sessionIds.includes(row.sessionId))
                 .map(row => denySession && row.sessionId === 'switch-session'
                   ? { sessionId: row.sessionId, detail: { status: 403, body: { error: 'forbidden' } } } : row) });
         }
@@ -315,6 +328,7 @@ describe('Usage page batch', () => {
         'How you work consumes the Session and transcript facts already admitted by Coach').toBe(0);
       expect.soft(firstSwitchVisits, 'the first view switch reuses the already folded compact evidence rows').toBe(0);
       expect(openings.mock.calls.length - coachOpenings, 'a view switch cannot decrypt a compact record without opening it').toBe(0);
+      const admittedOpenings = openings.mock.calls.length;
       const settledRenders = renders;
       const settledWidgetRenders = new Map(rendersByWidget);
       await flushHookEffects({ cycles: 4 });
@@ -331,7 +345,7 @@ describe('Usage page batch', () => {
       await settle(8);
       expect(reads() - admittedReads, 'a settled view switch admits no new accounting or private evidence reads').toBe(0);
       expect.soft(visits, 'revisiting admitted cohorts does not walk their compact evidence rows').toBe(0);
-      expect(openings.mock.calls.length - coachOpenings).toBe(0);
+      expect(openings.mock.calls.length - admittedOpenings).toBe(0);
       for (const [id, model] of models) {
         expect(model.slice).toEqual(retained.get(id));
         expect(model.slice?.accounting).toBe(retained.get(id)?.accounting);
@@ -686,8 +700,8 @@ describe('Usage page batch', () => {
         expect(result.value.summary).toBeDefined();
       }
       const metrics = screen.findAllByType(HappierDataMetric);
-      expect(metrics.find(metric => metric.props.testID === 'usage_period_summary.hero')?.props.value).toBe(unpriced ? '—' : 1.3048);
-      expect(metrics.find(metric => metric.props.testID === 'usage_efficiency.perMtok')?.props.value).toBe(unpriced ? '—' : 1.3048);
+      expect(metrics.find(metric => metric.props.testID === 'usage_period_summary.hero')?.props.value).toBe(1.3048);
+      expect(metrics.find(metric => metric.props.testID === 'usage_efficiency.perMtok')?.props.value).toBe(unpriced ? 0.6524 : 1.3048);
       const rows = screen.findByType(RankedRows).props.rows as { id: string; value: number | null }[];
       expect(rows.find(row => row.id === 'codex')?.value).toBe(1.25);
       expect(rows.find(row => row.id === 'claude')?.value).toBe(0.0548);
@@ -751,8 +765,22 @@ describe('Usage page batch', () => {
     { metric: 'tokens', days: 7 }, { metric: 'cost', days: 7 },
     { metric: 'tokens', days: 14 }, { metric: 'cost', days: 14 },
   ] as const)('settles an accounting-only Agent river ($metric, $days days) without reading Session evidence', async ({ metric, days }) => {
+    const startMs = Date.UTC(2026, 9, 26);
+    const riverAccounting: UsageAnalyticsQueryResponse = {
+      ...accounting,
+      totals: { ...accounting.totals, eventCount: days,
+        tokens: { ...accounting.totals.tokens, input: 10 * days, output: 5 * days, total: 15 * days },
+        cost: { ...accounting.totals.cost, reportedUsd: days } },
+      contributions: Array.from({ length: days }, (_, day) => ({
+        id: `river-${day}`, sessionId: 'river-session', turnId: `turn-${day}`,
+        observedAtMs: startMs + day * 86_400_000, eventCount: 1,
+        agentId: 'claude', modelId: 'claude-model', machineId: null, projectKey: null, workspaceId: null,
+        source: 'runtime', sourceContext: { path: 'runtime', execution: 'happier' },
+        tokens: accounting.totals.tokens, cost: accounting.totals.cost,
+      } satisfies NonNullable<UsageAnalyticsQueryResponse['contributions']>[number])),
+    };
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-river-settlement.test', accountId: 'account-a' }],
-      route: request => request.path === '/v2/usage/query' ? Response.json(accounting)
+      route: request => request.path === '/v2/usage/query' ? Response.json(riverAccounting)
         : request.path === '/v1/features' || request.path === '/v1/features/authenticated'
           ? Response.json(createRootLayoutFeaturesResponse())
           : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method, headers: request.headers }) ?? undefined });
@@ -784,7 +812,7 @@ describe('Usage page batch', () => {
   });
   it('requests only the output sections consumed by mounted Usage bodies and their chart styles', async () => {
     type WidgetId = Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>;
-    const outputs = ['includeSeries', 'includeInsights', 'includeActivity', 'includeLeaders', 'includeModelTimeline', 'includeMessageStats', 'includeQuotaHistory', 'includeComparison'] as const;
+    const outputs = ['includeContributions', 'includeSeries', 'includeInsights', 'includeActivity', 'includeLeaders', 'includeModelTimeline', 'includeMessageStats', 'includeQuotaHistory', 'includeComparison'] as const;
     type Output = typeof outputs[number];
     const defaults = {
       usage_daily: ['includeSeries', 'includeModelTimeline'],
@@ -849,7 +877,8 @@ describe('Usage page batch', () => {
     let slices: ReturnType<typeof useUsageWidgetBatchSlices> = [];
     let inventory: ReturnType<typeof useUsageWidgetBatchInventorySlice>;
     function DemandProbe() { slices = useUsageWidgetBatchSlices(); inventory = useUsageWidgetBatchInventorySlice(); return null; }
-    const pageQuery = resolveUsageWidgetPageInitialQuery({ nowMs: 1000, timeZoneOffsetMinutes: 0 });
+    const pageQuery = normalizeUsageQuery({ ...resolveUsageWidgetPageInitialQuery({ nowMs: 1000, timeZoneOffsetMinutes: 0 }),
+      includeContributions: true, workProjection: 'summary' });
     const inventoryQuery = normalizeUsageQuery({ ...pageQuery, period: { startMs: 0, endMs: 1000 }, breakdown: ['agent', 'machine', 'project', 'source'] });
     const view = (entry?: typeof cases[number]) => <InjectedAuthProvider credentials={credentials}><AppShellPluginUiProjectionValueProvider value={runtime}><CoreCollectionScope>
       <UsageWidgetBatchProvider clauses={readUsageWidgetQueryOverrides(pageQuery)} inventoryQuery={entry ? undefined : inventoryQuery} inventoryOnly={!entry}>
@@ -883,6 +912,58 @@ describe('Usage page batch', () => {
       });
     } finally { await screen.unmount(); }
   });
+  it('keeps raw contribution bytes out of non-Work bodies despite inherited page detail clauses', async () => {
+    const rich: UsageAnalyticsQueryResponse = { ...accounting, contributions: Array.from({ length: 1000 }, (_, index) => ({
+      id: `detail-event-${index}`, observedAtMs: 500, sessionId: null, turnId: null, agentId: 'codex', modelId: null,
+      machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
+      tokens: accounting.totals.tokens, cost: accounting.totals.cost,
+    })) };
+    const deliveries: UsageAnalyticsQueryBatchResponse[] = [];
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-page-detail-demand.test', accountId: 'account-a' }],
+      route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+        ? Response.json(createRootLayoutFeaturesResponse()) : request.path === '/v2/usage/query-batch' ? (() => {
+        const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+        const chunks = [...projectUsageAnalyticsBatchDelivery({ v: 1,
+          results: input.queries.map(query => ({ query, value: repriceUsageAnalyticsResponse(rich) })),
+        }, input, true)];
+        deliveries.push(collectUsageAnalyticsBatchDelivery(chunks));
+        return new Response(chunks.map(chunk => JSON.stringify(chunk)).join('\n'), { headers: { 'Content-Type': 'application/x-ndjson' } });
+      })() : request.path === '/v2/usage/query' ? Response.json(rich)
+        : createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+    const serverId = home.homes.a!.id;
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl: home.homes.a!.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
+    storage.setState({ profileScope: { serverId, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+    const inherited = readUsageWidgetQueryOverrides(normalizeUsageQuery({ includeContributions: true, workProjection: 'summary' }));
+    const observed: { model?: UsageWidgetBodyModel; query: ReturnType<typeof normalizeUsageQuery> | null } = { query: null };
+    type WidgetId = 'usage_cost_facts' | 'usage_period_summary' | 'usage_daily' | 'usage_outcomes';
+    function Probe(props: Readonly<{ id: WidgetId }>) {
+      const result = useUsageWidgetModel({ ...scope, period: { startMs: 0, endMs: 1000 }, metric: 'cost' }, props.id);
+      observed.model = result.model; observed.query = result.query;
+      return null;
+    }
+    const view = (id: WidgetId) => <InjectedAuthProvider credentials={credentials}>
+      <UsageWidgetBatchProvider clauses={inherited}><Probe id={id} /></UsageWidgetBatchProvider>
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(view('usage_cost_facts'));
+    try {
+      for (const id of ['usage_cost_facts', 'usage_period_summary', 'usage_daily'] as const) {
+        await screen.update(view(id));
+        await expect.poll(() => observed.model?.slice?.accounting !== undefined && !observed.model?.slice?.pending).toBe(true);
+        expect.soft(observed.query?.includeContributions, `${id} does not consume raw rows`).toBe(false);
+        const rowBytes = deliveries.reduce((bytes, delivery) => bytes + (delivery.contributionPages ?? [])
+          .reduce((sum, page) => sum + (page.rows.length ? new TextEncoder().encode(JSON.stringify(page.rows)).byteLength : 0), 0), 0);
+        expect.soft(rowBytes, `${id} acquires zero contribution bytes`).toBe(0);
+      }
+      await screen.update(view('usage_outcomes'));
+      await expect.poll(() => observed.query?.includeWorkEvidence).toBe(true);
+      expect.soft(observed.query?.includeContributions).toBe(false);
+      expect.soft(observed.query?.workProjection, 'Outcomes retains the detailed allocation demand that conserves Work').toBe('detail');
+      await expect.poll(() => deliveries.some(delivery => delivery.contributionPages?.some(page => page.totalCount === 1000 && page.nextOffset === null))).toBe(true);
+    } finally { await screen.unmount(); }
+  });
+
   it('populates a Project Breakdowns preview with bounded facts outside the mounted Account page batch', async () => {
     // The reported Account has 32,975 usage events. The HTTP boundary owns the
     // raw rows; opening a ranked preview must deliver only its aggregate facts.
@@ -1009,6 +1090,11 @@ describe('Usage page batch', () => {
         if (request.path === '/v2/usage/query') return Response.json(accounting);
         if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+        if (request.method === 'PUT' && request.path === '/v2/sessions/work/system-records'
+          && request.body !== null && typeof request.body === 'object' && 'address' in request.body && 'content' in request.body) {
+          return Response.json({ record: { id: 'usage-facts', address: request.body.address, content: request.body.content,
+            revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() } });
+        }
         if (request.path === USAGE_SESSION_EVIDENCE_PATH && request.method === 'POST') {
           const input = UsageSessionEvidenceRequestSchema.parse(request.body);
           const turns = { status: 200, body: { v: 1, sessionId: 'work', updatedAt: 900,
@@ -1019,7 +1105,8 @@ describe('Usage page batch', () => {
               workFacts: { session: { id: 'work', seq: 1, createdAt: 1, updatedAt: 900, active: true,
                 metadataVersion: 1, agentStateVersion: 1, metadataLayoutVersion: 1,
                 encryptionMode: 'plain', dataEncryptionKey: null, viewerRole: 'owner',
-                access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } }, content: null },
+              access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } },
+              records: (input.workFactKinds ?? ['work']).map(kind => ({ kind, content: null })) },
             } : {
               detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: 'work',
                 createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
@@ -1055,7 +1142,7 @@ describe('Usage page batch', () => {
       || request.method === 'GET' && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
     await screen.update(body('usage_period_summary'));
     // Custom windows open unconverted evidence under the shared window policy,
-    // even when this widget's output does not consume transcript facts.
+    // even when this body's summary projection does not consume transcript facts.
     await expect.poll(evidenceReads).toEqual([
       expect.objectContaining({ readWorkFacts: true,
         requests: [expect.objectContaining({ query: expect.objectContaining({ includeSessionEvidence: true, includeTranscriptEvidence: false }) })] }),
@@ -1064,7 +1151,7 @@ describe('Usage page batch', () => {
     ]);
     expect(evidenceReads()[1]).not.toHaveProperty('readWorkFacts');
     await expect.poll(() => slices.find(slice => slice.howYouWork)?.howYouWork?.intervals?.agentTimeMs).toBe(300);
-    expect(slices.find(slice => slice.howYouWork)?.sources)
+    await expect.poll(() => slices.find(slice => slice.howYouWork)?.sources)
       .toContainEqual({ source: 'how_you_work:transcripts', status: 'not_loaded' });
     const admittedReads = evidenceReads();
     await screen.update(body('usage_coach'));
@@ -1072,7 +1159,7 @@ describe('Usage page batch', () => {
     expect(evidenceReads()).toEqual(admittedReads);
     expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/sessions/read-batch'
       || request.method === 'GET' && (request.path === '/v2/sessions/work' || request.path.startsWith('/v1/sessions/work/')))).toEqual([]);
-    await expect.poll(() => slices.find(slice => slice.howYouWork)?.sources)
+    await expect.poll(() => slices.find(slice => slice.coach)?.sources)
       .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
   });
 

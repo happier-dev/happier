@@ -32,7 +32,9 @@ import { queryUsageAnalytics } from './apiUsage';
 import { createUsageAccountingReader, getUsageAccountingReadKey } from './usageAccountingReader';
 import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
-import { runSessionScmRpc } from '@/sync/ops/sessionScm';
+import { resolveSessionScmRequestTarget } from '@/sync/ops/sessionScm';
+import { machineScmWorkEvidenceRead } from '@/sync/ops/scm/machineScm';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readMachineControlTargetForSession, resolveMachineControlTargetForSessionFromState, resolveDisplayMachineIdForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
@@ -45,7 +47,7 @@ import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/co
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence,
     type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, getUsageSessionEvidenceDemandKey,
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema,
     createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { getUsageSessionFactKinds } from '@happier-dev/protocol/usage/usageSessionFactKinds';
@@ -73,7 +75,7 @@ import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
-import { createUsageQuerySessionInputs, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader, type SessionInputSelectionProjector } from './usageQuerySessionInputs';
+import { createUsageQuerySessionInputs, getUsageQuerySessionInputDemand, usageSessionInputDemandCovers, type SessionInputDemand, type SessionInputEvidence, type SessionInputReader, type SessionInputSelectionReader, type SessionInputSelectionProjector } from './usageQuerySessionInputs';
 import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
@@ -563,7 +565,7 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
     loadBatch: (requests: readonly SessionInputLoadRequest[], signal: AbortSignal) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
-    admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: string, sourceReferenceKey?: string,
+    admitted?: ReadonlyMap<string, SessionInputEvidence | null>, demandKey?: SessionInputDemand, sourceReferenceKey?: string,
     demandSignal?: AbortSignal) {
     const requests: SessionInputLoadRequest[] = [];
     const values = new Map<string, SessionInputEvidence | null>();
@@ -633,7 +635,7 @@ function sessionEvidenceBatchReadError(error: unknown): unknown {
 }
 
 type SelectionInputs = Readonly<{ inputs: ReadonlyMap<string, { value: SessionInputEvidence } | { error: unknown }>;
-    isInputCurrent(sessionId: string): boolean }>;
+    demand: ReturnType<typeof getUsageQuerySessionInputDemand>; isInputCurrent(sessionId: string): boolean }>;
 
 /** One window rule for How-you-work and Coach (owner ruling 2026-11-06 12:52Z). */
 function readsUnconvertedTranscriptsOnOpen(query: UsageQuery): boolean {
@@ -836,9 +838,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         if (idsByQuery.has(key)) continue;
         try {
             const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
-            const selection = await readSelection(getUsageSessionEvidenceDemandKey(summaryQuery, nowMs), async (isInputCurrent, ownerSignal, candidates) => {
+            const demand = getUsageQuerySessionInputDemand(summaryQuery, nowMs);
+            const selection = await readSelection(demand.key, async (isInputCurrent, ownerSignal, candidates) => {
                 const summary = await readSummary(summaryQuery, undefined, ownerSignal, candidates);
-                return { ids: summary.body.requests[0]!.sessionIds, rows: { inputs: summary.inputs, isInputCurrent } satisfies SelectionInputs };
+                return { ids: summary.body.requests[0]!.sessionIds, rows: { inputs: summary.inputs, demand, isInputCurrent } satisfies SelectionInputs };
             }, signal);
             // Every borrower of one selection read shares the rows it opened, not only
             // the batch that started it (that batch may have left before it settled).
@@ -867,11 +870,11 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const summaryQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: false });
     // The input owner already keys each entry by Session and transcript phase.
     // The remaining demand is identical for the entire selected range.
-    const summaryDemandKey = getUsageSessionEvidenceDemandKey(summaryQuery, nowMs);
+    const summaryDemandKey = getUsageQuerySessionInputDemand(summaryQuery, nowMs);
     // Widget output flags do not override the shared window/history read policy.
     const transcriptQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: true });
     // One transcript conversion produces both work and Coach records, regardless of saved-fact read scope.
-    const transcriptDemandKey = getUsageSessionEvidenceDemandKey({ ...transcriptQuery, includeCoach: true }, nowMs);
+    const transcriptDemandKey = getUsageQuerySessionInputDemand({ ...transcriptQuery, includeCoach: true }, nowMs);
     const readTranscript = history?.readUnconverted || readsUnconvertedTranscriptsOnOpen(query);
     let updateRequired: UsageQuerySourceState['updateRequired'];
     let projectedReadFailure: SessionPartsHttpError | undefined;
@@ -1117,7 +1120,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordPhaseReadFailure, async (requests, ownerSignal) => {
         try {
             const discovery = discovered.get(getUsageQueryKey(query));
-            const inputs = new Map(discovery ? [...discovery.inputs].filter(([id]) => discovery.isInputCurrent(id)) : []);
+            const inputs = new Map(discovery && usageSessionInputDemandCovers(discovery.demand, summaryDemandKey)
+                ? [...discovery.inputs].filter(([id]) => discovery.isInputCurrent(id)) : []);
             // Accounting can witness historical Sessions absent from current discovery.
             // Hydrate them only when their existing private input needs admission.
             const missingIds = requests.map(request => request.sessionId).filter(id => !inputs.has(id));
@@ -1213,11 +1217,12 @@ async function readSessionWorkEvidence(context: UsageQueryAccountContext, querie
     accounting: readonly UsageAccountingSourceSnapshot[], sessionReads: Map<string, Promise<SessionWorkSourceResult>>,
     signal?: AbortSignal): Promise<readonly UsageWorkSourceSnapshot[]> {
     return collectUsageWorkSources({ queries, accounting, sessionReads, assertCurrent: () => requireCurrent(context, signal),
-        readSession: async sessionId => {
+        resolveSession: async sessionId => {
             const scope = context.accountLifetime.scope;
-            if (!readMachineControlTargetForSession({ sessionId, serverId: scope.serverId, accountId: scope.accountId })) return null;
-            return (method, request) => runSessionScmRpc(sessionId, method, request, scope.serverId, signal, scope.accountId);
+            const target = resolveSessionScmRequestTarget(sessionId, RPC_METHODS.SCM_WORK_EVIDENCE_READ, {}, scope.serverId, scope.accountId);
+            return target.ok ? { machineId: target.machineId, cwd: target.cwd } : null;
         },
+        readMachine: (machineId, request) => machineScmWorkEvidenceRead(machineId, request, { ...context.accountLifetime.scope, signal }),
     });
 }
 
@@ -1793,6 +1798,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // Closed accounting views do not consume Session/private input changes.
     // Private views retain their own input identity and refresh when reopened.
     let sessionEvidenceInputs = resourceInputs;
+    // Metric selects a presentation of the same accounting operands. Its
+    // first mount must keep the retained input's instant after a scoped wake.
+    const accountingInputKey = (query: UsageQuery) => getUsageQueryKey({ ...query, metric: 'tokens' });
     const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs: number }>();
     let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
     const replaceAccounting = () => {
@@ -1867,7 +1875,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const readInputs = [resourceInputs,
             ...(queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence)
                 ? [sessionEvidenceInputs] : []), ...queries.map(query => {
-                const key = getUsageQueryKey(query);
+                const key = accountingInputKey(query);
                 let admitted = accountingInputs.get(key);
                 if (!admitted) { admitted = { query, identity: {}, nowMs: Date.now() }; accountingInputs.set(key, admitted); }
                 return admitted.identity;
@@ -1892,7 +1900,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             const nowMs = Date.now();
             if (!query.includeAccounting) return nowMs;
             const admitted = admittedAccounting;
-            const key = getUsageQueryKey(query);
+            const key = accountingInputKey(query);
             const previous = accountingInputs.get(key);
             if (!admitted || resolveUsageQueryPeriod(query, previous?.nowMs ?? admitted.nowMs).startMs !== resolveUsageQueryPeriod(query, nowMs).startMs) {
                 if (admitted) replaceAccounting();
@@ -1908,7 +1916,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         readAccounting(request, query, signal, includeContributions = true, includeSessionIds = false, workOnly = false, onIssued) {
             requireCurrent(sharedContext, signal);
             owner.readAccountingInstant(query);
-            const inputKey = getUsageQueryKey(query);
+            const inputKey = accountingInputKey(query);
             const input = accountingInputs.get(inputKey);
             // Opaque invocation-bound request closures keep their own exact transport.
             const admitted = sharedContext.readTransport ? admittedAccounting : undefined;
@@ -2398,7 +2406,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             let ready = initial.value !== undefined || reusable || queries.every(query => !query.includeAccounting)
                 || initial.subscription === 'live' && initial.pending !== 'idle' && matches(initialAdmission);
             if (!ready && sharedContext.readTransport && admittedAccounting?.answers.size) ready = queries.every(query => resolveUsagePageAccountingReads([query],
-                accountingInputs.get(getUsageQueryKey(query))?.nowMs ?? Date.now()).every(read => {
+                accountingInputs.get(accountingInputKey(query))?.nowMs ?? Date.now()).every(read => {
                 const demand = resolveUsageAccountingDemand(sharedContext, read.query, read.period);
                 return admittedAccounting?.answers.has(getUsageAccountingReadKey(
                     demand.request, demand.includeContributions, demand.includeSessionIds, demand.workOnly)) === true;
