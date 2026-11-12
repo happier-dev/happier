@@ -1149,6 +1149,12 @@ passes that decision to the authentication-selection materializer; absent
 authority remains isolated. Reapplying credentials must not force a primary
 Account's shared home into isolation and detach the transcript needed to resume.
 
+In 0.3 development, the refresh coordinator compares each target's recorded
+credential revision before applying an external credential projection. Unchanged
+targets cause no credential acquisition, home rematerialization or authentication
+application. A target with a changed or unknown revision follows the existing
+application owner; other Sessions sharing the same profile keep their applied state.
+
 Codex app-server authentication is process-local after token application. Its
 runtime records the account actually accepted at startup or hot application,
 and reset-credit requests use that accepted access material rather than the
@@ -1507,17 +1513,29 @@ at init, a workspace watch keeps its source for its lifetime, and watch
 subscriptions and the SCM status-snapshot cache are keyed by source id plus path.
 Tests replace the unbound default with a failing source
 (`replaceUnboundWorkspaceSource`), so a consumer that escapes its captured source
-fails instead of reading this Machine.
+fails instead of reading this Machine. The default resolves at call time; a
+chunk-split bundle test (`workspaceSource.bundle.test.ts`, the shipped CLI
+bundler settings) proves it whichever module enters the graph first.
 
 Path policy stays in `filesystemPathAuthorization.ts`: it uses this Machine's link
 facts only for the local source; a target confines each operation to its root
 with its own facts (`confineWorkspaceTargetPath`) and never falls back to this
-Machine's disk. Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
+Machine's disk. The target implementation is `createHolderWorkspaceSource`
+(`holderWorkspaceSource.ts`): commands run as holder streams in the target
+(`resolveExecutable` = holder `which`, tools = the target's own `rg`/`difft`),
+and file operations run the process-custody helper in the target through a holder
+stream: the confined read exchange (the helper's 1 MiB preview budget),
+`workspace-confined-meta` (lstat, stat and realpath following links only inside the
+root, list, readlink), `workspace-confined-write` (put with an `absent`/`any`/sha256
+expectation published by no-replace rename, mkdir, rename) and observe+delete for
+removal. Watches are holder `watch` streams. Creating symbolic links has no operation
+and rejects with `workspace_source_operation_unavailable`; none falls back to this
+Machine.
+Streaming producers (checkpoint materialization from `git cat-file`) write through the port's `openWrite` stream; workspace-export readers (manifest scan, file hashing, transfer resolution) read the exported workspace through the source, while export import/promotion into a sync or handoff destination stays this Machine's directory owner. Copy installs through `installWorkspaceTree` (stage beside the
 destination, swap, restore on failure); folder ZIP download, prepared entry
 exports and prepared entry imports stage through host temp space and reuse the
-existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. The requester-isolated native channel refuses a target (requester isolation is a
-host OS-user boundary). No target source ships yet; the session host's holder
-implements the port.
+existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. Machine members working in a target Session are served by the target's source: no per-member OS identity exists inside the container, so the container boundary, the source's workspace-root confinement and the member's Session access admitted at ingress gate the request (owner ruling 2026-11-12); without admitted Session access a member is refused, and this Machine's disk keeps the requester-isolated native channel. No Session selects a target source yet: the placement owner has not wired
+`resolveWorkspaceTarget`.
 
 ### Project definitions and guarded files (0.3 development)
 
@@ -2760,6 +2778,14 @@ frames, including a running loop under a cancelled Run. Startup recovery does
 not restart the interpreter; unresolved leaf effects, outcome uncertainty and
 owed publication still retain custody.
 
+In unreleased 0.3 development source, retrying Delete on a terminal Run with
+pending custody wakes its originally admitted Machine through the existing
+Run update transport. The worker rejoins the same custody recovery owner for
+same-Account and requester-scoped Runs. Delete still returns `custody_pending`
+until observation and publication settle custody; it neither replays authored
+work nor changes an uncertain outcome into cancellation. A later confirmed
+Delete uses the settled Run's current revision. No polling is added.
+
 In 0.3 development source, the same recovery owner publishes accepted Discussion
 results before retiring custody. Its publisher projects the accepted tagged
 result destination into the strict committed-origin envelope used by the Machine
@@ -3805,6 +3831,12 @@ The model picker and model-inspection Action consume the same catalog projection
 Download and Retry share the existing install operation, and Delete shares remove.
 Binary speech grants authorize the speech application, not a TCP destination port;
 see [peer mediation](peer-mediation.md).
+In 0.3 development, local conversation STT keeps one speech admission and binary
+tunnel across utterances while the selected Machine stays the same. A deliberate
+Machine change retires that tunnel and admits the next utterance on the new
+Machine. Each utterance still owns its stream, cancellation, content key and
+finish cleanup, and reads its current model, language and diagnostics settings.
+Ending the call or retiring its Account closes the retained tunnel.
 Streaming PCM capture shares the sender's existing packet coalescer on binary
 and JSON/RPC transports. Each transport supplies its admitted PCM packet capacity;
 the JSON/RPC capacity derives from the consumer's existing Base64 schema bound.
@@ -3892,6 +3924,16 @@ resize; recipients receive shared capacity/Happier totals and only Session folde
 whose Account custody is proven by the incumbent requester owner. Inventory and
 scan paths remain in Machine RPC payloads, not Machine metadata or broadcast Sync;
 the user's protected-folder policy is the exception described below.
+
+In 0.3 development, `machines.storage.path.capacity.get` reads an exact existing
+folder through `daemon.storage.path.capacity.get` on the selected Home/Machine.
+Manage admission protects arbitrary filesystem paths. The Storage service
+`capacityForPath` owner resolves the folder and reads that filesystem once; it
+does not scan, substitute root-volume capacity or create a capacity policy. Its
+`StoragePathCapacityV1` result preserves known zero bytes and reports native
+unavailability as unknown with its reason. Backup capacity review consumes this
+read before save; configure still rereads at its own admission boundary. Unknown
+capacity alone does not refuse an otherwise valid Keep everything choice.
 
 Explicit Manage summary and refresh Actions also return optional `docker` facts
 from `storage/dockerStorage.ts`; constructing the owner, Use reads and parked
@@ -6756,6 +6798,64 @@ channels and exits when the holder closes that connection.
 - State: a dropped channel is "state unknown, reattach" (`holderDisconnected`);
   only the holder's exit frame means the Agent exited. The one local exception is
   that the holder and the Agent are both observed gone.
+- Target placement (container/sandbox, no daemon inside): a launch may carry a
+  `SessionHolderTarget` (the target Machine provider's finite `exec` and its
+  optional `stream` channel). `ensureManagedGuestSessionHolder`
+  (`packages/cli-common/src/machines/managed/nativeBootstrap.ts`) places the static
+  holder and the process-custody helper in `~/.happier/holder/<version>/` once,
+  sha256-verified in the guest before promotion (Linux guests; the shared
+  `probeManagedNativeGuestPlatform` picks the architecture). One `exec` starts
+  `holder serve` detached (`nohup`, readiness through a private FIFO); every
+  attachment is `holder attach` over the provider channel. This Machine's
+  environment is never forwarded to the target. A target child has no local `pid`
+  (`remoteAgentPid`); Stop goes through the holder (TERM to the Agent's group, KILL
+  after the supervisor's grace). A dropped target channel reattaches once per live
+  channel and replays under the ack rule; a channel that never reached the holder
+  is reported, not retried. Holder stream processes (`spawnStream`, `O`/`E`/`X`
+  frames per stream id) carry commands run next to the Agent, terminals (`pty`:
+  a session-leader process on a new pseudo-terminal, `resize`) and change watches
+  (`watch`: inotify, pushed JSON lines, new directories joined as they appear).
+  The bootstrap's artifacts are the build's own target holders and helpers
+  (`readSessionTargetHolderArtifacts`).
+- Placing a Session on a managed target (development only: requested through the
+  daemon spawn option `managedTargetPlacement {managedId, workspaceRoot}`; no UI or
+  Home-admitted path yet):
+  - Custody stays with the controller daemon under the row's existing managed
+    custody (no per-spawn managed operation). The managed driver's
+    `openSessionTarget` (`apps/cli/src/machines/managed/acquire.ts`) reads the
+    current row, admits the requester, and builds the Session authority of
+    `createManagedNativeInvocation` (`reconcile.ts`): only `exec`/`putFile`/`stream`,
+    only the row's own resource, `exec` never wakes a stopped target, and the row
+    is re-checked before every call (controller, installation, Home, bound, not
+    being deleted). The authority's `lifetime` signal aborts every running channel.
+  - Access: every Session on one target runs as the same guest user and can reach
+    the others' holder sockets and files, so placing a Session needs access to the
+    target row itself, not to a Project or Session. The daemon admits only the row's
+    custodian; a requester with a shared role is refused
+    (`managed_target_access_unavailable`) until the Home admits the placement with
+    the spawn (the Home owns share roles).
+  - Lifetime: `prepareSessionTargetPlacement` (`daemon/spawn/`) registers the
+    authority on the spawn's launch resource scope, so a refused spawn ends it at
+    once and a launched Session's resources end it at exit.
+  - The runner holds no custody. The daemon serves an owner-only local relay
+    (`subprocess/supervision/sessionTargetRelay.ts`: one `exec` per connection, or a
+    piped channel) and hands its address to the runner in
+    `HAPPIER_SESSION_TARGET_PLACEMENT`; `resolveAgentSessionHolderLaunch` starts
+    every Agent of that Session in the target through it.
+  - Launch step (`deliverSessionTargetLaunch`): the Session's own connected-service
+    Agent home is copied to `~/.happier/sessions/<key>/agent-home` and only env
+    entries pointing into it are rewritten for the Agent. The Agent CLI is placed
+    when it is a Linux ELF for the target's architecture (streamed over the channel,
+    sha256-verified in the guest); otherwise the spawn is refused
+    (`agent_cli_target_unavailable`). Request-auth materializations (a loopback
+    proxy on this Machine) are refused (`connected_service_target_unsupported`).
+    The target launch maps the command and working directory and passes only that
+    environment; nothing else from this Machine's launch crosses.
+  - What keeps a full Account daemon out of a target is that no Happier or Account
+    credential is ever delivered there; refusing `exec processConfig` under the
+    Session authority is not a boundary on its own (plain `exec` runs guest commands).
+  - The holder and helper in the guest are writable by the Agent's user: every
+    holder frame and helper result stays untrusted data on this Machine.
 - Custody: the holder inherits the runner's custody unit (the Linux session scope,
   the Windows session Job), and neither ends when the runner dies, so the Session's
   Agent tree stays in the same unit. Agent isolation is unchanged: the holder runs
@@ -6785,10 +6885,14 @@ channels and exits when the holder closes that connection.
 - Adopt contract (`sessionHolderAdoption.ts`): the one owner every protocol seam
   uses, each with its own frame codec:
   - the host JSON-RPC client (`createJsonRpcProcessClient`: Codex per-Session
-    app-server, Pi, Muse, OpenCode);
+    app-server);
   - the ACP stream adapter (`createAcpNdJsonStream`, below the ACP SDK, which is
     never edited);
-  - the host JSON-stream client (the Claude SDK control channel).
+  - the host JSON-stream client (`createJsonStreamProcessClient`), with the codec
+    the spec declares: `streamJsonControl` (Claude Code `control_request` /
+    `control_response`, whose control `initialize` is answered locally) or
+    `commandResponse` (Pi RPC `{type, id}` commands; nothing to skip, held output
+    is released after the adopter's `get_state` answer).
 
   It stores state in the holder with the `meta` op: handshake results, in-flight
   request ids, the next free numeric id and an adopt generation. That state is
@@ -6802,13 +6906,45 @@ channels and exits when the holder closes that connection.
   - the previous runner's in-flight requests stay available as `heldRequests()`.
 
   Without this, a new client's ids restart at 0 or 1, and the replayed answer to the
-  old in-flight request resolves the new request with the same id. ACP resumes a
+  old in-flight request resolves the new request with the same id.
+
+  Which backends are adopted:
+  - Host JSON-RPC and JSON-stream Agents opt in per spawn (`adoptsHeldAgentTurns`,
+    declared by Codex, Claude and Pi). Only an opted-in primary Agent stores adopt
+    state, so only it is spared. Pi's Session spawn carries no `nativeLaunch`
+    qualifier today, so it is not held and its opt-in has no effect yet.
+  - The ACP host runtime always opts in.
+  - Muse (host-started turns only) and OpenCode (a local HTTP server, not stdio)
+    are not adoptable and keep the sweep.
+- Adopting runtimes learn it from the Session host service `adoptsHeldAgent`
+  (set while the runner holds the adopt token). Pi then joins turn output that
+  arrives before any turn it began as one provider-started turn. Claude, whose
+  queries are otherwise per prompt, starts one query when the runtime is first
+  watched; that launch adopts the Agent, control requests use it, its first output
+  becomes a provider-started turn, and a prompt that finds it silent ends it.
+- One turn owner across a respawn: every backend surfaces the adopted Agent's
+  answer as a provider-started turn. The Session's turn invariant
+  (`agentSessionTurnInvariant.ts`, `takeAdoptedTurnId`) maps the first such turn
+  onto the Session turn the crashed runner admitted. The adopt token carries
+  that turn id, and the daemon does not end the turn while the Agent is spared. ACP resumes a
   held `session/prompt` as its current turn. Held Agent output waits until the
   backend knows its Session again (`release`). The adopt launch skips the stdin
   launch preamble, which the running Agent already consumed.
 - Not held for adopt: the shared Codex app-server. It listens on a unix
   WebSocket, not holder stdio, and it is shared by Sessions, so no one Session can
   spare or adopt it. Its clients reconnect to the socket (`connectJsonRpcClient`).
+
+- Streams: `q {op:'spawn', argv, cwd, env}` starts an extra process in the Session
+  root (cwd must stay inside it) as a numbered stream with `O`/`E`/`X` output and
+  `I`/`C` input frames under the same sequence and acknowledgement window, so it
+  replays on reattach; `kill` signals its process group and `which` resolves a
+  command on the holder's PATH. Streams end when the holder leaves.
+- Confined file operations are never reimplemented in the holder: a target runs
+  the process-custody helper's `workspace-confined-*` exchange as a stream. The
+  same helper is the one confinement owner for workspace sync read, observe,
+  measure, capture, delete, apply and recover on every platform, Linux included.
+  The only Node-side descriptor walk left (`withConfinedWorkspaceSyncParent`)
+  serves the deployment archive read that must keep its file descriptor in-process.
 
 ### Runner start graph
 
@@ -7123,6 +7259,13 @@ Changing the preference keeps the current window and webviews alive; a failed sa
 These are unreleased development changes. ActualTitleButtons compatibility has not been tested.
 
 ### One CLI per computer (desktop setup, plan R12)
+
+In current development source, local setup and service Start/Restart share
+`waitForMachineOnline` in `packages/cli-common/src/systemTasks/executors/enrollMachineFlowExecutor.ts`.
+Standalone setup has no readiness phase cutoff: it follows the containing operation's cancellation
+and the daemon's existing status observations. A failed native service command or an observed daemon
+exit settles the operation with a typed failure and daemon-log guidance. An explicit timeout remains
+the caller's containing-operation budget; setup does not add a shorter one.
 
 In current development source, the desktop shell registers each release channel's custom URL
 scheme (`happier`, `happier-preview`, or `happier-dev`) through Tauri's deep-link plugin.
@@ -7925,6 +8068,47 @@ intact. This does not replace or retire the live publisher's old Machine
 identity, which must remain valid until its surviving publishers finish or
 migrate. A handoff that has published another runner's PID is left untouched.
 
+### Machine roles load their own code (0.3 development)
+
+In current 0.3 development source, a Machine role that has been split out of
+machine core has one entry, `apps/cli/src/daemon/roles/<role>/entry.ts`. The
+daemon's role activation owner (`daemon/roles/machineRoleActivation.ts`) loads
+that entry with `import()` only when the role is in the Machine's active role
+set (read from the role-set owner, `daemon/roles/machineRolesRuntime.ts`), and
+follows later changes to the set. Code inside a role loads eagerly. The entry
+starts the role's runtime and registers its Machine RPC family as one owned
+handler set (`RpcHandlerManager.replaceOwnedHandlers('machine-role:<role>')`).
+
+Machine core registers no method in a split role's RPC namespaces
+(`daemon/roles/machineRoleRpcNamespaces.ts`). While a role is inactive its
+handlers are not registered, and a local, direct-peer or in-process call into
+one of its namespaces answers `machine_role_inactive` with the `roleId`; any
+other unknown method still answers method-not-found. Calls relayed by the server
+never reach an unregistered method, so placement uses the advertised role set.
+
+Roles come in two kinds:
+
+- **Load-split roles** have their own entry, as described above. Split today:
+  `memory` (worker lifetime, Session removal subscription, `daemon.memory.*`)
+  and `voice` (inference worker lifetime, `daemon.voiceInference.*` and
+  `daemon.voiceDiagnostics.*`). `devices`, `broker` and `sessions` are the next
+  load-split roles; they are still registered by machine core in current source.
+  `machineRoles.importGraph.test.ts` keeps each split role out of the core start
+  graph and out of the other roles.
+- **Policy-only roles** (`relay`, `deployments`, `workspaces`, `intake`) are not
+  split for loading. Their code is small (about 1 MiB or less each) and sits
+  behind owners that are not role wiring: the Home/iroh carrier that every role
+  uses, Session file transfer, the Action executor dependencies shared with the
+  CLI process, and Session/project paths. Such a role is enforced by policy:
+  admission refuses its work and the Machine advertises its role set
+  (`packages/protocol/src/machines/roles/machineRolesV1.ts`), so placement does
+  not route to it. Its code still loads with machine core.
+
+Requester custody for Session-scoped work is a machine-core owner
+(`daemon/sessionEncryption/requesterSessionAccountContextCustody.ts`). Sessions,
+and the devices and broker roles once they are split, consume it, so none of them
+depends on another role for it.
+
 ### Plugin UI artifacts
 
 The daemon is the single Plugin UI build owner. Manifest artifact references
@@ -8127,13 +8311,26 @@ lock; it never continues serving without that lock. Cold plugin initialization g
 its existing readiness budget after Home verification, so waiting for Home
 reachability does not consume that budget before plugin startup begins.
 
+In 0.3 development, the daemon's two legacy approval startup passes persist
+completion separately for each Account and active Home in the local server directory.
+Complete passes report unclassifiable or mismatched rows once and leave those rows
+open. Failed or partial passes retry on the next startup; a completed sibling does
+not rescan. Executing-claim recovery remains part of every startup. This local
+settlement changes no approval wire format or Account settings.
+
 In current development, `createOnChildExited` releases session-marker evidence only
 through the tracked exit lifecycle. An exit notification for an untracked PID does
 not authorize marker deletion. A positively dead plain runner may release local
 tracking while its Home is unreachable only when its exact persisted Session marker
 remains as recovery evidence. Explicit Stop keeps that marker until the existing
-startup/reconnect orphan-settlement owner confirms Home finality and retires the
-matching runner's terminal-control projection. A replacement runner is not retired.
+startup/reconnect orphan-settlement owner confirms Home finality. That owner admits
+only markers attributed to the connected Home before terminal capture, finalization
+or permanent-refusal cleanup; another Home may reuse the same Session id. It then retires
+the matching runner's terminal-control projection. If requester context is unavailable
+after that ACK, it reports the typed unavailable outcome once and releases the
+acknowledged marker, without a custodian metadata write or requester credential
+custody deletion. Home unavailability or a marker attributed to another Home still
+retains the terminal evidence. A replacement runner is not retired.
 Caller-local CLI cleanup removes only terminal-owned markers under captured marker
 identity; it cannot erase the daemon's retained Home-retirement evidence.
 No terminal attachment means final-exit handling needs no Account/plugin catalog.

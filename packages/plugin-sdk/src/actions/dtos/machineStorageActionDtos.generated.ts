@@ -248,6 +248,11 @@ export type MachineStorageActionInputById = {
         machineId: string;
         serverId?: string | undefined;
     };
+    readonly "machines.storage.path.capacity.get": {
+        path: string;
+        machineId: string;
+        serverId?: string | undefined;
+    };
     readonly "machines.storage.category.list": {
         categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
         machineId: string;
@@ -1404,6 +1409,21 @@ export type MachineStorageActionResultById = {
         suggestionsSafeTotalCount?: number | undefined;
         suggestionsSafeFreesBytes?: number | undefined;
         suggestionsTotalCount?: number | undefined;
+    };
+    readonly "machines.storage.path.capacity.get": {
+        status: 'known';
+        path: string;
+        freeBytes: number;
+        observedAt: number;
+        volume?: undefined | {
+            volumeId: string;
+            mountPath: string;
+            label: string;
+        };
+    } | {
+        status: 'unknown';
+        path: string;
+        reason: string;
     };
     readonly "machines.storage.category.list": {
         revision: number;

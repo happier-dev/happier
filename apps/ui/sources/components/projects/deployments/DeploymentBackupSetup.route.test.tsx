@@ -90,6 +90,93 @@ it('shows a failed schedule read with its code, request id and Retry, not a bare
   } finally { await screen.unmount(); }
 });
 
+it('reads local path capacity on the runtime Machine before Test, on path changes and when the saved destination reopens', async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Backup path capacity', serverUrl: 'https://backup-capacity.test',
+    accountId: 'alice', currentAccount: true });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const account = await captureLazyActionAccountContext(serverId);
+  const initial = createDeploymentEnvironmentDetailV1();
+  const runtime = selectDeploymentRuntimeTargetLinkV1(initial);
+  if (!runtime) throw new Error('Expected runtime target fixture');
+  const runtimeMachineId = 'backup-runtime-machine';
+  const replacementMachineId = 'replacement-runtime-machine';
+  const detail = { ...initial, environment: { ...initial.environment, serverId },
+    runtimeTargetLink: { ...runtime, machines: [runtimeMachineId],
+      members: runtime.members.map(member => ({ ...member, machineId: runtimeMachineId })) },
+    memberVersions: {}, secretRevisions: [] };
+  await publishMachineInventoryForTest(account.accountLifetime.scope, [
+    createMachineFixture({ id: runtimeMachineId, activeAt: Date.now() }),
+    createMachineFixture({ id: replacementMachineId, activeAt: Date.now() }),
+    createMachineFixture({ id: detail.environment.controllerMachineId, activeAt: Date.now() }),
+  ]);
+  const definition = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === 'local');
+  if (!definition) throw new Error('Expected local destination');
+  const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
+    pluginVersion: PLUGIN_MANIFEST.version, definition };
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { backupDestinations: { family: 'backupDestinations', entriesById: { [destination.id]: destination } } } });
+  const reads: Array<{ machineId: string; path: string }> = [];
+  let settlePreviousPath: ((value: unknown) => void) | undefined;
+  transport.read.mockImplementation((request: { method: string; machineId: string; payload: { path: string } }) => {
+    if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+      return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection });
+    if (request.method === 'daemon.storage.path.capacity.get') {
+      reads.push({ machineId: request.machineId, path: request.payload.path });
+      if (request.payload.path === '/pending') return new Promise(resolve => { settlePreviousPath = resolve; });
+      return request.payload.path === '/unavailable' ? { status: 'unknown', path: '/unavailable', reason: 'path_not_found' }
+        : { status: 'known', path: request.payload.path, freeBytes: request.payload.path === '/full' ? 0
+          : request.machineId === replacementMachineId ? 8192 : 4096,
+          observedAt: 1794300000000, volume: { volumeId: 'archive', mountPath: '/archive-disk', label: 'Archive' } };
+    }
+    throw new Error(`Capacity review must not run a repository effect: ${request.method}`);
+  });
+  const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>();
+  const common = { detail, destination, lifetime: account.accountLifetime, machine: runtimeMachineId,
+    testID: 'capacity-setup', sourceChoices: [{ kind: 'volume' as const, sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' as const }],
+    review: { pendingId: null, request() {}, open() {} }, configure, onChanged() {}, onClose() {} };
+  const screen = await renderScreen(<DeploymentBackupSetupSheet {...common} />);
+  const changePath = (path: string) => act(async () => screen.findAllByType(HappierInputField)
+    .find(field => field.props.field.path === 'path')!.props.onChange(path));
+  try {
+    await changePath('/backups');
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(4096, 'storage')));
+    await changePath('/pending');
+    await vi.waitFor(() => expect(settlePreviousPath).toBeDefined());
+    await changePath('/full');
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(0, 'storage')));
+    await act(async () => settlePreviousPath?.({ status: 'known', path: '/pending', freeBytes: 65536, observedAt: 1794300000000 }));
+    expect(screen.getTextContent()).toContain(formatMachineBytes(0, 'storage'));
+    expect(screen.getTextContent()).not.toContain(formatMachineBytes(65536, 'storage'));
+    await changePath('/unavailable');
+    // An unreadable path is the page's failure line: it names where, and keeps the typed cause behind Details (VISUAL-136 E3).
+    await vi.waitFor(() => expect(screen.findAllByProps({ diagnosticCode: 'path_not_found' }).length).toBeGreaterThan(0));
+    expect(screen.getTextContent()).not.toContain('path_not_found');
+    expect(reads).toEqual(['/backups', '/pending', '/full', '/unavailable'].map(path => ({ machineId: runtimeMachineId, path })));
+    expect(configure).not.toHaveBeenCalled();
+    const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
+      destinationRef: { pluginId: destination.pluginId, localId: definition.id }, occurrenceId: definition.id,
+      config: { path: '/backups' }, credentialBindings: [], sources: common.sourceChoices,
+      ownership: { environmentId: detail.environment.id, prefix: '' }, retention: { kind: 'keepEverything' } });
+    await act(async () => screen.update(<DeploymentBackupDestinationRow detail={detail} configuration={configuration}
+      lifetime={account.accountLifetime} actions={null} testID="capacity-saved" />));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(4096, 'storage')));
+    expect(reads.at(-1)).toEqual({ machineId: runtimeMachineId, path: '/backups' });
+    expect(reads).toHaveLength(5);
+    await act(async () => screen.update(<DeploymentBackupDestinationRow detail={{ ...detail, runtimeTargetLink: {
+      ...detail.runtimeTargetLink, machines: [replacementMachineId],
+      members: detail.runtimeTargetLink.members.map(member => ({ ...member, machineId: replacementMachineId })),
+    } }} configuration={configuration} lifetime={account.accountLifetime} actions={null} testID="capacity-saved" />));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(8192, 'storage')));
+    expect(reads.at(-1)).toEqual({ machineId: replacementMachineId, path: '/backups' });
+    await act(async () => screen.update(<DeploymentBackupDestinationRow detail={{ ...detail, runtimeTargetLink: null }}
+      configuration={configuration} lifetime={account.accountLifetime} actions={null} testID="capacity-saved" />));
+    expect(screen.getTextContent()).not.toContain(formatMachineBytes(4096, 'storage'));
+    expect(screen.getTextContent()).not.toContain(formatMachineBytes(8192, 'storage'));
+    expect(reads).toHaveLength(6);
+  } finally { await screen.unmount(); account.dispose(); }
+});
+
 it('shows unknown local capacity before effects and keeps zero capacity eligible for Keep everything', async () => {
   const initial = createDeploymentEnvironmentDetailV1();
   const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };

@@ -1,4 +1,5 @@
 import {
+    StoragePathCapacityV1Schema, type StoragePathCapacityV1,
     HappierStorageSummaryV1Schema, MachineStorageCategoryListResultV1Schema,
     MachineStorageWatchInputV1Schema, MachineStorageWatchResultV1Schema,
     type HappierStorageCategoryIdV1, type HappierStorageSummaryV1, type MachineStorageCategoryListResultV1, type MachineStorageWatchResultV1,
@@ -129,6 +130,9 @@ async function execute(input: MachineStorageReadInput & Readonly<{ reviewedByPer
 
 export function fetchMachineStorageSummaryViaAction(input: MachineStorageReadInput): Promise<MachineStorageResult<HappierStorageSummaryV1>> {
     return result(input, () => execute(input, 'machines.storage.summary.get'), raw => HappierStorageSummaryV1Schema.safeParse(raw));
+}
+export function fetchMachineStoragePathCapacityViaAction(input: MachineStorageReadInput & Readonly<{ path: string }>): Promise<MachineStorageResult<StoragePathCapacityV1>> {
+    return result(input, () => execute(input, 'machines.storage.path.capacity.get', { path: input.path }), raw => StoragePathCapacityV1Schema.safeParse(raw));
 }
 export function fetchMachineStorageCategoryViaAction(input: MachineStorageCategoryInput): Promise<MachineStorageResult<MachineStorageCategoryListResultV1>> {
     return result(input, () => execute(input, 'machines.storage.category.list', { categoryId: input.categoryId, ...(input.cursor ? { cursor: input.cursor } : {}) }), raw => MachineStorageCategoryListResultV1Schema.safeParse(raw));

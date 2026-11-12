@@ -1515,6 +1515,20 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "manage",
   },
   {
+    "actionSpecId": "machines.roles.set",
+    "method": "machines.roles.set",
+    "ownerPacket": "PMS-5",
+    "rationale": "Manage Machine roles edit; the daemon owns metadata compare-and-swap.",
+    "routeClass": "direct_ephemeral",
+    "rpcClassification": "action_spec_bound",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": false,
+    },
+    "sharedMachineAccess": "manage",
+  },
+  {
     "actionSpecId": "machines.agentIsolation.status",
     "method": "machines.agentIsolation.status",
     "ownerPacket": "PMS-5",
@@ -1714,6 +1728,20 @@ exports[`preserves every declared method and complete effective policy through d
     },
     "serverRequiredReason": "destructive_or_recovery_mutation",
     "sharedMachineAccess": "use",
+  },
+  {
+    "actionSpecId": "machines.storage.path.capacity.get",
+    "method": "daemon.storage.path.capacity.get",
+    "ownerPacket": "PMS-5",
+    "rationale": "Read exact folder filesystem capacity through the Storage owner.",
+    "routeClass": "direct_ephemeral",
+    "rpcClassification": "action_spec_bound",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": false,
+    },
+    "sharedMachineAccess": "manage",
   },
   {
     "actionSpecId": "machines.storage.summary.get",

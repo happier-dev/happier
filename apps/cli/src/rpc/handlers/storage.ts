@@ -6,7 +6,7 @@ import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPermissionError } from '@/storage/categories/filesystem';
 import {
-    MachineStorageSummaryGetInputV1Schema, MachineStorageCategoryListInputV1Schema,
+    MachineStoragePathCapacityGetInputV1Schema, MachineStorageSummaryGetInputV1Schema, MachineStorageCategoryListInputV1Schema,
     MachineStorageSizeRefreshInputV1Schema, MachineStorageWatchInputV1Schema,
     type HappierStorageSummaryV1, type MachineStorageWatchResultV1,
     MachineStoragePileGetInputV1Schema, MachineStoragePileSetInputV1Schema,
@@ -199,6 +199,15 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             assertCurrentAuthority,
         };
     }
+    rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_PATH_CAPACITY_GET, async (raw: unknown, context) => {
+        const request = MachineStoragePathCapacityGetInputV1Schema.parse(raw);
+        const access = admission(request, context, true);
+        await access.assertCurrent();
+        return callStorageOwner(async () => {
+            const service = await options.getService(access.target!);
+            return service.capacityForPath(request.path);
+        }, access.assertCurrent);
+    });
     rpc.registerHandler(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, async (raw: unknown, context) => {
         const request = MachineStorageSummaryGetInputV1Schema.parse(raw);
         const access = admission(request, context);

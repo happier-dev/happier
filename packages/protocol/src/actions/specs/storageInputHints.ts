@@ -11,6 +11,7 @@ const volume = { path: 'volume', title: 'Volume', widget: 'text' } as const;
 
 export const STORAGE_OPERATION_INPUT_FIELDS = {
   'machines.storage.summary.get': [],
+  'machines.storage.path.capacity.get': [path],
   'machines.storage.category.list': [],
   'machines.storage.size.refresh': [],
   'machines.storage.pile.get': [],

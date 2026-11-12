@@ -5,6 +5,7 @@ export { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import {
+  MachineStoragePathCapacityGetInputV1Schema, StoragePathCapacityV1Schema,
   HappierStorageSummaryV1Schema, MachineStorageCategoryListInputV1Schema, MachineStorageCategoryListResultV1Schema,
   MachineStorageSizeRefreshInputV1Schema, MachineStorageSummaryGetInputV1Schema,
   MachineStoragePileGetInputV1Schema, MachineStoragePileSetInputV1Schema, MachineStoragePileResultV1Schema,
@@ -26,6 +27,7 @@ export type MachineStorageActionId = typeof MACHINE_STORAGE_ACTION_IDS[number];
 export const MachineStorageActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_STORAGE_ACTION_IDS));
 export const MACHINE_STORAGE_ACTION_INPUT_SCHEMAS = {
   'machines.storage.summary.get': MachineStorageSummaryGetInputV1Schema,
+  'machines.storage.path.capacity.get': MachineStoragePathCapacityGetInputV1Schema,
   'machines.storage.category.list': MachineStorageCategoryListInputV1Schema,
   'machines.storage.size.refresh': MachineStorageSizeRefreshInputV1Schema,
   'machines.storage.pile.get': MachineStoragePileGetInputV1Schema,
@@ -49,6 +51,7 @@ export const MACHINE_STORAGE_ACTION_INPUT_SCHEMAS = {
 export type MachineStorageActionInput = z.infer<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[MachineStorageActionId]>;
 export const MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS = {
   'machines.storage.summary.get': HappierStorageSummaryV1Schema,
+  'machines.storage.path.capacity.get': StoragePathCapacityV1Schema,
   'machines.storage.category.list': MachineStorageCategoryListResultV1Schema,
   'machines.storage.size.refresh': HappierStorageSummaryV1Schema,
   'machines.storage.pile.get': MachineStoragePileResultV1Schema,
@@ -165,6 +168,18 @@ function createMachineStorageActionSpecs() {
     invocationServerIdForInput: actionInputServerId(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.summary.get'], input => input.serverId),
     cli: { acceptsServerId: true as const, commands: [{ path: ['machines', 'storage', 'summary', 'get'], visibility: 'canonical' }] },
     inputHints: { fields: [...fields] },
+  },
+  {
+    ...base, id: 'machines.storage.path.capacity.get', approval: { result: 'required' }, title: 'Read folder capacity',
+    toolExposure: { agent: 'discoverable_only' },
+    description: 'Available space on the filesystem containing an exact folder on this Machine, or why capacity is unavailable.',
+    prompting: { agentGuidance: 'Use the exact selected Machine and existing folder path. Zero free bytes is a known result; unknown capacity never means the folder is invalid.' },
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_STORAGE_PATH_CAPACITY_GET, mcpToolName: 'machines_storage_path_capacity_get' },
+    inputSchema: MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.path.capacity.get'],
+    outputSchema: MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS['machines.storage.path.capacity.get'],
+    invocationServerIdForInput: actionInputServerId(MACHINE_STORAGE_ACTION_INPUT_SCHEMAS['machines.storage.path.capacity.get'], input => input.serverId),
+    cli: { acceptsServerId: true as const, commands: [{ path: ['machines', 'storage', 'path', 'capacity', 'get'], visibility: 'canonical' }] },
+    inputHints: { fields: [...fields, ...STORAGE_OPERATION_INPUT_FIELDS['machines.storage.path.capacity.get']] },
   },
   ...cleanupSpecs,
   {

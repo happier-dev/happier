@@ -1,4 +1,5 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
+import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
@@ -323,6 +324,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING, 'Custodian cancels a current memory warning without editing policy.', 'use') satisfies MachineRpcRoutePolicyV1,
   actionSpecServerRequired(RPC_METHODS.MACHINES_GUARD_SESSION_CEILING_SET, 'destructive_or_recovery_mutation', 'Manage writes the Session owner’s ceiling override through its existing custody and live native scope.', 'machines.guard.sessionCeiling.set', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_RESOURCES_POLICY_SET, 'Manage resources policy edit; the daemon owns metadata compare-and-swap.', 'manage') satisfies MachineRpcRoutePolicyV1,
+  directEphemeral(RPC_METHODS.MACHINES_ROLES_SET, 'Manage Machine roles edit; the daemon owns metadata compare-and-swap.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_STATUS, 'Own execution protection read under exact requester Use admission; no provisioning or member roster.', 'use'),
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_PREVIEW, 'Manage-admitted exact isolation effect review; no mutation or elevation.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.MACHINES_AGENT_ISOLATION_SET, 'Manage-admitted isolation policy and target-daemon reconciliation.', 'manage') satisfies MachineRpcRoutePolicyV1,
@@ -337,6 +339,7 @@ const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   actionSpecServerRequired(RPC_METHODS.MACHINES_PROCESSES_START_AGAIN, 'destructive_or_recovery_mutation', 'Restart admitted work through its canonical lifecycle owner.', 'machines.processes.startAgain', 'use', undefined, true),
   actionSpecServerRequired(RPC_METHODS.MACHINES_PROCESSES_KILL, 'destructive_or_recovery_mutation', 'End reviewed requester-admitted process identities through their canonical owner.', 'machines.processes.kill', 'use'),
   actionSpecServerRequired(RPC_METHODS.MACHINES_PROCESSES_LEFT_BEHIND_CLEAN_UP, 'destructive_or_recovery_mutation', 'End only echoed and rechecked confirmed left-behind identities.', 'machines.processes.leftBehind.cleanUp', 'use'),
+  directEphemeral(RPC_METHODS.DAEMON_STORAGE_PATH_CAPACITY_GET, 'Read exact folder filesystem capacity through the Storage owner.', 'manage') satisfies MachineRpcRoutePolicyV1,
   directEphemeral(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, 'Machine-local Happier storage summary; category paths stay in authenticated Machine RPC and shared reads are filtered by the daemon.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, 'Machine-local category items; the daemon discloses only session folders accessible to recipients.', 'use'),
   directEphemeral(RPC_METHODS.DAEMON_STORAGE_WATCH, 'Machine-local parked storage read; revision changes use the shared watch lifecycle without server persistence.', 'use'),
@@ -1205,6 +1208,22 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }
+  if (method === RPC_METHODS.APPROVAL_REQUEST_DECIDE || method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED) {
+    // This is the fresh reviewer's decision authority, not the Artifact's
+    // immutable native execution origin (checked by the replay owner).
+    if (!binding || binding.actionId !== 'approval.request.decide'
+      || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
+      || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
+      || binding.managedContinuation || binding.handoffAdmission || binding.handoffContinuation) return null;
+    const reviewer = readExternalActionBindingAuthority(binding) === 'present_user'
+      || 'principalId' in binding && Boolean(binding.principalId && binding.credentialId && binding.grant);
+    // Withdrawal spends the exact signed decision without promoting automation
+    // to reviewer authority or permitting the private approved-effect replay.
+    const withdrawal = method === RPC_METHODS.APPROVAL_REQUEST_DECIDE
+      && 'authentication' in binding && binding.authentication.kind === 'terminal'
+      && isApprovalWithdrawalDecisionV1(binding.approvalDecisionAdmission?.decision);
+    return reviewer || withdrawal ? 'approval.request.decide' : null;
+  }
   const declared = resolveMachineRpcRoutePolicy(method).actionSpecId;
   if (declared) return declared;
   const exactTransferTarget = binding?.target && (binding.target.kind === 'machine'
@@ -1234,17 +1253,6 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
     // the exact guest/current row; this projection grants no guest authority.
     return binding?.actionId === 'machines.managed.power.set' || binding?.actionId === 'machines.managed.delete'
       ? binding.actionId : null;
-  }
-  if (method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED) {
-    // This is the fresh reviewer's decision authority, not the Artifact's
-    // immutable native execution origin (checked by the replay owner).
-    if (!binding || binding.actionId !== 'approval.request.decide'
-      || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
-      || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
-      || binding.managedContinuation || binding.handoffAdmission || binding.handoffContinuation) return null;
-    const reviewer = readExternalActionBindingAuthority(binding) === 'present_user'
-      || 'principalId' in binding && Boolean(binding.principalId && binding.credentialId && binding.grant);
-    return reviewer ? 'approval.request.decide' : null;
   }
   if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
     || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE

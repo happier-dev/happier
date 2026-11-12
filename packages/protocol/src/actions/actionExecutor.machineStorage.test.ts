@@ -14,6 +14,24 @@ const summary: HappierStorageSummaryV1 = {
 };
 
 describe('machine storage Action front door', () => {
+  it('exposes exact-target path capacity through the Storage Action front door', async () => {
+    const id = ActionIdSchema.parse('machines.storage.path.capacity.get');
+    const spec = getActionSpec(id);
+    const input = { serverId: 'home', machineId: 'machine', path: '/archive' };
+    expect(spec.inputSchema.safeParse({ ...input, installationId: 'invented' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ machineId: 'machine' }).success).toBe(false);
+    expect(resolveMachineRpcRoutePolicy(spec.bindings!.rpcMethod!)).toMatchObject({ sharedMachineAccess: 'manage' });
+    // Machine transport is the boundary; the real executor parses and preserves its exact selected operands.
+    const executor = createActionExecutor({ machineStorageAction: async request => {
+      expect(request.actionId).toBe(id);
+      expect(request.input).toEqual(input);
+      return { status: 'known', path: '/archive', freeBytes: 0, observedAt: 1234 };
+    } } as ActionExecutorDeps);
+    expect(await executor.execute(id, input, { surface: 'ui', serverId: 'home' }))
+      .toEqual({ ok: true, result: { status: 'known', path: '/archive', freeBytes: 0, observedAt: 1234 } });
+    expect(spec.outputSchema.safeParse({ status: 'unknown', path: '/archive', reason: 'ENOTSUP' }).success).toBe(true);
+  });
+
   it('admits Manage scan and protection Actions with strict inputs and only ordinary agent-asks removal', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1 });
     const start = getActionSpec(ActionIdSchema.parse('machines.storage.scan.start')).inputSchema;

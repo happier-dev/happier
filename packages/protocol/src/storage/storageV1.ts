@@ -283,6 +283,10 @@ export type HappierStorageSummaryV1 = z.infer<typeof HappierStorageSummaryV1Sche
 
 export const MachineStorageSummaryGetInputV1Schema = lazyZodSchema(() => z.strictObject(target()));
 export type MachineStorageSummaryGetInputV1 = z.infer<typeof MachineStorageSummaryGetInputV1Schema>;
+export const MachineStoragePathCapacityGetInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...target(), path: z.string().check(z.minLength(1)),
+}));
+export type MachineStoragePathCapacityGetInputV1 = z.infer<typeof MachineStoragePathCapacityGetInputV1Schema>;
 export const MachineStorageCategoryListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...target(), categoryId: HappierStorageCategoryIdV1Schema, cursor: z.optional(z.string().check(z.minLength(1))),
 }));

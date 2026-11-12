@@ -180,6 +180,7 @@ export const RPC_METHODS = {
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE: 'daemon.plugins.ui.resources.watch.close',
   MACHINES_VITALS_GET: 'machines.vitals.get',
   MACHINES_RESOURCES_POLICY_SET: 'machines.resources.policy.set',
+  MACHINES_ROLES_SET: 'machines.roles.set',
   MACHINES_SERVICE_LOGS_READ: 'machines.services.logs.read',
   MACHINES_SERVICE_CONTROL: 'machines.services.control',
   MACHINES_SERVICE_EXEC: 'machines.services.exec',
@@ -210,6 +211,7 @@ export const RPC_METHODS = {
   MACHINES_PROCESSES_KILL: 'machines.processes.kill',
   MACHINES_PROCESSES_LEFT_BEHIND_CLEAN_UP: 'machines.processes.leftBehind.cleanUp',
   DAEMON_PROCESSES_WATCH: 'daemon.processes.watch',
+  DAEMON_STORAGE_PATH_CAPACITY_GET: 'daemon.storage.path.capacity.get',
   DAEMON_STORAGE_SUMMARY_GET: 'daemon.storage.summary.get',
   DAEMON_STORAGE_CATEGORY_LIST: 'daemon.storage.category.list',
   DAEMON_STORAGE_SIZE_REFRESH: 'daemon.storage.size.refresh',
@@ -697,4 +699,6 @@ export const SESSION_RPC_METHODS = {
     'managedServer.endpoint.read.next.v1',
   SESSION_MANAGED_SERVICE_ENDPOINT_READ_CANCEL_V1:
     'managedServer.endpoint.read.cancel.v1',
+  /** Daemon → the Session runner's managed-Provider service custody (supervise/adopt/stop…). */
+  SESSION_MANAGED_SERVICES_CUSTODY_V1: 'managedServices.custody.v1',
 } as const;

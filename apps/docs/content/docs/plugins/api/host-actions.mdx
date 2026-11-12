@@ -11355,6 +11355,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text, required): Machine ID
 - `refs` (json, required): Served storage references — Use the exact &#123;itemId, path&#125; values from this Machine’s storage inventory.
 
+## `machines.storage.path.capacity.get`
+
+**Read folder capacity** — Available space on the filesystem containing an exact folder on this Machine, or why capacity is unavailable.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `voice`, `api`.
+
+### Input guidance
+
+- `serverId` (text): Home ID
+- `machineId` (text, required): Machine ID
+- `path` (text, required): Folder path
+
 ## `machines.storage.pile.get`
 
 **Read the cleanup pile** — The items you collected for review on this machine.

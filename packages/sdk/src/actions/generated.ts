@@ -185,9 +185,11 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "daemon.filesystem.transfer.cancel",
   "daemon.filesystem.upload",
   "daemon.filesystem.writeFile",
+  "deployments.backups.configure",
   "deployments.backups.prune",
   "deployments.backups.restore",
   "deployments.backups.run",
+  "deployments.backups.test",
   "deployments.bindings.set",
   "deployments.cancel",
   "deployments.deploy",
@@ -196,6 +198,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "deployments.environments.controller.set",
   "deployments.environments.create",
   "deployments.environments.delete",
+  "deployments.environments.moveToRepository",
   "deployments.environments.update",
   "deployments.prepare",
   "deployments.promote",
@@ -348,6 +351,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.managed.delete",
   "machines.managed.power.set",
   "machines.managed.rebuild",
+  "machines.managed.resize",
   "machines.managed.retention.update",
   "machines.managed.retire",
   "machines.managed.setup.skip",
@@ -370,6 +374,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.replacement.clear",
   "machines.replacement.set",
   "machines.resources.policy.set",
+  "machines.roles.set",
   "machines.services.adopt",
   "machines.services.control",
   "machines.services.exec",
@@ -422,6 +427,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "notifications.push.test",
   "notifications.push.tokens.remove",
   "notifications.sounds.preview",
+  "notifications.test",
   "notifications.webhooks.add",
   "notifications.webhooks.remove",
   "notifications.webhooks.signingSecret.clear",
@@ -1393,6 +1399,7 @@ export type GeneratedActions = Readonly<{
       }> ;
       readonly rename: (input: PublicActionInputById["connectedServices.accounts.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.accounts.rename">>;
       readonly revoke: (input: PublicActionInputById["connectedServices.accounts.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.accounts.revoke">>;
+      readonly testConnection: (input: PublicActionInputById["connectedServices.accounts.testConnection"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.accounts.testConnection">>;
     }> ;
     readonly acknowledgements: Readonly<{
       readonly reset: (input: PublicActionInputById["connectedServices.acknowledgements.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.acknowledgements.reset">>;
@@ -1494,6 +1501,7 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly deployments: Readonly<{
     readonly backups: Readonly<{
+      readonly configure: (input: PublicActionInputById["deployments.backups.configure"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.configure">>;
       readonly history: (input: PublicActionInputById["deployments.backups.history"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.history">>;
       readonly inventory: (input: PublicActionInputById["deployments.backups.inventory"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.inventory">>;
       readonly prune: (input: PublicActionInputById["deployments.backups.prune"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.prune">>;
@@ -1506,6 +1514,9 @@ export type GeneratedActions = Readonly<{
       readonly set: (input: PublicActionInputById["deployments.bindings.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.bindings.set">>;
     }> ;
     readonly cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.cancel">>;
+    readonly data: Readonly<{
+      readonly query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.query">>;
+    }> ;
     readonly deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.deploy">>;
     readonly domains: Readonly<{
       readonly add: (input: PublicActionInputById["deployments.domains.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.domains.add">>;
@@ -1525,6 +1536,7 @@ export type GeneratedActions = Readonly<{
       readonly delete: (input: PublicActionInputById["deployments.environments.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.environments.delete">>;
       readonly get: (input: PublicActionInputById["deployments.environments.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.environments.get">>;
       readonly list: (input: PublicActionInputById["deployments.environments.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.environments.list">>;
+      readonly moveToRepository: (input: PublicActionInputById["deployments.environments.moveToRepository"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.environments.moveToRepository">>;
       readonly update: (input: PublicActionInputById["deployments.environments.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.environments.update">>;
     }> ;
     readonly health: Readonly<{
@@ -2000,6 +2012,7 @@ export type GeneratedActions = Readonly<{
       readonly references: Readonly<{
         readonly get: (input: PublicActionInputById["machines.managed.references.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.references.get">>;
       }> ;
+      readonly resize: (input: PublicActionInputById["machines.managed.resize"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.resize">>;
       readonly retention: Readonly<{
         readonly update: (input: PublicActionInputById["machines.managed.retention.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.retention.update">>;
       }> ;
@@ -2065,6 +2078,11 @@ export type GeneratedActions = Readonly<{
         readonly set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.resources.policy.set">>;
       }> ;
     }> ;
+    readonly roles: Readonly<{
+      readonly get: (input: PublicActionInputById["machines.roles.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.roles.get">>;
+      readonly list: (input: PublicActionInputById["machines.roles.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.roles.list">>;
+      readonly set: (input: PublicActionInputById["machines.roles.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.roles.set">>;
+    }> ;
     readonly runs: Readonly<{
       readonly list: (input: PublicActionInputById["machines.runs.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.runs.list">>;
     }> ;
@@ -2103,6 +2121,11 @@ export type GeneratedActions = Readonly<{
       }> ;
       readonly items: Readonly<{
         readonly check: (input: PublicActionInputById["machines.storage.items.check"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.storage.items.check">>;
+      }> ;
+      readonly path: Readonly<{
+        readonly capacity: Readonly<{
+          readonly get: (input: PublicActionInputById["machines.storage.path.capacity.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.storage.path.capacity.get">>;
+        }> ;
       }> ;
       readonly pile: Readonly<{
         readonly get: (input: PublicActionInputById["machines.storage.pile.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.storage.pile.get">>;
@@ -2240,6 +2263,7 @@ export type GeneratedActions = Readonly<{
     readonly sounds: Readonly<{
       readonly preview: (input: PublicActionInputById["notifications.sounds.preview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.sounds.preview">>;
     }> ;
+    readonly test: (input: PublicActionInputById["notifications.test"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.test">>;
     readonly webhooks: Readonly<{
       readonly add: (input: PublicActionInputById["notifications.webhooks.add"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.add">>;
       readonly list: (input: PublicActionInputById["notifications.webhooks.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"notifications.webhooks.list">>;
@@ -4243,6 +4267,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         },
         rename: (input: PublicActionInputById["connectedServices.accounts.rename"], options?: ActionExecutionOptions) => execute("connectedServices.accounts.rename", input, options),
         revoke: (input: PublicActionInputById["connectedServices.accounts.revoke"], options?: ActionExecutionOptions) => execute("connectedServices.accounts.revoke", input, options),
+        testConnection: (input: PublicActionInputById["connectedServices.accounts.testConnection"], options?: ActionExecutionOptions) => execute("connectedServices.accounts.testConnection", input, options),
       },
       acknowledgements: {
         reset: (input: PublicActionInputById["connectedServices.acknowledgements.reset"], options?: ActionExecutionOptions) => execute("connectedServices.acknowledgements.reset", input, options),
@@ -4344,6 +4369,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     deployments: {
       backups: {
+        configure: (input: PublicActionInputById["deployments.backups.configure"], options?: ActionExecutionOptions) => execute("deployments.backups.configure", input, options),
         history: (input: PublicActionInputById["deployments.backups.history"], options?: ActionExecutionOptions) => execute("deployments.backups.history", input, options),
         inventory: (input: PublicActionInputById["deployments.backups.inventory"], options?: ActionExecutionOptions) => execute("deployments.backups.inventory", input, options),
         prune: (input: PublicActionInputById["deployments.backups.prune"], options?: ActionExecutionOptions) => execute("deployments.backups.prune", input, options),
@@ -4356,6 +4382,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         set: (input: PublicActionInputById["deployments.bindings.set"], options?: ActionExecutionOptions) => execute("deployments.bindings.set", input, options),
       },
       cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => execute("deployments.cancel", input, options),
+      data: {
+        query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => execute("deployments.data.query", input, options),
+      },
       deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => execute("deployments.deploy", input, options),
       domains: {
         add: (input: PublicActionInputById["deployments.domains.add"], options?: ActionExecutionOptions) => execute("deployments.domains.add", input, options),
@@ -4375,6 +4404,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         delete: (input: PublicActionInputById["deployments.environments.delete"], options?: ActionExecutionOptions) => execute("deployments.environments.delete", input, options),
         get: (input: PublicActionInputById["deployments.environments.get"], options?: ActionExecutionOptions) => execute("deployments.environments.get", input, options),
         list: (input: PublicActionInputById["deployments.environments.list"], options?: ActionExecutionOptions) => execute("deployments.environments.list", input, options),
+        moveToRepository: (input: PublicActionInputById["deployments.environments.moveToRepository"], options?: ActionExecutionOptions) => execute("deployments.environments.moveToRepository", input, options),
         update: (input: PublicActionInputById["deployments.environments.update"], options?: ActionExecutionOptions) => execute("deployments.environments.update", input, options),
       },
       health: {
@@ -4850,6 +4880,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         references: {
           get: (input: PublicActionInputById["machines.managed.references.get"], options?: ActionExecutionOptions) => execute("machines.managed.references.get", input, options),
         },
+        resize: (input: PublicActionInputById["machines.managed.resize"], options?: ActionExecutionOptions) => execute("machines.managed.resize", input, options),
         retention: {
           update: (input: PublicActionInputById["machines.managed.retention.update"], options?: ActionExecutionOptions) => execute("machines.managed.retention.update", input, options),
         },
@@ -4915,6 +4946,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           set: (input: PublicActionInputById["machines.resources.policy.set"], options?: ActionExecutionOptions) => execute("machines.resources.policy.set", input, options),
         },
       },
+      roles: {
+        get: (input: PublicActionInputById["machines.roles.get"], options?: ActionExecutionOptions) => execute("machines.roles.get", input, options),
+        list: (input: PublicActionInputById["machines.roles.list"], options?: ActionExecutionOptions) => execute("machines.roles.list", input, options),
+        set: (input: PublicActionInputById["machines.roles.set"], options?: ActionExecutionOptions) => execute("machines.roles.set", input, options),
+      },
       runs: {
         list: (input: PublicActionInputById["machines.runs.list"], options?: ActionExecutionOptions) => execute("machines.runs.list", input, options),
       },
@@ -4953,6 +4989,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         },
         items: {
           check: (input: PublicActionInputById["machines.storage.items.check"], options?: ActionExecutionOptions) => execute("machines.storage.items.check", input, options),
+        },
+        path: {
+          capacity: {
+            get: (input: PublicActionInputById["machines.storage.path.capacity.get"], options?: ActionExecutionOptions) => execute("machines.storage.path.capacity.get", input, options),
+          },
         },
         pile: {
           get: (input: PublicActionInputById["machines.storage.pile.get"], options?: ActionExecutionOptions) => execute("machines.storage.pile.get", input, options),
@@ -5090,6 +5131,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       sounds: {
         preview: (input: PublicActionInputById["notifications.sounds.preview"], options?: ActionExecutionOptions) => execute("notifications.sounds.preview", input, options),
       },
+      test: (input: PublicActionInputById["notifications.test"], options?: ActionExecutionOptions) => execute("notifications.test", input, options),
       webhooks: {
         add: (input: PublicActionInputById["notifications.webhooks.add"], options?: ActionExecutionOptions) => execute("notifications.webhooks.add", input, options),
         list: (input: PublicActionInputById["notifications.webhooks.list"], options?: ActionExecutionOptions) => execute("notifications.webhooks.list", input, options),
