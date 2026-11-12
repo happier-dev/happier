@@ -66,6 +66,7 @@ export function installSessionFilesViewCommonModuleMocks(
             eyebrow: () => ({}),
             keyHint: () => ({}),
             mono: () => ({}),
+            monoMeta: () => ({}),
         },
     }));
 

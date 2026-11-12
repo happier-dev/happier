@@ -54,6 +54,8 @@ import type {
     ScmStashPopResponse,
     ScmStashShowRequest,
     ScmStashShowResponse,
+    ScmStatusEntriesRequest,
+    ScmStatusEntriesResponse,
     ScmStatusSnapshotRequest,
     ScmStatusSnapshotResponse,
     ScmWorktreeCreateRequest,
@@ -189,6 +191,20 @@ export async function machineScmStatusSnapshot(
     request: ScmStatusSnapshotRequest,
 ): Promise<ScmStatusSnapshotResponse> {
     return await callMachineScm<ScmStatusSnapshotResponse, ScmStatusSnapshotRequest>(machineId, RPC_METHODS.SCM_STATUS_SNAPSHOT, request);
+}
+
+/**
+ * Paged entry-list read for the Files surface's bounded entries window
+ * (`scm.status.entries`). Machine-scope only (same registration owner as every
+ * other SCM method). Errors never throw: `scmFallbackError` maps an old
+ * daemon's METHOD_NOT_AVAILABLE/NOT_FOUND to FEATURE_UNSUPPORTED/BACKEND_UNAVAILABLE
+ * so the window can drive its snapshot fallback (T5).
+ */
+export async function machineScmStatusEntries(
+    machineId: string,
+    request: ScmStatusEntriesRequest,
+): Promise<ScmStatusEntriesResponse> {
+    return await callMachineScm<ScmStatusEntriesResponse, ScmStatusEntriesRequest>(machineId, RPC_METHODS.SCM_STATUS_ENTRIES, request);
 }
 
 export async function machineScmWorktreesEnrichment(

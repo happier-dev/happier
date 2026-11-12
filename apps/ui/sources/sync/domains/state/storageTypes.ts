@@ -756,7 +756,28 @@ export interface ScmWorkingEntry {
     hasIncludedDelta: boolean;
     hasPendingDelta: boolean;
     stats: ScmPathStats;
+    /**
+     * True on a collapsed untracked-directory entry (opt-in
+     * `untrackedFiles: 'normal'` snapshots only). Optional so pre-flag
+     * snapshots and per-file entries stay byte-identical to the legacy shape;
+     * consumers must treat a directory row as non-actionable for per-file
+     * operations (diff/discard act on file paths).
+     */
+    isDirectory?: boolean;
+    /** Untracked FILE count under a collapsed directory entry. */
+    untrackedFileCount?: number;
 }
+
+/**
+ * Entry-list delivery facts. Absent = `'complete'` (legacy: every entry the
+ * backend produced is shipped). `'truncated'` = the shipped entries are a
+ * whole-entry prefix of the full set; `'omitted'` = entries deliberately not
+ * shipped (`includeEntries: false`). Orthogonal to `totals.isComplete`, which
+ * tracks line-stat completeness. Consumers MUST treat `'omitted'`/`'truncated'`
+ * entries as evidence of absence, not absence of evidence: pruning and
+ * path-diff decisions are gated on completeness, never on `entries.length`.
+ */
+export type ScmEntriesPresentation = 'complete' | 'truncated' | 'omitted';
 
 export interface ScmWorkingSnapshot {
     projectKey: string;
@@ -793,6 +814,7 @@ export interface ScmWorkingSnapshot {
     pullRequest?: ScmPullRequestSummary | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
+    entriesPresentation?: ScmEntriesPresentation;
     totals: {
         isComplete?: boolean;
         includedFiles: number;
@@ -802,5 +824,11 @@ export interface ScmWorkingSnapshot {
         includedRemoved: number;
         pendingAdded: number;
         pendingRemoved: number;
+        /**
+         * Server-derived deduplicated changed-FILE count (what `entries.length`
+         * means today), computed from the full entry set before any bounding or
+         * collapsing. Totals-first consumers prefer this over `entries.length`.
+         */
+        changedFiles?: number;
     };
 }

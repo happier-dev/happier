@@ -19,6 +19,12 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime'
 import { CANONICAL_DAEMON_STATE_BASENAME } from '@/daemon/ownership/daemonOwnershipPaths'
 import {
+  DEFAULT_RPC_RESPONSE_MAX_BYTES,
+  HAPPIER_RPC_RESPONSE_MAX_BYTES,
+  MAX_SINGLE_REPLY_PAYLOAD_BYTES,
+  RPC_RESPONSE_MAX_BYTES_ENV_MAX,
+} from '@/api/rpc/rpcResponseWireLimit'
+import {
   createServerUrlComparableKey,
   HAPPIER_REPLAY_SEED_MAX_CHARS,
   HAPPIER_REPLAY_SEED_MIN_CHARS,
@@ -219,6 +225,8 @@ class Configuration {
   public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
   // File system RPC limits (Files tab + transfers).
   public readonly filesReadMaxBytes: number
+  // Daemon RPC response wire backstop (single reply frame ceiling; see rpcResponseWireLimit.ts).
+  public readonly rpcResponseMaxBytes: number
   // Prompt transfer payload limits (prompt assets + prompt registry items).
   public readonly promptTransferJsonMaxBytes: number
   public readonly filesTransferChunkBytes: number
@@ -479,9 +487,18 @@ class Configuration {
       { min: 60_000, default: 6 * 60 * 60_000 },
     );
 
-    // Default: 2.5MB. Defensive minimum: 1 byte.
+    // Default: 2.5MB. Defensive minimum: 1 byte. Max: the largest raw payload a single
+    // RPC reply can carry inside the wire ceiling across both base64 expansions (payload
+    // embedded as base64, reply encrypted and base64 on the wire), so a supported
+    // configuration cannot produce a reply the wire guard must refuse.
     this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
-      min: 1, default: 2_500_000,
+      min: 1, max: MAX_SINGLE_REPLY_PAYLOAD_BYTES, default: 2_500_000,
+    });
+
+    // Default: 8MB (derived in api/rpc/rpcResponseWireLimit.ts). Defensive min: 1 byte;
+    // max: the relay's code-side Socket.IO frame cap.
+    this.rpcResponseMaxBytes = resolveIntEnvWithBounds(HAPPIER_RPC_RESPONSE_MAX_BYTES, {
+      min: 1, max: RPC_RESPONSE_MAX_BYTES_ENV_MAX, default: DEFAULT_RPC_RESPONSE_MAX_BYTES,
     });
 
     // Default: 2.5MB. Defensive min: 1 byte; max: 10MB.
@@ -489,9 +506,10 @@ class Configuration {
       min: 1, max: 10_000_000, default: 2_500_000,
     });
 
-    // Default: 256KB. Defensive min: 1KB; max: 5MB.
+    // Default: 256KB. Defensive min: 1KB; max: the single-reply raw payload ceiling (chunk
+    // replies embed the raw chunk as base64 and are encrypted + base64 again on the wire).
     this.filesTransferChunkBytes = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_CHUNK_BYTES', {
-      min: 1024, max: 5_000_000, default: 256_000,
+      min: 1024, max: MAX_SINGLE_REPLY_PAYLOAD_BYTES, default: 256_000,
     });
 
     // Default: 10 minutes. Defensive min: 1s; max: 60 minutes.

@@ -50,15 +50,22 @@ export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDete
 
 export async function getGitSnapshot(input: {
     context: ScmBackendContext;
-    request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus'>;
+    request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus' | 'untrackedFiles'>;
 }): Promise<ScmStatusSnapshotResponse> {
     const { context, request } = input;
     const repoRoot = context.detection.rootPath ?? context.cwd;
 
+    // 'all' (default) = today's exact single-command shape: one entry per
+    // untracked file. 'normal' is strictly opt-in (request-field presence) and
+    // swaps to git's own -unormal collapse, so a pre-flag client can never
+    // receive a collapsed directory row. Collapsed entries need one additional
+    // bounded enumeration (`ls-files --others`) so totals keep FILE semantics
+    // (T2) — see aggregateUntrackedFileCounts.
+    const untrackedMode = request?.untrackedFiles === 'normal' ? 'normal' : 'all';
     const statusResult = await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
-        args: ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', '--untracked-files=all'],
+        args: ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', `--untracked-files=${untrackedMode}`],
         timeoutMs: 10_000,
     });
     if (!statusResult.success) {
@@ -112,6 +119,13 @@ export async function getGitSnapshot(input: {
     const statusRaw = statusResult.stdout ?? '';
     const untrackedPaths = parseGitStatusPorcelainV2Z(statusRaw).notAdded;
     const untrackedStatsByPath = repoRoot && untrackedPaths.length > 0 ? await readUntrackedFileStats(repoRoot, untrackedPaths) : {};
+    // 'normal' only: bounded count enumeration (the same command
+    // readOperations.ts uses for untracked diff checks). Failure degrades
+    // honestly: directory entries omit untrackedFileCount and totals fall
+    // back to entry-derived counts with the existing totals.isComplete flag.
+    const untrackedEnumeration = untrackedMode === 'normal'
+        ? await readGitUntrackedEnumeration(repoRoot)
+        : undefined;
     const remotesOutput = remotesResult.success ? (remotesResult.stdout ?? '') : '';
     const hostingProvider = resolveGitHostingProviderFromOutputs({
         statusOutput: statusRaw,
@@ -134,6 +148,7 @@ export async function getGitSnapshot(input: {
         includedNumStatSuccess: includedResult.success,
         pendingNumStatSuccess: pendingResult.success,
         untrackedStatsByPath,
+        untrackedEnumeration,
         worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
         remotesOutput,
         remoteHeadRefsOutput: remoteHeadRefsResult.success ? (remoteHeadRefsResult.stdout ?? '') : '',
@@ -164,6 +179,50 @@ export async function getGitSnapshot(input: {
         success: true,
         snapshot,
     };
+}
+
+/**
+ * Aggregates `git ls-files --others --exclude-standard -z` output into the
+ * truthful untracked-FILE facts the 'normal' mode needs: the total untracked
+ * file count and, for every directory prefix, how many untracked files live
+ * under it (so a collapsed `D/` entry can carry its file count without
+ * shipping per-file rows). Pure string aggregation — no extra repository
+ * probes.
+ */
+export function aggregateUntrackedFileCounts(othersOutput: string): {
+    totalFileCount: number;
+    fileCountByDirectoryPath: ReadonlyMap<string, number>;
+} {
+    const paths = othersOutput.split('\0').filter((path) => path.length > 0);
+    const fileCountByDirectoryPath = new Map<string, number>();
+    for (const path of paths) {
+        // Count every ancestor directory prefix. Collapsed entries look up
+        // their own prefix ('D/', 'D/sub/'), so nested untracked subtrees are
+        // counted correctly without probing the filesystem.
+        let slashIndex = path.indexOf('/');
+        while (slashIndex > 0 && slashIndex < path.length - 1) {
+            const prefix = path.slice(0, slashIndex + 1);
+            fileCountByDirectoryPath.set(prefix, (fileCountByDirectoryPath.get(prefix) ?? 0) + 1);
+            slashIndex = path.indexOf('/', slashIndex + 1);
+        }
+    }
+    return { totalFileCount: paths.length, fileCountByDirectoryPath };
+}
+
+async function readGitUntrackedEnumeration(repoRoot: string): Promise<{
+    totalFileCount: number;
+    fileCountByDirectoryPath: ReadonlyMap<string, number>;
+} | undefined> {
+    const othersResult = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['ls-files', '--others', '--exclude-standard', '-z'],
+        timeoutMs: 10_000,
+    });
+    if (!othersResult.success) {
+        return undefined;
+    }
+    return aggregateUntrackedFileCounts(othersResult.stdout ?? '');
 }
 
 /**

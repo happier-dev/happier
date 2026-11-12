@@ -1,4 +1,5 @@
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { scmSnapshotEntriesAreComplete } from '@/scm/core/snapshotMappers';
 
 type SnapshotEntryComparable = {
     path: string;
@@ -95,6 +96,19 @@ export function areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(
 }
 
 export function collectChangedPaths(previous: ScmWorkingSnapshot | null | undefined, next: ScmWorkingSnapshot): string[] {
+    // A summary's `entries: []` (or a truncated prefix) is evidence of absence,
+    // not absence of evidence: diffing it would report every previously known
+    // path as removed. The caller refetches an entries-carrying snapshot when a
+    // real diff is required (see scmStatusSync attribution). A missing previous
+    // snapshot is NOT a completeness gap — the first observation attributes
+    // every current path, matching the historical first-poll behavior.
+    if (next && !scmSnapshotEntriesAreComplete(next)) {
+        return [];
+    }
+    if (previous && !scmSnapshotEntriesAreComplete(previous)) {
+        return [];
+    }
+
     const previousMap = toComparableMap(previous);
     const nextMap = toComparableMap(next);
     const candidatePaths = new Set<string>([

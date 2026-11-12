@@ -184,6 +184,29 @@ describe('useSessionAgentInputComposerPersistence', () => {
         standardCleanup();
     });
 
+    it('does not schedule a second render pass per keystroke while there are no persisted mentions', async () => {
+        const { useSessionAgentInputComposerPersistence } = await importHook();
+        let hookRenders = 0;
+        const hook = await renderHook(
+            (props: { sessionId: string; text: string }) => {
+                hookRenders += 1;
+                return useSessionAgentInputComposerPersistence(props);
+            },
+            { initialProps: { sessionId: 'session-a', text: '' } },
+        );
+
+        // Let mount effects settle before counting keystroke passes.
+        await act(async () => {});
+        const baseline = hookRenders;
+
+        await hook.rerender({ sessionId: 'session-a', text: 'h' });
+        await hook.rerender({ sessionId: 'session-a', text: 'he' });
+
+        // One render per keystroke: the text-dependent focus effect must be a no-op unless
+        // persisted mentions exist to re-filter, so typing must not set scoped state again.
+        expect(hookRenders - baseline).toBe(2);
+    });
+
     it('persists expansion per session owner and restores it after session switches', async () => {
         const { useSessionAgentInputComposerPersistence } = await importHook();
         const localUiStateStore = await importLocalUiStateStore();

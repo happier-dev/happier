@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { snapshotToScmStatusFiles } from './scmStatusFiles';
+import type { ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { buildScmStatusFilesFromEntries, snapshotToScmStatusFiles } from './scmStatusFiles';
 
 describe('snapshotToScmStatusFiles', () => {
     it('splits staged and unstaged entries from canonical snapshot', () => {
@@ -161,5 +161,85 @@ describe('snapshotToScmStatusFiles', () => {
         const first = snapshotToScmStatusFiles(snapshot);
         const second = snapshotToScmStatusFiles(snapshot);
         expect(second).toBe(first);
+    });
+});
+
+function makeEntry(path: string, overrides?: Partial<ScmWorkingEntry>): ScmWorkingEntry {
+    return {
+        path,
+        previousPath: null,
+        kind: 'untracked',
+        includeStatus: '?',
+        pendingStatus: '?',
+        hasIncludedDelta: false,
+        hasPendingDelta: true,
+        stats: {
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+            isBinary: false,
+        },
+        ...overrides,
+    };
+}
+
+function makeSnapshot(entries: ScmWorkingEntry[]): ScmWorkingSnapshot {
+    return {
+        projectKey: 'machine:/repo',
+        fetchedAt: 1,
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+        hasConflicts: false,
+        entries,
+        totals: {
+            includedFiles: 0,
+            pendingFiles: entries.length,
+            untrackedFiles: entries.length,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+    };
+}
+
+describe('scmStatusFiles directory-entry handling', () => {
+    it('renders a collapsed directory row without the malformed name split and marks it non-actionable', () => {
+        const files = snapshotToScmStatusFiles(makeSnapshot([
+            makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }),
+        ]));
+
+        const dirRow = files.pendingFiles.find((file) => file.fullPath === 'D/');
+        expect(dirRow).toBeDefined();
+        expect(dirRow?.isDirectory).toBe(true);
+        expect(dirRow?.fileName).toBe('D');
+        expect(dirRow?.filePath).toBe('');
+    });
+
+    it('keeps file rows byte-identical to the legacy shape', () => {
+        const files = snapshotToScmStatusFiles(makeSnapshot([
+            makeEntry('src/app.ts', { kind: 'modified' }),
+        ]));
+
+        const row = files.pendingFiles[0];
+        expect(row?.fileName).toBe('app.ts');
+        expect(row?.filePath).toBe('src');
+        expect(row?.fullPath).toBe('src/app.ts');
+        expect(row?.isDirectory).toBeUndefined();
+    });
+
+    it('builds the row projection from an explicit entries list (entries window source)', () => {
+        const snapshot = makeSnapshot([]);
+        const files = buildScmStatusFilesFromEntries([
+            makeEntry('D/', { isDirectory: true, untrackedFileCount: 30000 }),
+            makeEntry('loose.ts'),
+        ], snapshot);
+
+        expect(files.pendingFiles).toHaveLength(2);
+        expect(files.branch).toBe('main');
+        expect(files.changeSetModel).toBe('index');
+        expect(files.pendingFiles.find((file) => file.fullPath === 'loose.ts')?.fileName).toBe('loose.ts');
+        expect(files.pendingFiles.find((file) => file.fullPath === 'D/')?.isDirectory).toBe(true);
     });
 });

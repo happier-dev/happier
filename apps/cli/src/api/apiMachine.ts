@@ -341,6 +341,7 @@ export class ApiMachineClient {
             scopePrefix: this.machine.id,
             encryptionKey: this.machine.encryptionKey,
             encryptionVariant: this.machine.encryptionVariant,
+            responseMaxBytes: configuration.rpcResponseMaxBytes,
             logger: (msg, data) => logger.debug(msg, data),
             onRegistrationError: (error) => {
                 const probe = classifyMachineTransportErrorToProbeResult(error);

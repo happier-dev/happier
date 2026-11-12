@@ -8,7 +8,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
+import { scmRepositoryService, snapshotToScmStatus, type ScmSnapshotFetchOptions } from './scmRepositoryService';
 import {
     buildSnapshotSignature,
     clearSearchCacheForProject,
@@ -21,10 +21,39 @@ import { reportScmStatusSyncError } from './statusSync/errorReporting';
 import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { collectChangedPaths } from './sync/snapshotDiff';
+import { scmSnapshotEntriesAreComplete } from './core/snapshotMappers';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectKeyIdentity';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
 
 type InvalidationSource = 'unknown' | 'mutation';
+
+/**
+ * Entry-carrying refetch shape for attribution (D6): 'normal' mode keeps the
+ * payload collapsed (directory-level attribution granularity inside untracked
+ * trees) while carrying the complete collapsed entry set for the path diff.
+ */
+const ATTRIBUTION_REFETCH_OPTIONS: ScmSnapshotFetchOptions = Object.freeze({
+    includeEntries: true,
+    untrackedFiles: 'normal',
+} as const);
+
+/**
+ * Totals are computed by the backend from the FULL entry set in every delivery
+ * mode, so a totals delta is the truthful "something changed" signal under
+ * summary polls. Shallow field compare — `totals` is flat.
+ */
+function scmSnapshotTotalsChanged(
+    a: ScmWorkingSnapshot['totals'],
+    b: ScmWorkingSnapshot['totals']
+): boolean {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const key of keys) {
+        if ((a as Record<string, unknown>)[key] !== (b as Record<string, unknown>)[key]) {
+            return true;
+        }
+    }
+    return false;
+}
 
 const DEFAULT_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS = 30_000;
 const MAX_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS = 300_000;
@@ -58,8 +87,12 @@ export class ScmStatusSync {
     private projectLastAutoRefreshAt = new Map<string, number>();
     // Snapshot signatures per project to detect file tree changes
     private projectSnapshotSignature = new Map<string, string>();
-    // Last snapshot per project to compute changed path attribution
+    // Last snapshot per project (any delivery shape) for hydration and reuse.
     private projectLastSnapshot = new Map<string, ScmWorkingSnapshot | null>();
+    // Attribution pin: latest snapshot that carried the complete entry set. A
+    // summary snapshot never overwrites it (evidence of absence is not absence
+    // of evidence), so attribution always diffs entries-vs-entries.
+    private projectLastEntriesSnapshot = new Map<string, ScmWorkingSnapshot | null>();
     // Session that most recently invalidated a project (best-effort attribution source)
     private projectLastInvalidatedBySession = new Map<string, string>();
     // Source for the most recent project invalidation actor
@@ -75,6 +108,7 @@ export class ScmStatusSync {
             projectFastPollUntil: this.projectFastPollUntil,
             projectSnapshotSignature: this.projectSnapshotSignature,
             projectLastSnapshot: this.projectLastSnapshot,
+            projectLastEntriesSnapshot: this.projectLastEntriesSnapshot,
             projectLastInvalidatedBySession: this.projectLastInvalidatedBySession,
             projectLastInvalidationSource: this.projectLastInvalidationSource,
             projectLastInvalidatedBySessionAt: this.projectLastInvalidatedBySessionAt,
@@ -336,6 +370,7 @@ export class ScmStatusSync {
         this.projectLastAutoRefreshAt.delete(projectKey);
         this.projectSnapshotSignature.delete(projectKey);
         this.projectLastSnapshot.delete(projectKey);
+        this.projectLastEntriesSnapshot.delete(projectKey);
         this.projectLastInvalidatedBySession.delete(projectKey);
         this.projectLastInvalidationSource.delete(projectKey);
         this.projectLastInvalidatedBySessionAt.delete(projectKey);
@@ -405,23 +440,15 @@ export class ScmStatusSync {
             }
             scheduledProjectKey = activeProjectKey;
 
-            const previousSnapshot = this.projectLastSnapshot.get(activeProjectKey) ?? null;
-            const changedPaths = collectChangedPaths(previousSnapshot, snapshot);
-            const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
-            const actorSessionId =
-                this.projectLastInvalidatedBySession.get(activeProjectKey) ??
-                this.projectLastInvalidatedBySession.get(projectKey) ??
-                null;
-            const actorSource =
-                this.projectLastInvalidationSource.get(activeProjectKey) ??
-                this.projectLastInvalidationSource.get(projectKey) ??
-                null;
-            const actorInvalidatedAt =
-                this.projectLastInvalidatedBySessionAt.get(activeProjectKey) ??
-                this.projectLastInvalidatedBySessionAt.get(projectKey) ??
-                null;
-            const now = Date.now();
-
+            // projectLastSnapshot is the entries-carrying attribution pin: the
+            // latest snapshot that carried the complete entry set. Summary
+            // snapshots (`entriesPresentation: 'omitted'`) never overwrite it —
+            // evidence of absence is not absence of evidence.
+            const pinnedEntriesSnapshot = this.projectLastEntriesSnapshot.get(activeProjectKey) ?? null;
+            // Entry-level diffs always run entries-vs-entries against the pin;
+            // against a summary snapshot this yields [] (gated inside
+            // collectChangedPaths — no fabricated removals).
+            const changedPaths = collectChangedPaths(pinnedEntriesSnapshot, snapshot);
             const signature = buildSnapshotSignature(snapshot);
             const previousSignature = this.projectSnapshotSignature.get(activeProjectKey);
             const signatureChanged = signature !== previousSignature;
@@ -445,16 +472,68 @@ export class ScmStatusSync {
                 }
             }
 
+            // Attribution under the delivery split: `collectChangedPaths` only
+            // works against complete entry sets, so during an ACTIVE attribution
+            // window a totals delta vs the pin triggers exactly ONE
+            // entries-carrying refetch (collapsed 'normal' mode, D6) to compute
+            // the real diff. No rate limiter beyond the window + the 30s poll
+            // throttle (OD-4). Outside the window the poll stays summary-only.
+            const actorSessionId =
+                this.projectLastInvalidatedBySession.get(activeProjectKey) ??
+                this.projectLastInvalidatedBySession.get(projectKey) ??
+                null;
+            const actorSource =
+                this.projectLastInvalidationSource.get(activeProjectKey) ??
+                this.projectLastInvalidationSource.get(projectKey) ??
+                null;
+            const actorInvalidatedAt =
+                this.projectLastInvalidatedBySessionAt.get(activeProjectKey) ??
+                this.projectLastInvalidatedBySessionAt.get(projectKey) ??
+                null;
+            const now = Date.now();
+            const totalsDelta = pinnedEntriesSnapshot === null || scmSnapshotTotalsChanged(pinnedEntriesSnapshot.totals, snapshot.totals);
+            const attributionWindowActive = shouldAttributeChangedPaths({
+                actorSessionId,
+                actorSource,
+                scopeSessionIds,
+                // Presence probe: the totals delta is the pre-refetch evidence
+                // that content changed; the real path count is only known after
+                // the refetch, and the final gate below re-runs this predicate
+                // with it.
+                changedPathCount: totalsDelta ? 1 : 0,
+                invalidatedAt: actorInvalidatedAt,
+                now,
+                freshnessWindowMs: ATTRIBUTION_INVALIDATION_WINDOW_MS,
+            });
+
+            let refetchedEntriesSnapshot: ScmWorkingSnapshot | null = null;
+            let attributionChangedPaths: string[] = [];
+            if (attributionWindowActive && actorSessionId && totalsDelta) {
+                try {
+                    const entriesSnapshot = await scmRepositoryService.fetchSnapshotForSession(sessionId, ATTRIBUTION_REFETCH_OPTIONS);
+                    if (entriesSnapshot) {
+                        refetchedEntriesSnapshot = entriesSnapshot;
+                        attributionChangedPaths = collectChangedPaths(pinnedEntriesSnapshot, entriesSnapshot);
+                    }
+                } catch {
+                    // Attribution is best-effort; the summary poll already
+                    // succeeded and must not surface a snapshot error for it.
+                }
+            }
+
+            const attributionPaths = refetchedEntriesSnapshot
+                ? attributionChangedPaths
+                : changedPaths;
             if (shouldAttributeChangedPaths({
                 actorSessionId,
                 actorSource,
                 scopeSessionIds,
-                changedPathCount: changedPaths.length,
+                changedPathCount: attributionPaths.length,
                 invalidatedAt: actorInvalidatedAt,
                 now,
                 freshnessWindowMs: ATTRIBUTION_INVALIDATION_WINDOW_MS,
             }) && actorSessionId) {
-                state.markSessionProjectScmTouchedPaths(actorSessionId, changedPaths);
+                state.markSessionProjectScmTouchedPaths(actorSessionId, attributionPaths);
                 this.projectLastInvalidatedBySession.delete(activeProjectKey);
                 this.projectLastInvalidationSource.delete(activeProjectKey);
                 this.projectLastInvalidatedBySessionAt.delete(activeProjectKey);
@@ -468,8 +547,20 @@ export class ScmStatusSync {
             }
 
             if (signatureChanged) {
+                // projectLastSnapshot keeps its hydration role (latest snapshot,
+                // any shape); the attribution pin only advances on snapshots
+                // that carried the complete entry set.
                 this.projectLastSnapshot.set(activeProjectKey, snapshot);
+                if (scmSnapshotEntriesAreComplete(snapshot)) {
+                    this.projectLastEntriesSnapshot.set(activeProjectKey, snapshot);
+                }
                 await clearSearchCacheForProject(this.sessionToProjectKey, activeProjectKey);
+            }
+            if (refetchedEntriesSnapshot && scmSnapshotEntriesAreComplete(refetchedEntriesSnapshot)) {
+                // The refetch is the freshest entries-carrying observation; pin
+                // it so the next window diffs against it ("revert to summary
+                // polls" — the refetch is one-shot per window).
+                this.projectLastEntriesSnapshot.set(activeProjectKey, refetchedEntriesSnapshot);
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error ?? 'Unknown source-control status error');

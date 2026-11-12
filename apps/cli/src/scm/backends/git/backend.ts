@@ -42,6 +42,7 @@ import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remot
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations';
 import { createGitRepositoryProvisioningBackend } from './operations/repositoryProvisioningOperations';
 import { gitStashApply, gitStashDrop, gitStashList, gitStashPop, gitStashShow } from './operations/stashOperations';
+import { gitStatusEntries } from './statusEntries';
 import { gitWorktreeCreate, gitWorktreePrune, gitWorktreeRemove } from './operations/worktreeOperations';
 
 function createUnsupportedGitModeCapabilities() {
@@ -135,6 +136,7 @@ export function createGitBackend(): ScmBackend {
         async worktreesEnrichment({ context, request }) {
             return getGitWorktreesEnrichment({ context, request });
         },
+        statusEntries: gitStatusEntries,
         diffFile: gitDiffFile,
         diffCommit: gitDiffCommit,
         changeInclude: gitChangeInclude,

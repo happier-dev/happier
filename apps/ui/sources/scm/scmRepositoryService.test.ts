@@ -301,7 +301,10 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
 
         expect(result).not.toBeNull();
         expect(result?.projectKey).toBe('machine-a:/repo-from-project');
-        expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {});
+        expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {
+            includeEntries: false,
+            untrackedFiles: 'normal',
+        });
     });
 
     it('throws when rpc snapshot fetch fails', async () => {
@@ -563,7 +566,10 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         const service = new ScmRepositoryService();
         await service.fetchSnapshotForSession('session_1');
 
-        expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {});
+        expect(sessionScmStatusSnapshot).toHaveBeenCalledWith('session_1', {
+            includeEntries: false,
+            untrackedFiles: 'normal',
+        });
     });
 
     it('hydrates the shared machine/path cache when a session snapshot resolves a repo identity', async () => {
@@ -724,6 +730,8 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
 
         expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
             cwd: '/Users/tester/repo',
+            includeEntries: false,
+            untrackedFiles: 'normal',
         });
         expect(result).not.toBeNull();
         expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
@@ -767,6 +775,8 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
 
         expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
             cwd: '/Users/tester/repo/subdir',
+            includeEntries: false,
+            untrackedFiles: 'normal',
         });
         expect(result?.projectKey).toBe('machine-a:/Users/tester/repo');
         expect(result?.repo.rootPath).toBe('/Users/tester/repo');
@@ -1243,6 +1253,8 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
         expect(machineScmStatusSnapshot).toHaveBeenCalledWith('machine-a', {
             cwd: '/Users/tester/repo',
             includeWorktreeStatus: true,
+            includeEntries: false,
+            untrackedFiles: 'normal',
         });
     });
 
@@ -2036,5 +2048,164 @@ describe('ScmRepositoryService.fetchWorktreesEnrichment — FR4-13 bounded enric
         const cached = service.readCachedWorktreesEnrichment({ machineId: 'm-a', path: '~/repo' });
         expect(cached).not.toBeNull();
         expect(cached!.length).toBeLessThanOrEqual(64);
+    });
+});
+
+describe('snapshotToScmStatus totals-first derivations', () => {
+    it('derives counts from totals.changedFiles when the snapshot omits entries', () => {
+        const status = snapshotToScmStatus(makeSnapshot({
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 30000,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+                changedFiles: 30000,
+            },
+        }));
+
+        expect(status.untrackedCount).toBe(30000);
+        expect(status.modifiedCount).toBe(0);
+        expect(status.isDirty).toBe(true);
+    });
+
+    it('keeps entries-derived fallbacks for legacy snapshots without totals.changedFiles', () => {
+        const status = snapshotToScmStatus(makeSnapshot());
+
+        expect(status.modifiedCount).toBe(1);
+        expect(status.untrackedCount).toBe(1);
+        expect(status.isDirty).toBe(true);
+    });
+
+    it('reports a clean worktree when totals report no changes even with omitted entries', () => {
+        const status = snapshotToScmStatus(makeSnapshot({
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+                changedFiles: 0,
+            },
+        }));
+
+        expect(status.isDirty).toBe(false);
+        expect(status.untrackedCount).toBe(0);
+    });
+});
+
+describe('summary poll request shapes', () => {
+    it('fetches entries-carrying snapshots on explicit request without deduping against the summary in-flight request', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '/repo',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot)
+            .mockResolvedValueOnce({
+                success: true,
+                snapshot: makeScmSnapshot({
+                    entries: [],
+                    entriesPresentation: 'omitted',
+                    totals: {
+                        includedFiles: 0,
+                        pendingFiles: 0,
+                        untrackedFiles: 2,
+                        includedAdded: 0,
+                        includedRemoved: 0,
+                        pendingAdded: 0,
+                        pendingRemoved: 0,
+                        changedFiles: 2,
+                    },
+                }),
+            } as any)
+            .mockResolvedValueOnce({
+                success: true,
+                snapshot: makeScmSnapshot({
+                    entriesPresentation: 'complete',
+                    totals: {
+                        includedFiles: 0,
+                        pendingFiles: 0,
+                        untrackedFiles: 2,
+                        includedAdded: 0,
+                        includedRemoved: 0,
+                        pendingAdded: 0,
+                        pendingRemoved: 0,
+                        changedFiles: 2,
+                    },
+                }),
+            } as any);
+
+        const service = new ScmRepositoryService();
+        await service.fetchSnapshotForSession('session_1');
+        const entriesSnapshot = await service.fetchSnapshotForSession('session_1', {
+            includeEntries: true,
+            untrackedFiles: 'normal',
+        });
+
+        expect(sessionScmStatusSnapshot).toHaveBeenCalledTimes(2);
+        expect(sessionScmStatusSnapshot).toHaveBeenNthCalledWith(2, 'session_1', {
+            includeEntries: true,
+            untrackedFiles: 'normal',
+        });
+        expect(entriesSnapshot?.entriesPresentation).toBe('complete');
+    });
+});
+
+describe('normalizeWorkingSnapshotForUi presentation facts', () => {
+    it('passes entriesPresentation, directory-entry fields and totals.changedFiles through to the UI shape', async () => {
+        const { normalizeWorkingSnapshotForUi } = await import('./scmRepositoryService');
+
+        const normalized = normalizeWorkingSnapshotForUi(makeScmSnapshot({
+            entriesPresentation: 'truncated',
+            entries: [{
+                path: 'D/',
+                previousPath: null,
+                kind: 'untracked',
+                includeStatus: '?',
+                pendingStatus: '?',
+                hasIncludedDelta: false,
+                hasPendingDelta: true,
+                stats: {
+                    includedAdded: 0,
+                    includedRemoved: 0,
+                    pendingAdded: 0,
+                    pendingRemoved: 0,
+                    isBinary: false,
+                },
+                isDirectory: true,
+                untrackedFileCount: 30000,
+            }],
+            totals: {
+                changedFiles: 30001,
+            },
+        }), 'machine:/repo');
+
+        expect(normalized.entriesPresentation).toBe('truncated');
+        expect(normalized.entries[0]?.isDirectory).toBe(true);
+        expect(normalized.entries[0]?.untrackedFileCount).toBe(30000);
+        expect(normalized.totals.changedFiles).toBe(30001);
+    });
+
+    it('omits the optional presentation facts for legacy snapshots', async () => {
+        const { normalizeWorkingSnapshotForUi } = await import('./scmRepositoryService');
+
+        const normalized = normalizeWorkingSnapshotForUi(makeScmSnapshot(), 'machine:/repo');
+
+        expect(normalized.entriesPresentation).toBeUndefined();
+        expect(normalized.entries[0]?.isDirectory).toBeUndefined();
+        expect(normalized.totals.changedFiles).toBeUndefined();
     });
 });

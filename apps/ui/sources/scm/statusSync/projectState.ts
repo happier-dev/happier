@@ -15,6 +15,12 @@ export type ScmStatusSyncStateMaps = {
     projectFastPollUntil: Map<string, number>;
     projectSnapshotSignature: Map<string, string>;
     projectLastSnapshot: Map<string, ScmWorkingSnapshot | null>;
+    /**
+     * Attribution pin: the latest snapshot that CARRIED the complete entry set.
+     * Summary snapshots never overwrite it — the attribution diff is always
+     * entries-vs-entries, never against an omitted/truncated entries array.
+     */
+    projectLastEntriesSnapshot: Map<string, ScmWorkingSnapshot | null>;
     projectLastInvalidatedBySession: Map<string, string>;
     projectLastInvalidationSource: Map<string, 'unknown' | 'mutation'>;
     projectLastInvalidatedBySessionAt: Map<string, number>;
@@ -185,6 +191,12 @@ export function moveProjectStateKey(input: {
         stateMaps.projectLastSnapshot.set(toKey, snapshot);
     }
     stateMaps.projectLastSnapshot.delete(fromKey);
+
+    const entriesSnapshot = stateMaps.projectLastEntriesSnapshot.get(fromKey);
+    if (entriesSnapshot && !stateMaps.projectLastEntriesSnapshot.has(toKey)) {
+        stateMaps.projectLastEntriesSnapshot.set(toKey, entriesSnapshot);
+    }
+    stateMaps.projectLastEntriesSnapshot.delete(fromKey);
 
     const actor = stateMaps.projectLastInvalidatedBySession.get(fromKey);
     if (actor && !stateMaps.projectLastInvalidatedBySession.has(toKey)) {

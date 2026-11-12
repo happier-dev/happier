@@ -1881,10 +1881,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     projectManager.updateSessionProjectScmSnapshotError(sessionId, null);
                 }
                 projectManager.updateSessionProjectScmStatus(sessionId, status);
-                const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
-                projectManager.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
-                projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
-                projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+                // Presentation-gated pruning: touched-path and commit-selection
+                // state may only be pruned against the COMPLETE entry set. A
+                // summary's `entries: []` is evidence of absence, not absence
+                // of evidence — pruning against it would wipe real selection
+                // state on every poll (hazard (b) of the delivery split).
+                const entriesPresentation = snapshot.entriesPresentation;
+                const entriesAreComplete = entriesPresentation === undefined || entriesPresentation === 'complete';
+                if (entriesAreComplete) {
+                    const activePaths = new Set(snapshot.entries.map((entry) => entry.path));
+                    projectManager.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
+                    projectManager.pruneSessionProjectScmCommitSelectionPaths(sessionId, activePaths);
+                    projectManager.pruneSessionProjectScmCommitSelectionPatches(sessionId, activePaths);
+                }
                 statusUpdates[sessionId] = status;
             }
             set((state) => ({

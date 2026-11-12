@@ -16,7 +16,8 @@ import { SourceControlUnavailableState } from '@/components/sessions/sourceContr
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useScmTreeBadgeIndex } from '@/components/sessions/files/repositoryTree/useScmTreeBadgeIndex';
-import { buildScmTreeBadgeSignature } from '@/components/sessions/files/repositoryTree/scmTreeBadges';
+import { buildScmTreeBadgeSignature, resolveScmTreeBadgeSourceSnapshot } from '@/components/sessions/files/repositoryTree/scmTreeBadges';
+import { useScmStatusEntriesWindow } from '@/scm/entries/useScmStatusEntriesWindow';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { RepositoryTreeRowActionsMenu, type RepositoryTreeRowActionMenuItemId } from '@/components/sessions/files/repositoryTree/RepositoryTreeRowActionsMenu';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -164,10 +165,25 @@ export const RepositoryTreeList = React.memo(function RepositoryTreeList(props: 
         focusedRevealRef.current = request;
         treeKeyboard.focusPath(request.path);
     }, [nodes, props.revealRequest, treeKeyboard.focusPath]);
-    const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
+    // Badges derive from entry rows. Under the summary/detail delivery split a
+    // poll carries a summary (`entries: []`), so the open surface's demand-loaded
+    // entries window is the live badge source; it stays idle (zero RPCs) whenever
+    // the snapshot still carries the complete entry set.
+    const entriesWindow = useScmStatusEntriesWindow({
+        sessionId,
+        snapshot: props.scmSnapshot ?? null,
+    });
+    const badgeSourceSnapshot = React.useMemo(
+        () => resolveScmTreeBadgeSourceSnapshot({
+            snapshot: props.scmSnapshot ?? null,
+            windowEntries: entriesWindow.state.entries,
+        }),
+        [props.scmSnapshot, entriesWindow.state.entries],
+    );
+    const badgeIndex = useScmTreeBadgeIndex(badgeSourceSnapshot);
     const badgeSignature = React.useMemo(
-        () => buildScmTreeBadgeSignature(props.scmSnapshot ?? null),
-        [props.scmSnapshot],
+        () => buildScmTreeBadgeSignature(badgeSourceSnapshot),
+        [badgeSourceSnapshot],
     );
     const renderedBadgeSignature = badgeIndex ? badgeSignature : 'none';
     const rowActions = useRepositoryTreeRowActions({

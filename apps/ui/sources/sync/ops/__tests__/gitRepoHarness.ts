@@ -227,13 +227,68 @@ function buildSnapshot(cwd: string) {
             includedRemoved: stagedStats.removed,
             pendingAdded: unstagedStats.added,
             pendingRemoved: unstagedStats.removed,
+            // Server-derived deduplicated changed-FILE count (same semantic as
+            // the daemon's totals.changedFiles): the fake computes it from the
+            // full path set, matching the real backend's contract.
+            changedFiles: paths.size,
         },
+    };
+}
+
+function compareEntryPaths(left: string, right: string): number {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+}
+
+function buildEntriesPage(cwd: string, request: any) {
+    const snapshot = buildSnapshot(cwd) as any;
+    let entries: any[] = snapshot.entries;
+    if (typeof request?.expandPath === 'string' && request.expandPath.length > 0) {
+        const prefix = request.expandPath.endsWith('/') ? request.expandPath : `${request.expandPath}/`;
+        entries = entries.filter((entry) => entry.path.startsWith(prefix));
+    }
+    if (request?.area === 'included') {
+        entries = entries.filter((entry) => entry.hasIncludedDelta);
+    } else if (request?.area === 'pending') {
+        entries = entries.filter((entry) => entry.hasPendingDelta);
+    }
+    const sorted = [...entries].sort((left, right) => compareEntryPaths(left.path, right.path));
+    const limit = Math.min(Math.max(1, Math.floor(request?.limit ?? 500)), 500);
+    const afterPath = request?.afterPath;
+    const startIndex = afterPath === undefined
+        ? 0
+        : sorted.findIndex((entry) => compareEntryPaths(entry.path, afterPath) > 0);
+    if (startIndex < 0) {
+        return { success: true, entries: [], hasMore: false, fetchedAt: Date.now() };
+    }
+    const page = sorted.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + limit < sorted.length;
+    return {
+        success: true,
+        entries: page,
+        hasMore,
+        ...(hasMore && page.length > 0 ? { nextCursor: page[page.length - 1]!.path } : {}),
+        fetchedAt: Date.now(),
     };
 }
 
 export function createGitSessionRpcHarness(workspace: string) {
     return async (_sessionId: string, method: string, request: any) => {
         const cwd = resolve(workspace, request?.cwd ?? '.');
+
+        if (method === RPC_METHODS.SCM_STATUS_ENTRIES) {
+            if (!isRepo(cwd)) {
+                return {
+                    success: false,
+                    entries: [],
+                    hasMore: false,
+                    fetchedAt: Date.now(),
+                    error: 'Not a git repository',
+                    errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY,
+                };
+            }
+            return buildEntriesPage(cwd, request);
+        }
 
         if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
             if (!isRepo(cwd)) {
@@ -261,9 +316,25 @@ export function createGitSessionRpcHarness(workspace: string) {
                 };
             }
 
+            const snapshot = buildSnapshot(cwd) as any;
+            // Honor the delivery split: summary polls ship no entries and say
+            // so machine-readably; entry rows load via SCM_STATUS_ENTRIES.
+            // The fake keeps per-file untracked rows ('all' semantics) when
+            // entries are requested — collapsing is a daemon-side concern the
+            // UI must not depend on.
+            if (request?.includeEntries === false) {
+                return {
+                    success: true,
+                    snapshot: {
+                        ...snapshot,
+                        entries: [],
+                        entriesPresentation: 'omitted',
+                    },
+                };
+            }
             return {
                 success: true,
-                snapshot: buildSnapshot(cwd),
+                snapshot,
             };
         }
 

@@ -66,6 +66,8 @@ import type {
     ScmStashPopResponse,
     ScmStashShowRequest,
     ScmStashShowResponse,
+    ScmStatusEntriesRequest,
+    ScmStatusEntriesResponse,
     ScmStatusSnapshotRequest,
     ScmStatusSnapshotResponse,
     ScmWorktreeCreateRequest,
@@ -291,6 +293,16 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmWorktreesEnrichmentRequest;
     }): Promise<ScmWorktreesEnrichmentResponse>;
+    /**
+     * Paged entry-list delivery (`scm.status.entries`) for the Files surface.
+     * Optional capability: when absent, the route answers FEATURE_UNSUPPORTED
+     * and the UI falls back to snapshot-carried entries. Git implements it;
+     * sapling's implementation is deferred (named, not silent).
+     */
+    statusEntries?(input: {
+        context: ScmBackendContext;
+        request: ScmStatusEntriesRequest;
+    }): Promise<ScmStatusEntriesResponse>;
     diffFile(input: {
         context: ScmBackendContext;
         request: ScmDiffFileRequest;

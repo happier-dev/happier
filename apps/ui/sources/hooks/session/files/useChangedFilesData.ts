@@ -10,7 +10,9 @@ import {
     type SessionAttributedFile,
     type SessionAttributionReliability,
 } from '@/scm/scmAttribution';
-import { snapshotToScmStatusFiles, type ScmFileStatus, type ScmStatusFiles } from '@/scm/scmStatusFiles';
+import { snapshotToScmStatusFiles, buildScmStatusFilesFromEntries, type ScmFileStatus, type ScmStatusFiles } from '@/scm/scmStatusFiles';
+import { useScmStatusEntriesWindow } from '@/scm/entries/useScmStatusEntriesWindow';
+import type { ScmStatusEntriesWindowState } from '@/scm/entries/scmStatusEntriesWindow';
 import { deriveSessionWorkingTreeProjection } from '@/sync/domains/session/changes/derivation/deriveSessionWorkingTreeProjection';
 
 import { buildAllRepositoryChangedFiles } from '@/components/sessions/files/filesUtils';
@@ -47,6 +49,17 @@ export type UseChangedFilesDataResult = {
     sessionAttributedFiles: ReturnType<typeof buildChangedFilesAttribution>['sessionAttributedFiles'];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
+    /**
+     * The bounded entries window this owner already runs. Surfaces render rows
+     * and drive paging through it; nothing else may open a second window.
+     */
+    entriesWindow: {
+        state: ScmStatusEntriesWindowState;
+        expandDirectory: (directoryPath: string) => void;
+        collapseDirectory: (directoryPath: string) => void;
+        loadMoreExpanded: (directoryPath: string) => void;
+        loadMoreTopLevel: () => void;
+    };
 };
 
 type ScopedProjectionResult = Readonly<{
@@ -103,14 +116,36 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
 
     const includeInferredAttribution = attributionReliability === 'high';
 
+    // Bounded entries window (delivery split): when the poll delivered a
+    // summary snapshot (entries omitted/truncated), the window loads entry rows
+    // on demand (paged RPC, snapshot fallback). While it carries rows, they are
+    // the row source through the SAME projection owner (scmStatusFiles); a
+    // complete-entry snapshot keeps the historical path with zero extra RPCs.
+    const entriesWindow = useScmStatusEntriesWindow({ sessionId, snapshot: scmSnapshot });
+    // Continuity: rows serve whenever the window holds data — including while a
+    // staleness refresh is in flight (status 'loading') — so a poll advance
+    // never blanks the pane back to the snapshot's omitted entries.
+    const windowRowsActive = entriesWindow.state.mode === 'window' && entriesWindow.state.entries.length > 0;
+    const fallbackRowsActive = entriesWindow.state.mode === 'snapshot-fallback' && (entriesWindow.state.fallbackEntries?.length ?? 0) > 0;
+
     const scmStatusFiles = React.useMemo(() => {
         if (!scmSnapshot?.repo.isRepo) {
             return null;
         }
+        if (windowRowsActive) {
+            return buildScmStatusFilesFromEntries(entriesWindow.state.entries, scmSnapshot);
+        }
+        if (fallbackRowsActive) {
+            return buildScmStatusFilesFromEntries(entriesWindow.state.fallbackEntries ?? [], scmSnapshot);
+        }
         return snapshotToScmStatusFiles(scmSnapshot);
-    }, [scmSnapshot]);
+    }, [entriesWindow.state, fallbackRowsActive, scmSnapshot, windowRowsActive]);
 
-    const changedFilesCount = (scmStatusFiles?.totalIncluded ?? 0) + (scmStatusFiles?.totalPending ?? 0);
+    // Totals-first count: totals.changedFiles is the truthful server-derived
+    // changed-FILE count in every delivery mode; the rows sum (today's
+    // derivation) stays the fallback for legacy snapshots.
+    const changedFilesCount = scmSnapshot?.totals.changedFiles
+        ?? ((scmStatusFiles?.totalIncluded ?? 0) + (scmStatusFiles?.totalPending ?? 0));
     const shouldShowAllFiles = Boolean(searchQuery) || showAllRepositoryFiles || changedFilesCount === 0;
 
     const allRepositoryChangedFiles = React.useMemo(
@@ -226,5 +261,14 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
         sessionAttributedFiles: sessionScope.attributedFiles,
         repositoryOnlyFiles: sessionScope.repositoryOnlyFiles,
         suppressedInferredCount: sessionScope.suppressedInferredCount,
+        // The bounded entries window this owner already runs: consumers render
+        // rows and drive paging through it instead of opening a second window.
+        entriesWindow: {
+            state: entriesWindow.state,
+            expandDirectory: entriesWindow.expandDirectory,
+            collapseDirectory: entriesWindow.collapseDirectory,
+            loadMoreExpanded: entriesWindow.loadMoreExpanded,
+            loadMoreTopLevel: entriesWindow.loadMoreTopLevel,
+        },
     };
 }

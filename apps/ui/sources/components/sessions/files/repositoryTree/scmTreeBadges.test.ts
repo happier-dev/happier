@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { computeScmDirectoryTreeBadge, computeScmFileTreeBadge, createScmTreeBadgeIndex } from './scmTreeBadges';
+import type { ScmWorkingEntry } from '@/sync/domains/state/storageTypes';
+import { computeScmDirectoryTreeBadge, computeScmFileTreeBadge, createScmTreeBadgeIndex, resolveScmTreeBadgeSourceSnapshot } from './scmTreeBadges';
 
 function snapshot(entries: any[]) {
     return {
@@ -136,5 +137,68 @@ describe('scmTreeBadges', () => {
         expect(second).toBe(first);
         expect(first.getFileBadge('src/a.ts')).toEqual({ kindLetter: 'M', added: 2, removed: 1, changedCount: 1 });
         expect(first.getDirectoryBadge('src')).toEqual({ kindLetter: 'M', added: 2, removed: 1, changedCount: 1 });
+    });
+});
+
+describe('resolveScmTreeBadgeSourceSnapshot', () => {
+    const windowEntry = (path: string): ScmWorkingEntry => ({
+        path,
+        previousPath: null,
+        kind: 'modified',
+        includeStatus: '',
+        pendingStatus: 'M',
+        hasIncludedDelta: false,
+        hasPendingDelta: true,
+        stats: { includedAdded: 1, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 1, isBinary: false },
+    });
+
+    it('keeps a complete snapshot by identity (no reindex churn)', () => {
+        const complete = snapshot([windowEntry('src/a.ts')]);
+
+        expect(resolveScmTreeBadgeSourceSnapshot({
+            snapshot: complete,
+            windowEntries: [],
+        })).toBe(complete);
+    });
+
+    it('restores badges from the demand-loaded window when polls carry a summary', () => {
+        const summary = { ...snapshot([]), entriesPresentation: 'omitted' };
+
+        const resolved = resolveScmTreeBadgeSourceSnapshot({
+            snapshot: summary,
+            windowEntries: [windowEntry('src/a.ts')],
+        });
+
+        expect(resolved?.entries.map((entry) => entry.path)).toEqual(['src/a.ts']);
+        expect(computeScmFileTreeBadge(resolved, 'src/a.ts')).toEqual({
+            kindLetter: 'M',
+            added: 1,
+            removed: 1,
+            changedCount: 1,
+        });
+    });
+
+    it('never claims completeness from a window (presentation stays truncated)', () => {
+        const summary = { ...snapshot([]), entriesPresentation: 'omitted' };
+
+        const resolved = resolveScmTreeBadgeSourceSnapshot({
+            snapshot: summary,
+            windowEntries: [windowEntry('src/a.ts')],
+        });
+
+        expect(resolved?.entriesPresentation).toBe('truncated');
+    });
+
+    it('keeps the summary untouched while the window has nothing yet', () => {
+        const summary = { ...snapshot([]), entriesPresentation: 'omitted' };
+
+        expect(resolveScmTreeBadgeSourceSnapshot({
+            snapshot: summary,
+            windowEntries: [],
+        })).toBe(summary);
+        expect(resolveScmTreeBadgeSourceSnapshot({
+            snapshot: null,
+            windowEntries: [],
+        })).toBeNull();
     });
 });

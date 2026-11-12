@@ -48,6 +48,24 @@ export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string
     return parsed;
 }
 
+export const DEFAULT_SOCKET_PERMESSAGE_DEFLATE_THRESHOLD = 1_024;
+
+const SOCKET_PERMESSAGE_DEFLATE_DISABLE_VALUES: ReadonlySet<string> = new Set(["0", "off", "false", "no"]);
+
+export type SocketPerMessageDeflateOption = false | { threshold: number };
+
+// Permessage-deflate is enabled by default on the relay socket: both hops
+// (machine-scoped daemon and user/session-scoped UI) terminate on this one
+// server, and engine.io clients already offer the extension, so without server
+// acceptance nothing on the wire was compressed. HAPPIER_SOCKET_PERMESSAGE_DEFLATE
+// (or the legacy HAPPY_ alias) set to 0/off/false/no disables negotiation as the
+// operational rollback; any other value keeps the default.
+export function resolveSocketPerMessageDeflateFromEnv(env: Record<string, string | undefined>): SocketPerMessageDeflateOption {
+    const raw = (env.HAPPIER_SOCKET_PERMESSAGE_DEFLATE ?? env.HAPPY_SOCKET_PERMESSAGE_DEFLATE ?? '').trim().toLowerCase();
+    if (SOCKET_PERMESSAGE_DEFLATE_DISABLE_VALUES.has(raw)) return false;
+    return { threshold: DEFAULT_SOCKET_PERMESSAGE_DEFLATE_THRESHOLD };
+}
+
 export const DEFAULT_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS = 1_000;
 
 export function resolveSocketFastDisconnectLogThresholdMsFromEnv(env: Record<string, string | undefined>): number {
@@ -112,6 +130,7 @@ export function startSocket(app: Fastify) {
         pingInterval: 15000,
         path: '/v1/updates',
         maxHttpBufferSize: resolveSocketMaxHttpBufferSizeFromEnv(process.env),
+        perMessageDeflate: resolveSocketPerMessageDeflateFromEnv(process.env),
         allowUpgrades: true,
         upgradeTimeout: 10000,
         connectTimeout: 20000,

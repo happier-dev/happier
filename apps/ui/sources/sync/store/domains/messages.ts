@@ -3,6 +3,8 @@ import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
+import { persistEvictedSessionTranscript } from '@/sync/domains/state/sessionTranscriptDiskCache';
+import type { ToolCall } from '../../domains/messages/messageTypes';
 import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
@@ -113,6 +115,8 @@ export type MessagesDomain = {
         latestReadyEventAt: number | null;
     };
     applyMessagesLoaded: (sessionId: string) => void;
+    /** Adopt a persisted-at-eviction transcript baseline (reducer-output `Message` form). */
+    hydrateSessionMessages: (sessionId: string, messages: readonly Message[]) => void;
     resetSessionMessages: (sessionId: string) => void;
     evictSessionMessages: (sessionId: string) => void;
 };
@@ -1096,11 +1100,136 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 }
             };
         }),
+        /**
+         * Rehydrate a transcript persisted at eviction time (sessionTranscriptDiskCache) into a
+         * fresh store entry. Input is reducer-OUTPUT form (the store `Message` shape the disk cache
+         * captured), so this does NOT go through `applyMessages`/the reducer — the wire normalizer
+         * expects `NormalizedMessage` and must not be handed processed rows.
+         *
+         * Deliberately conservative: `isLoaded` stays false so the first-open fetch still owns
+         * load truth, `sessionMessagesHistoryStartLoaded` stays unset so older-pagination never
+         * assumes full history from a baseline, and `lastAppliedAgentStateVersion` stays null so
+         * the next apply reconciles permission projections for the hydrated rows.
+         */
+        hydrateSessionMessages: (sessionId: string, messages: readonly Message[]) => set((state) => {
+            if (messages.length === 0) return state;
+            const existingEntry = state.sessionMessages[sessionId];
+            // Never override live state: only a session with no materialized transcript can adopt
+            // a persisted baseline (the post-eviction / pre-first-open state).
+            if (existingEntry && (existingEntry.messageIdsOldestFirst.length > 0 || existingEntry.isLoaded)) {
+                return state;
+            }
+
+            const base = existingEntry ?? createEmptySessionMessages();
+            const messagesById: Record<string, Message> = { ...base.messagesById };
+            const messageRevisionsById: Record<string, number> = { ...base.messageRevisionsById };
+            const insertIds: string[] = [];
+            for (const message of messages) {
+                if (!message || typeof message.id !== 'string' || !message.id) continue;
+                if (messagesById[message.id]) continue;
+                messagesById[message.id] = message;
+                messageRevisionsById[message.id] = 1;
+                insertIds.push(message.id);
+            }
+            if (insertIds.length === 0) return state;
+
+            const merged = mergeTranscriptMessageIdsOldestFirst(
+                base.messageIdsOldestFirst.slice(),
+                insertIds,
+                messagesById,
+            );
+            const nextIds = merged.messageIdsOldestFirst;
+
+            // Restore the reducer's identity maps for the hydrated rows. The first-open refetch
+            // re-applies the same wire rows; without these marks the reducer sees them as new and
+            // allocates duplicate processed rows alongside the baseline (sidechain wire rows are
+            // deliberately left unmarked: their children are not root-level store rows, so letting
+            // them re-process rebuilds the sidechain chains without duplicating anything).
+            // `messages` itself is NOT restored: it holds reducer-internal role-form objects, and
+            // retention only evicts quiescent sessions, so late in-place tool updates are no-ops.
+            const reducerState = base.reducerState;
+            for (const id of insertIds) {
+                const message = messagesById[id] as (Message & { tool?: ToolCall }) | undefined;
+                if (!message) continue;
+                if (typeof message.localId === 'string' && message.localId) {
+                    reducerState.localIds.set(message.localId, id);
+                }
+                if (typeof message.realID === 'string' && message.realID) {
+                    reducerState.messageIds.set(message.realID, id);
+                }
+                if (message.kind === 'tool-call' && typeof message.tool?.id === 'string' && message.tool.id) {
+                    reducerState.toolIdToMessageId.set(message.tool.id, id);
+                    // Reconstruct the reducer's message row too: the tool-results phase looks up
+                    // `state.messages` for the mapped tool id and silently drops the result when
+                    // the row is missing — a long-running tool finishing after eviction+reopen
+                    // would otherwise lose its outcome. The tool copy is independent (the reducer
+                    // mutates its row in place), so the hydrated store row stays untouched until
+                    // the next projection.
+                    let toolCopy: ToolCall;
+                    try {
+                        toolCopy = structuredClone(message.tool);
+                    } catch {
+                        // structuredClone can only fail on non-cloneable tool input (not wire JSON);
+                        // a shallow copy still satisfies the result-update contract.
+                        toolCopy = { ...message.tool };
+                    }
+                    reducerState.messages.set(id, {
+                        id,
+                        realID: typeof message.realID === 'string' ? message.realID : null,
+                        seq: typeof message.seq === 'number' ? message.seq : null,
+                        transcriptBlockIndex: typeof message.transcriptBlockIndex === 'number' ? message.transcriptBlockIndex : null,
+                        localId: typeof message.localId === 'string' ? message.localId : null,
+                        createdAt: message.createdAt,
+                        role: 'agent',
+                        text: null,
+                        event: null,
+                        tool: toolCopy,
+                        ...(message.meta ? { meta: message.meta } : {}),
+                    } as (typeof reducerState.messages) extends Map<string, infer R> ? R : never);
+                }
+            }
+            const latestThinkingMessageId = findLatestThinkingMessageId({ idsOldestFirst: nextIds, messagesById });
+            const renderableMessages = nextIds
+                .map((id) => messagesById[id])
+                .filter((message): message is Message => Boolean(message));
+            const renderableAggregate = buildTranscriptRenderableAggregate({
+                messages: renderableMessages,
+                completedRequests: null,
+            });
+
+            return {
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    [sessionId]: {
+                        ...base,
+                        messageIdsOldestFirst: nextIds,
+                        messagesById,
+                        messageRevisionsById,
+                        messagesMap: messagesById,
+                        renderableAggregate,
+                        latestThinkingMessageId,
+                        latestThinkingMessageActivityAtMs: latestThinkingMessageId ? Date.now() : null,
+                        messagesVersion: 1,
+                        subagentSourceVersion: renderableMessages.some(shouldIncludeSubagentSourceMessage) ? 1 : 0,
+                        agentEventSourceVersion: renderableMessages.some((message) => message.kind === 'agent-event') ? 1 : 0,
+                        isLoaded: false,
+                    } satisfies SessionMessages,
+                },
+            };
+        }),
         evictSessionMessages: (sessionId: string) => set((state) => {
             const existingSession = state.sessionMessages[sessionId];
             const { [sessionId]: _coverage, ...remainingHistoryStartLoaded } = state.sessionMessagesHistoryStartLoaded ?? {};
             if (!existingSession && !_coverage) {
                 return state;
+            }
+
+            // Best-effort disk copy before the drop (see sessionTranscriptDiskCache): a re-open can
+            // paint this baseline while the first-open load runs. No scope or a quota failure skips
+            // the copy and never blocks eviction.
+            if (existingSession) {
+                persistEvictedSessionTranscript(state.sessionLocalStateScope ?? null, sessionId, existingSession);
             }
 
             // Bounded transcript retention: drop the whole materialized transcript

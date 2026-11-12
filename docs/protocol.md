@@ -220,6 +220,12 @@ from this current-work projection.
   - `{ method, params }` -> callback `{ ok, result? | error? }`
   - Server forwards to the registered socket via `rpc-request` (ack-based).
 
+### RPC reply transport limits (development)
+
+Development source negotiates `permessage-deflate` on the Socket.IO server that terminates both hops (machine-scoped daemon and user/session-scoped clients). Client libraries already offer the extension, so this is a server-side default with `HAPPIER_SOCKET_PERMESSAGE_DEFLATE` (`apps/server/sources/app/api/socket.ts#resolveSocketPerMessageDeflateFromEnv`) as its rollback. Compression changes bytes on the wire only: `maxHttpBufferSize`/`maxPayload` still apply to the decompressed payload, so a reply is bounded in bytes on the wire and in memory by different owners.
+
+Separately, the daemon bounds a single RPC reply (`apps/cli/src/api/rpc/rpcResponseWireLimit.ts`, `RpcHandlerManager.guardResponseWireBytes`). An encoded reply above the ceiling is replaced by a typed `RPC_RESPONSE_TOO_LARGE` error carrying `method`, `measuredBytes` and `limitBytes`, logged at warn with `reason=rpc_response_too_large` — never silently truncated or dropped. Payload owners keep their own paging/projection contracts; the guard exists so one oversized reply cannot kill the machine channel and take unrelated RPCs (session creation, session stop) with it. Its own diagnostic reply bypasses the guard, so a configured ceiling below that error's size still delivers the error instead of recursing.
+
 ## HTTP endpoints by area
 See `api.md` for the full HTTP endpoint catalog and auth flows.
 

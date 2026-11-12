@@ -149,13 +149,42 @@ function readStructuredMentions(
 type ScopedComposerPersistenceState = Readonly<{
     owner: AgentInputDraftOwner | null;
     scope: ServerAccountScope | null;
-    text: string | undefined;
-    textLength: number | undefined;
-    fontScale: number | undefined;
     expanded: boolean;
     inputState: ReturnType<typeof readInputState>;
     structuredInputMentions: readonly ComposerStructuredInputMention[];
 }>;
+
+function areInputStatesValueEqual(
+    left: AgentInputLocalUiStateV1 | null,
+    right: AgentInputLocalUiStateV1 | null,
+): boolean {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    return left.updatedAt === right.updatedAt
+        && left.expanded === right.expanded
+        && left.scrollY === right.scrollY
+        && left.textLength === right.textLength
+        && left.fontScale === right.fontScale
+        && left.selection?.start === right.selection?.start
+        && left.selection?.end === right.selection?.end;
+}
+
+/**
+ * Value equality for the store-derived cache: the hook recomputes this state on every text
+ * change (the focus effect keeps `text` in its deps so mentions re-filter against live text),
+ * but a recompute that changed nothing must return the previous reference so React skips the
+ * render — typing must not schedule a second persistence-host render pass.
+ */
+function areScopedComposerPersistenceStatesEqual(
+    left: ScopedComposerPersistenceState,
+    right: ScopedComposerPersistenceState,
+): boolean {
+    return areOwnersEqual(left.owner, right.owner)
+        && areNullableScopesEqual(left.scope, right.scope)
+        && left.expanded === right.expanded
+        && areInputStatesValueEqual(left.inputState, right.inputState)
+        && areMentionListsEqual(left.structuredInputMentions, right.structuredInputMentions);
+}
 
 function readScopedComposerPersistenceState(
     scope: ServerAccountScope | null,
@@ -169,9 +198,6 @@ function readScopedComposerPersistenceState(
     return {
         owner,
         scope,
-        text: options.text,
-        textLength: options.textLength,
-        fontScale: options.fontScale,
         expanded: readExpanded(scope, owner),
         inputState: readInputState(scope, owner, {
             textLength: options.textLength,
@@ -185,17 +211,9 @@ function isScopedComposerPersistenceStateCurrent(
     state: ScopedComposerPersistenceState,
     scope: ServerAccountScope | null,
     owner: AgentInputDraftOwner | null,
-    options: Readonly<{
-        text?: string;
-        textLength?: number;
-        fontScale?: number;
-    }>,
 ): boolean {
     return areOwnersEqual(state.owner, owner)
-        && areNullableScopesEqual(state.scope, scope)
-        && state.text === options.text
-        && state.textLength === options.textLength
-        && state.fontScale === options.fontScale;
+        && areNullableScopesEqual(state.scope, scope);
 }
 
 /**
@@ -250,7 +268,7 @@ export function useSessionAgentInputComposerPersistence({
     // once. Self-originated persist writes must not touch it — see
     // buildRestoreToken.
     const [restoreEpoch, setRestoreEpoch] = React.useState(0);
-    const currentScopedState = isScopedComposerPersistenceStateCurrent(scopedState, scope, owner, scopedStateReadOptions)
+    const currentScopedState = isScopedComposerPersistenceStateCurrent(scopedState, scope, owner)
         ? scopedState
         : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
     const expanded = currentScopedState.expanded;
@@ -285,13 +303,15 @@ export function useSessionAgentInputComposerPersistence({
             fontScale?: number;
         }>,
     ) => {
-        setScopedState(readScopedComposerPersistenceState(nextScope, nextOwner, nextOptions));
+        const next = readScopedComposerPersistenceState(nextScope, nextOwner, nextOptions);
+        setScopedState((current) => areScopedComposerPersistenceStatesEqual(current, next) ? current : next);
     }, []);
     const setScopedStateWithExpanded = React.useCallback((nextExpanded: boolean) => {
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+            if (base.expanded === nextExpanded) return current;
             return {
                 ...base,
                 expanded: nextExpanded,
@@ -300,12 +320,14 @@ export function useSessionAgentInputComposerPersistence({
     }, [owner, scope, scopedStateReadOptions]);
     const setScopedStateWithInputState = React.useCallback(() => {
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
+            const nextInputState = readInputState(scope, owner, inputStateReadOptions);
+            if (areInputStatesValueEqual(base.inputState, nextInputState)) return current;
             return {
                 ...base,
-                inputState: readInputState(scope, owner, inputStateReadOptions),
+                inputState: nextInputState,
             };
         });
     }, [inputStateReadOptions, owner, scope, scopedStateReadOptions]);
@@ -482,7 +504,7 @@ export function useSessionAgentInputComposerPersistence({
             fontScale,
         }, { flush: false });
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
             return {
@@ -514,7 +536,7 @@ export function useSessionAgentInputComposerPersistence({
             && areNullableScopesEqual(activeOwner.scope, scope)
         ) {
             setScopedState((current) => {
-                const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+                const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                     ? current
                     : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
                 return {
@@ -542,7 +564,7 @@ export function useSessionAgentInputComposerPersistence({
             ...(typeof state.fontScale === 'number' ? { fontScale: state.fontScale } : {}),
         });
         setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner, scopedStateReadOptions)
+            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
                 : readScopedComposerPersistenceState(scope, owner, scopedStateReadOptions);
             return {

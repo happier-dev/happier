@@ -28,6 +28,8 @@ import {
     isDelegatedSessionApprovalRpcMethod,
 } from '@happier-dev/protocol/rpc';
 import { isPublicRpcHandlerError, readRpcErrorCode, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
+import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
+import { DEFAULT_RPC_RESPONSE_MAX_BYTES } from './rpcResponseWireLimit';
 
 export type RpcHandlerRegistrationReadiness =
     | Readonly<{ status: 'ready' }>
@@ -56,6 +58,7 @@ export class RpcHandlerManager {
     private readonly encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     private readonly encryptionMode: 'e2ee' | 'plain';
     private readonly logger: (message: string, data?: any) => void;
+    private readonly responseMaxBytes: number;
     private readonly onRegistrationError: RpcHandlerConfig['onRegistrationError'];
     private readonly onRegistrationAcknowledged: RpcHandlerConfig['onRegistrationAcknowledged'];
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
@@ -80,6 +83,7 @@ export class RpcHandlerManager {
         this.encryptionVariant = config.encryptionVariant;
         this.encryptionMode = config.encryptionMode ?? (config.encryptionVariant === 'plain' ? 'plain' : 'e2ee');
         this.logger = config.logger || ((msg, data) => defaultLogger.debug(msg, data));
+        this.responseMaxBytes = config.responseMaxBytes ?? DEFAULT_RPC_RESPONSE_MAX_BYTES;
         this.onRegistrationError = config.onRegistrationError;
         this.onRegistrationAcknowledged = config.onRegistrationAcknowledged;
         this.authorizeRequest = config.authorizeRequest;
@@ -494,18 +498,92 @@ export class RpcHandlerManager {
         result: unknown,
         acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
     ): unknown {
+        return this.guardResponseWireBytes(
+            request,
+            this.encodeTransportResponseUnguarded(request, result, acknowledgement),
+        );
+    }
+
+    /**
+     * Encodes a reply without applying the wire guard. Used only for the guard's own
+     * diagnostic reply: re-guarding it would recurse whenever the configured ceiling
+     * is below the (small, fixed-shape) error reply itself, turning a misconfiguration
+     * into a stack overflow on every RPC instead of a typed error.
+     */
+    private encodeTransportResponseUnguarded(
+        request: RpcRequest,
+        result: unknown,
+        acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
+    ): unknown {
         const encodedResult = this.encodeResponse(result);
+        let response: unknown;
         if (
             request.transportResponseEnvelopeVersion
             !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1
         ) {
-            return encodedResult;
+            response = encodedResult;
+        } else {
+            response = {
+                v: SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
+                result: encodedResult,
+                ...(acknowledgement ? { acknowledgement } : {}),
+            };
         }
-        return {
-            v: SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1,
-            result: encodedResult,
-            ...(acknowledgement ? { acknowledgement } : {}),
-        };
+        return response;
+    }
+
+    /**
+     * Backstop that keeps one RPC reply from killing the daemon's socket channel: a reply
+     * measured above `responseMaxBytes` is replaced by a typed RPC_RESPONSE_TOO_LARGE error
+     * (logged + returned; never truncated or silently dropped). This measures the
+     * post-encryption wire payload (base64 chars ≈ bytes), not the pre-encryption object.
+     * Payload owners keep their own paging/projection contracts; per-method shrinking does
+     * not belong here. The relay's own frame cap remains owned by the server.
+     */
+    private guardResponseWireBytes(request: RpcRequest, response: unknown): unknown {
+        const limitBytes = this.responseMaxBytes;
+        if (!Number.isFinite(limitBytes) || limitBytes <= 0) return response;
+
+        let measuredBytes: number;
+        if (typeof response === 'string') {
+            // Encrypted path: base64 of the ciphertext; ASCII chars map 1:1 to wire bytes.
+            measuredBytes = response.length;
+        } else if (
+            response
+            && typeof response === 'object'
+            && !Array.isArray(response)
+            && typeof (response as { result?: unknown }).result === 'string'
+        ) {
+            // Envelope path: the encrypted result string dominates the wire payload
+            // (envelope keys add well under 1KB); the guard protects against MB-scale frames.
+            measuredBytes = ((response as { result: string }).result).length;
+        } else {
+            // Plaintext path: the transport serializes this object as JSON; use the bounded
+            // estimator so small replies stay cheap, then measure exactly only when firing.
+            measuredBytes = estimateJsonUtf8BytesBounded(response, limitBytes);
+            if (measuredBytes <= limitBytes) return response;
+            try {
+                measuredBytes = Buffer.byteLength(JSON.stringify(response) ?? '', 'utf8');
+            } catch {
+                // Keep the bounded estimate; it already proves the limit is exceeded.
+            }
+        }
+        if (measuredBytes <= limitBytes) return response;
+
+        const method = this.readUnprefixedMethod(request.method);
+        defaultLogger.warn('[RPC] [ERROR] Refusing oversized response frame', {
+            reason: 'rpc_response_too_large',
+            method,
+            measuredBytes,
+            limitBytes,
+        });
+        return this.encodeTransportResponseUnguarded(request, {
+            error: `${RPC_ERROR_MESSAGES.RESPONSE_TOO_LARGE} for method '${method}': ${measuredBytes} bytes exceeds limit ${limitBytes} bytes`,
+            errorCode: RPC_ERROR_CODES.RESPONSE_TOO_LARGE,
+            method,
+            measuredBytes,
+            limitBytes,
+        });
     }
 
     private projectAcknowledgement(

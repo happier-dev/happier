@@ -12,6 +12,8 @@ import { normalizeSessionOrderingNumber, reconcileSessionSnapshot, resolveSessio
 import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { deleteEvictedSessionTranscript } from '@/sync/domains/state/sessionTranscriptDiskCache';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -1376,6 +1378,9 @@ export async function handleUpdateContainer(params: {
         removeSessionEncryption: (id) => encryption.removeSessionEncryption(id),
         removeProjectManagerSession: (id) => projectManager.removeSession(id),
         clearScmStatusForSession: (id) => scmStatusSync.clearForSession(id),
+        removeEvictedTranscriptDiskCache: (id) => {
+            deleteEvictedSessionTranscript(getActiveServerAccountScope(), id);
+        },
         log,
     });
 

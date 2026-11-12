@@ -7490,6 +7490,8 @@ export const ru: TranslationStructure = {
   },
 
   files: {
+            changedFilesDirectoryFileCount: ({ count }: { count: number }) => (count === 1 ? '1 файл' : `${count} файлов`),
+            changedFilesLoadMore: 'Загрузить ещё файлы',
             revealInFiles: "Показать в файлах",
             openChanges: "Открыть изменения",
     searchPlaceholder: "Поиск файлов...",

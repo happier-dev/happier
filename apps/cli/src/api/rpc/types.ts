@@ -68,6 +68,13 @@ export interface RpcHandlerConfig {
     encryptionKey: Uint8Array | null;
     encryptionVariant: 'legacy' | 'dataKey' | 'plain';
     encryptionMode?: 'e2ee' | 'plain';
+    /**
+     * Wire ceiling in bytes for a single encoded response frame. When omitted, the
+     * canonical DEFAULT_RPC_RESPONSE_MAX_BYTES applies. Wired from
+     * configuration.rpcResponseMaxBytes (HAPPIER_RPC_RESPONSE_MAX_BYTES) at live
+     * socket-client construction sites.
+     */
+    responseMaxBytes?: number;
     logger?: (message: string, data?: any) => void;
     onRegistrationError?: (error: unknown) => void;
     onRegistrationAcknowledged?: (method: string) => void;

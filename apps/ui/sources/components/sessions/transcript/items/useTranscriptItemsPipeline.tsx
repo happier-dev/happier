@@ -230,8 +230,11 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         sessionThinking,
     ]);
     const projectionLiveTailAnchorMessageId = projectionLiveTailAnchor?.messageId ?? null;
+    // Last projection handed to the renderer, threaded back as the append-only reuse baseline
+    // (streaming inserts extend it instead of rebuilding full-transcript index maps).
+    const previousRenderWindowProjectionRef = React.useRef<TranscriptRenderWindowProjection<ChatTranscriptListItem> | null>(null);
     const renderWindowProjection = React.useMemo(() => {
-        return resolveTranscriptRenderWindowProjection({
+        const next = resolveTranscriptRenderWindowProjection({
             activeThinkingMessageId,
             createWindowGapItem: createTranscriptWindowGapItem,
             entrySliceWindow,
@@ -250,7 +253,10 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             targetWindowState: targetWindowState ?? jumpWindowFacts.sessionTargetWindowState,
             transcriptNativeHotTailItemCount,
             transcriptWebHotTailItemCount,
+            previousProjection: previousRenderWindowProjectionRef.current,
         });
+        previousRenderWindowProjectionRef.current = next;
+        return next;
     }, [
         activeThinkingMessageId,
         decomposedItems,

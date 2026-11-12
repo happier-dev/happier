@@ -63,6 +63,7 @@ export function installRepositoryTreeCommonModuleMocks(
             Typography: {
                 default: () => ({}),
                 mono: () => ({}),
+                monoMeta: () => ({}),
             },
         };
     });

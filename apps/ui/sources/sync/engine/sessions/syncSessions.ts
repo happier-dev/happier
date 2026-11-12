@@ -61,9 +61,11 @@ export function handleDeleteSessionSocketUpdate(params: {
     removeSessionEncryption: (sessionId: string) => void;
     removeProjectManagerSession: (sessionId: string) => void;
     clearScmStatusForSession: (sessionId: string) => void;
+    /** Drop the persisted evicted-transcript copy, so a re-open can never paint deleted content. */
+    removeEvictedTranscriptDiskCache: (sessionId: string) => void;
     log: { log: (message: string) => void };
 }) {
-    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearScmStatusForSession, log } = params;
+    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearScmStatusForSession, removeEvictedTranscriptDiskCache, log } = params;
 
     // Remove session from storage
     deleteSession(sessionId);
@@ -76,6 +78,9 @@ export function handleDeleteSessionSocketUpdate(params: {
 
     // Clear any cached git status
     clearScmStatusForSession(sessionId);
+
+    // Drop the evicted-transcript disk copy
+    removeEvictedTranscriptDiskCache(sessionId);
 
     log.log(`🗑️ Session ${sessionId} deleted from local storage`);
 }

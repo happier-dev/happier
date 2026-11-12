@@ -138,6 +138,7 @@ import {
 } from './domains/state/sessionViewportPersistence';
 import { sessionViewportStorageKey } from './domains/state/sessionLocalStateKeys';
 import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
+import { deleteEvictedSessionTranscript, hydrateEvictedSessionTranscript } from './domains/state/sessionTranscriptDiskCache';
 import {
     areServerAccountScopesEqual,
     createServerAccountScope,
@@ -2420,6 +2421,9 @@ class Sync {
                 removeSessionEncryption: (id) => { if (isActiveServer) this.encryption?.removeSessionEncryption(id); },
                 removeProjectManagerSession: (id) => { if (isActiveServer) projectManager.removeSession(id); },
                 clearScmStatusForSession: (id) => { if (isActiveServer) scmStatusSync.clearForSession(id); },
+                removeEvictedTranscriptDiskCache: (id) => {
+                    if (isActiveServer) deleteEvictedSessionTranscript(getActiveServerAccountScope(), id);
+                },
                 log,
             });
             if (isActiveServer) {
@@ -5789,6 +5793,21 @@ class Sync {
           }
 
           const loadedTranscript = storage.getState().sessionMessages[sessionId];
+          // Warm baseline for a re-opened, previously evicted session: adopt the transcript copy
+          // persisted at eviction time (best-effort, see sessionTranscriptDiskCache) before the
+          // snapshot load below runs, so first paint has content. It never marks the session
+          // loaded and never overrides materialized content; the fetch below still owns isLoaded,
+          // coverage, and reconciliation against the server.
+          if (hydrateEvictedSessionTranscript({
+              scope: getActiveServerAccountScope(),
+              sessionId,
+              hasMaterializedMessages: Object.keys(loadedTranscript?.messagesById ?? {}).length > 0,
+              applyMessages: (sid, messages) => {
+                  storage.getState().hydrateSessionMessages(sid, messages);
+              },
+          })) {
+              log.log(`session ${sessionId}: hydrated evicted-transcript baseline from disk cache`);
+          }
           const hasMaterializedMessages = Object.keys(loadedTranscript?.messagesById ?? {}).length > 0;
           // A previous empty or interrupted open can leave a non-empty session hint with a loaded,
           // zero-row cache. Recover with a snapshot so catch-up does not preserve the blank projection.

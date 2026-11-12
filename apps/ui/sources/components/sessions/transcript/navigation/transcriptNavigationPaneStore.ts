@@ -1,4 +1,5 @@
 import type { TranscriptNavigationEntryPressHandler } from './transcriptNavigationTypes';
+import { LruMap } from '@/utils/cache/lruMap';
 
 /**
  * Registry of the transcript host's jump handler, keyed by session.
@@ -24,7 +25,17 @@ export type TranscriptNavigationPaneStore = Readonly<{
     subscribe: (sessionId: string, listener: () => void) => () => void;
 }>;
 
-const emptySnapshotsBySessionId = new Map<string, TranscriptNavigationPaneSnapshot>();
+/**
+ * Bound for the empty-snapshot identity cache: these singletons exist only so `get()` returns a
+ * cached identity for `useSyncExternalStore`, and the warm-paint cache already established the
+ * per-session identity-cache working set at this size. LRU eviction keeps actively viewed
+ * sessions' snapshots stable while an app lifetime of session switches cannot grow the map.
+ */
+export const MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS = 256;
+
+const emptySnapshotsBySessionId = new LruMap<string, TranscriptNavigationPaneSnapshot>({
+    maxEntries: MAX_EMPTY_TRANSCRIPT_NAVIGATION_PANE_SNAPSHOTS,
+});
 
 /**
  * How long a reveal-then-jump press waits for the transcript host to register its jump

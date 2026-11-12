@@ -68,6 +68,7 @@ export function installSessionFilesCommonModuleMocks(
             Typography: {
                 default: () => ({}),
                 mono: () => ({}),
+                monoMeta: () => ({}),
             },
         };
     });
