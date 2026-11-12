@@ -85,14 +85,14 @@ describe('MCP provider input projection', () => {
         const schema = { ...source, definitions: { pair: { type: 'array', items: [{ type: 'string' }, { type: 'number' }], additionalItems: false } },
             properties: { ...source.properties as Record<string, unknown>, label: { $ref: '#/definitions/pair/items/0' },
                 count: { $ref: '#/properties/open/additionalItems' },
-                open: { type: 'array', items: [{ type: 'string' }], additionalItems: { type: 'number' } } },
+                open: { type: 'array', items: [{ type: 'string' }], additionalItems: { $ref: '#/definitions/pair/items/1' } } },
             default: { items: [{ const: 'literal data' }] } };
         const projected = projectMcpToolInputJsonSchema(schema);
         expect(projected).toMatchObject({ properties: {
             executionRunContext: { properties: { versions: { items: { anyOf: [{ type: 'number', const: 1 }, false] } } } },
             label: { $ref: '#/definitions/pair/items/anyOf/0' },
             count: { $ref: '#/properties/open/items/anyOf/1' },
-            open: { items: { anyOf: [{ type: 'string' }, { type: 'number' }] } },
+            open: { items: { anyOf: [{ type: 'string' }, { $ref: '#/definitions/pair/items/anyOf/1' }] } },
         }, default: schema.default });
         const validate = new Ajv({ strict: false }).compile(projected);
         expect(validate({ executionRunContext: { versions: [1] }, label: 'ok', count: 2, open: ['a', 2] })).toBe(true);

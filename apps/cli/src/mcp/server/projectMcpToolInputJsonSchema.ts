@@ -29,7 +29,7 @@ function mapSchemaChildren(schema: JsonSchemaObject, map: (child: JsonSchemaObje
         if (entries) result[key] = Object.fromEntries(Object.entries(entries).map(([name, child]) =>
             [name, asObject(child) ? map(child as JsonSchemaObject) : child]));
     }
-    for (const key of ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems']) {
+    for (const key of ['items', 'additionalItems', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else', 'unevaluatedProperties', 'unevaluatedItems']) {
         const child = asObject(schema[key]);
         if (child) result[key] = map(child);
     }
