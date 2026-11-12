@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
@@ -11,13 +11,12 @@ import { SelectionList, type SelectionListOption, type SelectionListSectionDescr
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
-import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
 import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -136,18 +135,12 @@ const WHO_PREVIEW = { total: 4, newAgent: 2, session: 1, bot: 1 } as const;
 
 type ModelSelection = Extract<ExecutableParticipantSelectionV1, { kind: 'model' }>;
 
-/** The model row a chosen recipe came from: its Agent on its Machine, else the Machine's own row. */
-function modelRowIds(selection: ModelSelection): readonly string[] {
-    const machineId = selection.launch.executionTarget.machineId;
-    const agentId = resolveBundledAgentIdFromContributionIdentity(selection.launch.agentTarget.identity);
-    return agentId ? [`model:${machineId}:${agentId}`, `model:${machineId}`] : [`model:${machineId}`];
-}
-
 /**
  * Shared fields only; the host retains its existing admission controller and typed result adapter.
- * Lab flows `flOpinion`: one Who list (models, then Sessions and Bots, each naming its type). A chosen
- * model reads its recipe as its row's line with Change beside the check; Change opens the recipe right
- * under the list and sets the question aside until it closes. People follow as their own calm section.
+ * Lab dpRev: one Who list of what exists (Sessions, Bots, People, each naming its type); agents the
+ * person adds lead it, checked, their recipe as the row's line with Change. "Add an agent" is the last
+ * row and "+ Add agent" sits at the label's end; both open the same composer chips under the list.
+ * Change opens that recipe there too and sets the question aside until it closes.
  */
 export function ContextualStartComposerBody({ model, whoHint, question, whoContent, whoAccessory, details }: Readonly<{
     model: ContextualStartComposerModel;
@@ -159,6 +152,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     whoAccessory?: Readonly<{ label: string; render: (close: () => void) => React.ReactNode }>;
     details?: ReadonlyMap<string, () => React.ReactNode>;
 }>) {
+    const { theme } = useUnistyles();
     const { source, where } = model;
     const { participants } = source;
     const busy = !source.enabled || source.busy === true;
@@ -168,59 +162,42 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     const closeAccessory = React.useCallback(() => setAccessoryOpen(false), []);
     const [expanded, setExpanded] = React.useState(false);
     const [whoEditing, setWhoEditing] = React.useState(() => source.selectedIds.size === 0);
-    // Which row's recipe is settling (one-tap default) or open (Change). Presentation only: the recipe
+    // Whether the open recipe adds an agent or changes a chosen one. Presentation only: the recipe
     // and its value stay with the participant owner.
-    const [recipe, setRecipe] = React.useState<Readonly<{ rowId: string; mode: 'default' | 'change' }> | null>(null);
+    const [recipe, setRecipe] = React.useState<'add' | 'change' | null>(null);
     const editor = participants?.who.recipeEditor ?? null;
     const openRecipe = editor ? recipe : null;
     const onChoose = participants?.input.onChoose;
     const onReplace = participants?.input.onReplace;
     const editModel = participants?.who.editModel;
+    const addAgent = model.admissible.who.includes('newAgent') ? participants?.who.addAgent ?? null : null;
+    const startAdd = React.useCallback(() => { setRecipe('add'); addAgent?.(); }, [addAgent]);
 
     const display = React.useMemo(() => {
         const categoryOf = new Map(source.sections.map(entry => [entry.section.id, entry.category] as const));
         const agentSections = model.rootStep.sections.filter(section => categoryOf.get(section.id) !== 'person');
         const peopleSections = model.rootStep.sections.filter(section => categoryOf.get(section.id) === 'person');
-        const rowIds = new Set(agentSections.flatMap(section => section.kind === 'static' ? section.options.map(option => option.id) : []));
-        // Each chosen model claims the first row it came from; one with no row left reads beneath the list.
-        const chosenByRow = new Map<string, ModelSelection>();
-        const unplaced: ModelSelection[] = [];
-        for (const selection of participants?.input.selected ?? []) {
-            if (selection.kind !== 'model') continue;
-            const rowId = modelRowIds(selection).find(id => rowIds.has(id) && !chosenByRow.has(id));
-            if (rowId) chosenByRow.set(rowId, selection);
-            else unplaced.push(selection);
-        }
+        // Agents the person added have no row of their own in the list; they lead it.
+        const added = (participants?.input.selected ?? []).filter((selection): selection is ModelSelection => selection.kind === 'model');
+        const addRow: SelectionListOption | null = addAgent ? {
+            id: 'who:add-agent', testID: 'contextual-start-add-agent',
+            icon: <Icon name="plus" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+            label: t('session.collaboration.discussion.secondOpinion.addAgent'),
+            disabled: busy || openRecipe !== null, onSelect: startAdd,
+        } : null;
+        const addSection: SelectionListSectionDescriptor[] = addRow ? [{ kind: 'static', id: 'who:add', options: [addRow] }] : [];
         const decorate = (option: SelectionListOption): SelectionListOption => {
             const detail = details?.get(option.id);
+            // A row that chooses nothing (an Agent not ready on the Machine) opens its detail itself: its setup.
+            if (detail && !option.onSelect && !option.openStep) return { ...option,
+                onSelect: () => setDetailId(current => current === option.id ? null : option.id) };
             if (detail) return { ...option, rightAccessoryOutsidePressable: true,
                 rightAccessory: <TextLinkButton testID={`contextual-start-change:${option.id}`} tone="strong" size="meta"
                     label={t('common.change')} disabled={busy || option.disabled}
                     onPress={() => setDetailId(current => current === option.id ? null : option.id)} /> };
-            if (option.openStep || !option.id.startsWith('model:')) return option;
-            const chosen = chosenByRow.get(option.id);
-            const settling = openRecipe?.mode === 'default' && openRecipe.rowId === option.id;
-            return {
-                ...option,
-                // A chosen recipe unchooses on its row; a new one settles its defaults right here.
-                onSelect: chosen ? () => onChoose?.(chosen) : () => { setRecipe({ rowId: option.id, mode: 'default' }); option.onSelect?.(); },
-                ...(settling ? { subtitleContent: <Text style={styles.recipeText}>{t('common.loading')}</Text> } : {}),
-                ...(chosen ? {
-                    subtitleContent: <RecipeSummary selection={chosen} />,
-                    subtitleLines: 2,
-                    rightAccessoryOutsidePressable: true,
-                    rightAccessory: <TextLinkButton testID="second-opinion.change-model" tone="strong" size="meta"
-                        label={t('common.change')} disabled={busy}
-                        onPress={() => {
-                            setRecipe({ rowId: option.id, mode: 'change' });
-                            editModel?.(chosen, next => onReplace?.(chosen, next));
-                        }} />,
-                } : {}),
-            };
+            return option;
         };
         const selectedIds = new Set(model.selectedIds);
-        for (const rowId of chosenByRow.keys()) selectedIds.add(rowId);
-        if (openRecipe?.mode === 'default') selectedIds.add(openRecipe.rowId);
         const isState = (option: SelectionListOption) => option.id.startsWith('sessions:');
         const candidates = agentSections.flatMap(section => section.kind === 'static'
             ? section.options.filter(option => !isState(option)).map(option => ({ option, category: categoryOf.get(section.id) ?? 'session' }))
@@ -233,7 +210,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             const sections = agentSections.map(section => section.kind === 'static'
                 ? { ...section, title: undefined, rightAccessory: undefined, count: undefined, options: section.options.map(decorate) }
                 : section);
-            return { step: { ...model.rootStep, sections: [...sections, ...peopleSections] }, selectedIds, unplaced };
+            return { step: { ...model.rootStep, sections: [...sections, ...peopleSections, ...addSection] }, selectedIds, added };
         }
         // Lab flows `ask`: a short mixed list of top picks. Whatever is chosen (or open) leads, then the
         // owner's first new agents, Session and Bot, in the order the owner already ranks them.
@@ -271,11 +248,12 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             label: t('session.collaboration.discussion.secondOpinion.showAllReviewers', { count: candidates.length }),
             disabled: busy, onSelect: () => setExpanded(true),
         };
-        const topSection: SelectionListSectionDescriptor = { kind: 'static', id: 'who:top', options: [...top.map(decorate), ...stateRows, showAll] };
+        const topSection: SelectionListSectionDescriptor = { kind: 'static', id: 'who:top',
+            options: [...top.map(decorate), ...stateRows, showAll, ...(addRow ? [addRow] : [])] };
         // People live inside Show all; ones already chosen stay in sight.
         return { step: { ...model.rootStep, inputPlaceholder: peopleChosen ? model.rootStep.inputPlaceholder : undefined,
-            sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, unplaced };
-    }, [busy, details, detailId, editModel, expanded, participants?.input.selected, participants?.input.people?.chosen, model.rootStep, model.selectedIds, onChoose, onReplace, openRecipe, source.sections]);
+            sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, added };
+    }, [addAgent, busy, details, detailId, expanded, participants?.input.selected, participants?.input.people?.chosen, model.rootStep, model.selectedIds, openRecipe, source.sections, startAdd, theme.colors.text.secondary]);
     const chosenStep = React.useMemo<SelectionListStep>(() => ({
         ...display.step, inputPlaceholder: undefined,
         sections: display.step.sections.flatMap(section => {
@@ -284,9 +262,11 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
             return options.length > 0 ? [{ ...section, options }] : [];
         }),
     }), [display.step, display.selectedIds]);
-    const hasChosen = chosenStep.sections.length > 0 || display.unplaced.length > 0;
+    const hasChosen = chosenStep.sections.length > 0 || display.added.length > 0;
     const choosingWho = whoEditing || !hasChosen;
-    const changing = editor !== null && openRecipe?.mode === 'change';
+    const changing = openRecipe === 'change';
+    // The recipe closes itself when it resolves; the mode follows it.
+    React.useEffect(() => { if (editor === null) setRecipe(null); }, [editor]);
 
     return <View testID="contextual-start-composer" style={styles.root}>
         <View>
@@ -299,7 +279,19 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
                 {/* The link holds its own start alignment; its wrapper joins the label's baseline. */}
                 {whoAccessory ? <View ref={accessoryAnchorRef} collapsable={false}><TextLinkButton testID="contextual-start-who-accessory" tone="strong" size="meta"
                     label={whoAccessory.label} disabled={busy} onPress={() => setAccessoryOpen(value => !value)} /></View> : null}
+                {addAgent ? <TextLinkButton testID="contextual-start-add-agent-button" tone="strong" size="meta"
+                    label={t('session.collaboration.discussion.secondOpinion.addAgentShort')}
+                    disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
             </View>
+            {/* Agents the person added lead the list, checked, their recipe as the row's line (lab dpRev `two`). */}
+            {display.added.map((selection, index) => <View key={index} style={styles.hang}>
+                <Item testID="second-opinion.selected-model-row" density="compact" showChevron={false} showDivider={false}
+                    selected disabled={busy} title={<AddedRecipeTitle selection={selection} />}
+                    subtitle={<RecipeSummary selection={selection} />} onPress={() => onChoose?.(selection)}
+                    rightElement={<TextLinkButton testID="second-opinion.change-model" tone="strong" size="meta"
+                        label={t('common.change')} disabled={busy || openRecipe !== null}
+                        onPress={() => { setRecipe('change'); editModel?.(selection, next => onReplace?.(selection, next)); }} />} />
+            </View>)}
             <View style={styles.hang}>
                 <SelectionList testID="contextual-start-who" rootStep={choosingWho ? display.step : chosenStep}
                     inputValue={choosingWho ? source.search?.value : undefined}
@@ -310,15 +302,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
                     optionsHostInlineControls selectionMark="check" surface="none" disableTransitions
                 />
             </View>
-            {display.unplaced.map((selection, index) => <View key={index} style={styles.hang}>
-                <Item testID="second-opinion.selected-model-row" density="compact" showChevron={false} showDivider={false}
-                    selected disabled={busy} title={<UnplacedRecipeTitle selection={selection} />}
-                    subtitle={<RecipeSummary selection={selection} />} onPress={() => onChoose?.(selection)}
-                    rightElement={<TextLinkButton testID="second-opinion.change-model" tone="strong" size="meta"
-                        label={t('common.change')} disabled={busy}
-                        onPress={() => { setRecipe({ rowId: `unplaced:${index}`, mode: 'change' }); editModel?.(selection, next => onReplace?.(selection, next)); }} />} />
-            </View>)}
-            {/* The recipe settles here (one tap) or opens here (Change); it never covers the form. */}
+            {/* Add and Change open the recipe here, under the list; it never covers the form. */}
             {editor}
             {detailId ? details?.get(detailId)?.() : null}
             {whoAccessory ? <AgentInputSelectionPopover open={accessoryOpen} anchorRef={accessoryAnchorRef}
@@ -344,7 +328,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     </View>;
 }
 
-function UnplacedRecipeTitle(props: Readonly<{ selection: ModelSelection }>) {
+function AddedRecipeTitle(props: Readonly<{ selection: ModelSelection }>) {
     const label = useExecutableParticipantLabel(props.selection, props.selection.launch.executionTarget.serverId);
     return <>{label ?? t('session.collaboration.discussion.heldParticipant')}</>;
 }

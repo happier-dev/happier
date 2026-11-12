@@ -221,10 +221,10 @@ describe('Workflow inputs through real Action option resolution', () => {
             }));
         } else {
             await act(async () => storage.getState().applySessions([session]));
-            await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-model-input-relay-codex'), screen.getTextContent()).not.toBeNull());
-            await act(async () => { screen.pressByTestId('discussion-invite-model-input-relay-codex'); });
-            await vi.waitFor(() => expect(screen.findByTestId('second-opinion.change-model'), screen.getTextContent()).not.toBeNull());
-            await screen.pressByTestIdAsync('second-opinion.change-model');
+            // Add an agent opens the shared authoring chips on the run's Machine (lab dpRev `add`).
+            await vi.waitFor(() => expect(screen.findByTestId('contextual-start-add-agent'), screen.getTextContent()).not.toBeNull());
+            await screen.pressByTestIdAsync('contextual-start-add-agent');
+            await vi.waitFor(() => expect(screen.findByTestId('server-start-draft-control-agentTarget'), screen.getTextContent()).not.toBeNull());
             await screen.pressByTestIdAsync('server-start-draft-control-agentTarget');
             // Agent/model details expand the same Machine projection while the
             // participant field still owns an unfinished picker request.

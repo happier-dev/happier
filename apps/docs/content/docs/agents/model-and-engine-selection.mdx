@@ -41,6 +41,35 @@ The list is capability-aware:
 
 If only one Agent is available, Happier can skip most of the picker chrome and use it directly.
 
+In the current development source, the same Agent picker rules are used by the composer, New
+Session, Workflow editors, role engine fields (Settings › Roles, a Session's roles, Workflow roles
+and a Workflow run's "another agent" choice) and the **Who** list when you start a delegate, plan or
+review. Each shows every Agent's readiness on the chosen machine:
+
+- an Agent that is not installed there sits under **Not on this machine yet** (or **Can't run on
+  this machine**), and one that needs sign-in (and has no connected account set as its default) is
+  marked as such; choosing either opens that machine's setup for it instead of picking it;
+- if you already chose that Agent, it stays chosen and is labeled as not ready; it is never
+  swapped for another Agent, and starting work on it fails with that reason until you sign in,
+  install it, or choose again;
+- opening the picker reads the machine's Agents when nothing has read them yet; an Agent whose
+  readiness the machine has not reported yet is not blocked.
+
+**Get a second opinion**, **Discuss this answer** and a Workflow's participant inputs list only your
+existing Sessions, Bots and people. To bring in a new agent, choose **Add an agent** (or **Add
+agent** beside the list's label): it shows the same chips a new Session uses (Agent, model and
+effort, Runs through, permissions) and one **Where** chip for the machine and folder, starting on
+the Session's machine and folder. **Add** puts it at the top of the list, checked; **Change**
+reopens the same chips.
+
+Where work can follow the Session it runs in, such as a Session's roles, the picker also offers
+**Same as session**: the role then has no Agent of its own and uses the Session's.
+
+When nothing is chosen, a new Session starts on the Agent you used last if it is available,
+otherwise the default Agent, preferring one that is ready on the machine. When you switch a
+running Session to another Agent, that Agent starts on your default model for it (Settings ›
+Agents), the same default a child run uses when it names no model.
+
 ## Choose a model
 
 Native model sections may offer **Use CLI settings**.
@@ -101,7 +130,9 @@ The unreleased child-session integration lets an attached delegate, plan, review
 or conversation inherit the model and source actually running in its parent
 session. A pending model change does not become the child's choice. Choosing an
 explicit model or native CLI settings overrides inheritance, as do model choices
-in a Workflow definition or role.
+in a Workflow definition or role. A role's model keeps the exact Provider connection it was chosen
+from. A role saved without one runs its model natively, except when it is started directly from a
+Session that already runs the same Agent on a connection, which it then reuses.
 
 Inheritance is part of ordinary child launch admission in 0.3 development builds,
 without a separate capability toggle. The one-way 0.3 upgrade updates all

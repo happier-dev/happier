@@ -36,7 +36,6 @@ function InlinePickerHost() {
 const { useExecutableParticipantSections } = await import('@/components/discussions/useExecutableParticipantSections');
 const { SessionServerStartSpawnDraftV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
 const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
-const { getModelOptionsForSession } = await import('@/sync/domains/models/modelOptions');
 const { parseDecryptedSessionMetadata } = await import('@/sync/engine/sessions/parsePlainSessionPayload');
 const { Modal } = await import('@/modal');
 let boundary: SessionListQuerySourceHarness;
@@ -147,8 +146,8 @@ describe('inline executable participant selection', () => {
       void result.then(resolved);
     });
     const before = vi.mocked(Modal.show).mock.calls.length;
-    await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-model-inline-model')).not.toBeNull());
-    await screen.pressByTestIdAsync('discussion-invite-model-inline-model');
+    await vi.waitFor(() => expect(screen.findByTestId('contextual-start-add-agent')).not.toBeNull());
+    await screen.pressByTestIdAsync('contextual-start-add-agent');
     const { SessionServerStartDraftComposerBody } = await import('@/components/sessions/new/SessionServerStartDraftComposerBody');
     await vi.waitFor(() => expect(screen.findAllByType(SessionServerStartDraftComposerBody)).toHaveLength(1));
     expect(screen.findByTestId('executable-participant-picker')).not.toBeNull();
@@ -193,16 +192,16 @@ describe('inline executable participant selection', () => {
     await vi.waitFor(() => expect(storage.getState().sessionListRowsByServerId[home]?.['prior-agent']).toBeDefined());
     await act(async () => storage.getState().applySessions([session]));
     
-    const { t } = await import('@/text');
-    // React test renderer exposes a generic props bag at this external boundary.
-    const options = () => (screen.findByType(ContextualStartComposerBody).props as React.ComponentProps<typeof ContextualStartComposerBody>)
-      .model.source.sections.flatMap(entry => entry.section.kind === 'static' ? entry.section.options : []);
-    await vi.waitFor(() => expect(options().filter(option => option.id.endsWith(':codex')).map(option => option.id))
-      .toEqual([`model:${expected}:codex`]));
-    const option = options().find(option => option.id === `model:${expected}:codex`)!;
-    expect(option.disabled).toBe(false);
-    if (offline) expect(option.subtitle).toBe(t('session.collaboration.readiness.cause.machineOffline'));
-    else expect(option.subtitle).not.toBe(t('session.collaboration.readiness.cause.machineOffline'));
+    // Add an agent starts on the run's Machine when this Home has it, else on one of this Home's Machines.
+    await vi.waitFor(() => expect(screen.findByTestId('contextual-start-add-agent')).not.toBeNull());
+    await screen.pressByTestIdAsync('contextual-start-add-agent');
+    const { SessionServerStartDraftRecipeEditor } = await import('@/components/sessions/new/SessionServerStartDraftRecipeEditor');
+    await vi.waitFor(() => expect(screen.findAllByType(SessionServerStartDraftRecipeEditor)).toHaveLength(1));
+    const machineId = screen.findByType(SessionServerStartDraftRecipeEditor).props.target.machineId;
+    if (target === 'foreign-only') expect(['prior-host', 'run-host']).toContain(machineId);
+    else expect(machineId).toBe(expected);
+    // A Machine that cannot start the agent says so under the chips.
+    await vi.waitFor(() => expect(screen.findByTestId('server-start-draft-machine-not-ready') !== null).toBe(offline));
     await act(async () => controller.abort());
     await expect(result).resolves.toBeNull();
     await screen.unmount();
@@ -236,38 +235,6 @@ describe('inline executable participant selection', () => {
     await screen.unmount();
   });
 
-  it.each(['codex', 'test.vendor/reviewer'])('finds Agent %s by its catalog model name through the public picker', async (agentId) => {
-    const accountLifetime = await captureHome();
-    const home = accountLifetime.scope.serverId;
-    boundary.setRows(home, ['prior-agent']);
-    const session = createSessionFixture({ id: 'prior-agent', serverId: home, encryptionMode: 'plain',
-      seq: 2, metadataVersion: 2, metadataLayoutVersion: 1,
-      metadata: parseDecryptedSessionMetadata({ v: 1, agentPresentation: { agentId } }, 1),
-      ownerMetadataView: { machineId: 'run-host', path: '/work', host: 'run-host' },
-      composerOptionsInput: { sessionModelsV1: { v: 1, agentId, updatedAt: 1, currentModelId: 'gpt-review',
-        availableModels: [{ id: 'gpt-review', name: 'GPT review' }] } },
-      access: createSessionAccessFixture('owner') });
-    await publishMachineInventoryForTest(accountLifetime.scope, [createMachineFixture({ id: 'run-host', active: true, activeAt: Date.now() })]);
-    const model = getModelOptionsForSession(agentId, session.composerOptionsInput).find(option => option.value !== 'default');
-    expect(model).toBeDefined();
-    const screen = await renderScreen(<InlinePickerHost />);
-    const controller = new AbortController();
-    let result!: ReturnType<typeof openParticipantPicker>;
-    await act(async () => { result = openParticipantPicker({ accountLifetime, multiple: true, signal: controller.signal }); });
-    await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:prior-agent')).not.toBeNull());
-    await act(async () => storage.getState().applySessions([session]));
-    const rowId = `discussion-invite-model-run-host-${agentId}`;
-    await vi.waitFor(() => expect(screen.findByTestId(rowId)).not.toBeNull());
-    await act(async () => screen.changeTextByTestId('executable-participant-picker-search', model!.label));
-    expect(screen.findByTestId(rowId)).not.toBeNull();
-    const { resolveAgentCatalogProjection } = await import('@/agents/backendCatalog/agentCatalogProjection');
-    await act(async () => screen.changeTextByTestId('executable-participant-picker-search', resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title));
-    expect(screen.findByTestId(rowId)).not.toBeNull();
-    await act(async () => controller.abort());
-    expect(await result).toBeNull();
-    await screen.unmount();
-  });
-
   it('withdraws a model setup result when its actual captured Account retires before selection', async () => {
     const accountLifetime = await captureHome();
     const serverId = accountLifetime.scope.serverId;
@@ -279,10 +246,8 @@ describe('inline executable participant selection', () => {
       return source.recipeEditor;
     }
     const screen = await renderScreen(<Host />);
-    await vi.waitFor(() => expect(source.sections.flatMap(section => section.options).find(option => option.id === 'model:late-model')).toBeDefined());
-    const option = source.sections.flatMap(section => section.options).find(option => option.id === 'model:late-model');
-    expect(option).toBeDefined();
-    await act(async () => option!.onSelect?.());
+    await vi.waitFor(() => expect(source.addAgent).not.toBeNull());
+    await act(async () => source.addAgent?.());
     const { SessionServerStartDraftRecipeEditor } = await import('@/components/sessions/new/SessionServerStartDraftRecipeEditor');
     await vi.waitFor(() => expect(screen.findAllByType(SessionServerStartDraftRecipeEditor)).toHaveLength(1));
     const complete = screen.findByType(SessionServerStartDraftRecipeEditor).props.onResolve;

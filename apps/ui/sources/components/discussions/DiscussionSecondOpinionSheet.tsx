@@ -217,7 +217,7 @@ function BoundForm(
   const selectedReviewers = React.useMemo(() => snapshot.draft.reviewers.map(reviewer => reviewer.selection), [snapshot.draft.reviewers]);
   const composerSource = useContextualStartParticipantSource({ accountLifetime: binding, enabled: detailEnabled,
     busy: snapshot.working || snapshot.submitted, sessionsContext: t('session.collaboration.discussion.secondOpinion.yourSession'),
-    excludeSessionId: sourceSession.sessionId, onChoose: toggleReviewer, people,
+    excludeSessionId: sourceSession.sessionId, consumerSessionId: sourceSession.sessionId, onChoose: toggleReviewer, people,
     selected: selectedReviewers, onReplace: replaceReviewer,
     question, onQuestionChange: setQuestion, showWhere: snapshot.draft.reviewers.length > 1, onProject: setProject });
   const composer = useContextualStartComposer(composerSource, OPINION_ADMISSIBLE);

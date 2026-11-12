@@ -477,26 +477,6 @@ it('retains the edited question, reviewers and explicit placement across withdra
   }
 });
 
-it('finds a different Machine from Ask search without reading more Session bodies', async () => {
-  const { screen, serverId } = await mount({ pane: true, longList: true });
-  await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewers-more')).not.toBeNull());
-  await act(async () => {
-    const machine = createMachineFixture({ id: 'dev-machine', active: false, activeAt: 0 });
-    storage.setState({ machineListByServerId: { ...storage.getState().machineListByServerId,
-      [serverId]: [...storage.getState().machineListByServerId[serverId]!, {
-        ...machine, metadata: { ...machine.metadata!, displayName: 'Dev box' },
-      }] } });
-  });
-  await screen.pressByTestIdAsync('second-opinion.reviewers-more');
-  const sessionReads = () => boundary.http.requests.filter(request => request.path.startsWith('/v2/sessions/')).length;
-  const readsBeforeSearch = sessionReads();
-  await act(async () => screen.changeTextByTestId('contextual-start-who:header:input', 'Dev box'));
-  await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-model-dev-machine')).not.toBeNull());
-  expect(screen.findByTestId('discussion-invite-model-review-machine-codex')).toBeNull();
-  expect(sessionReads() - readsBeforeSearch).toBe(0);
-  await screen.unmount();
-});
-
 it('withdraws hidden detail work on Session and Machine arrivals and reopens with current choices and the draft', async () => {
   const { screen, serverId, previewPath, setActive, commits } = await mount({ pane: true });
   await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:reviewer-session')).not.toBeNull());
@@ -520,7 +500,8 @@ it('withdraws hidden detail work on Session and Machine arrivals and reopens wit
   const { SelectionList } = await import('@/components/ui/selectionList');
   const choices = () => screen.findAllByType(SelectionList).find(node => node.props.testID === 'contextual-start-who')!
     .props.rootStep.sections.flatMap((section: { options?: readonly { id: string }[] }) => section.options ?? []).map((option: { id: string }) => option.id);
-  await vi.waitFor(() => expect(choices()).toContain('model:new-machine-0'));
+  // Machines are reached through Add an agent, which opens on a current Machine.
+  await vi.waitFor(() => expect(choices()).toContain('who:add-agent'));
   await vi.waitFor(() => expect(choices()).toContain('session:new-session-0'));
   expect(screen.findByTestId('second-opinion.question')?.props.value).toBe('Retain the hidden draft');
   await screen.unmount();
@@ -559,13 +540,20 @@ it('keeps an Ask in flight while hidden and stops detail work after completion',
   }
 });
 
-it('chooses a model inline, preserves its slot through Change and cancel, and creates only on explicit Ask', async () => {
-  const { screen, serverId, previewPath } = await mount();
-  await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-model-review-machine-codex')).not.toBeNull());
-  expect(screen.getTextContent()).toContain((await import('@/text')).t('session.collaboration.readiness.cause.machineOffline'));
+it('adds an agent in place on this Session\'s Machine and folder, keeps its row through Change and cancel, and creates only on explicit Ask', async () => {
+  // The answer's own Session is held, as it is whenever its answer is open.
+  const { screen, serverId, previewPath } = await mount({ sheet: true });
+  await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:reviewer-session')).not.toBeNull());
+  // Only what exists is listed: no default "new session on a Machine" rows (owner R2.1).
+  expect(screen.findAllByType(Item).some(item => String(item.props.testID ?? '').startsWith('discussion-invite-model-'))).toBe(false);
   expect(boundary.http.requestsFor('/v1/discussions')).toHaveLength(0);
-  await screen.pressByTestIdAsync('discussion-invite-model-review-machine-codex');
+  await screen.pressByTestIdAsync('contextual-start-add-agent');
   await vi.waitFor(() => expect(screen.findAllByType(SessionServerStartDraftRecipeEditor)).toHaveLength(1));
+  expect(screen.findByType(SessionServerStartDraftRecipeEditor).props).toMatchObject({
+    target: { machineId: 'review-machine' }, seed: { directory: '/work' } });
+  // Machine and folder are the one Where owner's chip (Workflows, triggers and run composers use it too).
+  expect(screen.findAllByType(WorkflowProjectTargetControl).filter(control => control.props.presentation === 'chip'
+    && control.props.target?.machineId === 'review-machine' && control.props.target?.directory === '/work')).toHaveLength(1);
   // The genuine presentation boundary returns the ordinary author's strict draft. It never allocates a Session.
   const draft = SessionServerStartSpawnDraftV1Schema.parse({ executionTarget: { serverId, machineId: 'review-machine' },
     directory: { kind: 'path', path: '/work' }, permissionMode: 'read-only', title: 'Migration reviewer',
@@ -591,20 +579,15 @@ it('chooses a model inline, preserves its slot through Change and cancel, and cr
   await screen.unmount();
 });
 
-it('lists models before Sessions in one Ask list, each row naming its type', async () => {
+it('lists existing Sessions, each naming its type, with Add an agent as the last row', async () => {
   const { screen } = await mount();
   const { t } = await import('@/text');
   await vi.waitFor(() => expect(screen.findByTestId('second-opinion.reviewer:reviewer-session')).not.toBeNull());
-  const rows = screen.findAllByType(Item).filter(item => /^(second-opinion\.reviewer:|discussion-invite-model-)/.test(item.props.testID ?? ''));
-  const kindOf = (testID: string) => testID.startsWith('second-opinion.reviewer:') ? 'session' : 'model';
-  const order = rows.map(row => kindOf(row.props.testID));
-  expect(order).toContain('model');
-  expect(order).toContain('session');
-  expect(order.lastIndexOf('model')).toBeLessThan(order.indexOf('session'));
+  const rows = screen.findAllByType(Item).filter(item => /^(second-opinion\.reviewer:|contextual-start-add-agent$)/.test(item.props.testID ?? ''));
   // The type is a chip after the name, not a group heading the rows sit under.
-  const chip = (kind: 'model' | 'session') => rows.find(row => kindOf(row.props.testID) === kind)?.props.titleAccessory?.props.label;
-  expect(chip('session')).toBe(t('session.collaboration.discussion.participants.session'));
-  expect(chip('model')).toBe(t('session.collaboration.discussion.participants.model'));
+  expect(rows.find(row => row.props.testID === 'second-opinion.reviewer:reviewer-session')?.props.titleAccessory?.props.label)
+    .toBe(t('session.collaboration.discussion.participants.session'));
+  expect(rows.at(-1)?.props.testID).toBe('contextual-start-add-agent');
   await screen.unmount();
 });
 

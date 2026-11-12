@@ -21,25 +21,18 @@ import type { ExecutableParticipantPickerOption } from '@/components/sessions/au
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage, useMachineListForServer } from '@/sync/domains/state/storage';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
-import { projectModelParticipantCandidates } from './modelParticipantCandidates';
-import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { SharePrincipalVisual } from '@/components/sharing/buildShareSheetSelectionStep';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
 import { t } from '@/text';
 import { describeMachineReadinessCause, presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
-import { useShallow } from 'zustand/react/shallow';
 import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { getModelOptionsForSession } from '@/sync/domains/models/modelOptions';
 import { SessionServerStartDraftRecipeEditor } from '@/components/sessions/new/SessionServerStartDraftRecipeEditor';
 import type { SessionServerStartDraftSeed, SessionServerStartDraftTarget } from '@/components/sessions/new/serverStartDraftComposer';
 
@@ -79,9 +72,10 @@ export function executableParticipantOptionId(
 }
 
 /**
- * The one presenter of who can take part (lab T2-I): existing Sessions, then Bots from the same
- * exact-Home Session inventory, then a model started as a new Session on a Machine. A Session is chosen
- * at once; a model first opens the ordinary session setup (agent, model, folder) for that machine.
+ * The one presenter of who can take part (lab dpRev): existing Sessions, then Bots from the same
+ * exact-Home Session inventory, and models already taking part. Nothing new is listed by default:
+ * `addAgent` opens the ordinary session setup (the shared authoring chips and the Where chip) on the
+ * consumer's Machine and folder, and its result is chosen like any other row.
  * Mount it only while a participant choice is open: it reads the session listing and machines.
  * Discussion invites and Workflow participant inputs both choose through it.
  */
@@ -97,6 +91,8 @@ export function useExecutableParticipantSections(
     onReadinessSessionChange?: (sessionId: string | null) => void;
     modelOptions?: readonly ExecutableParticipantPickerOption[];
     preferredMachineId?: string | null;
+    /** The Session this choice is for: an added agent starts on its Machine and folder. */
+    consumerSessionId?: string | null;
     /** How the viewer's sessions take part here; said once beside the section title, not on every row. */
     sessionsContext: string;
     onChoose: (selection: ExecutableParticipantSelectionV1) => void;
@@ -126,28 +122,25 @@ export function useExecutableParticipantSections(
   });
   const machines = useMachineListForServer(serverId, input.enabled);
   const presence = useMachinePresenceSummaries(serverId, input.enabled ? (machines ?? []).map(machine => machine.id) : [], input.accountLifetime);
-  // List display metadata omits model catalogs. Subscribe only to the catalog leaf of held,
-  // Home-qualified Sessions; search never hydrates every candidate or loads a second catalog.
-  const modelCatalogs = getStorage()(useShallow(state => candidates.candidates.map(candidate => {
-    if (!input.enabled || candidate.kind !== 'session') return null;
-    const session = selectHomeQualifiedSession(state, candidate.selection.session.sessionId, serverId, getActiveServerSnapshot().serverId);
-    return session ? readSessionModelsState(session.composerOptionsInput === undefined
-      ? readSessionOwnerMetadataView(session) : session.composerOptionsInput) : null;
-  })));
   const { onChoose, sessionsContext, onReadinessSessionChange } = input;
   const [recipe, setRecipe] = React.useState<Readonly<{
     seed: SessionServerStartDraftSeed;
     target: SessionServerStartDraftTarget;
-    automatic: boolean;
     onChoose: (selection: ExecutableParticipantSelectionV1) => void;
   }> | null>(null);
   const editModel = React.useCallback((selection: Extract<ExecutableParticipantSelectionV1, { kind: 'model' }>,
     onReplace: (selection: ExecutableParticipantSelectionV1) => void) => {
     const existingDraft = SessionServerStartSpawnDraftV1Schema.parse(selection.launch);
-    setRecipe({ seed: { existingDraft }, target: existingDraft.executionTarget, automatic: false, onChoose: onReplace });
+    setRecipe({ seed: { existingDraft }, target: existingDraft.executionTarget, onChoose: onReplace });
   }, []);
   const busy = input.busy === true;
   const query = input.query ?? '';
+  // Setup remains selectable offline. Start re-admits through the ordinary authoring owner.
+  const launchMachines = React.useMemo(() => input.enabled ? resolveMachineActionCandidates(
+    input.accountLifetime.scope,
+    (machines ?? []).filter(isMachineVisibleForLaunchSelection),
+    { onlineOnly: false },
+  ) : [], [input.accountLifetime.scope, input.enabled, machines]);
   const sections = React.useMemo<readonly ExecutableParticipantSection[]>(() => {
     if (!input.enabled) return [];
     // A session leads with its Agent's own mark (identity marks always stay); the catalog decides
@@ -230,74 +223,13 @@ export function useExecutableParticipantSections(
         ));
       }
     }
-    // Setup remains selectable offline. Start re-admits through the ordinary authoring owner.
-    const inventory = machines ?? [];
-    const launchMachines = resolveMachineActionCandidates(
-      input.accountLifetime.scope,
-      inventory.filter(isMachineVisibleForLaunchSelection),
-      { onlineOnly: false },
-    );
     const machineById = new Map(launchMachines.map((machine) => [machine.id, machine]));
     const readinessByMachineId = new Map(launchMachines.map((machine) => [machine.id,
       resolveMachineSpawnReadiness({ machine, selectedMachineId: machine.id, scope: input.accountLifetime.scope })]));
-    const agentLabel = (agentId: string) => resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] }).title;
-    const modelSearchByAgent = new Map<string, Set<string>>();
-    for (const [index, candidate] of candidates.candidates.entries()) {
-      if (candidate.kind !== 'session' || !candidate.agentId) continue;
-      const searchText = getModelOptionsForSession(candidate.agentId, { sessionModelsV1: modelCatalogs[index] ?? undefined })
-        .filter(model => model.value !== 'default').map(model => `${model.label} ${model.value}`).join(' ');
-      if (!searchText) continue;
-      const texts = modelSearchByAgent.get(candidate.agentId) ?? new Set<string>();
-      texts.add(searchText);
-      modelSearchByAgent.set(candidate.agentId, texts);
-    }
-    const agentSearchText = (agentId: string) => [...(modelSearchByAgent.get(agentId) ?? [])].join(' ');
-    const modelRows = projectModelParticipantCandidates({
-      machines: launchMachines.map((machine) => ({
-        id: machine.id,
-        name: getMachineDisplayName(machine, inventory) ?? t('session.collaboration.unnamed'),
-        reachable: resolveMachineReachability(input.accountLifetime.scope, machine) === 'reachable',
-      })),
-      sessions: candidates.candidates.flatMap((candidate) => candidate.kind === 'session'
-        ? [{ agentId: candidate.agentId, machineId: candidate.machineId, lastActivityAt: candidate.lastActivityAt }]
-        : []),
-      query,
-      preferredMachineId: input.preferredMachineId,
-      sessionsSettled: candidates.sessions.status !== 'loading' && candidates.sessions.status !== 'idle',
-      agentLabel,
-      agentSearchText,
-    });
     const models: ExecutableParticipantSectionOption[] = candidates.candidates.flatMap(candidate => candidate.kind === 'model' && matches(candidate.label)
       ? [{ id: candidate.key, label: candidate.label, subtitle: readinessSubtitle(candidate.readiness, ''), icon: modelMark, disabled: busy,
           readiness: candidate.readiness, repair: candidate.repair, onHighlight: () => onReadinessSessionChange?.(null),
           onPressIn: () => onReadinessSessionChange?.(null), onSelect: () => onChoose(candidate.selection) }] : []);
-    models.push(...modelRows.flatMap((row): ExecutableParticipantSectionOption[] => {
-      const machine = machineById.get(row.machineId);
-      if (!machine) return [];
-      const readiness = readinessByMachineId.get(machine.id) ?? null;
-      // A row the viewer's own sessions name: that Agent, started as a new session of theirs on that Machine;
-      // its setup opens on that Agent. A Machine row leaves the Agent and model to setup.
-      const agentId = row.kind === 'agent' ? row.agentId : undefined;
-      return [{
-        id: agentId ? `model:${machine.id}:${agentId}` : `model:${machine.id}`,
-        testID: agentId ? `discussion-invite-model-${machine.id}-${agentId}` : `discussion-invite-model-${machine.id}`,
-        label: agentId
-          ? agentLabel(agentId)
-          : t('session.collaboration.discussion.manage.modelOn', { machine: row.machineName }),
-        searchText: [row.machineName, agentId ? agentSearchText(agentId) : ''].join(' '),
-        icon: agentId ? sessionMark(agentId) : modelMark,
-        disabled: busy,
-        readiness,
-        subtitle: readinessSubtitle(readiness, agentId
-          ? t('session.collaboration.discussion.manage.modelNewSessionOn', { machine: row.machineName })
-          : t('session.collaboration.discussion.manage.modelCandidate')),
-        repair: null,
-        onHighlight: () => onReadinessSessionChange?.(null),
-        onPressIn: () => onReadinessSessionChange?.(null),
-        onSelect: () => setRecipe({ seed: { ...(agentId ? { agentId } : {}), permissionMode: 'read-only' },
-          target: { serverId, machineId: machine.id }, automatic: true, onChoose }),
-      }];
-    }));
     // Nothing of the viewer's can answer (lab flOpinion:emptyP): every Machine of theirs is not ready and every
     // listed Session of theirs runs on one of them. Said once, leading the list, from the facts the rows already
     // carry; Bots run with their Team's setup and stay choosable. Unknown readiness never counts as not ready.
@@ -350,14 +282,11 @@ export function useExecutableParticipantSections(
     input.accountLifetime.scope,
     input.enabled,
     input.people,
-    input.preferredMachineId,
+    launchMachines,
     query,
     onChoose,
     onReadinessSessionChange,
-    machines,
     presence,
-    modelCatalogs,
-    serverId,
     sessionsContext,
     theme.colors.text.secondary,
     theme.colors.text.tertiary,
@@ -394,13 +323,27 @@ export function useExecutableParticipantSections(
       }),
     };
   }, [browsePeople, busy, candidates.people.resolverKey, input.enabled, people, resolvePeople, viewerAccountId]);
+  // Add an agent (lab dpRev `add`): the consumer Session's Machine and folder, else the caller's Machine,
+  // else the first launchable one. Read once at the press; nothing here subscribes to the Session.
+  const consumerSessionId = input.consumerSessionId ?? null;
+  const preferredMachineId = input.preferredMachineId ?? null;
+  const addAgent = React.useMemo(() => launchMachines.length === 0 ? null : () => {
+    const session = consumerSessionId
+      ? selectHomeQualifiedSession(getStorage().getState(), consumerSessionId, serverId, getActiveServerSnapshot().serverId) : null;
+    const metadata = session ? readSessionOwnerMetadataView(session) : null;
+    const machineId = [metadata?.machineId, preferredMachineId].find(id => id && launchMachines.some(machine => machine.id === id))
+      ?? launchMachines[0]!.id;
+    const directory = metadata?.machineId === machineId && metadata.path ? metadata.path : undefined;
+    setRecipe({ seed: { permissionMode: 'read-only', ...(directory ? { directory } : {}) },
+      target: { serverId, machineId }, onChoose });
+  }, [consumerSessionId, launchMachines, onChoose, preferredMachineId, serverId]);
   const recipeEditor = input.enabled && recipe ? <SessionServerStartDraftRecipeEditor
-    seed={recipe.seed} target={recipe.target} automatic={recipe.automatic}
+    seed={recipe.seed} target={recipe.target}
     onResolve={draft => {
       setRecipe(null);
       if (!draft || !input.accountLifetime.isCurrent()) return;
       const selection = normalizeExecutableParticipantSelectionV1({ kind: 'model', launch: projectDiscussionModelParticipantLaunchV1(draft) });
       if (selection) recipe.onChoose(selection);
     }} /> : null;
-  return { sections, peopleSection, sessions: candidates.sessions, recipeEditor, editModel };
+  return { sections, peopleSection, sessions: candidates.sessions, recipeEditor, editModel, addAgent };
 }

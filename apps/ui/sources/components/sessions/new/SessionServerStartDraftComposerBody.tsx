@@ -18,9 +18,14 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
+import { Typography } from '@/constants/Typography';
 import { SESSION_FOLDER_SELECTION_ROOT_ID, resolveSessionFolderSelectionLabel } from '@/components/sessions/organization/sessionFolderSelectionOptions';
 import type { SessionServerStartDraftSeed } from './serverStartDraftComposer';
 import type { SessionServerStartDraftRecipe } from './useSessionServerStartDraftRecipe';
+import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
+import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
+import { useMachineListForServer } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 /** The recipe fields this composer edits through the Session-owned authoring controls, in reading order. */
 const AGENT_FIELDS: readonly SessionAuthoringFieldId[] = [
@@ -30,8 +35,88 @@ const TOOL_FIELDS: readonly SessionAuthoringFieldId[] = [
     'capabilitySelection', 'connectedServices', 'unlistedTools', 'allowedTools',
 ];
 
-/** The same Session-owned fields inside an inline editor or its returning sheet. */
+/** What an added agent shows as composer chips (lab dpRev `add`): engine, Runs through, permissions. */
+const CHIP_FIELDS: readonly SessionAuthoringFieldId[] = ['agentTarget', 'connectedServices', 'permissionMode'];
+const NO_MACHINES: readonly Machine[] = [];
+
+/**
+ * The same Session-owned fields inside an inline editor or its returning sheet. `chips` shows them as
+ * a new Session's composer does: the shared authoring chips, then the one Where chip (Machine · folder);
+ * choosing another Machine there hands the move to `onMoveMachine`, since the recipe belongs to a Machine.
+ */
 export function SessionServerStartDraftComposerBody(props: Readonly<{
+    seed: SessionServerStartDraftSeed;
+    model: SessionServerStartDraftRecipe;
+    presentation?: 'fields' | 'chips';
+    onMoveMachine?: (machineId: string, directory: string) => void;
+}>) {
+    if (props.presentation === 'chips') return <ComposerChips model={props.model} onMoveMachine={props.onMoveMachine} />;
+    return <ComposerFields seed={props.seed} model={props.model} />;
+}
+
+function ComposerChips(props: Readonly<{
+    model: SessionServerStartDraftRecipe;
+    onMoveMachine?: (machineId: string, directory: string) => void;
+}>) {
+    const { selectedTarget, selectedPlacement, machine, directory, setDirectory, setDirectoryEdited, setError, error, facts,
+        agentTargets, selection, changeFields, changeField, daemonMergedProjection } = props.model;
+    const machines = useMachineListForServer(selectedTarget.serverId) ?? NO_MACHINES;
+    const agentsReady = daemonMergedProjection.phase === 'ready' && agentTargets.length > 0;
+    const where = React.useMemo(() => ({ machineId: selectedTarget.machineId, directory: directory.trim() }),
+        [directory, selectedTarget.machineId]);
+    const { onMoveMachine } = props;
+    const changeWhere = React.useCallback((next: Parameters<NonNullable<React.ComponentProps<typeof WorkflowProjectTargetControl>['onChange']>>[0]) => {
+        const nextDirectory = isWorkflowProjectTarget(next) ? next.directory : '';
+        if (next.machineId !== selectedTarget.machineId) {
+            onMoveMachine?.(next.machineId, nextDirectory);
+            return;
+        }
+        setError(false);
+        setDirectory(nextDirectory);
+        setDirectoryEdited(true);
+    }, [onMoveMachine, selectedTarget.machineId, setDirectory, setDirectoryEdited, setError]);
+    return (
+        <View testID="server-start-draft-chips" style={styles.chips}>
+            {agentsReady ? (
+                <SessionAuthoringControls
+                    presentation="chips"
+                    fields={CHIP_FIELDS}
+                    values={selection}
+                    facts={facts}
+                    onChangeFields={changeFields}
+                    onChangeField={changeField}
+                    testIDPrefix="server-start-draft-control"
+                />
+            ) : daemonMergedProjection.phase === 'idle' || daemonMergedProjection.phase === 'loading'
+                || (daemonMergedProjection.phase === 'ready' && facts.agentTargets === undefined) ? (
+                <ItemLoadStateRows state={{ kind: 'loading' }} rows={1} lines={1} accessibilityLabel={t('common.loading')} />
+            ) : (
+                <Text style={styles.note}>{daemonMergedProjection.phase === 'unsupported'
+                    ? t('newSession.actionMethodUnavailable') : t('errors.daemonUnavailableBody')}</Text>
+            )}
+            <WorkflowProjectTargetControl
+                presentation="chip"
+                target={where}
+                machineName={machine ? getMachineDisplayName(machine) : null}
+                machineHomeDir={machine?.metadata?.homeDir ?? null}
+                machines={onMoveMachine ? machines : undefined}
+                directoryEditable
+                onChange={changeWhere}
+                testIDPrefix="participant-recipe"
+            />
+            {selectedPlacement.machineReady ? null : (
+                <Text testID="server-start-draft-machine-not-ready" style={styles.note}>{t('newSession.recipeComposerMachineNotReady')}</Text>
+            )}
+            {error ? (
+                <Text accessibilityLiveRegion="polite" style={styles.chipError}>
+                    {t('newSession.failedToStart')}
+                </Text>
+            ) : null}
+        </View>
+    );
+}
+
+function ComposerFields(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     model: SessionServerStartDraftRecipe;
 }>) {
@@ -230,6 +315,9 @@ export function SessionServerStartDraftComposerBody(props: Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
     content: { paddingBottom: theme.space.s16 },
+    chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6, paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
+    note: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
+    chipError: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
     back: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s8, alignItems: 'flex-start' },
     toolsGroup: { paddingTop: 0 },
     error: { marginHorizontal: theme.space.s24, marginTop: theme.space.s12, color: theme.colors.state.danger.foreground },
