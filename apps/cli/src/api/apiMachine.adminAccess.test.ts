@@ -177,8 +177,6 @@ async function createHostBoundary(encryptionMode: 'plain' | 'e2ee', initialPolic
   daemonUsername: string | null = 'happier', installed?: InstalledAdminHarness) {
   const directory = await mkdtemp(join(tmpdir(), 'happier-admin-action-'));
   protectedFiles.directory = directory;
-  if (!process.getuid) throw new Error('Host fixture requires a process identity API');
-  const uid = vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
   if (initialPolicy.mode !== 'none' && !daemonUsername) throw new Error('Previous grant fixture needs a known daemon');
   const [previous] = initialPolicy.mode === 'none' ? []
     : buildManagedSudoersSteps({ daemonUsername: daemonUsername!, previousPolicy: none, policy: initialPolicy });
@@ -239,7 +237,10 @@ async function createHostBoundary(encryptionMode: 'plain' | 'e2ee', initialPolic
           })();
         }
         const running = runMachineSetupEffectInternal(invocation.args.slice(invocation.args.indexOf('effect-internal') + 1), {
-          stdin: rootInput, stdout: output, signal: controller.signal, runNative: async command => {
+          stdin: rootInput, stdout: output, signal: controller.signal,
+          // Only the elevated process has root identity; daemon receipt storage
+          // keeps the runner's real UID and protected filesystem ownership.
+          readUid: () => 0, runNative: async command => {
             if (command.executable === 'getent') return { code: 0, stderr: '', stdout: command.args.includes('passwd')
               ? 'root:x:0:0::/root:/bin/sh\n' : 'root:x:0:\n' };
             if (command.executable === 'visudo') return { code: 0, stdout: '', stderr: '' };
@@ -267,7 +268,7 @@ async function createHostBoundary(encryptionMode: 'plain' | 'e2ee', initialPolic
     },
     operation: (signal = new AbortController().signal): RpcHandlerContext => ({ ...h.context(), signal,
       localActionContext: { actionRequestId: 'actual-admitted-transport-request' } }),
-    close: async () => { await h.close(); uid.mockRestore(); protectedFiles.directory = ''; await rm(directory, { recursive: true, force: true }); },
+    close: async () => { await h.close(); protectedFiles.directory = ''; await rm(directory, { recursive: true, force: true }); },
   };
 }
 
@@ -554,6 +555,7 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
     }
     const held = outcome.snapshot;
     expect(held).toMatchObject({ actionId: 'machines.setup.adminAccess.set', state: 'running',
+      cancellation: 'supported',
       requestId: 'actual-admitted-transport-request', scope: { accountId: 'owner', machineId: 'machine' },
       domainRef: { kind: 'machineSetup', serverId: profile.id, machineId: 'machine', setupTask: {
         taskKind: 'machine.setup.apply.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops.admin' },
@@ -573,7 +575,7 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
       id: 'tool.systemTasks', method: 'respond', params: { taskId: task.id,
         expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' } },
     }, actorAccountId, callerAuthority);
-    expect(await respond('foreign-manager')).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+    expect(await respond('foreign-manager')).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
     expect(h.passwords).toEqual([]);
     expect(await respond('owner', 'account_automation')).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
     expect(h.passwords).toEqual([]);
@@ -586,7 +588,7 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
       return;
     }
     if (completion === 'cancel') {
-      await receive(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: held.operationId });
+      expect(await receive(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId: held.operationId })).toMatchObject({ kind: 'requested' });
       expect(await invocation).toMatchObject({ status: 'applied', effect: { outcome: 'not_applied', reasonCode: 'cancelled' } });
       const cancelled = ActionOperationGetV1ResponseSchema.parse(await receive(ACTION_OPERATION_RPC_METHODS_V2.get,
         { operationId: held.operationId, waitForTerminal: true }));

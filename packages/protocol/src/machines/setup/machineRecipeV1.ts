@@ -15,6 +15,7 @@ import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } 
 import { resolveDeclaredInputLeaves } from '../../plugins/actions/inputSchemaTraversal.js';
 import { MachineRecipeReferenceV1Schema } from './machineRecipeReferenceV1.js';
 import { MachineFirewallExposureV1Schema as FirewallExposure } from './machineFirewallV1.js';
+import { MachineCaddyFirewallObservationInputV1Schema } from './machineFirewallV1.js';
 import { AccessCredentialPurposeRefV1Schema, AccessProviderSelectionV1Schema } from '../../plugins/contributions/accessProviderSelection.js';
 export { MachineFirewallTransitionIntentV1Schema, type MachineFirewallTransitionIntentV1,
     MachineFirewallTransitionBindingsV1Schema, type MachineFirewallTransitionBindingsV1,
@@ -196,7 +197,10 @@ export const MachineRecipePackageSourceStepV1Schema =
 export const MachineRecipeServiceUnitStepV1Schema =
     z.object({ ...Step, kind: z.literal('serviceUnit'), unit: ServiceUnitName, enabled: z.boolean().optional(), running: z.boolean() }).strict();
 export const MachineRecipeFirewallStepV1Schema =
-    z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional() }).strict();
+    z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional(),
+        /** Host-built CHECK operand; authored firewall recipes do not select this observation. */
+        caddyObservation: MachineCaddyFirewallObservationInputV1Schema.optional(),
+    }).strict();
 // Host-built concrete effect only; recipes cannot declare reboot.
 export const MachineRecipeRebootStepV1Schema = z.object({ ...Step, kind: z.literal('reboot') }).strict();
 export const MachineRecipeStepV1Schema = z.discriminatedUnion('kind', [
@@ -307,7 +311,7 @@ const FileDeclaration = z.object({ ...File.shape,
 }).strict().superRefine(refineFile);
 const ServiceDeclaration = z.object({ ...MachineRecipeServiceUnitStepV1Schema.shape,
     unit: bindable(MachineRecipeServiceUnitStepV1Schema.shape.unit) }).strict();
-const FirewallDeclaration = z.object({ ...MachineRecipeFirewallStepV1Schema.shape,
+const FirewallDeclaration = z.object({ ...MachineRecipeFirewallStepV1Schema.omit({ caddyObservation: true }).shape,
     rules: bindable(MachineRecipeFirewallStepV1Schema.shape.rules),
     exposures: bindable(MachineRecipeFirewallStepV1Schema.shape.exposures.unwrap()).optional(),
 }).strict();

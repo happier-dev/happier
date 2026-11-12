@@ -187,9 +187,11 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
     };
     try {
       const tasks = getLiveSystemTasksRunnerAdapter();
+      const signal = context.signal ? AbortSignal.any([ingress.signal, context.signal]) : ingress.signal;
       const operationId = context.operationAcceptance?.operationId ?? context.actionRequestId;
       const publishTask = (task: Readonly<{ taskId: string }>, prompt?: MachineSudoPasswordPromptV1) => {
-        context.operationOwnerUpdate?.update({ domainRef: { kind: 'machineSetup', serverId: target.serverId,
+        context.operationOwnerUpdate?.update({ cancellation: prompt ? 'supported' : 'unsupported',
+          domainRef: { kind: 'machineSetup', serverId: target.serverId,
           machineId: target.machineId, setupTask: { id: task.taskId, taskKind: 'machine.setup.apply.v1', ...(prompt ? { prompt } : {}) } } });
       };
       let result: unknown;
@@ -197,7 +199,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       const task = await tasks.startAdmitted({ run: async taskContext => {
         try {
           result = await execute({ ...context, signal: taskContext.signal
-            ? AbortSignal.any([ingress.signal, taskContext.signal]) : ingress.signal }, taskContext);
+            ? AbortSignal.any([signal, taskContext.signal]) : signal }, taskContext);
           return { operationId };
         } catch (error) { failure = error; throw error; }
       } }, 'machine.setup.apply.v1', { started: task => publishTask(task), prompt: (task, question) => {
@@ -211,14 +213,14 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
         publishTask(task, prompt?.success ? prompt.data : undefined);
       } });
       const cancel = () => { void tasks.cancel(task); };
-      ingress.signal.addEventListener('abort', cancel, { once: true });
-      if (ingress.signal.aborted) cancel();
+      signal.addEventListener('abort', cancel, { once: true });
+      if (signal.aborted) cancel();
       try {
         const settled = await tasks.wait(task);
         if (failure) throw failure;
         return result ?? (settled.ok ? { ok: false, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' }
           : { ok: false, errorCode: settled.error.code, error: settled.error.message });
-      } finally { ingress.signal.removeEventListener('abort', cancel); }
+      } finally { signal.removeEventListener('abort', cancel); }
     } catch (error) {
       throwMachineReachabilityRpcError(error);
     }

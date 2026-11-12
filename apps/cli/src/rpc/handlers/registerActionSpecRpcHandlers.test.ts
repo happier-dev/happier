@@ -74,6 +74,22 @@ describe('ActionSpec-derived RPC registrar', () => {
         }
     });
 
+    it('retains closed native observation failures for reachability review and configure', () => {
+        const failure = { ok: false as const, errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable',
+            effectAttempted: false, details: { requiredFact: 'caddyContainer',
+                failure: { kind: 'native_observation_unavailable', reason: 'required_fact_unavailable',
+                    requiredFact: 'caddyContainer', errorCode: 'ENOENT' },
+                remedy: 'Restore the selected Docker engine observation.' } };
+        for (const actionId of ['machines.reachability.inspect', 'machines.reachability.configure'] as const) {
+            expect(module.unwrapActionResultForRpc(actionId, failure)).toEqual(failure);
+            expect(module.unwrapActionResultForRpc(actionId, { ...failure,
+                details: { ...failure.details, stderr: 'private native output' } })).not.toHaveProperty('details');
+            expect(module.unwrapActionResultForRpc(actionId, { ...failure,
+                details: { ...failure.details, failure: { ...failure.details.failure, errorCode: 'private native output' } } }))
+                .not.toHaveProperty('details');
+        }
+    });
+
     it('keeps only closed filesystem custody details at the Action RPC failure sink', () => {
         const failure = { ok: false as const, errorCode: 'filesystem_identity_custody_unavailable',
             error: 'Filesystem admission refused', details: { reason: 'requester_identity_unavailable' } };

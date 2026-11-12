@@ -13,7 +13,8 @@ import { MachineEffectInternalRecordSchema, MachineEffectInternalRequestSchema }
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { inspectMachineReachabilityNativeFirewall } from '../reachability/inspectMachineReachabilityNativeFirewall';
-import { settleMachineCaddyFirewallForHost } from '../reachability/machineReachabilityHost';
+import { settleMachineCaddyFirewallForHost, settleMachinePrivateWorkloadFirewallForHost } from '../reachability/machineReachabilityHost';
+import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { observeOwnDaemonReachability } from '../reachability/observeOwnDaemonReachability';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 
@@ -73,8 +74,10 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
     const events: ('prompt' | 'native')[] = [];
     os.interfaces = {};
     const calls: MachineSetupNativeCommand[] = [];
+    let docker: ((command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>) | undefined;
     const runNative = async (command: MachineSetupNativeCommand): Promise<MachineSetupNativeCommandResult> => {
         calls.push(command); events.push('native'); const args = command.args;
+        if (command.executable === 'docker' && docker) return docker(command);
         if (command.executable === 'ip') {
             if (args.includes('route')) return { code: 0, stdout: JSON.stringify(args.includes('-4') ? routes4 : routes6), stderr: '' };
         }
@@ -153,6 +156,7 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
         observe: async () => observation, verifyCurrent, prompt, spawn } satisfies MachineElevationDependencies;
     return { fs, disk, backend, calls, events, launches, frames, authentication, boundaryFailures, verifyCurrent, prompt, deps, readTable: () => table,
         setNativePolicy(value: unknown) { nativePolicy = value; },
+        setDocker(run: NonNullable<typeof docker>) { docker = run; },
         async setFirewallFacts(input: Readonly<{ interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>; routes4?: unknown; routes6?: unknown;
             ssh4?: string; ssh6?: string; sshExecutableOwnedBy?: number }>) {
             os.interfaces = input.interfaces;
@@ -211,6 +215,73 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(f.readTable()).toContain('tcp dport 443 accept');
         expect(f.readTable()).toContain('ct state new ct direction original ct status dnat drop');
         expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
+    });
+
+    it.each(['ask', 'preauthorized'] as const)('retains Caddy and private workload permits from the same %s protected CHECK', async mode => {
+        const f = await fixture(mode);
+        await f.setFirewallFacts({ interfaces: {
+            ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
+                mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
+        } });
+        const container = { Id: 'owned-caddy', Name: '/happier-caddy',
+            Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
+                Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
+            HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, Mounts: [], Binds: null,
+                PortBindings: { '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }] } },
+            State: { Running: false }, NetworkSettings: { Networks: {}, Ports: null } };
+        f.setDocker(async command => {
+            // Genuine OS boundary: Docker is readable only inside the admitted root invocation.
+            if (f.launches.length !== 1) return { code: 1, stdout: '', stderr: 'daemon Docker permission denied' };
+            if (command.args[0] === 'container' && command.args[1] === 'ls')
+                return { code: 0, stdout: JSON.stringify(container.Id), stderr: '' };
+            if (command.args[0] === 'container' && command.args[1] === 'inspect')
+                return { code: 0, stdout: JSON.stringify([container]), stderr: '' };
+            throw new Error('Protected firewall inventory must not mutate Docker');
+        });
+        const metadata = { reachabilityPosture: { revision: 0,
+            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
+        await machineNativeEffectAdmission.run({ operation: { operationId: 'private-workload', kind: 'deployments.deploy' },
+            keys: [{ kind: 'machineSetup' }] }, native => settleMachinePrivateWorkloadFirewallForHost({
+            machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
+            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
+                compareAndSwap: async () => { throw new Error('Unchanged workload posture cannot write metadata'); } },
+            elevation: f.deps, privateNetworks: [], privateWorkloadBindings: { environmentId: 'withdrawn-environment', bindings: [] },
+            readDaemonProof: () => observeOwnDaemonReachability({ client: {
+                isMachineControlRegistrationReady: () => true, callConnectedClientRpc: async () => ({ ok: true, result: {} }),
+            } }),
+        }));
+        expect(f.boundaryFailures).toEqual([]);
+        expect(f.launches).toHaveLength(1);
+        expect(f.prompt).toHaveBeenCalledTimes(mode === 'ask' ? 1 : 0);
+        expect(f.frames.filter(frame => frame && typeof frame === 'object' && 'mode' in frame)
+            .map(frame => Reflect.get(frame as object, 'mode'))).toEqual(['check', 'apply']);
+        expect(f.readTable()).toContain('tcp dport 80 accept');
+        expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
+    });
+
+    it('keeps an unavailable private-workload Caddy fact as a typed protected CHECK refusal without APPLY', async () => {
+        const f = await fixture('ask');
+        f.setDocker(async () => ({ code: null, errorCode: 'ENOENT', stdout: '', stderr: '' }));
+        const metadata = { reachabilityPosture: { revision: 0,
+            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
+        const pending = machineNativeEffectAdmission.run({ operation: { operationId: 'unavailable-private-workload', kind: 'deployments.deploy' },
+            keys: [{ kind: 'machineSetup' }] }, native => settleMachinePrivateWorkloadFirewallForHost({
+            machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
+            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
+                compareAndSwap: async () => { throw new Error('Unavailable inventory cannot write metadata'); } },
+            elevation: f.deps, privateNetworks: [], privateWorkloadBindings: { environmentId: 'environment', bindings: [] },
+            readDaemonProof: async () => { throw new Error('No APPLY or daemon ACK before native inventory'); },
+        }));
+        await expect(pending).rejects.toMatchObject({ code: 'required_fact_unavailable',
+            details: { requiredFact: 'caddyContainer', failure: { kind: 'native_check_unavailable',
+                reason: 'required_fact_unavailable', requiredFact: 'caddyContainer' }, remedy: expect.any(String) },
+            cause: { effectAttempted: false } });
+        expect(f.boundaryFailures).toEqual([]);
+        expect(f.launches).toHaveLength(1);
+        expect(f.frames.map(frame => MachineEffectInternalRequestSchema.parse(frame).mode)).toEqual(['check']);
+        expect(f.readTable()).toBeUndefined();
     });
 
     it.each(['ask', 'preauthorized'] as const)('inspects native SSH endpoints through the %s root CHECK without APPLY', async mode => {

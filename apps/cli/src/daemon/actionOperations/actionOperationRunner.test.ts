@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore } from './actionOperationStore';
 import { getActionSpec } from '@happier-dev/protocol/actions';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationSetInputV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { ActionOperationCredentialUseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
@@ -16,6 +17,24 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it.each(MACHINE_REACHABILITY_ACTION_IDS_V1)('retains closed native Network failures in Activity for %s', async actionId => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec(actionId);
+    let sequence = 0;
+    const runner = createActionOperationRunner({ store, generateOperationId: () => `network-failure-${sequence++}`,
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const details = { requiredFact: 'caddyContainer', failure: { kind: 'native_observation_unavailable',
+      reason: 'required_fact_unavailable', requiredFact: 'caddyContainer', errorCode: 'ENOENT' },
+      remedy: 'Restore native container inventory before retrying.' };
+    const failure = { ok: false as const, errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable',
+      effectAttempted: false, details };
+    await runner.observe({ actionId, scope, requestId: 'closed-native-failure', input: {}, execute: async () => failure });
+    expect(store.get(scope, 'network-failure-0')).toMatchObject({ state: 'failed',
+      error: { errorCode: failure.errorCode, effectAttempted: false, details } });
+    await runner.observe({ actionId, scope, requestId: 'private-native-output', input: {},
+      execute: async () => ({ ...failure, details: { ...details, stderr: 'private native output' } }) });
+    expect(store.get(scope, 'network-failure-1')?.error).not.toHaveProperty('details');
+  });
   it('preserves strict authored input for an existing fresh bootstrap retry policy', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('machines.managed.bootstrap.retry');

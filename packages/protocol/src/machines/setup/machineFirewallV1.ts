@@ -2,6 +2,8 @@ import '../../zodRuntimePolicy.js';
 import { z } from 'zod';
 import { z as mini } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
+import { MachinePrivateNetworkObservationV1Schema } from '../../plugins/contributions/machinePrivateNetworks.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
 import { PluginJsonSchemaV2Schema, type PluginJsonSchemaV2 } from '../../plugins/contributions/jsonSchema.js';
 
@@ -15,8 +17,7 @@ const privateExposure = () => z.object({ ...exposureFields(), exposure: z.litera
 export const MachineFirewallExposureV1Schema = lazyZodSchema(() => {
   return z.union([
     privateExposure(),
-    z.object({ ...exposureFields(), exposure: z.enum(['public', 'loopback']),
-      providerId: z.never().optional(), networkIdentity: z.never().optional() }).strict(),
+    z.object({ ...exposureFields(), exposure: z.enum(['public', 'loopback']) }).strict(),
   ]);
 });
 
@@ -42,6 +43,19 @@ export const MachineFirewallTransitionBindingsV1Schema = lazyZodSchema(() => z.o
   }).strict().optional(),
 }).strict());
 export type MachineFirewallTransitionBindingsV1 = z.infer<typeof MachineFirewallTransitionBindingsV1Schema>;
+/** Host-captured scope for the existing protected Caddy CHECK. */
+export const MachineCaddyFirewallObservationInputV1Schema = lazyZodSchema(() => z.object({
+  privateNetworks: z.array(MachinePrivateNetworkObservationV1Schema),
+}).strict());
+export type MachineCaddyFirewallObservationInputV1 = z.infer<typeof MachineCaddyFirewallObservationInputV1Schema>;
+/** The same native Caddy observation is carried by the existing protected CHECK. */
+export const MachineCaddyFirewallObservationV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), bindings: MachineFirewallTransitionBindingsV1Schema }).strict(),
+  z.object({ status: z.literal('unavailable'),
+    reason: z.enum(['required_fact_unavailable', 'foreign_effect_conflict', 'private_scope_unenforceable']),
+    details: z.optional(DeploymentDomainCaddyFailureDetailsV1Schema) }).strict(),
+]));
+export type MachineCaddyFirewallObservationV1 = z.infer<typeof MachineCaddyFirewallObservationV1Schema>;
 
 /** An explicit private publication for one Environment. The native writer
  * retains other Environments; an empty list withdraws this Environment's permits. */
@@ -63,6 +77,7 @@ export type MachineFirewallPrivateWorkloadBindingsV1 = z.infer<typeof MachineFir
 export const MachineFirewallTransitionIntentV1Schema = lazyZodSchema(() => mini.strictObject({
   v: mini.literal(1), kind: mini.enum(['retainSsh', 'preserveSsh']),
   caddy: MachineFirewallTransitionBindingsV1Schema,
+  caddyObservation: mini.optional(MachineCaddyFirewallObservationInputV1Schema),
   privateWorkloadBindings: mini.optional(MachineFirewallPrivateWorkloadBindingsV1Schema),
   publicSsh: MachinePublicSshV1Schema,
 }));
@@ -81,8 +96,10 @@ export const MachineFirewallTransitionFactsV1Schema = lazyZodSchema(() => {
       privateInterfaces: z.array(z.object({ providerId: name, networkIdentity: name, hostAddress: address, interfaceName: name }).strict()),
       retainedSshEndpoints: z.array(endpoint),
       privateWorkloadBindings: z.array(MachineFirewallPrivateWorkloadBindingsV1Schema).optional(),
+      caddy: MachineCaddyFirewallObservationV1Schema.optional(),
     }).strict(),
-    z.object({ status: z.literal('unavailable'), requiredFact: name, remedy: name.optional() }).strict(),
+    z.object({ status: z.literal('unavailable'), requiredFact: name, remedy: name.optional(),
+      caddy: MachineCaddyFirewallObservationV1Schema.optional() }).strict(),
   ]);
 });
 export type MachineFirewallTransitionFactsV1 = z.infer<typeof MachineFirewallTransitionFactsV1Schema>;

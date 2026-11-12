@@ -7,7 +7,8 @@ import { MachineSetupRecipePlanV1Schema } from '../managed/actionsV1.js';
 import { MachineFirewallTransitionFactsV1Schema, MachineFirewallTransitionIntentV1Schema } from '../setup/machineFirewallV1.js';
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './machineReachabilityPostureV1.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
-import { MachineElevationFailureV1Schema, MachineFirewallRecoveryV1Schema, MachineFirewallRestorationV1Schema } from '../adminAccessV1.js';
+import { MachineReachabilityNativeFailureDetailsV1Schema } from './nativeFailureV1.js';
+export { MachineReachabilityNativeFailureDetailsV1Schema } from './nativeFailureV1.js';
 
 const text = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.number().check(z.int(), z.nonnegative());
@@ -64,18 +65,9 @@ export const MachineReachabilityConfigureResultV1Schema = lazyZodSchema(() => z.
 }).check(z.refine(result => result.errorCode === undefined || result.status === 'outcome_unknown',
   { message: 'A role result code is supplied only for an unknown reachability outcome.' })));
 export type MachineReachabilityConfigureResultV1 = z.infer<typeof MachineReachabilityConfigureResultV1Schema>;
-/** Closed public diagnostics, not native membership or permission to retry. */
+/** Configure alone may report an earlier setup effect. */
 export const MachineReachabilityConfigureFailureDetailsV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ setupOutcome: z.literal('applied') }),
-  z.strictObject({
-    status: z.optional(z.enum(['rolledBack', 'outcome_unknown', 'recoveryRequired', 'refused'])),
-    failure: z.optional(z.union([MachineElevationFailureV1Schema, z.strictObject({
-      kind: z.literal('daemon_reachability_unavailable'), reason: z.literal('required_fact_unavailable'),
-      requiredFact: z.literal('homeRoutedDaemonAck'), errorCode: z.optional(text()),
-    })])),
-    recovery: z.optional(MachineFirewallRecoveryV1Schema), restoration: z.optional(MachineFirewallRestorationV1Schema),
-    remedy: text(),
-  }),
+  z.strictObject({ setupOutcome: z.literal('applied') }), MachineReachabilityNativeFailureDetailsV1Schema,
 ]));
 /** Only the incumbent operation link, never native keys or credentials. */
 export const MachineReachabilityBusyFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({

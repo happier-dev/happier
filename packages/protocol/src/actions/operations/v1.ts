@@ -41,6 +41,7 @@ import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '../../machines/reachability/nativeFailureV1.js';
+import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
   type DeploymentBackupFailureResultV1 } from '../../deployments/deploymentBackupActionsV1.js';
@@ -263,8 +264,11 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
 }).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
   ? 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
     : 'failure' in failure.details ? (!!failure.details.failure && ('kind' in failure.details.failure
-      ? failure.errorCode === failure.details.failure.reason
-        || (MachineElevationFailureV1Schema.safeParse(failure.details.failure).success && failure.errorCode === failure.details.failure.kind)
+      ? DeploymentDomainCaddyFailureDetailsV1Schema.safeParse(failure.details).success
+        ? failure.errorCode === failure.details.failure.reason
+        : MachineElevationFailureV1Schema.safeParse(failure.details.failure).success
+          ? failure.errorCode === failure.details.failure.kind
+          : failure.errorCode === failure.details.failure.reason
       : failure.errorCode === failure.details.failure.code))
       || ('cleanupFailure' in failure.details && failure.errorCode === failure.details.cleanupFailure?.code)
     : 'requiredFact' in failure.details

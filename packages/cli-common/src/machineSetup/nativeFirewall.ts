@@ -6,6 +6,7 @@ import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/a
 import { MachineSetupEffectError, type MachineRecipeStepV1, type MachineSetupStepObservationV1, type MachineSetupNativeStageV1 } from './index.js';
 import type { NativeRun } from './nativeSystemBackend.js';
 import { nativeSocketSshReader } from './nativeFirewallSshSockets.js';
+import { observeNativeCaddyFirewallBindings, readCaddyContainerFirewallExposures } from './nativeCaddy.js';
 import { nativeFirewallTransitionObservationStepId, readNativeFirewallPrivateWorkloads, replaceNativeFirewallPrivateWorkloads } from './nativeFirewallWorkloads.js';
 import type { MachineFirewallPrivateWorkloadBindingsV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { activateNativeFile, assertProtectedNativeTarget, inspectNativeAncestors, inspectNativePath, isMissingNativeFile,
@@ -358,15 +359,24 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         try {
             candidateRules(step.rules);
             if (!await available()) return { stepId: step.id, status: 'unsupported', reason: 'required_fact_unavailable', facts: { requiredFact: 'systemNft' } };
-            const state = await inspect(step);
-            const transition = await transitionFacts(step, state);
+            const caddy = step.caddyObservation ? await observeNativeCaddyFirewallBindings(step.caddyObservation, {
+                run: command => run(command.executable, command.args, command.env), signal,
+            }) : undefined;
+            if (caddy?.status === 'unavailable') return { stepId: step.id, status: 'unavailable',
+                reason: 'required_fact_unavailable', facts: { firewallTransition: { status: 'unavailable',
+                    requiredFact: caddy.details?.requiredFact ?? 'caddyFirewall',
+                    ...(caddy.details ? { remedy: caddy.details.remedy } : {}), caddy } } };
+            const observedStep = caddy?.status === 'ready' ? { ...step,
+                exposures: [...(step.exposures ?? []), ...readCaddyContainerFirewallExposures(caddy.bindings)] } : step;
+            const state = await inspect(observedStep);
+            const transition = await transitionFacts(observedStep, state);
             return { stepId: step.id, status: transition.privateScopeAvailable ? satisfied(step, state) ? 'satisfied' : 'drifted' : 'unavailable',
                 ...(!transition.privateScopeAvailable ? { reason: 'required_fact_unavailable' as const } : {}), facts: {
                 rulesDigest: state.rules.kind === 'file' ? state.rules.digest! : null,
                 unitDigest: state.unit.kind === 'file' ? state.unit.digest! : null,
                 ownedTableDigest: state.table === null ? null : nativeFileDigest(state.table),
                 bootEnabled: state.boot.enabled, bootActive: state.boot.running,
-                firewallTransition: transition.fact,
+                firewallTransition: { ...transition.fact, ...(caddy ? { caddy } : {}) },
             } };
         } catch (error) {
             if (signal?.aborted) throw error;

@@ -156,6 +156,7 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
                 return { ok: false as const, errorCode: 'machine_setup_operation_unavailable', error: 'machine_setup_operation_unavailable' };
               signal = initialSignal ? AbortSignal.any([initialSignal, operation.signal]) : operation.signal;
               const ownerUpdate = operation.operationOwnerUpdate, progress = operation.operationProgress;
+              ownerUpdate.update({ cancellation: 'supported' });
               return machineNativeEffectAdmission.run({ operation: { operationId, kind: 'agentIsolation', signal },
                 keys: [{ kind: 'machineSetup' }] }, async nativeEffectContext => {
                 const owner = getLiveSystemTasksRunnerAdapter();

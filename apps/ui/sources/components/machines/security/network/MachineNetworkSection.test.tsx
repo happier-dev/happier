@@ -130,6 +130,18 @@ async function render(
 }
 
 describe('Machine → Network page', () => {
+  it.each([false, true])('shows the protected Caddy recovery in failed Network review with an apply plan=%s', async applying => {
+    const remedy = 'Restore native container inventory before reviewing Network again.';
+    const failure = { ok: false as const, ...ActionOperationFailureV1Schema.parse({
+      errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', effectAttempted: false,
+      details: { requiredFact: 'caddyContainer', failure: { kind: 'native_observation_unavailable',
+        reason: 'required_fact_unavailable', requiredFact: 'caddyContainer', errorCode: 'ENOENT' }, remedy },
+    }) };
+    const screen = await render(model({ kind: 'settled' }, true), true,
+      { kind: 'failed', failure, ...(applying ? { plan } : {}) });
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
+      .toBe(remedy);
+  });
   it('renders the native administrator recovery from a refused Network Action', async () => {
     const remedy = 'The selected administrator needs its own sudo-to-root right and a valid password. Choose an administrator with that right or grant it, then retry.';
     const failure = { ok: false as const, ...ActionOperationFailureV1Schema.parse({
@@ -741,7 +753,7 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     const unverified = await render(model({ kind: 'settled' }, true), true,
       { kind: 'failed', failure: { ...failure, details: { status: 'rolledBack', remedy: 'Check nftables.' } }, plan });
     expect(findTestInstanceByTypeWithProps(unverified, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
-      .toBe('errors.machineNativeEffectFailed');
+      .toBe(failure.details.remedy);
   });
 
   it('names a refused provider default in words and keeps the choice to pick another', async () => {

@@ -6,6 +6,7 @@ import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemo
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
@@ -66,7 +67,13 @@ function readWidgetRefusalMessage(code: unknown, details?: unknown): string | nu
  * A Machine's native setup refusal, in words. Action results and recorded Workflow failures (a Setup step's
  * reported code) read the same sentence; the raw code stays with the caller's technical detail.
  */
-export function describeMachineNativeFailureCode(code: unknown): string | null {
+export function describeMachineNativeFailureCode(code: unknown, details?: unknown, failure?: unknown): string | null {
+    const nativeDetails = MachineReachabilityNativeFailureDetailsV1Schema.safeParse(details);
+    if (nativeDetails.success) return nativeDetails.data.remedy;
+    const wrapped = asRecord(details);
+    const elevation = MachineElevationFailureV1Schema.safeParse(failure
+        ?? (wrapped?.kind === 'machineSetup' ? wrapped.failure : undefined));
+    if (elevation.success && elevation.data.remedy) return elevation.data.remedy;
     switch (code) {
         case 'machine_setup_conflict': return t('machinePresets.setup.sourceConflict');
         case 'native_protocol_invalid': return t('errors.machineNativeProtocolInvalid');
@@ -144,13 +151,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         || code === 'space_reorder_not_applied'
         || code === 'saved_view_reorder_not_applied') return t('entityDragDrop.reasons.generic');
     if (code === 'project_workspace_unavailable') return t('terminalEmbedded.errors.projectWorkspaceUnavailable');
-    const nativeFailure = describeMachineNativeFailureCode(code);
-    if (nativeFailure) {
-        const details = asRecord(record.details);
-        const failure = MachineElevationFailureV1Schema.safeParse(record.failure
-            ?? (details?.kind === 'machineSetup' ? details.failure : undefined));
-        return failure.success ? failure.data.remedy ?? nativeFailure : nativeFailure;
-    }
+    const nativeFailure = describeMachineNativeFailureCode(code, record.details, record.failure);
+    if (nativeFailure) return nativeFailure;
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
     // A Settings write sets a value, so repeating it after no answer is safe.
     if (code === 'account_settings_mutation_outcome_unknown') return t('errors.tryAgain');

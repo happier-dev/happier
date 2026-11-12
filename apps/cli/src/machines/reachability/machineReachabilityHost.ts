@@ -25,7 +25,6 @@ import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/ag
 import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeDockerEffectEngines } from '@/daemon/local/services/launch/nativeComposeEngine';
-import { observeNativeCaddyFirewallBindings } from '@happier-dev/cli-common/machineSetup';
 import { buildPluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import { machineRecipesProjectionFamily } from '@/plugins/projection/registry/machineRecipes';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -274,22 +273,20 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
     if (setup.status !== 'ready') return refuse(`machine_setup_content_${setup.status}`);
     let bindings: NonNullable<MachineReachabilityPlanBasisV1['firewallTransition']>['intent']['caddy'] = {};
     let dockerEngineIds: string[] = [];
-    if (reviewFirewall) {
-      const observed = await observeNativeCaddyFirewallBindings({ privateNetworks: observation.privateNetworks },
-        { run: deps.runNative, signal: deps.context.signal });
-      if (observed.status !== 'ready') return refuse(observed.reason, observed.details);
-      bindings = observed.bindings;
+    const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
+      signal: deps.context.signal, caddy: bindings,
+      ...(reviewFirewall ? { caddyObservation: { privateNetworks: observation.privateNetworks } } : {}),
+      basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
+    { ...deps.elevation, verifyCurrent: deps.isCurrent });
+    if (!native.ok) return native;
+    const facts = native.facts;
+    if (reviewFirewall && facts.caddy?.status === 'ready') {
+      bindings = facts.caddy.bindings;
       dockerEngineIds = [...(await readNativeDockerEffectEngines({ io: deps.nativeEffects.environmentIo,
         command: 'docker', prefix: [], cwd: deps.nativeEffects.userHomeDirectory,
         env: Object.fromEntries(Object.entries(deps.nativeEffects.hostEnvironment ?? process.env)
           .filter((entry): entry is [string, string] => typeof entry[1] === 'string')), signal: deps.context.signal })).dockerEngineIds].sort();
     }
-    const native = await inspectMachineReachabilityNativeFirewall({ machineId: deps.target.machineId, requestId,
-      signal: deps.context.signal, caddy: bindings,
-      basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: setup.policy.revision } },
-    { ...deps.elevation, verifyCurrent: deps.isCurrent });
-    if (!native.ok) return native;
-    const facts = native.facts;
     const publicSsh = facts.status === 'unavailable' ? 'unknown' : facts.retainedSshEndpoints.some(endpoint =>
       facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
     observation = { ...observation, nativeFirewall: facts,
@@ -697,7 +694,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
 export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshTransitionInput,
   'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
   & Readonly<{ caddy: Pick<import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput, 'privateBinding' | 'publicBindings'>;
-    privateWorkloadBindings?: RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings'] }>) {
+    privateWorkloadBindings?: RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings'];
+    caddyObservation?: RetainedSshTransitionInput['firewallIntent']['caddyObservation'] }>) {
   const state = await readMachineReachabilityMetadata(input.port);
   if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
     requiredFact: 'reachabilityPosture',
@@ -710,7 +708,8 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
       ...(input.caddy.privateBinding ? { privateBinding: { ...input.caddy.privateBinding,
         sourceRanges: [...input.caddy.privateBinding.sourceRanges] } } : {}),
       publicBindings: [...(input.caddy.publicBindings ?? [])],
-    }, ...(input.privateWorkloadBindings ? { privateWorkloadBindings: input.privateWorkloadBindings } : {}),
+    }, ...(input.caddyObservation ? { caddyObservation: input.caddyObservation } : {}),
+    ...(input.privateWorkloadBindings ? { privateWorkloadBindings: input.privateWorkloadBindings } : {}),
     publicSsh: state.posture.management.publicSsh } });
   if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged')
     return refuse(transitioned.errorCode ?? transitioned.status, {
@@ -739,8 +738,6 @@ export async function settleMachinePrivateWorkloadFirewallForHost(input: Pick<Re
     privateNetworks: readonly import('@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1').MachinePrivateNetworkObservationV1[];
     runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
   }>) {
-  const caddy = await observeNativeCaddyFirewallBindings({ privateNetworks: input.privateNetworks },
-    { run: input.runNative, signal: input.signal });
-  if (caddy.status !== 'ready') return refuse(caddy.reason, caddy.details);
-  return settleMachineCaddyFirewallForHost({ ...input, caddy: caddy.bindings });
+  return settleMachineCaddyFirewallForHost({ ...input, caddy: {},
+    caddyObservation: { privateNetworks: [...input.privateNetworks] } });
 }

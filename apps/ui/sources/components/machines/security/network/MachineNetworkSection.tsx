@@ -1040,7 +1040,7 @@ function NetworkReviewFoot(
   }
   if (review.kind === 'failed') {
     const planChanged = review.failure.errorCode === 'plan_changed';
-    const nativeFailure = describeMachineNativeFailureCode(review.failure.errorCode);
+    const nativeFailure = describeMachineNativeFailureCode(review.failure.errorCode, review.failure.details);
     // The firewall owner's closed result: a verified restoration means the Machine is back as it was.
     const details = MachineReachabilityConfigureFailureDetailsV1Schema.safeParse(review.failure.details);
     const rolledBack = details.success && 'status' in details.data && details.data.status === 'rolledBack'
@@ -1064,7 +1064,7 @@ function NetworkReviewFoot(
             : providerRefused
               ? t('machineDetailPage.network.providerRefused', { machine })
               : planChanged ? t('machineDetailPage.network.planChanged')
-                : nativeFailure ? resolveActionExecutionErrorMessage(review.failure, nativeFailure)
+                : nativeFailure ? nativeFailure
                   : t(review.plan ? 'machineDetailPage.network.applyRecovery' : 'machineDetailPage.network.prepareRecovery')}
           action={{
             label: t('common.refresh'),

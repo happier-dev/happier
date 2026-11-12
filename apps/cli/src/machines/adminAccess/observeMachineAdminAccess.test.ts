@@ -136,6 +136,20 @@ describe('Machine administrator access native observation', () => {
     expect(await observeMachineAdminAccess(dependencies)).toMatchObject({ daemonUsername: null, managedDropIn: 'unknown' });
   });
 
+  it('flags the withdrawn 94fbd95a4b Ask root grant as dropInInvalid without repairing it', async () => {
+    const boundary = nativeBoundary();
+    const content = 'Defaults:happier targetpw, timestamp_timeout=0\n'
+      + 'happier ALL=(qa133admin) PASSWD: ALL\n'
+      + 'qa133admin ALL=(root) NOPASSWD: ALL\n';
+    const observation = await observeMachineAdminAccess({ ...boundary.dependencies,
+      fileSystem: {
+        lstat: async () => ({ uid: 0, gid: 0, mode: 0o440, isFile: () => true, isSymbolicLink: () => false }),
+        readFile: async () => content,
+      },
+    });
+    expect(observation).toMatchObject({ managedDropIn: 'invalid', reasonCode: 'dropInInvalid' });
+  });
+
   it('publishes a changed primary group once while equal demanded identity retains publication', async () => {
     const boundary = nativeBoundary();
     const execute = boundary.dependencies.execFile!;

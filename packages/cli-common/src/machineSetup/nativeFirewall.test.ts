@@ -5,7 +5,7 @@ import { MachineRecipeStepV1Schema, MachineFirewallTransitionIntentV1Schema } fr
 import { MachineReachabilityInspectResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan,
     createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
-    materializeMachineFirewallTransitionV1 } from './index.js';
+    materializeMachineFirewallTransitionV1, type MachineSetupStepObservationV1 } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from './nativeBackend.js';
 
 // Only OS boundaries are substituted. Bytes, inode identity, chmod, staging,
@@ -155,6 +155,17 @@ async function stage(f: Awaited<ReturnType<typeof fixture>>, step = f.step): Pro
 }
 
 describe('native owned firewall', () => {
+    it.each([undefined, { status: 'ready' as const, bindings: { publicBindings: [] } }])(
+        'retains generic firewall recovery when a different protected fact is unavailable (Caddy: %j)', caddy => {
+            const firewallTransition: MachineSetupStepObservationV1['facts'] = {
+                status: 'unavailable', requiredFact: 'kernelRoutes',
+            };
+            if (caddy) firewallTransition.caddy = caddy;
+            const observed = readMachineFirewallTransitionFactsV1({ stepId: 'reachability-native-facts',
+                status: 'unavailable', reason: 'required_fact_unavailable', facts: { firewallTransition } });
+            expect(observed).toMatchObject({ status: 'unavailable', requiredFact: 'kernelRoutes',
+                remedy: expect.any(String), ...(caddy ? { caddy } : {}) });
+        });
     it('closes wildcard SSH after nft elides address-family selectors implied by source addresses', async () => {
         // Captured from QA-DOMAIN-1104, nft -s, 2026-11-04: nft omits the
         // redundant meta nfproto before an ip/ip6 source-address expression.

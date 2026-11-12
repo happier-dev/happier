@@ -1125,6 +1125,9 @@ their existing input-acquisition flow: a Boolean confirmation cannot supply them
 The originating UI renders carried reviews through the same family presenters as
 retained approvals, whether the review appears in a step or in a dialog. Host-specific
 annotations supplement those facts instead of replacing them with Action API hints.
+Human consequence copy belongs to the Action's `approvalPresentation.summary`.
+Without a domain summary, the review uses the Action title; agent input instructions
+are never the person's confirmation text.
 In unreleased 0.3 source, a member's Source clone with an unprepared destination
 returns `workspace_private_checkout_review_required` and the native owner's
 `destinationReview`. Open carries the prepared private path through this same
@@ -2031,8 +2034,11 @@ confirmation: their generic wrapper preview does not describe or confirm that
 inner effect. That resolved owner still needs operation-preview/confirmation
 integration. Native provider playback also needs loaded-runtime verification.
 An attempt ID does not upgrade authority: terminal credentials retain automation
-authority on UI, can request policy-required approval, and cannot decide it. The
-approval UI preserves `present_user_required` and directs the person to an Account
+authority on UI, can request policy-required approval, and cannot approve it. In
+0.3 development source, a terminal credential can reject or cancel its own pending
+approval through the signed decision Action. This withdrawal retains automation
+authority and does not authorize approved-effect replay or another Account’s
+approval. The approval UI preserves `present_user_required` and directs the person to an Account
 sign-in on this Home or another device with that sign-in. Content-key custody and
 Home ownership do not supply present-user authority.
 
@@ -5028,6 +5034,15 @@ authority without template child-role knowledge. Link management uses the existi
 `audience:'signed_in'`; anonymous publication remains unavailable for templates.
 Standalone link creation retains the existing present-user authority; scoped
 automation creates a link through that reviewed release child.
+In 0.3 development, standalone Artifact link creation uses the answering
+client's existing approval and reverse-dispatch path. The issuing App receives
+the capability once through `onPublicLinkIssued` and opens its issued-link Share
+sheet with the selected anonymous or signed-in audience. The agent's result and
+observation retain only the redacted creation receipt. A missing answering client
+returns the existing typed client-unavailable refusal. Home and Account custody
+remain bound to the answering client; list, revoke and audit retain their
+Account owners. No capability is persisted for later recovery by Share.
+
 `artifact.public_link.join` consumes a fragment from its transient host port,
 checks the returned recipient against the host's captured Account/key, and
 creates only the caller's ordinary view grant. Its result contains source
@@ -6771,10 +6786,13 @@ same route owner protects cancellation and setup decisions on paired rows.
 The 0.3 development managed-intent result retains `accepted`, `conflict` and
 `refused`. Its `operation` reference is optional: installed asynchronous
 execution returns its real Action operation. Immediate foreground Account power
-returns acceptance only after native execution and inspection complete; deferred
-`after-idle` acceptance instead retains the intent for its existing policy/drain
-owner, without submitting native work early. Home admission alone is not immediate
-native success, and a request ID is not an operation ID.
+returns acceptance only after native execution and inspection complete. A
+controller-bound `after-idle` control keeps that controller as its original
+executor across approval. Its real Action operation retains the admitted intent,
+waits for the guest idle/drain decision, submits the native effect and reports the
+observation. Recording the intent alone does not schedule that work in the
+automatic retention loop. Home admission alone is not immediate native success,
+and a request ID is not an operation ID.
 
 After a managed power intent is acknowledged by Home, a later controller HTTP
 failure does not roll it back. In 0.3 development the controller returns

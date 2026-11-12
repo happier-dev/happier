@@ -15,6 +15,7 @@ import { machineSetup } from '@happier-dev/cli-common';
 import type { MachineAdminAccessObservationV1, MachineRecipeStepV1 } from '@happier-dev/protocol';
 import { checkElevatedMachineSetupPlanResult, checkElevatedMachineSetupPlan, runElevatedEffect, runElevatedMachineReboot, runElevatedMachineSetupIntent, prepareMachinePoweroff, type MachineElevationSpawn, type MachineElevationDependencies } from './runElevatedEffect';
 import { MachineEffectInternalRequestSchema } from '../setup/effectInternalProtocol';
+import { inspectMachineReachabilityNativeFirewall } from '../reachability/inspectMachineReachabilityNativeFirewall';
 import { runMachineSetupEffectInternal } from '../setup/effectInternal';
 import { MachineElevatedEffectV1Schema, MachineSetupEffectBasisV1Schema, MachineRecipeStepV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { createDeferred } from '@/testkit/async/deferred';
@@ -186,10 +187,12 @@ describe('one operation-scoped sudo stdin hand-off', () => {
     it('returns the administrator sudo prerequisite when that account has no existing root permission', async () => {
         const f = nativeFixture();
         f.denyAdministratorSudo();
-        const result = await checkElevatedMachineSetupPlanResult({ machineId: 'machine-a', operationId: 'no-admin-sudo', basis, steps: [] },
+        const result = await inspectMachineReachabilityNativeFirewall({ machineId: 'machine-a', requestId: 'no-admin-sudo', basis },
             { ...f.dependencies, prompt: async () => ({ password: 'one-use-password' }) });
-        expect(result).toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
-            failure: { requiredFact: 'administratorSudoToRoot', remedy: expect.any(String) } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'native_check_unavailable', details: {
+            failure: { kind: 'native_check_unavailable', requiredFact: 'administratorSudoToRoot', remedy: expect.any(String) },
+            remedy: expect.any(String),
+        } });
         expect(f.authentication).toEqual(['one-use-password']);
         expect(f.mutations).toEqual([]);
         expect(f.boundaryFailures).toEqual([]);

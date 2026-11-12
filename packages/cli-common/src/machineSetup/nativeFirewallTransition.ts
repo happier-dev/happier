@@ -14,7 +14,7 @@ type SshEndpoint = NativeAvailable['retainedSshEndpoints'][number];
  * is already emitted from the SAME Snapshot as the SSH policy observation;
  * missing is never interpreted as a fresh firewall. No OS work happens here. */
 export function readMachineFirewallTransitionFactsV1(observation: MachineSetupStepObservationV1 | undefined): MachineFirewallTransitionFactsV1 {
-  const unavailable = (requiredFact: string): MachineFirewallTransitionFactsV1 => ({ status: 'unavailable', requiredFact,
+  const unavailable = (requiredFact: string): Extract<MachineFirewallTransitionFactsV1, { status: 'unavailable' }> => ({ status: 'unavailable', requiredFact,
     remedy: 'Use administrator or provider-console access to inspect /etc/happier/firewall/rules.nft, the effective inet happier table (nft -s list table inet happier), and /etc/systemd/system/happier-firewall.service with its enabled/running state. Make the saved rules and effective table describe the same intended policy, and ensure the owned service loads that saved file with the intended enabled/running state. Use any available prechange recovery evidence and preserve a working management path. Do not blindly delete the table or replay an uncertain change. Then run machines.reachability.inspect again with the intended Network posture; configure only after it returns a fresh reviewed plan.' });
   if (!observation) return unavailable('nativeFirewall');
   const raw = observation.facts.firewallTransition;
@@ -29,13 +29,16 @@ export function readMachineFirewallTransitionFactsV1(observation: MachineSetupSt
   }
   const parsed = MachineFirewallTransitionFactsV1Schema.safeParse(candidate);
   if (!parsed.success) return unavailable('firewallTransition');
-  return parsed.data.status === 'unavailable' ? unavailable(parsed.data.requiredFact) : parsed.data;
+  return parsed.data.status === 'unavailable' && parsed.data.caddy?.status !== 'unavailable'
+    ? { ...parsed.data, ...unavailable(parsed.data.requiredFact) } : parsed.data;
 }
 
 /** CHECK-only declaration to the existing native observer. This is never an
  * effect plan and must never be returned in the materialized APPLY list. */
-export function createMachineFirewallTransitionObservationStepV1(intent: Pick<MachineFirewallTransitionIntentV1, 'caddy' | 'privateWorkloadBindings'>): Firewall {
-  return { id: nativeFirewallTransitionObservationStepId, kind: 'firewall', exposures: [...readCaddyContainerFirewallExposures(intent.caddy),
+export function createMachineFirewallTransitionObservationStepV1(intent: Pick<MachineFirewallTransitionIntentV1, 'caddy' | 'privateWorkloadBindings'>
+  & Pick<Firewall, 'caddyObservation'>): Firewall {
+  return { id: nativeFirewallTransitionObservationStepId, kind: 'firewall',
+    ...(intent.caddyObservation ? { caddyObservation: intent.caddyObservation } : {}), exposures: [...readCaddyContainerFirewallExposures(intent.caddy),
     ...(intent.privateWorkloadBindings?.bindings.map(binding => binding.exposure) ?? [])],
     rules: `table inet happier\ndelete table inet happier\ntable inet happier {\n${renderNativeFirewallPrivateWorkloads(intent.privateWorkloadBindings ? [intent.privateWorkloadBindings] : [])}  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n` };
 }
@@ -53,6 +56,10 @@ export type MachineFirewallTransitionMaterializationV1 =
 export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTransitionIntentV1,
   native: MachineFirewallTransitionFactsV1): MachineFirewallTransitionMaterializationV1 {
   if (native.status === 'unavailable') return { status: 'review_required', reason: 'required_fact_unavailable', requiredFact: native.requiredFact };
+  if (intent.caddyObservation) {
+    if (native.caddy?.status !== 'ready') return { status: 'review_required', reason: 'required_fact_unavailable', requiredFact: 'caddyFirewall' };
+    intent = { ...intent, caddy: native.caddy.bindings };
+  }
   const workloads = replaceNativeFirewallPrivateWorkloads(native.privateWorkloadBindings ?? [], intent.privateWorkloadBindings);
   const privateBindings = [...(intent.caddy.privateBinding ? [intent.caddy.privateBinding] : []),
     ...workloads.flatMap(item => item.bindings)];

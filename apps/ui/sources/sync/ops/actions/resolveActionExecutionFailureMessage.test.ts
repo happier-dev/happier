@@ -7,6 +7,24 @@ import { t } from '@/text';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it.each([
+        { errorCode: 'required_fact_unavailable', details: { requiredFact: 'caddyContainer',
+            failure: { kind: 'native_observation_unavailable', reason: 'required_fact_unavailable', requiredFact: 'caddyContainer', errorCode: 'ENOENT' },
+            remedy: 'Restore native container inventory before reviewing Network again.' } },
+        { errorCode: 'native_check_unavailable', details: {
+            failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'administratorSudoToRoot',
+                remedy: 'Choose an administrator with its own sudo-to-root right, then retry.' },
+            remedy: 'Choose an administrator with its own sudo-to-root right, then retry.' } },
+    ])('presents the closed native recovery across returned and thrown Network failures: $errorCode', ({ errorCode, details }) => {
+        const failure = { ok: false, errorCode, error: errorCode, details };
+        expect(resolveActionExecutionErrorMessage(failure, 'Network unavailable')).toBe(details.remedy);
+        for (const result of [failure, { ok: true, result: failure }]) {
+            expect(resolveActionExecutionFailureMessage(result, 'Network unavailable')).toBe(details.remedy);
+        }
+        const invalid = { ...failure, details: { ...details, stderr: 'private native diagnostic' } };
+        expect(resolveActionExecutionErrorMessage(invalid, 'Network unavailable')).not.toBe(details.remedy);
+        expect(resolveActionExecutionErrorMessage(invalid, 'Network unavailable')).not.toContain('private native diagnostic');
+    });
     it.each(['credential_unavailable', 'preset_limit_reached'])('prefers authored repair over fallback copy for %s across thrown and returned failures', code => {
         const data = { code, message: 'Sign in to Docker: run sbx login', retryable: true, remediation: { kind: 'retry' as const } };
         const expected = `${data.message} ${t('errors.tryAgain')}`;

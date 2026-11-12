@@ -17,6 +17,14 @@ afterEach(() => standardCleanup());
 
 const { MachineSetupPlanReview } = await import('./MachineSetupPlanReview');
 
+it('keeps the administrator repair in the shared native Setup review presentation', async () => {
+  const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
+  const remedy = 'Choose an administrator with its own sudo-to-root right, then retry.';
+  expect(describeMachineSetupPlanFailure({ ok: false, errorCode: 'native_check_unavailable', error: 'native_check_unavailable',
+    details: { kind: 'machineSetup', failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable',
+      requiredFact: 'administratorSudoToRoot', remedy } } }, id => id)).toBe(remedy);
+});
+
 it('names the refused setup target and keeps its typed reason in the error presented to the person', async () => {
   const { describeMachineSetupPlanFailure } = await import('./MachineSetupPlanReview');
   const description = describeMachineSetupPlanFailure({ ok: false, errorCode: 'permission_denied',

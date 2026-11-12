@@ -21,27 +21,10 @@ const deploymentDomainServiceFailureDetailsV1Schema = lazyZodSchema(() => z.stri
     remedy: z.optional(z.string().check(z.trim(), z.minLength(1))),
     operation: z.optional(ActionOperationAddressV1Schema),
 }).check(z.refine(value => deploymentDomainFailureFactsV1[value.step] === value.requiredFact)));
-export const deploymentDomainCaddyRequiredFactsV1 = [
-    'caddyContainer', 'caddyMountedSeed', 'caddyAdminSocket', 'caddyAdminConfig',
-    'caddyPublishedBindings', 'caddyListeners', 'caddyRoutedNetworks',
-] as const;
-export type DeploymentDomainCaddyRequiredFactV1 = typeof deploymentDomainCaddyRequiredFactsV1[number];
-/** Safe native diagnostics only: command output and container error text stay private. */
-export const DeploymentDomainCaddyFailureV1Schema = lazyZodSchema(() => z.strictObject({
-    kind: z.enum(['native_observation_unavailable', 'native_effect_failed']),
-    reason: z.enum(['required_fact_unavailable', 'native_effect_failed', 'port_in_use']),
-    requiredFact: z.enum(deploymentDomainCaddyRequiredFactsV1),
-    errorCode: z.optional(z.string().check(z.regex(/^(?:E[A-Z]+|HTTP_\d{3})$/))),
-    stepId: z.optional(z.enum(['caddy-public-port', 'caddy-container-create', 'caddy-container-start',
-        'caddy-container-stop', 'caddy-container-rm', 'caddy-container-wait', 'caddy-container-network-connect'])),
-    nativeCommand: z.optional(z.strictObject({ command: z.literal('docker'),
-        phase: z.enum(['create', 'start', 'stop', 'rm', 'wait', 'network-connect']),
-        exitCode: z.nullable(z.number().check(z.int())) })),
-    containerExitCode: z.optional(z.number().check(z.int())),
-    containerError: z.optional(z.enum(['port_in_use', 'container_start_failed'])),
-    port: z.optional(z.number().check(z.int(), z.gte(1), z.lte(65535))),
-}));
-export type DeploymentDomainCaddyFailureV1 = z.infer<typeof DeploymentDomainCaddyFailureV1Schema>;
+import { deploymentDomainCaddyRequiredFactsV1, DeploymentDomainCaddyFailureV1Schema } from './deploymentDomainCaddyFailureV1.js';
+export { deploymentDomainCaddyRequiredFactsV1, DeploymentDomainCaddyFailureV1Schema, DeploymentDomainCaddyFailureDetailsV1Schema,
+    type DeploymentDomainCaddyRequiredFactV1, type DeploymentDomainCaddyFailureV1,
+    type DeploymentDomainCaddyFailureDetailsV1 } from './deploymentDomainCaddyFailureV1.js';
 export const DeploymentDomainNativeRequiredFactV1Schema = lazyZodSchema(() => z.union([z.enum([
     'nativeExecutionResult', 'networkExposure',
     'reachabilityPosture', 'cloudflarePreparation', 'activeDomainMembers', 'domainIngress',

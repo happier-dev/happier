@@ -252,7 +252,7 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
     expect(none.launches).toEqual([]);
   });
 
-  it('routes real member first use through an enrolled-owner child whose actual setup task admits only the owner response', async () => {
+  it.each(['answer', 'cancel'] as const)('routes real member first use through an enrolled-owner child whose actual setup task admits only the owner response (%s)', async completion => {
     const native = fixture({ version: 1, mode: 'ask', administratorUsername: 'operator' });
     const { runtime, members } = native;
     const ingressLifetime = new AbortController();
@@ -298,6 +298,18 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
       expect(await respond(manager)).toMatchObject({ ok: false, error: { code: 'permission_denied' } });
       expect(native.mutations).toEqual([]);
       expect(native.launches).toEqual([]);
+      if (completion === 'cancel') {
+        const operation = owned.items[0]!;
+        expect(operation.cancellation).toBe('supported');
+        expect(await runtime.handlers.cancel({ operationId: operation.operationId }, owner)).toEqual({ kind: 'requested' });
+        expect(await original).toMatchObject({ ok: false, errorCode: 'member_setup_required' });
+        expect(await runtime.handlers.getV2({ operationId: operation.operationId }, owner)).toMatchObject({
+          kind: 'found', operation: { state: 'cancelled' },
+        });
+        expect(native.mutations).toEqual([]);
+        expect(native.launches).toEqual([]);
+        return;
+      }
       expect(await respond(owner)).toMatchObject({ ok: true });
       expect(await original).toMatchObject({ ok: true, result: { nativeUid: 2401 } });
       expect(native.mutations).toContain('agent-account');

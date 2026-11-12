@@ -1,6 +1,8 @@
 import * as z from 'zod/mini';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineReachabilityConfigureFailureDetailsV1Schema,
     MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
@@ -164,9 +166,12 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
     if (actionId === MACHINE_SERVICE_CONTROL_ACTION_ID) {
         details = result.details;
     }
-    if (actionId === 'machines.reachability.configure') {
-        const schema = result.errorCode === 'effect_in_progress'
-            ? MachineReachabilityBusyFailureDetailsV1Schema : MachineReachabilityConfigureFailureDetailsV1Schema;
+    const reachability = MACHINE_REACHABILITY_ACTION_IDS_V1.some(id => id === actionId);
+    if (reachability) {
+        const schema = actionId === 'machines.reachability.configure'
+            ? result.errorCode === 'effect_in_progress'
+                ? MachineReachabilityBusyFailureDetailsV1Schema : MachineReachabilityConfigureFailureDetailsV1Schema
+            : MachineReachabilityNativeFailureDetailsV1Schema;
         const projected = schema.safeParse(result.details);
         if (projected.success) details = projected.data;
     }
@@ -201,7 +206,7 @@ export function unwrapActionResultForRpc(actionId: ActionId, result: ActionExecu
         errorCode: result.errorCode,
         error: result.error,
         ...(result.failureCause ? { failureCause: result.failureCause } : {}),
-        ...(actionId === 'machines.reachability.configure' && typeof result.effectAttempted === 'boolean'
+        ...(reachability && typeof result.effectAttempted === 'boolean'
             ? { effectAttempted: result.effectAttempted } : {}),
         ...(details !== undefined ? { details } : {}),
     };
@@ -508,6 +513,10 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
             }
             if (!result.ok || !rpcBinding) {
                 return unwrapActionResultForRpc(typedActionId, result);
+            }
+            if (spec.operation) {
+                const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
+                if (accepted.success) return accepted.data;
             }
             const deferredApproval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
             if (deferredApproval.success) {

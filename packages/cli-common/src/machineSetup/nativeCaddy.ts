@@ -9,10 +9,11 @@ import { watch } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
-import type { MachineFirewallTransitionBindingsV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { checkCaddyPublishedPortConflicts } from './nativeCaddyPorts.js';
 import type { DeploymentDomainCaddyRequiredFactV1, DeploymentDomainCaddyFailureV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentDomainCaddyFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import type { MachineCaddyFirewallObservationV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 
 export type NativeCaddyFirewallExposure = NonNullable<Extract<MachineRecipeStepV1, { kind: 'firewall' }>['exposures']>[number];
 export type NativeCaddySetupInput = Readonly<{
@@ -27,11 +28,7 @@ export type NativeCaddySetupInput = Readonly<{
 export type NativeCaddyContainerResult = Readonly<{ status: 'ready'; containerId: string }>
     | Readonly<{ status: 'needs_setup' }>
     | Readonly<{ status: 'unavailable'; reason: 'foreign_effect_conflict' | 'required_fact_unavailable' | 'private_scope_unenforceable' | 'native_effect_failed'; details?: NativeCaddyFailureDetails }>;
-type NativeCaddyFailureDetails = Readonly<{
-    requiredFact?: keyof typeof caddyFactRemedies;
-    failure: Readonly<DeploymentDomainCaddyFailureV1>;
-    remedy: string;
-}>;
+type NativeCaddyFailureDetails = Readonly<DeploymentDomainCaddyFailureDetailsV1>;
 const caddyFactRemedies = {
     caddyContainer: 'Restore access to the selected Docker engine and inspect the owned Caddy container before retrying.',
     caddyMountedSeed: 'Restore daemon-group read access to the owned Caddy seed and its mounted state directory before retrying.',
@@ -244,14 +241,14 @@ async function inspectOwnedContainer(input: ContainerInput, run: ReturnType<type
     const filter = input.containerName === undefined ? `label=${ownerLabel}=${ownerValue}`
         : `name=^/${input.containerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
     const listed = await run(['container', 'ls', '--all', '--no-trunc', '--filter', filter, '--format', '{{json .ID}}']);
-    if (listed.code !== 0) return unavailable;
+    if (listed.code !== 0) return caddyFactUnavailable('caddyContainer', listed.errorCode);
     let ids: unknown[];
     try { ids = listed.stdout.trim() ? listed.stdout.trim().split('\n').map(line => JSON.parse(line)) : []; }
     catch { return unavailable; }
     if (ids.length > 1 || ids.some(id => typeof id !== 'string' || !id)) return unavailable;
     if (!ids.length) return { status: 'needs_setup' };
     const inspected = await run(['container', 'inspect', '--', String(ids[0])]);
-    if (inspected.code !== 0) return unavailable;
+    if (inspected.code !== 0) return caddyFactUnavailable('caddyContainer', inspected.errorCode);
     let raw: unknown;
     try { raw = JSON.parse(inspected.stdout); } catch { return unavailable; }
     const state = Array.isArray(raw) && raw.length === 1 ? object(raw[0]) : undefined;
@@ -334,9 +331,7 @@ function publishedEndpoints(value: unknown): NativeCaddyPublishedEndpoint[] | un
  * scope. No listener/admin observation can silently omit a retained permit. */
 export async function observeNativeCaddyFirewallBindings(input: ContainerInput & Readonly<{
     privateNetworks: readonly MachinePrivateNetworkObservationV1[];
-}>, options: NativeOptions = {}): Promise<Readonly<{ status: 'ready'; bindings: MachineFirewallTransitionBindingsV1 }>
-    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'private_scope_unenforceable';
-        details?: NativeCaddyFailureDetails }>> {
+}>, options: NativeOptions = {}): Promise<MachineCaddyFirewallObservationV1> {
     try {
         const container = await inspectOwnedContainer(input, nativeDocker(input, options));
         if (container.status === 'needs_setup') return { status: 'ready', bindings: { publicBindings: [] } };
@@ -462,6 +457,7 @@ export async function observeNativeCaddyContainer(input: ContainerInput & Readon
             adminSocketPath: socketPath, networkNames: Object.keys(container.networks), servers, containerOrigins,
             ...(input.privateNetworks ? { privateOrigins: servers.filter(server => !server.tls && server.automaticHttpsDisabled).flatMap(server =>
                 server.endpoints.flatMap(endpoint => input.privateNetworks!.filter(network => privateBinding
+                    && privateBinding.exposure.exposure === 'privateNetwork'
                     && endpoint.hostAddress === privateBinding.exposure.hostAddress && endpoint.hostPort === privateBinding.exposure.hostPort
                     && endpoint.containerPort === (privateBinding.exposure.containerPort ?? privateBinding.exposure.hostPort)
                     && network.state === 'ready' && privateProviderId(network) === privateBinding.exposure.providerId
@@ -657,22 +653,19 @@ export async function ensureNativeCaddyContainer(input: NativeCaddySetupInput, o
         running = container.running;
         networks = container.networks;
         await options.settleBindings?.();
-        let missingNetwork = false;
-        if (!running || !bindingsMatch) {
-            // State.Error describes the previous start, which may predate a
-            // network deletion. Compare configured names/IDs with live Docker
-            // inventory before starting or replacing the owned container.
-            const listed = await run(['network', 'ls', '--no-trunc', '--format', '{{.ID}} {{.Name}}']);
-            if (listed.code !== 0) return caddyFactUnavailable('caddyRoutedNetworks');
-            const existing = new Set(listed.stdout.trim().split(/\s+/));
-            const surviving = Object.fromEntries(Object.entries(networks).filter(([name, attachment]) => {
-                const networkId = object(attachment)?.NetworkID;
-                return existing.has(typeof networkId === 'string' && networkId ? networkId : name);
-            }));
-            missingNetwork = Object.keys(surviving).length !== Object.keys(networks).length
-                || typeof host.NetworkMode === 'string' && !existing.has(host.NetworkMode);
-            networks = surviving;
-        }
+        // Detaching a running Caddy before Environment teardown leaves its
+        // immutable NetworkMode behind. State.Error describes the previous
+        // start, so compare with live inventory on every admitted setup.
+        const listed = await run(['network', 'ls', '--no-trunc', '--format', '{{.ID}} {{.Name}}']);
+        if (listed.code !== 0) return caddyFactUnavailable('caddyRoutedNetworks');
+        const existing = new Set(listed.stdout.trim().split(/\s+/));
+        const surviving = Object.fromEntries(Object.entries(networks).filter(([name, attachment]) => {
+            const networkId = object(attachment)?.NetworkID;
+            return existing.has(typeof networkId === 'string' && networkId ? networkId : name);
+        }));
+        const missingNetwork = Object.keys(surviving).length !== Object.keys(networks).length
+            || typeof host.NetworkMode === 'string' && !existing.has(host.NetworkMode);
+        networks = surviving;
         if (!bindingsMatch || missingNetwork) {
             // Docker publications and the primary network mode are immutable.
             // A deleted primary network prevents even an attached replacement

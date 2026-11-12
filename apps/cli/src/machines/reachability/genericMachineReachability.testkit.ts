@@ -1356,7 +1356,7 @@ export async function createGenericComposedJourney(occurrence: 'external', manag
       dockerInventoryAvailable: options.dockerInventoryAvailable });
     await os.installGenericNetworkTool(hostNative.runNative, options.nativeClientInitiallyAvailable !== false);
     if (options.builtinTailscale) await os.installBuiltinTailscaleTool();
-    const elevation = createElevationProcessBoundary(hostNative.runNative);
+    const elevation = createElevationProcessBoundary(command => hostNative.runNative(command));
     disposals.push(() => elevation.dispose());
     const happyHomeDir = join(directory, 'private-home');
     await mkdir(happyHomeDir, { mode: 0o700 });

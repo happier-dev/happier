@@ -5,10 +5,13 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
 import { userInfo } from 'node:os';
 import { unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { nativeCaddyImage, nativeCaddyProfile, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import type { AccessProviderSelectionV1 } from '@happier-dev/plugin-sdk/access-providers';
 import { relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
 import { MachineReachabilityPostureV1Schema } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 
 const builtin = (withKey: boolean): AccessProviderSelectionV1 => ({
   provider: { kind: 'builtin', id: 'tailscale' }, config: {}, credentialRefs: withKey ? selection.credentialRefs : [],
@@ -35,6 +38,165 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     let prepared: Awaited<ReturnType<typeof fixture>>;
     beforeEach(async () => { prepared = await fixture(false); }, 120_000);
 
+  it('cancels an unanswered Network CHECK password at the existing operation owner before elevation', async () => {
+    const { f, api } = prepared;
+    let taskId: string | undefined;
+    let pending: ReturnType<typeof api.inspectOriginalCli> | undefined;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion,
+        metadata: { ...snapshot.metadata, adminAccess: { version: 1, mode: 'ask', administratorUsername: 'ops.admin' } } }))
+        .toMatchObject({ status: 'applied' });
+      pending = api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId });
+      let operationId: string | undefined;
+      await vi.waitFor(async () => {
+        const operations = await api.listOperations();
+        const held = operations.items.find(operation => operation.domainRef?.kind === 'machineSetup'
+          && operation.domainRef.setupTask?.prompt?.kind === 'sudo.password');
+        expect(held).toBeDefined();
+        operationId = held?.operationId;
+        if (held?.domainRef?.kind === 'machineSetup') taskId = held.domainRef.setupTask?.id;
+      });
+      const held = (await api.listOperations()).items.find(operation => operation.operationId === operationId);
+      expect(held).toMatchObject({ state: 'running', cancellation: 'supported' });
+      expect(f.elevation.launches).toEqual([]);
+      expect(await api.invoke(ACTION_OPERATION_RPC_METHODS_V1.cancel, { operationId })).toEqual({ kind: 'requested' });
+      expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
+      expect((await api.listOperations()).items.find(operation => operation.operationId === operationId))
+        .toMatchObject({ state: 'cancelled' });
+      expect(f.elevation.launches).toEqual([]);
+      expect(f.hostNative.firewallStages).toEqual([]);
+    } finally {
+      if (taskId) await getLiveSystemTasksRunnerAdapter().cancel({ taskId });
+      await pending;
+      await api.dispose();
+    }
+  });
+
+  it('preserves Ask administrator refusal and remedy in the Action and serialized Activity before a password', async () => {
+    const { f, api } = prepared;
+    const daemonUsername = f.identity.daemon.username;
+    // The OS fixture's account facts feed the observer captured by the real
+    // routes; choose an admissible daemon name independent of the test host.
+    f.identity.daemon.username = 'ops.admin';
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion,
+        metadata: { ...snapshot.metadata, adminAccess: { version: 1, mode: 'ask', administratorUsername: 'ops.admin' } } }))
+        .toMatchObject({ status: 'applied' });
+      const seenOperations = new Set((await api.listOperations()).items.map(operation => operation.operationId));
+      const result = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId });
+      expect(result).toMatchObject({ ok: false, errorCode: 'native_check_unavailable', details: {
+        failure: { kind: 'native_check_unavailable', requiredFact: 'distinctAdministrator', remedy: expect.any(String) },
+        remedy: expect.any(String),
+      } });
+      const operation = (await api.listOperations()).items.find(candidate => !seenOperations.has(candidate.operationId)
+        && candidate.actionId === 'machines.reachability.inspect');
+      expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'native_check_unavailable', details: {
+        failure: { kind: 'native_check_unavailable', requiredFact: 'distinctAdministrator', remedy: expect.any(String) },
+        remedy: expect.any(String),
+      } } });
+      expect(f.elevation.launches).toEqual([]);
+      expect(f.hostNative.firewallStages).toEqual([]);
+      expect(f.home.approvalRequests()).toEqual([]);
+      expect((await api.listOperations()).items.flatMap(candidate => candidate.domainRef?.kind === 'machineSetup'
+        ? [candidate.domainRef.setupTask?.prompt].filter(Boolean) : [])).toEqual([]);
+    } finally { f.identity.daemon.username = daemonUsername; await api.dispose(); }
+  });
+
+  it('preserves the native Caddy fact and recovery through one root CHECK when daemon Docker is denied', async () => {
+    const { f, api } = prepared;
+    try {
+      await f.hostNative.setNativeSshPort(22);
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
+      const posture = { ...current, revision: current.revision + 1,
+        management: { ...current.management, publicSsh: { kind: 'closed' as const },
+          independentRecovery: { kind: 'providerConsole' as const, evidence: 'userAttested' as const, confirmedAtMs: 1_793_610_000_000 } } };
+      const container = { Id: 'owned-caddy', Name: '/happier-caddy',
+        Config: { Image: nativeCaddyImage, Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'],
+          Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' } },
+        HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, Mounts: [], Binds: null,
+          PortBindings: { '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }] } },
+        State: { Running: false }, NetworkSettings: { Networks: {}, Ports: null } };
+      const runNative = f.hostNative.runNative;
+      const docker = vi.spyOn(f.hostNative, 'runNative').mockImplementation(async command => {
+        if (command.executable !== 'docker' || command.args[0] !== 'container') return runNative(command);
+        if (process.getuid?.() !== 0) return { code: 1, stdout: '', stderr: 'private Docker permission diagnostic' };
+        if (command.args[1] === 'ls') return { code: 0, stdout: JSON.stringify(container.Id), stderr: '' };
+        if (command.args[1] === 'inspect') return { code: 0, stdout: JSON.stringify([container]), stderr: '' };
+        throw new Error('Caddy review must not mutate Docker');
+      });
+      try {
+        const result = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+          change: { kind: 'posture', posture } });
+        expect(result.ok, JSON.stringify(result)).toBe(true);
+        const inspected = parseReachabilityInspectResult(result.ok ? result.result : result);
+        expect(inspected.plan?.basis.firewallTransition?.intent.caddy.publicBindings).toEqual([
+          { requirementId: nativeCaddyProfile.publicPortRequirements[0].id, exposure: 'public', protocol: 'tcp',
+            containerPort: 80, hostPort: 80, hostAddress: '0.0.0.0' },
+        ]);
+        expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).map(request => request.mode)).toEqual(['check']);
+        expect(api.client.getMachineMetadataSnapshot()).toEqual(snapshot);
+        expect(f.hostNative.firewallStages).toEqual([]);
+      } finally { docker.mockRestore(); }
+    } finally { await api.dispose(); }
+  });
+
+  it('preserves the native Caddy fact and recovery when SSH closure review cannot inventory Docker', async () => {
+    const { f, api } = prepared;
+    try {
+      await f.hostNative.setNativeSshPort(22);
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const current = MachineReachabilityPostureV1Schema.parse(snapshot.metadata.reachabilityPosture);
+      const posture = { ...current, revision: current.revision + 1,
+        management: { ...current.management, publicSsh: { kind: 'closed' as const },
+          independentRecovery: { kind: 'providerConsole' as const, evidence: 'userAttested' as const, confirmedAtMs: 1_793_610_000_000 } } };
+      const nativeFailures = [
+        { code: null, errorCode: 'ENOENT', stdout: '', stderr: '' },
+        { code: 1, stdout: '', stderr: 'private Docker permission diagnostic' },
+        { code: 1, stdout: '', stderr: 'private Docker transport diagnostic' },
+        { code: 0, stdout: 'private malformed Docker inventory', stderr: '' },
+      ] satisfies MachineSetupNativeCommandResult[];
+      let nativeFailure = nativeFailures[0]!;
+      const runNative = f.hostNative.runNative;
+      // Docker execution is the OS boundary. The CLI, Home admission, daemon
+      // route, task, producer and Action failure projection remain real.
+      const docker = vi.spyOn(f.hostNative, 'runNative').mockImplementation(command =>
+        command.executable === 'docker' && command.args[0] === 'container' && command.args[1] === 'ls'
+          ? Promise.resolve(nativeFailure) : runNative(command));
+      try {
+        const seenOperations = new Set((await api.listOperations()).items.map(operation => operation.operationId));
+        for (const failure of nativeFailures) {
+          nativeFailure = failure;
+          const result = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
+            change: { kind: 'posture', posture } });
+          expect(result).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable', effectAttempted: false,
+            details: { requiredFact: 'caddyContainer',
+              failure: { kind: 'native_observation_unavailable', requiredFact: 'caddyContainer',
+                ...(failure.errorCode ? { errorCode: failure.errorCode } : {}) },
+              remedy: expect.any(String) } });
+          expect(JSON.stringify(result)).not.toContain('private ');
+          const operation = (await api.listOperations()).items.find(candidate => !seenOperations.has(candidate.operationId)
+            && candidate.actionId === 'machines.reachability.inspect');
+          expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'required_fact_unavailable',
+            details: { requiredFact: 'caddyContainer', failure: { kind: 'native_observation_unavailable',
+              requiredFact: 'caddyContainer' }, remedy: expect.any(String) } } });
+          if (operation) seenOperations.add(operation.operationId);
+        }
+      } finally { docker.mockRestore(); }
+      expect(api.client.getMachineMetadataSnapshot()).toEqual(snapshot);
+      expect(f.home.approvalRequests()).toEqual([]);
+      expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).map(request => request.mode))
+        .toEqual(nativeFailures.map(() => 'check'));
+      expect(f.hostNative.firewallStages).toEqual([]);
+    } finally { await api.dispose(); }
+  });
+
   it.each([false, true])('inspects a Machine without a saved posture through its canonical Home identity (managed CLI installed: %s)', async installed => {
     const { f, api } = prepared;
     try {
@@ -54,10 +216,16 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
         const review = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
           change: { kind: 'posture', posture: { revision: 0,
             management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } } });
-        expect(review).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable', details: {
-          failure: { kind: 'native_check_unavailable', phase: 'check', requiredFact: expect.any(String) },
+        expect(review).toMatchObject({ ok: false, errorCode: 'native_check_unavailable', details: {
+          failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', phase: 'check', requiredFact: expect.any(String) },
           remedy: expect.stringContaining('machines.reachability.inspect'),
         } });
+        const operation = (await api.listOperations()).items.find(candidate => candidate.actionId === 'machines.reachability.inspect'
+          && candidate.state === 'failed');
+        expect(operation).toMatchObject({ state: 'failed', error: { errorCode: 'native_check_unavailable', details: {
+          failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: expect.any(String) },
+          remedy: expect.stringContaining('machines.reachability.inspect'),
+        } } });
       } else {
         expect(result).toMatchObject({ ok: false, errorCode: 'managed_cli_unavailable',
           details: { recovery: { kind: 'install_managed_cli', executablePath } } });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
 
 import {
   ACTION_OPERATION_RPC_METHODS_V1,
@@ -38,6 +39,39 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('retains the closed native Caddy observation through the public failed operation reader', () => {
+    const details = DeploymentDomainCaddyFailureDetailsV1Schema.parse({ requiredFact: 'caddyContainer',
+      failure: { kind: 'native_observation_unavailable', reason: 'required_fact_unavailable',
+        requiredFact: 'caddyContainer', errorCode: 'ENOENT' },
+      remedy: 'Restore access to the selected Docker engine and inspect owned Caddy.' });
+    const error = { errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', effectAttempted: false, details };
+    const wire = { ...baseSnapshot, actionId: 'machines.reachability.inspect', state: 'failed', startedAt: 110, settledAt: 120, error };
+    const projected = ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire })));
+    expect(projected).toMatchObject({ kind: 'found', operation: { error } });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'native_effect_failed' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...details, stderr: 'PRIVATE_NATIVE_OUTPUT' } }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...details, failure: { ...details.failure, errorCode: 'PRIVATE_NATIVE_OUTPUT' } } }).success).toBe(false);
+    const effectDetails = { ...details, failure: { ...details.failure, kind: 'native_effect_failed' } };
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: effectDetails }).success).toBe(true);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'native_effect_failed', details: effectDetails }).success).toBe(false);
+  });
+
+  it.each(['distinctAdministrator', 'administratorSudoToRoot'])('retains the closed Ask CHECK refusal for %s in serialized Activity', requiredFact => {
+    const failure = { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', phase: 'check', requiredFact,
+      remedy: 'Choose a distinct administrator with existing native sudo access.' };
+    const details = { failure, remedy: failure.remedy };
+    const error = { errorCode: failure.kind, error: failure.kind, details };
+    const wire = { ...baseSnapshot, actionId: 'machines.reachability.inspect', state: 'failed', startedAt: 110, settledAt: 120, error };
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire }))))
+      .toMatchObject({ kind: 'found', operation: { error } });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'native_effect_failed' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: failure.reason }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error,
+      details: { ...details, stderr: 'PRIVATE_NATIVE_OUTPUT' } }).success).toBe(false);
+  });
+
   it('retains content-free finite command failure facts in V2 and omits them for V1 readers', () => {
     const details = { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 };
     const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',

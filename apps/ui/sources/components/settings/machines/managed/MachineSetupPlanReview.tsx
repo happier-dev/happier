@@ -387,7 +387,7 @@ export function describeMachineSetupAllOffline(failure: ActionExecuteFailure, na
 export function describeMachineSetupPlanFailure(failure: ActionExecuteFailure, nameOf: (machineId: string) => string): string {
   const offline = describeMachineSetupAllOffline(failure, nameOf);
   if (offline) return offline;
-  const diagnostic = describeMachineNativeFailureCode(failure.errorCode)
+  const diagnostic = describeMachineNativeFailureCode(failure.errorCode, failure.details)
     ?? describeManagedOperationDiagnostic({ errorCode: failure.errorCode, error: failure.error });
   const details = failure.details;
   const target = details && typeof details === 'object' && 'target' in details ? details.target : undefined;
