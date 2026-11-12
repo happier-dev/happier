@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import {
   SkillListItemV1Schema,
   type SkillListItemV1,
@@ -55,6 +56,21 @@ function skill(
 }
 
 describe('buildStoreUpdates', () => {
+  it('projects supplied app observations into the existing Environment review without body reads', () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const row: InstalledRow = { kind: 'app', key: 'app:env', scope,
+      native: { environment: detail.environment, title: detail.content.name }, home: '/environment', projectKeys: null };
+    const results: RegistryUpdateCheckResultV1['results'] = [{ kind: 'app', key: detail.environment.id,
+      upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }];
+    const view = buildStoreUpdates([row], results, { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([row]) });
+    expect(view.count).toBe(1);
+    expect(view.sections).toMatchObject([{ kind: 'app', entries: [{ state: 'available', to: '2.0',
+      review: { kind: 'environmentTemplateUpdate', href: row.home } }] }]);
+    expect(buildStoreUpdates([{ ...row, native: { ...row.native, environment: { ...row.native.environment, revision: row.native.environment.revision + 1 } } }],
+      results, { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([row]) }).sections).toEqual([]);
+    expect(buildStoreUpdates([row], [{ ...results[0]!, upstream: { state: 'unchecked', reason: { state: 'unreachable' } } }])
+      .sections[0]?.entries[0]).toMatchObject({ state: 'unchecked', reason: { state: 'unreachable' } });
+  });
   it('keeps browser extension updates profile-qualified and supersedes an applied version without losing another profile', () => {
     const extensionId = 'a'.repeat(32);
     const browserRow = (profileId: string, version: string, current = false, catalog = true, machineId = 'machine-a', unpacked = false): InstalledRow => ({

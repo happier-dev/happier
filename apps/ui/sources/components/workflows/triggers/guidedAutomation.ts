@@ -74,14 +74,17 @@ export function guidedApprovalProfileId(draft: GuidedAutomationDraft): string {
 
 export type GuidedStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
 
-const STARTER_EVENT: Readonly<Partial<Record<GuidedStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+type GuidedEventStarter = GuidedStarter | 'healthRecovered';
+
+const STARTER_EVENT: Readonly<Partial<Record<GuidedEventStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
   healthFailed: HEALTH_CHECK_EVENT_REFS_V1.failed,
+  healthRecovered: HEALTH_CHECK_EVENT_REFS_V1.recovered,
   deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
 };
 
 /** The page supplies its subject; the existing contributed setup owns configuring the source. */
 export function guidedStarterEventSeed(
-  starter: GuidedStarter | null,
+  starter: GuidedEventStarter | null,
   params: Readonly<{
     subject?: TriggerSubject;
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
@@ -96,12 +99,13 @@ export function guidedStarterEventSeed(
     const { serverId, environmentId } = params.deploymentEnvironment;
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
   }
-  if (starter === 'healthFailed' && params.subject?.kind === 'environment') {
+  const health = starter === 'healthFailed' || starter === 'healthRecovered';
+  if (health && params.subject?.kind === 'environment') {
     const subject = { kind: 'environment' as const, environmentId: params.subject.environmentId };
     return { eventRef, ...observer, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject),
       setupInput: { v: 1, subject, ...(params.domain ? { domain: params.domain } : {}) } };
   }
-  if (starter === 'healthFailed' && params.subject?.kind === 'service') {
+  if (health && params.subject?.kind === 'service') {
     const subject = { kind: 'machineService' as const,
       machineId: params.subject.machineId, serviceId: params.subject.serviceId };
     return { eventRef, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject), setupInput: { v: 1, subject } };
@@ -110,7 +114,7 @@ export function guidedStarterEventSeed(
 }
 
 export function guidedStarterDraft(
-  starter: GuidedStarter | null,
+  starter: GuidedEventStarter | null,
   selection?: WorkflowSessionAuthoringSelection,
 ): GuidedAutomationDraft {
   const base = {

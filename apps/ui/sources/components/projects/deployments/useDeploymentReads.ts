@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { DeploymentUiRollbackInput } from './deploymentActions';
 import type { DeploymentEnvironmentCollectionV1, DeploymentPreMigrationBackupV1 } from '@happier-dev/deployment-protocol/v1';
 import { useRegistryAppUpdate } from '@/registries/useRegistryUpdateCheck';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
@@ -270,7 +271,36 @@ export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | nu
     [value, detail, runtime, history.snapshot]);
     const snapshot = React.useMemo(() => !value ? read.snapshot : { ...read.snapshot, value: { ...value,
         facts: selection ? { ...value.facts, ...selection } : value.facts } }, [read.snapshot, value, selection]);
-    return { ...read, snapshot, healthFeed: detail?.healthFeed ?? null,
+    return { ...read, snapshot, retainedHistory: history.snapshot, environmentSnapshot: environment.snapshot, healthFeed: detail?.healthFeed ?? null,
         refresh: React.useCallback(() => Promise.all([read.refresh(), environment.refresh(), history.refresh()]).then(() => {}),
             [read.refresh, environment.refresh, history.refresh]) };
+}
+
+export type EnvironmentRollbackMenuResult =
+    | Readonly<{ status: 'idle' | 'loading' | 'empty' }>
+    | Readonly<{ status: 'unavailable'; reason: string; retryable: boolean }>
+    | Readonly<{ status: 'ready'; target: NonNullable<NonNullable<ReturnType<typeof useDeploymentReceipt>['snapshot']['value']>['facts']['retainedRollbackTarget']>;
+        input: DeploymentUiRollbackInput }>;
+
+/** Menus share the receipt owner's retained target. Closed menus acquire no record or history leases.
+ * Submit the returned operands through the existing rollback Action/review/receipt lifecycle. */
+export function useEnvironmentRollbackMenu(controller: DeploymentReadControllerV1 | null, environmentId: string | null,
+    receiptId: string | null, open: boolean) {
+    const read = useDeploymentReceipt(open ? controller : null, open ? environmentId : null, open ? receiptId : null,
+        open ? { mounted: true, visible: true, focused: true } : INACTIVE);
+    let result: EnvironmentRollbackMenuResult;
+    const failed = [read.snapshot, read.environmentSnapshot, read.retainedHistory].find(snapshot => snapshot.status === 'unavailable');
+    if (!open) result = { status: 'idle' };
+    else if (!environmentId || !receiptId) result = { status: 'empty' };
+    else if (failed) result = { status: 'unavailable', reason: failed.failure?.code ?? 'deployment_unavailable',
+        retryable: failed.failure?.retryable ?? false };
+    else if (read.snapshot.status !== 'ready' || read.environmentSnapshot.status !== 'ready' || read.retainedHistory.status !== 'ready') result = { status: 'loading' };
+    else {
+        const facts = read.snapshot.value?.facts;
+        const target = facts?.retainedRollbackTarget;
+        result = target ? { status: 'ready', target, input: { environmentId, deploymentId: target.deploymentId } }
+            : facts?.retainedPreviousCount === null ? { status: 'unavailable', reason: 'deployment_content_unavailable', retryable: true }
+                : { status: 'empty' };
+    }
+    return { result, retry: read.refresh };
 }

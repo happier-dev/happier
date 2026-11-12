@@ -16,6 +16,7 @@ import type { StorePluginUpdateEntry } from './useStorePluginUpdates';
 
 /** The kinds whose owners record where they came from and what that source says now (the registry trackers). */
 export const STORE_UPDATE_KINDS = [
+  'app',
   'mcpServer',
   'skill',
   'agent',
@@ -40,6 +41,8 @@ export type StoreUpdateEntry = Readonly<{
   to: string | null;
   /** The native update Action binds the exact version selected by the registry check. */
   apply?: Extract<BrowserExtensionActionIntent, { actionId: 'browser.extensions.update' }>;
+  /** App updates open the Environment's existing template review; this is navigation, never an apply operation. */
+  review?: Readonly<{ kind: 'environmentTemplateUpdate'; href: string }>;
 }>;
 
 export type StoreUpdatesView = Readonly<{
@@ -69,6 +72,9 @@ type Tracked = Readonly<{
 /** The owner's own record of where an installed thing came from; null when nothing upstream can publish a newer one. */
 function readTracked(row: InstalledRow): Tracked | null {
   switch (row.kind) {
+    case 'app':
+      return { kind: 'app', key: row.native.environment.id, upstream: undefined, current: null, modified: false,
+        basis: JSON.stringify([row.native.environment.id, row.native.environment.revision]) };
     case 'browserExtension': {
       if (row.subject !== 'extension') return null;
       const extension = row.native.extension;
@@ -180,6 +186,8 @@ export function buildStoreUpdates(
       }
       continue;
     }
+    // App provenance stays private to the Environment. Only its tracker's supplied observations establish tracking.
+    if (row.kind === 'app' && !checked.has(`app:${row.native.environment.id}`)) continue;
     const item = readTracked(row);
     if (!item) continue;
     tracked += 1;
@@ -229,6 +237,7 @@ export function buildStoreUpdates(
       entry = { key: row.key, row, state: 'current', from, to: null };
     }
     if (!entry) continue;
+    if (row.kind === 'app') entry = { ...entry, review: { kind: 'environmentTemplateUpdate', href: row.home } };
     const list = byKind.get(item.kind);
     if (list) list.push(entry);
     else byKind.set(item.kind, [entry]);

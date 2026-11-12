@@ -47,6 +47,7 @@ import { submitBrowserExtensionMutation } from '../submitBrowserExtensionMutatio
 type Href = ManagedInventoryRowPresentation['home']['href'];
 
 const KIND_TITLE: Readonly<Record<StoreUpdateKind, () => string>> = {
+  app: () => t('capabilities.store.kinds.app.title'),
   mcpServer: () => t('capabilities.store.kinds.mcpServer.title'),
   skill: () => t('capabilities.store.kinds.skill.title'),
   agent: () => t('capabilities.store.kinds.agent.title'),
@@ -122,8 +123,9 @@ export function StoreUpdatesScreen(): React.ReactNode {
   const loading =
     view.sections.length === 0 &&
     [mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
-  const coverageFamilies = STORE_UPDATE_KINDS.map(kind => ({ kind, result: families[kind] }));
-  const unresolved = STORE_UPDATE_KINDS.flatMap(kind => {
+  const coverageKinds = STORE_UPDATE_KINDS.filter((kind): kind is keyof typeof families => kind in families);
+  const coverageFamilies = coverageKinds.map(kind => ({ kind, result: families[kind] }));
+  const unresolved = coverageKinds.flatMap(kind => {
     const family = families[kind];
     return typeof family.coverage === 'object' ? [{ kind, family, coverage: family.coverage }] : [];
   });

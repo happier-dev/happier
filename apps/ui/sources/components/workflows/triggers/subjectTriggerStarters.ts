@@ -1,7 +1,8 @@
 import type { IconName } from '@/components/ui/icons/Icon';
 
 import type { TriggerSubject } from './accountTriggerRows';
-import type { GuidedStarter } from './guidedAutomation';
+import { guidedStarterDraft, guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
+import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 
 /**
  * A subject page's suggested entries: a guided automation starter, or `addCheck`, which opens the trigger editor at
@@ -39,3 +40,18 @@ export const SUBJECT_TRIGGER_STARTER_GLYPH: Readonly<Record<SubjectTriggerStarte
   deploymentFailed: 'rocket-launch',
   nightly: 'moon',
 };
+
+export const SUBJECT_OPERATION_STARTERS = ['deploymentFailed', 'healthRecovered', 'restoreDrill'] as const;
+export type SubjectOperationStarter = typeof SUBJECT_OPERATION_STARTERS[number];
+
+/** Authoring only: the open Workflows editor owns the When catalog, configuration and eventual Action.
+ * The drill keeps its existing disabled schedule and required isolated-destination inputs. */
+export function buildSubjectOperationStarter(starter: SubjectOperationStarter,
+    context: Parameters<typeof guidedStarterEventSeed>[1]) {
+    if (starter === 'restoreDrill') {
+        const example = getWorkflowStarterExamplesV1().find(example => example.key === 'restore-drill');
+        if (!example) throw new Error('Missing built-in restore drill');
+        return { kind: 'workflow' as const, example };
+    }
+    return { kind: 'guided' as const, draft: guidedStarterDraft(starter), eventSeed: guidedStarterEventSeed(starter, context) };
+}

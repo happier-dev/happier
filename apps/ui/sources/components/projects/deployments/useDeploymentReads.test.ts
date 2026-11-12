@@ -6,7 +6,7 @@ import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
-import { useDeploymentCollection, useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt, useSessionDeploymentChip } from './useDeploymentReads';
+import { useEnvironmentRollbackMenu, useDeploymentCollection, useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentHistory, useDeploymentReceipt, useSessionDeploymentChip } from './useDeploymentReads';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 
@@ -30,6 +30,43 @@ function createBoundary() {
 }
 
 describe('deployment React demand', () => {
+    it('settles an Environment read refusal with its cause and recovers through the same menu retry', async () => {
+        const boundary = createBoundary();
+        let refused = true;
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
+            readEnvironment: async () => refused
+                ? { ok: false, failure: { code: 'deployment_access_denied', retryable: false } }
+                : { ok: true, value: boundary.detail },
+        } });
+        const hook = await renderHook(() => useEnvironmentRollbackMenu(controller, boundary.row.id, boundary.receipt.id, true));
+        try {
+            await flushHookEffects();
+            expect(hook.getCurrent().result).toMatchObject({ status: 'unavailable', reason: 'deployment_access_denied', retryable: false });
+            refused = false;
+            await act(async () => { await hook.getCurrent().retry(); });
+            await flushHookEffects();
+            expect(hook.getCurrent().result.status).toBe('empty');
+        } finally { await hook.unmount(); controller.retire(); }
+    });
+    it('reads rollback facts only while the menu is open and leaves eligibility with the receipt owner', async () => {
+        const boundary = createBoundary();
+        const controller = createDeploymentReadControllerV1({ scope, transport: boundary.transport });
+        let open = false;
+        const hook = await renderHook(() => useEnvironmentRollbackMenu(controller, boundary.row.id, boundary.receipt.id, open));
+        try {
+            await flushHookEffects();
+            expect(boundary.reads).toBe(0);
+            expect(hook.getCurrent().result.status).toBe('idle');
+            open = true; await hook.rerender(); await flushHookEffects();
+            expect(boundary.reads).toBe(3);
+            expect(hook.getCurrent().result.status).toBe('empty');
+            open = false; await hook.rerender(); await flushHookEffects();
+            const closedReads = boundary.reads;
+            await controller.invalidate({ environmentId: boundary.row.id });
+            await flushHookEffects();
+            expect(boundary.reads).toBe(closedReads);
+        } finally { await hook.unmount(); controller.retire(); }
+    });
     it('keeps partial empty Domain and receipt pages unavailable and predecessor history unknown', async () => {
         const boundary = createBoundary();
         const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
@@ -68,7 +105,8 @@ describe('deployment React demand', () => {
                 value: id === current.deployment.id ? current : previous }; },
         } });
         const page = await renderHook(() => ({ receipt: useDeploymentReceipt(controller, boundary.row.id, current.deployment.id, shown),
-            history: useDeploymentHistory(controller, boundary.row.id, shown) }));
+            history: useDeploymentHistory(controller, boundary.row.id, shown),
+            menu: useEnvironmentRollbackMenu(controller, boundary.row.id, current.deployment.id, true) }));
         try {
             expect(page.getCurrent().receipt.snapshot.value?.facts).toMatchObject({ previousVersion: undefined,
                 retainedPreviousCount: null, retainedRollbackTarget: null });
@@ -79,10 +117,13 @@ describe('deployment React demand', () => {
                 previousVersion: { deploymentId: 'previous' }, retainedPreviousCount: 1,
                 retainedRollbackTarget: { deploymentId: 'previous' },
             });
+            expect(page.getCurrent().menu.result).toMatchObject({ status: 'ready',
+                target: { deploymentId: 'previous' }, input: { environmentId: boundary.row.id, deploymentId: 'previous' } });
             expect(historyReads).toBe(1);
             expect(receiptReads).toEqual(['deployment-a']);
             failed = true;
             await act(async () => { await page.getCurrent().history.refresh(); });
+            expect(page.getCurrent().menu.result).toMatchObject({ status: 'unavailable', reason: 'deployment_read_failed', retryable: true });
             expect(page.getCurrent().receipt.snapshot.value?.facts).toMatchObject({ previousVersion: undefined,
                 retainedPreviousCount: null, retainedRollbackTarget: null });
         } finally { await page.unmount(); controller.retire(); }
