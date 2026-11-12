@@ -56,7 +56,7 @@ function service(name: string, overrides: Partial<MachineServiceRowV1> = {}) {
     return MachineServiceRowV1Schema.parse({
         serviceId: name.toLowerCase(), name, authority: 'machine', lifecyclePurpose: 'development',
         generation: 'generation-a', state: 'running', watchId: `watch-${name}`, watchRevision: 'revision-a',
-        capabilities: { start: true, stop: true, restart: true, logs: true, accounting: true },
+        capabilities: { exec: true, start: true, stop: true, restart: true, logs: true, accounting: true },
         ...overrides,
     });
 }
@@ -397,7 +397,8 @@ describe('MachineServicesTab rendered production wiring', () => {
         await vi.waitFor(() => expect(machineTransport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_SERVICE_DETAIL)).toBe(true));
         await vi.waitFor(() => {
             for (const id of ['machine-service-command', 'machine-service-shell', 'machine-service-unwatch']) {
-                const supportedTarget = id === 'machine-service-unwatch' ? target === 'watched' : target === 'deployment';
+                // Command and Shell follow the row's admitted exec capability, watched or deployed alike.
+                const supportedTarget = id === 'machine-service-unwatch' ? target === 'watched' : true;
                 if (role === 'manage' && supportedTarget) expect(screen.findHostByTestId(id), id).not.toBeNull();
                 else expect(screen.findHostByTestId(id), id).toBeNull();
             }
@@ -409,11 +410,12 @@ describe('MachineServicesTab rendered production wiring', () => {
             || request.path === '/v1/actions/machines.terminal.open' || request.path === '/v1/actions/machines.services.unwatch')).toBe(false);
     });
 
-    it.each(['offline', 'missing-generation', 'not-watched'] as const)('keeps Service entries bound to the available operands (%s)', async condition => {
+    it.each(['offline', 'missing-generation', 'not-watched', 'watched', 'no-exec'] as const)('keeps Service entries bound to the available operands (%s)', async condition => {
         await shareWith('manage');
         const row = service('Web', condition === 'missing-generation' ? { generation: null }
             : condition === 'not-watched' ? { authority: 'project', environmentId: 'environment-staging',
-                watchId: undefined, watchRevision: undefined } : {});
+                watchId: undefined, watchRevision: undefined }
+            : condition === 'no-exec' ? { capabilities: { start: true, stop: true, restart: true, logs: true, accounting: true } } : {});
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
         machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
         const { screen } = await mount({ online: condition !== 'offline',
@@ -425,8 +427,9 @@ describe('MachineServicesTab rendered production wiring', () => {
         }
         await screen.pressByTestIdAsync('machine-service-more');
         await vi.waitFor(() => {
-            expect(screen.findHostByTestId('machine-service-command') !== null).toBe(condition === 'not-watched');
-            expect(screen.findHostByTestId('machine-service-shell') !== null).toBe(condition === 'not-watched');
+            const exec = condition === 'not-watched' || condition === 'watched';
+            expect(screen.findHostByTestId('machine-service-command') !== null).toBe(exec);
+            expect(screen.findHostByTestId('machine-service-shell') !== null).toBe(exec);
             expect(screen.findHostByTestId('machine-service-unwatch') !== null).toBe(condition !== 'not-watched');
         });
     });
@@ -518,6 +521,60 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(config?.props).toMatchObject({ serverId, machineId,
             launch: { kind: 'service_shell', serviceId: row.serviceId, expectedGeneration: row.generation } });
         expect(config?.props).not.toHaveProperty('machineShell');
+    });
+
+    it('runs a command and opens a shell in the chosen member of a watched Compose project', async () => {
+        await shareWith('manage');
+        const row = service('Shop', { native: { phase: 'running', readiness: 'ready', composeServices: ['web', 'worker'] } });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        const commands: unknown[] = [];
+        answerAction('machines.services.exec', envelope => {
+            commands.push(envelope.input);
+            return { kind: 'outcome_unknown' };
+        });
+        machineTransport.rpc.mockImplementation(async ({ method, payload }) => {
+            if (method === RPC_METHODS.MACHINES_SERVICE_EXEC) {
+                commands.push(payload);
+                return { kind: 'outcome_unknown' };
+            }
+            return { kind: 'service', service: row };
+        });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-command')).not.toBeNull());
+        await screen.pressByTestIdAsync('machine-service-command');
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props).toMatchObject({
+            target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: row.generation }, services: ['web', 'worker'],
+        }));
+        const sheetProps = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props as ServiceCommandSheetProps;
+        const { ServiceCommandSheet } = await import('./command/ServiceCommandSheet');
+        const commandScreen = await renderScreen(<ServiceCommandSheet {...sheetProps} />);
+        try {
+            // The picker offers exactly the watch's own members.
+            expect(commandScreen.findHostByTestId('service-command.service:web')).not.toBeNull();
+            expect(commandScreen.findHostByTestId('service-command.service:worker')).not.toBeNull();
+            await commandScreen.pressByTestIdAsync('service-command.service:worker');
+            commandScreen.changeTextByTestId('service-command.input', 'ls');
+            await vi.waitFor(() => expect(commandScreen.findHostByTestId('service-command.run')?.props.accessibilityState?.disabled).toBe(false));
+            await commandScreen.pressByTestIdAsync('service-command.run');
+            await vi.waitFor(() => expect(commands).toEqual([{ serverId, machineId,
+                target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: row.generation, service: 'worker' },
+                mode: 'exec', argv: ['ls'] }]));
+        } finally { await commandScreen.unmount(); }
+
+        await screen.pressByTestIdAsync('machine-service-more');
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-shell')).not.toBeNull());
+        // Several members: the Shell row's submenu (the menu owner's chooser) lists exactly the watch's members.
+        // The submenu's measured anchor is a platform boundary, so the menu's own selection contract is driven.
+        const menu = screen.tree.find(node => Array.isArray(node.props.items)
+            && node.props.items.some((item: { id: string }) => item.id === 'shell') && typeof node.props.onSelect === 'function');
+        const shellItem = menu.props.items.find((item: { id: string }) => item.id === 'shell');
+        expect(shellItem.submenu.items.map((item: { id: string; title: string }) => [item.id, item.title]))
+            .toEqual([['shell:web', 'web'], ['shell:worker', 'worker']]);
+        await act(async () => { menu.props.onSelect('shell:worker'); });
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props).toMatchObject({ serverId, machineId,
+            launch: { kind: 'service_shell', serviceId: row.serviceId, expectedGeneration: row.generation, service: 'worker' } }));
     });
 
     it('stops an Environment service through the existing Action and follows its pushed stopped state', async () => {

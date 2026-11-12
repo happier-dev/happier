@@ -9,11 +9,13 @@ import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { NativeLogLines } from '@/components/machines/services/MachineServiceLogs';
 import { MachineSetupReviewFooter } from '@/components/settings/machines/managed/MachineSetupPlanReview';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -40,6 +42,11 @@ export type ServiceCommandSheetProps = Readonly<{
   /** Who keeps it ("shop · Production"); null for a service no Environment deploys. */
   place: string | null;
   target: ServiceCommandTarget;
+  /**
+   * A project-level watch's own Compose members when it has several (the set the exec owner validates against):
+   * the person picks where the command runs. Absent or empty when the target is already one container.
+   */
+  services?: readonly string[];
   /** The Action front door; tests build one over the real executor with only the Machine RPC substituted. */
   execute?: FrontDoorActionExecute;
 }>;
@@ -63,10 +70,17 @@ function ServiceCommandModal(
 export function ServiceCommandSheet(
   props: ServiceCommandSheetProps & Partial<CustomModalInjectedProps>,
 ) {
+  const services = props.services ?? NO_SERVICES;
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  // The first member leads until the person picks; a member that left the watch falls back to it.
+  const member = services.length === 0 ? null : chosen !== null && services.includes(chosen) ? chosen : services[0]!;
+  const target = React.useMemo((): ServiceCommandTarget => member === null ? props.target : { ...props.target, service: member },
+    [member, props.target]);
+  const where = member ?? props.serviceName;
   const { state, run } = useServiceCommand({
     serverId: props.serverId,
     machineId: props.machineId,
-    target: props.target,
+    target,
     ...(props.execute ? { execute: props.execute } : {}),
   });
   const [text, setText] = React.useState('');
@@ -150,18 +164,22 @@ onPress: press,
             />
           }
         />
-        <Item
-          testID="service-command.where"
-          title={t('machineServices.command.whereTitle')}
-          subtitle={t('machineServices.command.whereRunning', { service: props.serviceName })}
-          subtitleLines={0}
-          showChevron={false}
-        />
+        {member === null ? (
+          <Item
+            testID="service-command.where"
+            title={t('machineServices.command.whereTitle')}
+            subtitle={t('machineServices.command.whereRunning', { service: where })}
+            subtitleLines={0}
+            showChevron={false}
+          />
+        ) : (
+          <ServiceMemberChoice services={services} value={member} disabled={running} onChange={setChosen} />
+        )}
       </ItemGroup>
       <ServiceCommandResult
         state={state}
         serverId={props.serverId}
-        serviceName={props.serviceName}
+        serviceName={where}
         machineName={props.machineName}
         onClose={() => onClose?.()}
       />
@@ -169,6 +187,41 @@ onPress: press,
       {props.setChrome ? null : footer}
     </View>
     </ListPresentationProvider>
+  );
+}
+
+/** Where it runs, for a watch with several members: segmented for 2–4, the field select beyond (control table). */
+function ServiceMemberChoice(
+  props: Readonly<{ services: readonly string[]; value: string; disabled: boolean; onChange: (next: string) => void }>,
+) {
+  const [open, setOpen] = React.useState(false);
+  const title = t('machineServices.command.whereTitle');
+  const subtitle = t('machineServices.command.whereRunning', { service: props.value });
+  const options = React.useMemo(() => props.services.map(service => ({ id: service, label: service })), [props.services]);
+  if (options.length <= 4) {
+    return (
+      <SegmentedChoiceItem
+        testID="service-command.where"
+        testIDPrefix="service-command.service"
+        title={title}
+        subtitle={subtitle}
+        options={options}
+        value={props.value}
+        disabled={props.disabled}
+        onChange={props.onChange}
+      />
+    );
+  }
+  return (
+    <DropdownMenu
+      testID="service-command.where"
+      open={open}
+      onOpenChange={setOpen}
+      items={options.map(option => ({ id: option.id, testID: `service-command.service:${option.id}`, title: option.label }))}
+      selectedId={props.value}
+      onSelect={(id) => { setOpen(false); props.onChange(id); }}
+      itemTrigger={{ title, subtitle, showSelectedSubtitle: false, itemProps: { disabled: props.disabled } }}
+    />
   );
 }
 
@@ -317,6 +370,7 @@ function CommandOutput(
 }
 
 const NO_RANGES: readonly never[] = [];
+const NO_SERVICES: readonly string[] = Object.freeze([]);
 const noRanges = () => NO_RANGES;
 
 /** The owner's refusal in words; the code stays in Details. */
@@ -324,6 +378,9 @@ function failureReason(code: string, service: string, machine: string): string {
   switch (code) {
     case 'service_admission_unavailable':
     case 'service_operation_unavailable':
+    // The chosen member stopped running or left the watch after the page read it.
+    case 'service_selection_invalid':
+    case 'compose_service_unavailable':
     case 'unsupported_action':
       return t('machineServices.command.reason.unavailable', {
         service,

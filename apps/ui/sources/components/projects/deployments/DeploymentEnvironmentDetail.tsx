@@ -1928,7 +1928,8 @@ function EnvironmentServiceRow(
       }
     });
   } : null;
-  const runCommand = row && generation && machineId ? () => showServiceCommandSheet({
+  // The row's admitted exec capability decides, the same fact the Machine service page reads.
+  const runCommand = row?.capabilities.exec === true && generation && machineId ? () => showServiceCommandSheet({
     serverId: props.serverId, machineId, machineName: props.machineName, serviceName: service.name, place: props.place,
     target: { kind: 'current', serviceId: row.serviceId, expectedGeneration: generation },
   }) : null;

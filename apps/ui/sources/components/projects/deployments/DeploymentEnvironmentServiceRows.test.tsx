@@ -277,6 +277,7 @@ describe('Environment service row ⋯ (P1 §3)', () => {
         },
       },
       capabilities: {
+        exec: true,
         start: true,
         stop: true,
         restart: true,

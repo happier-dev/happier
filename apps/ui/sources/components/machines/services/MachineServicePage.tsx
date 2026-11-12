@@ -188,12 +188,14 @@ function MachineServicePresent(props: Readonly<{
   const menuStart = !props.offline && offered.start && visible !== 'start';
   const menuStop = !props.offline && offered.stop;
   const serviceActions = useMachineServiceActions({ serverId: props.serverId, machineId: props.machineId,
-    machineName, service, environmentId, offline: props.offline });
-  // Run a command (P30 §463) reaches a deployed service's own container at the generation the page shows.
+    machineName, service, offline: props.offline });
+  // Run a command (P30 §463) reaches the service's own container at the generation the page shows; a watched
+  // Compose project with several members asks which one.
   const generation = service.generation;
   const runCommand = !serviceActions.command || generation === null ? null : () => showServiceCommandSheet({
     serverId: props.serverId, machineId: props.machineId, machineName, serviceName,
-    place: header ? keeper : null, target: { kind: 'current', serviceId: service.serviceId, expectedGeneration: generation } });
+    place: header ? keeper : null, target: { kind: 'current', serviceId: service.serviceId, expectedGeneration: generation },
+    ...(serviceActions.members.length > 0 ? { services: serviceActions.members } : {}) });
   const expectedStop = machineServiceExpectedStop(service);
   const facts = React.useMemo(() => serviceFacts(service, detail, expectedStop), [service, detail, expectedStop]);
   // A process start proves running since; only a health transition proves healthy since.
@@ -279,6 +281,7 @@ function MachineServicePresent(props: Readonly<{
                 start={menuStart}
                 onRunCommand={runCommand}
                 onOpenShell={serviceActions.shell}
+                shellMembers={serviceActions.members}
                 onUnwatch={serviceActions.unwatch}
                 disabled={control.pending !== null || serviceActions.pending}
                 onRun={control.run}
@@ -395,7 +398,9 @@ function ServiceMoreMenu(props: Readonly<{
   onRun: (operation: 'stop' | 'start') => void;
   /** Run a command…, for a deployed service; null where the service has no container of its own to run in. */
   onRunCommand: (() => void) | null;
-  onOpenShell: (() => void) | null;
+  /** Opens the shell; with several Compose members, in the one the person picks from the row's submenu. */
+  onOpenShell: ((member?: string) => void) | null;
+  shellMembers: readonly string[];
   onUnwatch: (() => Promise<void>) | null;
 }>) {
   const { theme } = useUnistyles();
@@ -405,14 +410,17 @@ function ServiceMoreMenu(props: Readonly<{
       subtitle: t('machineServices.control.runCommandDetail'),
       icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.onOpenShell ? [{ id: 'shell', testID: 'machine-service-shell', title: t('machineServices.actions.shell'),
-      icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} /> }] : []),
+      icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
+      ...(props.shellMembers.length > 0 ? { submenu: {
+        items: props.shellMembers.map(member => ({ id: `shell:${member}`, testID: `machine-service-shell:${member}`, title: member })),
+      } } : {}) }] : []),
     ...(props.onUnwatch ? [{ id: 'unwatch', testID: 'machine-service-unwatch', title: t('machineServices.actions.unwatch'),
       icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.start ? [{ id: 'start', testID: 'machine-service-start', title: t('machineServices.control.start'),
       icon: <Icon name="play" size={16} color={theme.colors.text.secondary} /> }] : []),
     ...(props.stop ? [{ id: 'stop', testID: 'machine-service-stop', title: t('machineServices.control.stop'),
       icon: <Icon name="stop" size={16} color={theme.colors.text.secondary} /> }] : []),
-  ], [props.onRunCommand, props.onOpenShell, props.onUnwatch, props.start, props.stop, theme.colors.text.secondary]);
+  ], [props.onRunCommand, props.onOpenShell, props.shellMembers, props.onUnwatch, props.start, props.stop, theme.colors.text.secondary]);
   return (
     <DropdownMenu
       open={open}
@@ -424,6 +432,7 @@ function ServiceMoreMenu(props: Readonly<{
       onSelect={(id) => {
         if (id === 'command') props.onRunCommand?.();
         else if (id === 'shell') props.onOpenShell?.();
+        else if (id.startsWith('shell:')) props.onOpenShell?.(id.slice('shell:'.length));
         else if (id === 'unwatch' && props.onUnwatch) fireAndForget(props.onUnwatch(), { tag: 'MachineServices.unwatch' });
         else if (id === 'stop' || id === 'start') props.onRun(id);
       }}
