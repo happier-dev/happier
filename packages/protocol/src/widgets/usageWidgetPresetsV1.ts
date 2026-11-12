@@ -39,10 +39,10 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
         w('usage_capacity', 'medium'), w('usage_projections', 'full'), w('usage_coach', 'full'),
         w('usage_efficiency', 'medium'), w('usage_rhythm', 'medium')] }],
     // Cost facts holds the money facts and the prices line behind them, so it takes the full band. The daily
-    // cost bars sit beside Breakdowns over Efficiency (lab d2views-COST 2-up), so the chart's plot takes that
-    // column's height rather than a short list's; Plan fit and Outcomes follow as their own bands.
+    // cost bars sit beside the agents' costs (lab d2views-COST 2-up), two lists of the same height; Efficiency is
+    // one compact band, as on Usage, so no column runs past the chart beside it. Plan fit and Outcomes follow.
     costs: [{ width: 'full', widgets: [w('usage_cost_facts', 'full', { metric: 'cost' }), w('usage_daily', 'tall', { metric: 'cost' }),
-        w('usage_breakdowns', 'medium', { metric: 'cost', breakdown: ['agent'] }), w('usage_efficiency', 'medium', { metric: 'cost' }),
+        w('usage_breakdowns', 'tall', { metric: 'cost', breakdown: ['agent'] }), w('usage_efficiency', 'wide', { metric: 'cost' }),
         w('usage_plan_fit', 'full', { metric: 'cost' }), w('usage_outcomes', 'full', { metric: 'cost' })] }],
     work: [{ width: 'full', widgets: [w('usage_project_ledger', 'large'), w('usage_session_value', 'tall'), w('usage_outcomes', 'tall')] }],
     // Daily beside the model breakdown; Efficiency is one compact band, so a period without a basis
@@ -55,10 +55,11 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
         w('usage_plan_fit', 'medium')] }],
     coach: [{ width: 'full', widgets: [w('usage_coach', 'large')] }],
     // Lab u3how: Sky of days leads, Steering by Agent takes its own band (its figures column needs the width), then A day in
-    // agents beside Your planet, Run length beside Personal records, and the typical week beside the typical day.
+    // agents beside Run length (both a row per Agent), Your planet beside Personal records (both short summaries of you),
+    // and the typical week beside the typical day. Pairing like heights leaves no gap in either column (R4 leftover).
     'how-you-work': [{ width: 'full', widgets: [w('usage_rhythm', 'full', { style: 'sky', metric: 'busy', colourBy: 'leadingAgent' }),
-        w('usage_human_loop', 'full', { style: 'tide' }), w('usage_parallel', 'medium', { style: 'lanes' }), w('usage_planet', 'medium'),
-        w('usage_run_length', 'medium'), w('usage_recap', 'medium', { style: 'personalRecords' }),
+        w('usage_human_loop', 'full', { style: 'tide' }), w('usage_parallel', 'medium', { style: 'lanes' }), w('usage_run_length', 'medium'),
+        w('usage_planet', 'medium'), w('usage_recap', 'medium', { style: 'personalRecords' }),
         w('usage_rhythm', 'medium', { style: 'weekTide', metric: 'busy' }), w('usage_rhythm', 'medium', { style: 'daylight', metric: 'busy' })] }],
     sources: [{ width: 'full', widgets: [w('usage_sources', 'large'), w('usage_source_coverage', 'medium'), w('usage_unpriced', 'medium')] }],
     // Lab u3ens: the week's Score leads, Orbit beside Crew, the Agent river, Constellation and Shipped as bands.

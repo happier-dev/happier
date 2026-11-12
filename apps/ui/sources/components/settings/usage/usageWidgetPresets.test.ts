@@ -88,8 +88,13 @@ describe('Usage host fragment presets', () => {
         // with Rhythm (both fill from sessions), so on a first run both are empty together.
         expect(bandsOf('overview')).toEqual([[['usage_daily'], ['usage_period_summary', 'usage_capacity']],
             [['usage_projections']], [['usage_coach']], [['usage_efficiency'], ['usage_rhythm']]]);
-        expect(bandsOf('costs')).toEqual([[['usage_cost_facts']], [['usage_daily'], ['usage_breakdowns', 'usage_efficiency']],
+        // Costs: the daily cost bars beside the agents' costs, both tall lists of the same rows, then Efficiency as its own
+        // band as on Usage, so neither column of the 2-up runs ~300 px past the other (R4 leftover).
+        expect(bandsOf('costs')).toEqual([[['usage_cost_facts']], [['usage_daily'], ['usage_breakdowns']], [['usage_efficiency']],
             [['usage_plan_fit']], [['usage_outcomes']]]);
+        // How you work: per-agent rows pair with per-agent rows and summaries with summaries, so no column holds a gap.
+        expect(bandsOf('how-you-work')).toEqual([[['usage_rhythm']], [['usage_human_loop']],
+            [['usage_parallel', 'usage_planet', 'usage_rhythm'], ['usage_run_length', 'usage_recap', 'usage_rhythm']]]);
         // Plans: Capacity, then Projections and Plan fit stack beside the longer Resets list instead of leaving a column empty.
         expect(bandsOf('plans')).toEqual([[['usage_capacity']], [['usage_projections', 'usage_plan_fit'], ['usage_resets']]]);
     });

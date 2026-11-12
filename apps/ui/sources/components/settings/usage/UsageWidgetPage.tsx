@@ -67,11 +67,13 @@ import {
   UsageWidgetBatchProvider,
   isUsageQueryWidget,
   useUsageWidgetPageRetry,
+  readUsagePageNothingRecorded,
   useUsageWidgetBatchSelection,
   useUsageWidgetBatchInventorySelection,
   useUsageWidgetBatchCostBasis,
   useUsageWidgetBatchHistory,
 } from './widgets/usageWidgetBatch';
+import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
 import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageAsOfMs } from './widgets/usageBodyKit';
 
@@ -508,6 +510,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
       coverageIncomplete: slices.some(slice => readUsageCoverageGaps(slice, ['accounting']).length > 0),
+      nothingRecorded: readUsagePageNothingRecorded(slices),
     },
   };
 }
@@ -538,6 +541,7 @@ function resolveUsagePageNotice(
   retry: (() => void) | null,
   history: UsagePageHistoryFact | null | undefined,
   layouts: Readonly<{ retry: () => void }> | null | undefined,
+  startSession: () => void,
 ): UsagePageNotice | null {
   const { pending, failed, failedQuiet, newerServer, partial } = facts;
   if (failed) {
@@ -555,6 +559,14 @@ function resolveUsagePageNotice(
     const onPress = history.onPress;
     return { testID: 'usage-page.header.history', reason: history.text, tone: history.failed ? 'warning' : 'neutral',
       ...(history.label && onPress ? { action: { label: history.label, onPress: () => onPress(), testID: 'usage-page.header.historyAction' } } : {}) };
+  }
+  // Nothing was recorded in the period (a first-use Account, a quiet week): the page says it once, with the next step,
+  // and every card holds one quiet line (`UsageBodyNothingYet`) instead of the same sentence again.
+  if (facts.nothingRecorded) {
+    return { testID: 'usage-page.header.nothingRecorded', tone: 'neutral',
+      // The title alone fits a phone's one header line; Start a session is the reason's next step.
+      reason: t('usage.board.page.noUsageTitle'),
+      action: { label: t('usage.board.coach.firstUseAction'), onPress: startSession, testID: 'usage-page.header.nothingRecordedAction' } };
   }
   if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
   if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral' };
@@ -583,10 +595,12 @@ function UsagePageHeader(
   const { retry, history, layouts } = props;
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const { observedAtMs, machines, agents } = props.facts;
+  const openNewSession = useOpenNewSession();
+  const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
   // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
   const notice = React.useMemo(() => {
     if (props.homeUnavailable) return null;
-    const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts);
+    const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts, startSession);
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
     return resolved ? (
@@ -604,7 +618,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     ) : null;
-  }, [props.facts, props.homeUnavailable, retry, history, layouts]);
+  }, [props.facts, props.homeUnavailable, retry, history, layouts, startSession]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

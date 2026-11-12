@@ -29,7 +29,9 @@ import {
   useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
+  UsageBodyNothingYet,
 } from './usageBodyKit';
+import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import { UsageSkyStyleBody, UsageWeekTideStyleBody, UsageDaylightStyleBody } from './UsageChartStyleBodies';
 import { UsageCalendarArtStyleBody, isUsageCalendarArtStyle } from './UsagePlanetFamilyBodies';
 import { usageChartValuesLabels } from './usageChartHost';
@@ -65,6 +67,7 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
   const hasRhythm =
     (view?.punchCard.total ?? 0) > 0 || (view?.hourRhythm.total ?? 0) > 0;
   const streak = view?.hero.longestStreakDays ?? 0;
+  const pageNothingRecorded = useUsageWidgetPageNothingRecorded();
   useWidgetFrameBodyCaption(
     view && streak > 0
       ? t('usage.board.howYouWork.longestStreak', { count: streak })
@@ -75,6 +78,8 @@ function UsageRhythmWidgetOriginal(props: UsageBodyProps) {
       return <UsageBodyReading testID={`${props.testID}.loading`} />;
     if (isUsageReadFailed(props.slice, ['accounting']))
       return <UsageBodyReadFailed slice={props.slice} sources={['accounting']} testID={props.testID} onRetry={props.model.refresh} />;
+    // Nothing was recorded in the period: the page says so once; this card keeps one quiet line.
+    if (pageNothingRecorded) return <UsageBodyNothingYet testID={props.testID} />;
     return (
       <UsageBodyInsufficient
         testID={`${props.testID}.empty`}

@@ -342,7 +342,7 @@ it('outlines only a pool of two or more members; a pool of one reads as its acco
   expect(screen.findHostByTestId('capacity.pool.one')).toBeNull();
   expect(screen.findHostByTestId('capacity.cell.solo')).not.toBeNull();
   // Each cell is an item of the meter list it sits in (axe aria-required-children on the list).
-  expect(screen.findHostByTestId('capacity.cell.solo')?.props.accessibilityRole).toBe('listitem');
+  expect(screen.findHostByTestId('capacity.cell.solo')?.props.role).toBe('listitem');
   // The outline is named: a framed set of cells says which pool it is.
   expect(screen.findHostByTestId('capacity.pool.duo.label')).not.toBeNull();
   // At full width (Plans) the pool order follows the meters; beside other widgets the meters are said once.
@@ -464,7 +464,7 @@ it.each([['loaded_data', true], ['loaded_empty', false], ['not_loaded', false]] 
   }
 });
 
-it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', false, 520, false], ['medium', true, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid at full width, and one row per account under a bar too narrow for labels', async (size, pooled, width, listed) => {
+it.each([['medium', true, 520, false], ['tall', true, 520, false], ['full', false, 520, false], ['medium', true, 180, true], ['full', false, 180, true]] as const)('draws one pooled bar with labels under its segments beside other widgets (%s), the per-account grid at full width, and one row per account under a bar too narrow for labels or a grid too narrow for its cells (native N2)', async (size, pooled, width, listed) => {
   const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
   const query = normalizeUsageQuery({});
   const quota = [['work', 'loaded_data', 40], ['personal', 'loaded_data', 75], ['spare', 'not_loaded', null]].map(([accountId, state, usedPct]) => {

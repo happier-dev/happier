@@ -560,6 +560,23 @@ export function useUsageWidgetPageRetry(): (() => void) | null {
     return React.useMemo(() => entry ? () => { if (lifetime?.isCurrent()) void entry.refresh(); } : null, [entry, lifetime]);
 }
 
+/**
+ * Every displayed read of the page asked for accounting, answered, and recorded nothing in its period (an empty period
+ * is 0, never unknown). The page header says so once with its next step; a body that would repeat it holds one quiet
+ * line instead (`UsageBodyNothingYet`). A failed or pending read is not "nothing", so it never qualifies.
+ */
+export function readUsagePageNothingRecorded(slices: readonly UsageQueryResultSlice[]): boolean {
+    const read = slices.filter(slice => slice.requestedQuery.includeAccounting);
+    return read.length > 0 && read.every(slice => !slice.pending && slice.accounting?.totals.eventCount === 0);
+}
+
+/** On the Usage page only: elsewhere (Home, a Project) a body keeps saying its own empty state. */
+export function useUsageWidgetPageNothingRecorded(): boolean {
+    const batch = React.useContext(UsageWidgetBatchContext);
+    const nothing = useUsageWidgetBatchSelection(readUsagePageNothingRecorded, Object.is);
+    return batch !== null && nothing;
+}
+
 export function useUsageWidgetPageHasCoverageDetail(): boolean {
     const batch = React.useContext(UsageWidgetBatchContext);
     // Coverage belongs to the page from its first frame, including the time

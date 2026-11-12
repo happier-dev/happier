@@ -37,7 +37,7 @@ import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { getUsageHistoryReadOperation } from '@/sync/api/account/usageHistoryReadState';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
-import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
+import { useUsageWidgetPageHasCoverageDetail, useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -591,11 +591,34 @@ export function UsageBodyNoUsage(props: Readonly<{
     return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: USAGE_ACCOUNTING_SOURCES }} {...(props.readingShape ? { shape: props.readingShape } : {})} />;
   if (!props.slice.accounting)
     return <UsageBodyReadFailed slice={props.slice} sources={USAGE_ACCOUNTING_SOURCES} testID={props.testID} onRetry={props.onRetry} />;
+  return <UsageBodyNoUsageSettled testID={props.testID} />;
+}
+
+function UsageBodyNoUsageSettled(props: Readonly<{ testID: string }>) {
+  // The page already said "No usage in this period" and its next step: this card only holds its quiet line.
+  if (useUsageWidgetPageNothingRecorded()) return <UsageBodyNothingYet testID={props.testID} />;
   return (
     <UsageBodyInsufficient
       testID={`${props.testID}.empty`}
       title={t('usage.board.page.noUsageTitle')}
       reason={t('usage.board.page.noUsageReason')}
+    />
+  );
+}
+
+/**
+ * A body on a Usage page whose period recorded nothing: the page header says the cause once, with Start a session
+ * (`readUsagePageNothingRecorded`), so each card is one quiet line rather than the same sentence again (C first use).
+ */
+export function UsageBodyNothingYet(props: Readonly<{ testID: string }>) {
+  return (
+    <SurfaceStateCard
+      testID={`${props.testID}.nothingYet`}
+      kind="empty"
+      layout="inline"
+      size="line"
+      replacesContent={false}
+      title={t('usage.board.page.nothingYetTitle')}
     />
   );
 }

@@ -128,7 +128,8 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
           label: cost ? t('usage.cost') : t('usage.tokens'),
           value: current ?? UNKNOWN_VALUE,
           caption: cost ? costCaption : current === null ? t('common.unavailable') : undefined,
-          unit: cost ? undefined : t('usage.board.page.tokensUnit'),
+          // An unknown total is the quiet dash alone: "— tokens" would read as a measured figure.
+          unit: cost || current === null ? undefined : t('usage.board.page.tokensUnit'),
           valueFormatter:
             cost
               ? (value) => formatUsageCost(value, currency)
