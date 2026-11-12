@@ -39,7 +39,7 @@ describe('materializeAzureDevOpsListedAuthorization', () => {
     if (outcome.ok) return;
     expect(projectAzureSourceFailure(outcome.failure)).toEqual({
       class: 'authentication', code: 'connected_service_credential_reconnect_required',
-      detail: 'Happier Request ID: host-request-1',
+      detail: 'Happier Request ID: host-request-1', requestId: 'host-request-1',
     });
   });
 

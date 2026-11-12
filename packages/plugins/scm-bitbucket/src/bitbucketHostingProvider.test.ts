@@ -6,9 +6,7 @@ import { encodeBitbucketBasicAuthorization } from './auth/basicCredentials.js';
 
 /** The immutable account id Bitbucket answers `GET /2.0/user` with in these cases. */
 const VIEWER_UUID = '{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}';
-import { BITBUCKET_TRIAGE_ACTION_IDS } from './triage/source/actions.js';
-import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from './triage/source/detailActions.js';
-import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from './triage/source/mutationActions.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -56,7 +54,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.bitbucket',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         expect.objectContaining({ id: 'bitbucket-api', capability: 'network', scope: { targets: expect.arrayContaining([
           { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
@@ -87,6 +85,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
           expect.objectContaining({
             id: 'bitbucket-account',
             authentication: {
+              account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' },
               defaultModeId: 'manual',
               modes: [
                 expect.objectContaining({
@@ -293,18 +292,13 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       },
     } as Parameters<typeof mod.activate>[0]);
 
-    // The three source roles, the three source-native detail planes AND the two
-    // pull-request writes. The list is exhaustive on purpose: a declared Action
-    // with no registered handler passes conformance and then fails at
-    // invocation, and a registered handler with no declaration is a path the
-    // host never admits — which for a write would be an external effect
-    // reachable through an owner the manifest never described.
-    expect(actionRegistrations.map(({ id }) => id).sort())
-      .toEqual([
-        ...Object.values(BITBUCKET_TRIAGE_ACTION_IDS),
-        ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
-        ...Object.values(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS),
-      ].sort());
+    // Account handlers are exercised by activate.test.ts through both real activations.
+    // This daemon boundary must register exactly its own declared handlers.
+    expect(actionRegistrations.map(({ id }) => id).sort()).toEqual(
+      PLUGIN_MANIFEST.contributes.actions
+        .filter((action) => action.execution?.target !== 'account')
+        .map(({ id }) => id).sort(),
+    );
 
     expect(registrations).toHaveLength(1);
     expect(hooks).toEqual([]);
@@ -434,7 +428,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     ]) {
       await expect(connectedAccountRuntime.materialize({
         kind: 'httpHeaders',
-        origin,
+        origin: origin,
         headerNames: ['Authorization'],
       }, readContext), origin).rejects.toThrow('cannot materialize credentials for this origin');
     }

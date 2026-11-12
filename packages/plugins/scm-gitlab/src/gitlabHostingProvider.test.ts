@@ -80,7 +80,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
   it('declares a strict target SCM hosting-provider contribution with configured-origin access', async () => {
     expect(PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.gitlab',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         expect.objectContaining({ id: 'gitlab-cloud-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'fixedOrigin', origin: 'https://gitlab.com' }] }) }),
         expect.objectContaining({ id: 'gitlab-account-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'connectedAccountOrigin', service: 'gitlab-account' }], privateNetwork: true }) }),
@@ -130,9 +130,10 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
     } as unknown as Parameters<typeof activate>[0]);
     expect(registrations.map(({ id }) => id)).toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
     expect(accountRuntimes).toEqual(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.map(({ id }) => id));
-    // Every declared Action has a registered handler, and no handler is
-    // registered for an Action the manifest never declared.
-    expect([...actionIds].sort()).toEqual(PLUGIN_MANIFEST.contributes.actions.map(({ id }) => id).sort());
+    // Account/daemon parity is exercised through both activations in activate.test.ts.
+    expect([...actionIds].sort()).toEqual(PLUGIN_MANIFEST.contributes.actions
+      .filter((action) => action.execution?.target !== 'account')
+      .map(({ id }) => id).sort());
   });
 
   it('detects bundled GitLab remotes and supports enterprise hosts through test-local options', async () => {

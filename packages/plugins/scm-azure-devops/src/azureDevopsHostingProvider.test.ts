@@ -29,7 +29,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.azure-devops',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
         // The public hosting-provider origin remains on its own public-only grant. The Triage
         // source's configured account origin is admitted by the separate account grant below.

@@ -1,4 +1,4 @@
-import { TriageSourceScanObservationV1Schema } from '@happier-dev/triage-protocol/v1';
+import { MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1, TriageSourceScanObservationV1Schema } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { decodeGitlabRow } from './mapping/gitlabEntry.js';
@@ -111,22 +111,19 @@ describe('projectGitlabPresentObservation locator bounds', () => {
     // is the contract: one deep namespace must not discard every sibling row on the page.
     expect(TriageSourceScanObservationV1Schema.parse(observation)).toEqual(observation);
     expect(observation.localRef.entryId).toBe('7');
-    // A route and a URL are machine-meaningful: a shortened one addresses somewhere else,
-    // so they are omitted rather than cut, and the omission is announced.
-    expect(observation.locator.routingToken).toBeUndefined();
-    expect(observation.locator.webUrl).toBeUndefined();
-    // Display text is shortened rather than dropped: the row still reads as itself.
-    expect(observation.locator.displayPath).not.toBeUndefined();
-    expect(observation.snapshot.projectionTruncated).toBe(true);
+    expect(observation.locator.routingToken).toBe(nestedGroupPath(20));
+    expect(observation.locator.webUrl).toBe(`https://gitlab.com/${nestedGroupPath(20)}/-/merge_requests/7`);
+    expect(observation.locator.displayPath).toBe(`${nestedGroupPath(20)}!7`);
+    expect(observation.snapshot.projectionTruncated).toBeUndefined();
   });
 
-  it('omits only the route when the display path and URL still fit', () => {
-    const observation = projectRow(nestedGroupPath(7));
+  it('omits oversized machine locators rather than shortening their destinations', () => {
+    const observation = projectRow(`group/${'g'.repeat(MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 + 1)}`);
 
     expect(TriageSourceScanObservationV1Schema.parse(observation)).toEqual(observation);
     expect(observation.locator.routingToken).toBeUndefined();
-    expect(observation.locator.webUrl).not.toBeUndefined();
-    expect(observation.locator.displayPath).toBe(`${nestedGroupPath(7)}!7`);
+    expect(observation.locator.webUrl).toBeUndefined();
+    expect(observation.locator.displayPath).toBeDefined();
     expect(observation.snapshot.projectionTruncated).toBe(true);
   });
 });

@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   GITLAB_PLUGIN_ID,
   GITLAB_TRIAGE_ACTION_IDS,
+  GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID,
   GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1,
 } from '../../triage/contribution.js';
 
@@ -76,7 +77,9 @@ describe('the mounted GitLab PRs & Issues settings page', () => {
     ]);
     // Both mount reads are reads: opening a settings page must never configure
     // anything.
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, {
+      v: 1, source: { pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID },
+    }]);
   });
 
   it('names this source the way its own descriptor spells it', async () => {

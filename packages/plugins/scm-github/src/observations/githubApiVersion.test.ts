@@ -21,7 +21,7 @@ const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HEADER_OWNER = 'observations/githubRequestHeaders.ts';
 
 const PRODUCTION_REQUEST_OWNERS = [
-  'auth/connectedAccountRuntime.ts',
+  'auth/authentication.ts',
   'pullRequests/restAdapter.ts',
   'repositoryProvisioning/githubRepositoryRestAdapter.ts',
   'observations/githubApiClient.ts',

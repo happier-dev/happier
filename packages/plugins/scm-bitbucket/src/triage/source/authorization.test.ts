@@ -33,7 +33,7 @@ describe('createAuthorizedBitbucketClient', () => {
     }, { purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE, account: accountRef('account-1') });
     expect(outcome).toEqual({ ok: false, failure: {
       class: 'authentication', code: 'connected_service_credential_reconnect_required',
-      detail: 'Happier Request ID: host-request-1',
+      detail: 'Happier Request ID: host-request-1', requestId: 'host-request-1',
     } });
     expect(requests).toEqual([]);
     expect(JSON.stringify(outcome)).not.toContain('private');

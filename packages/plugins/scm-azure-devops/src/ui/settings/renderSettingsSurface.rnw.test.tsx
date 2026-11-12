@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from '../../triage/actions.js';
-import { AZURE_DEVOPS_TRIAGE_DESCRIPTOR } from '../../triage/descriptor.js';
+import { AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID, AZURE_DEVOPS_TRIAGE_DESCRIPTOR } from '../../triage/descriptor.js';
 
 import { renderSurface } from './renderSettingsSurface.js';
 
@@ -74,7 +74,9 @@ describe('the mounted Azure DevOps PRs & Issues settings page', () => {
     ]);
     // Both mount reads are reads: opening a settings page must never configure
     // anything.
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, {
+      v: 1, source: { pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_CONTRIBUTION_ID },
+    }]);
   });
 
   it('names this source the way its own descriptor spells it', async () => {

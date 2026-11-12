@@ -28,7 +28,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
       id: 'happier.scm.forge.github',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
       hostAccess: {
         required: expect.arrayContaining([expect.objectContaining({
           id: 'github-api',
@@ -73,6 +73,13 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
               // Account-placed reads run in the plugin's account runtime artifact.
               account: { artifactId: 'github-account-runtime', exportName: 'activate' },
               modes: [expect.objectContaining({
+                id: 'copilot-device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none',
+                clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'scopes' },
+              }), expect.objectContaining({
+                id: 'copilot-token', kind: 'manual', outcomeReconciliation: 'none',
+                credentialOrigin: 'authentication',
+                fields: [expect.objectContaining({ id: 'token', secret: true })],
+              }), expect.objectContaining({
                 id: 'fine-grained-pat',
                 kind: 'manual',
                 outcomeReconciliation: 'none',

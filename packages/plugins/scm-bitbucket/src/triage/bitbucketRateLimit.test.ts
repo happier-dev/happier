@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   readBitbucketRateLimitTelemetry,
@@ -100,11 +101,11 @@ describe('Bitbucket failure classification', () => {
     const long = classifyBitbucketHttpFailure({
       status: 404,
       headers: {},
-      body: { type: 'error', error: { message: 'é'.repeat(2_000) } },
+      body: { type: 'error', error: { message: 'é'.repeat(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1) } },
       nowMs: NOW_MS,
     });
 
-    expect(new TextEncoder().encode(long.detail ?? '').byteLength).toBeLessThanOrEqual(1_024);
+    expect(new TextEncoder().encode(long.detail ?? '').byteLength).toBeLessThanOrEqual(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1);
   });
 
   it('reports cancellation as cancellation rather than as a provider fault', () => {

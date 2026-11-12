@@ -4,7 +4,6 @@ import {
   TriageSourceScanObservationV1Schema,
   MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
   MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
@@ -52,7 +51,7 @@ describe('Bitbucket configured-instance codec', () => {
     expect(encoded.token).toContain(WORKSPACE_UUID);
   });
 
-  it('rejects an unbraced UUID, a foreign version, an unknown member, and oversize bytes', () => {
+  it('rejects invalid known fields and oversize bytes while ignoring retired fields', () => {
     expect(encodeBitbucketConfiguration({
       v: 1,
       workspaceUuid: '4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44',
@@ -61,7 +60,7 @@ describe('Bitbucket configured-instance codec', () => {
     expect(decodeBitbucketConfiguration({
       v: 1,
       token: JSON.stringify({ v: 1, workspaceUuid: WORKSPACE_UUID, origin: 'https://evil.test' }),
-    })).toBeNull();
+    })).toEqual({ v: 1, workspaceUuid: WORKSPACE_UUID });
     expect(decodeBitbucketConfiguration({
       v: 1,
       token: 'x'.repeat(MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 + 1),
@@ -120,10 +119,7 @@ describe('Bitbucket present-observation projection', () => {
       viewer: { involvement: ['author'] },
       nativeRevision: '3f6c1a8e9b24',
     });
-    // Ordered by decision value, then bounded — asserted against the published bound rather than
-    // against a copied number, because the bound is the contract and it has moved before.
-    // `scopeLabel` already carries the repository, so no fact repeats it: with this few slots a
-    // fact that restates a field already on the row spends one saying nothing new.
+    // Every supplied fact survives in decision order; scopeLabel already carries the repository.
     const priorityOrder = [
       'bitbucket/number',
       'bitbucket/author',
@@ -134,12 +130,12 @@ describe('Bitbucket present-observation projection', () => {
       'bitbucket/tasks',
     ];
     expect(parsed.kind === 'present' && parsed.snapshot.facts.map((fact) => fact.id))
-      .toEqual(priorityOrder.slice(0, MAX_TRIAGE_ROW_FACTS_V1));
+      .toEqual(priorityOrder);
     expect(parsed.kind === 'present' && parsed.snapshot.summary).toBe(
       'The poller outlived its own invocation. Bind it to the supplied signal.',
     );
-    // Facts the bound dropped are reported as truncation, not silently lost.
-    expect(parsed.kind === 'present' && parsed.snapshot.projectionTruncated).toBe(true);
+    // Every fixture fact now fits the published allocation; none is silently dropped.
+    expect(parsed.kind === 'present' && parsed.snapshot.projectionTruncated).toBeUndefined();
   });
 
   it('reports a list-page reviewers omission as detail-only rather than as no reviewers', () => {
@@ -161,7 +157,7 @@ describe('Bitbucket present-observation projection', () => {
     // before it projects rather than emitting a result the target parses and throws away whole.
     const observation = toBitbucketPresentObservation(decodeFixtureRow({
       id: 91,
-      title: `Fix\tthe poller\r\n${'deadline handling '.repeat(40)}`,
+      title: `Fix\tthe poller\r\n${'deadline handling '.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1)}`,
       summary: { raw: 'Line one.\n\nLine two of the description body.' },
       destination: { repository: { uuid: '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}' } },
     }), { viewerAccountUuid: OTHER_VIEWER_UUID });
@@ -175,7 +171,7 @@ describe('Bitbucket present-observation projection', () => {
     expect(parsed.snapshot.projectionTruncated).toBe(true);
     expect(parsed.snapshot.summary).toBe('Line one. Line two of the description body.');
     expect(/[ -]/u.test(parsed.snapshot.summary ?? '')).toBe(false);
-    expect(parsed.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(parsed.snapshot.facts.map(({ id }) => id)).toEqual(['bitbucket/number', 'bitbucket/reviewers']);
   });
 
   it('routes through the repository locator and puts no identity or origin in the token', () => {
@@ -300,10 +296,10 @@ describe('Bitbucket present-observation projection', () => {
     });
     const available = ['bitbucket/number', 'bitbucket/reviewers'];
     expect(parsed.kind === 'present' && parsed.snapshot.facts.map((fact) => fact.id))
-      .toEqual(available.slice(0, MAX_TRIAGE_ROW_FACTS_V1));
+      .toEqual(available);
     // Nothing was dropped here, so nothing claims it was.
     expect(parsed.kind === 'present' && parsed.snapshot.projectionTruncated)
-      .toBe(available.length > MAX_TRIAGE_ROW_FACTS_V1 ? true : undefined);
+      .toBeUndefined();
   });
 });
 

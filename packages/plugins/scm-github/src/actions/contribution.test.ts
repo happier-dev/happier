@@ -46,7 +46,11 @@ it.each([
     .toMatchObject(confirms ? refusal : { status: 'admitted' });
   expect(await gate().admit({ surface: 'plugin', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} }))
     .toMatchObject(confirms ? refusal : { status: 'admitted' });
-  for (const surface of ['agent', 'mcp', 'cli'] as const) expect(await gate().admit({ surface, invocationSurface: surface, input: {} })).toMatchObject(refusal);
+  for (const surface of ['agent', 'mcp'] as const) expect(await gate().admit({ surface, invocationSurface: surface, input: {} })).toMatchObject(refusal);
+  // Reversible CLI edits default to Direct; an explicit saved Ask still requires intent.
+  expect(await gate().admit({ surface: 'cli', invocationSurface: 'cli', input: {} }))
+    .toMatchObject(action.dangerLevel === 'writesLocal' ? { status: 'admitted' } : refusal);
+  expect(await gate(true).admit({ surface: 'cli', invocationSurface: 'cli', input: {} })).toMatchObject(refusal);
   expect(await gate().admit({ surface: 'plugin', invocationSurface: 'agent', invocationAuthority: 'account_automation', input: {} })).toMatchObject(refusal);
   expect(await gate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input: {} })).toMatchObject(refusal);
   expect(await gate(false).admit({ surface: 'agent', invocationSurface: 'agent', input: {} })).toMatchObject({ status: 'admitted' });

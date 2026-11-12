@@ -60,7 +60,7 @@ describe('the supplied local action in the shared default job panel', () => {
       expect(inputs).toHaveLength(1);
       available = true;
       await fixture.press(await fixture.getByRole('button', { name: 'Open local form' }));
-      expect(settlements[1]).toEqual({ status: 'success', result: { kind: 'opened', mountId: 'form-mount' } });
+      expect(settlements[1]).toEqual({ status: 'success', requestId: expect.any(String), result: { kind: 'opened', mountId: 'form-mount' } });
       expect(inputs).toEqual([0, 1].map(() => ({ operation: { kind: 'open', seed: {
         target: { kind: 'project', projectId: 'project-workflows' },
         workspace: { serverId: 'home', workspaceId: 'checkout', machineId: 'primary', rootPath: '/repo' },

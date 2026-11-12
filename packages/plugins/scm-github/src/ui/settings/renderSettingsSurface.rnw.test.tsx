@@ -17,6 +17,7 @@ import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_CONNECTED_ACCOUNT_SERVICE, GIT
 import { decodeGithubTriageConfiguration } from '../../triage/configuration.js';
 import {
   GITHUB_TRIAGE_ACTION_IDS_V1,
+  GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1,
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
 } from '../../triage/contribution.js';
 
@@ -173,7 +174,9 @@ describe('the mounted GitHub PRs & Issues settings page', () => {
       { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_ACTION_IDS_V1.listInstances },
       { ...TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 },
     ]);
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, {
+      v: 1, source: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 },
+    }]);
   });
 
   it('names this source as its descriptor declares', async () => {

@@ -281,7 +281,7 @@ describe('Triage plugin manifest', () => {
     }).toEqual({
       id: 'happier.triage',
       version: '0.0.0',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     });
     expect(Object.keys(TRIAGE_PLUGIN.manifest.contributes).sort()).toEqual([
       'accountCollections',
@@ -415,12 +415,12 @@ describe('Triage plugin manifest', () => {
 
   it('carries the daemon entrypoint the bundled activation source resolves', () => {
     // The canonical packager (`scripts/migrations/extensions/generateBundledPluginEntries.ts`)
-    // emits the daemon runtime at `.happier-plugin/daemon.js` and the release
+    // emits the daemon runtime at `.happier-plugin-build/daemon.js` and the release
     // contract pins that exact path
     // (`scripts/release/publish_cli_binaries_native_matrix.contract.test.mjs`).
     // `./dist/index.js` is the retired pre-packager entry: it is this package's
     // `main` for in-repo importers, not the path the host loads.
-    expect(PLUGIN_MANIFEST.entrypoints.daemon).toBe('./.happier-plugin/daemon.js');
+    expect(PLUGIN_MANIFEST.entrypoints.daemon).toBe('./.happier-plugin-build/daemon.js');
   });
 
   it('offers one existing safe list read to Voice through its canonical Account Action', () => {

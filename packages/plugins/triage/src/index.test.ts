@@ -14,7 +14,7 @@ describe('Triage plugin daemon entry', () => {
     // `PLUGIN_MANIFEST.entrypoints.daemon` points the host at the packaged
     // daemon runtime the canonical packager emits from this module, and the
     // host loader requires a callable `activate` export.
-    expect(PLUGIN_MANIFEST.entrypoints.daemon).toBe('./.happier-plugin/daemon.js');
+    expect(PLUGIN_MANIFEST.entrypoints.daemon).toBe('./.happier-plugin-build/daemon.js');
     expect(entry.activate).toBeTypeOf('function');
   });
 

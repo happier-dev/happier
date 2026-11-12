@@ -468,7 +468,7 @@ describe('GitHub listed-account authorization', () => {
     } as unknown as Parameters<typeof createGithubListedAccountApiClient>[0];
   }
 
-  it('reports a host materialization refusal as authentication, and never echoes the host’s own code', async () => {
+  it('preserves a typed host materialization refusal without echoing its private message', async () => {
     // The user fixes a revoked or unauthorized account by reconnecting and pressing
     // Refresh, and `refresh/refreshEligibility.ts` exempts `authentication` from the
     // aggregate backoff for exactly that reason. Classifying it `unsupportedContract`
@@ -482,7 +482,7 @@ describe('GitHub listed-account authorization', () => {
 
     expect(classifyGithubTransportFailure(caught)).toEqual({
       class: 'authentication',
-      code: 'github_credential_unavailable',
+      code: 'connected_account_revoked',
     });
   });
 

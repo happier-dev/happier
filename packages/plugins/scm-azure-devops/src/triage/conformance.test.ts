@@ -63,7 +63,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     expect(contribution?.operations?.prepareReviewWorkspace).toBe(PREPARE_REVIEW_WORKSPACE_ACTION_ID);
     expect(action).toMatchObject({
       id: PREPARE_REVIEW_WORKSPACE_ACTION_ID,
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'ui'],
       dangerLevel: 'writesLocal',
       hostAccess: [
         AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,

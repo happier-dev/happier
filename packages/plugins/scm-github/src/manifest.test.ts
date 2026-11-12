@@ -20,7 +20,7 @@ import {
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   PLUGIN_MANIFEST,
 } from './manifest.js';
-import { GITHUB_CI_ACTION_IDS_V1 } from './actions/actionIds.js';
+import { GITHUB_PROJECT_READINESS_ACTION_ID_V1, GITHUB_CI_ACTION_IDS_V1 } from './actions/actionIds.js';
 import { GITHUB_DEPLOYMENT_MONITORING_OPEN_ACTION_ID } from './actions/deploymentMonitoring.js';
 import { GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID } from './actions/deploymentReviewProtocol.js';
 import { LOCAL_ACT_ACTION_IDS } from './actions/local/contracts.js';
@@ -330,6 +330,7 @@ describe('GitHub SCM manifest', () => {
       ...Object.values(GITHUB_RELEASE_ACTION_IDS_V1),
       GITHUB_RELEASE_MOUNTED_ACTION_ID_V1,
       GITHUB_OVERVIEW_TARGET_ACTION_ID,
+      GITHUB_PROJECT_READINESS_ACTION_ID_V1,
       GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID,
       GITHUB_DEPLOYMENT_MONITORING_OPEN_ACTION_ID,
       // Plan 07's exact selected-alert/detail reads, not global commands.
@@ -442,7 +443,9 @@ describe('GitHub SCM manifest', () => {
       // resource, and rebinds the exact account the configured instance names.
       expect(action.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
       expect(action.connectedAccountPurposeBindings).toEqual([
-        { path: 'instance.binding.account', nativeServicePath: 'instance.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE },
+        { path: 'instance.binding.account', nativeServicePath: 'instance.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+          ...(id === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus ? { alternativePaths: ['sourceConfig.credentialRef'] } : {}),
+        },
       ]);
       expect(() => PluginActionContributionV2Schema.parse(action)).not.toThrow();
     }
