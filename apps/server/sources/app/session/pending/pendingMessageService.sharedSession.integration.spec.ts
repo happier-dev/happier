@@ -295,6 +295,44 @@ describe("pendingMessageService (shared sessions)", () => {
         })).resolves.toEqual({ requestedAction: { v: 1, kind: "enqueue" } });
     });
 
+    it('authorizes runtime activation for explicit steering on enqueue and on an existing queued row', async () => {
+        const owner = await createAccount('inactive-steer-owner');
+        const session = await createSession(owner.id);
+        const localId = `inactive-steer-${randomUUID()}`;
+        const requestedAction = { v: 1, kind: 'steer_now' } as const;
+
+        await expect(enqueuePendingMessage({
+            actorUserId: owner.id,
+            sessionId: session.id,
+            localId,
+            ciphertext: 'cipher-steer',
+            messageRole: 'user',
+            requestedAction,
+        })).resolves.toMatchObject({
+            ok: true,
+            activationTarget: { accountId: owner.id, requestId: localId },
+        });
+
+        await updatePendingRequestedAction({
+            actorUserId: owner.id, sessionId: session.id, localId,
+            requestedAction: { v: 1, kind: 'enqueue' }, resumeWhenAvailable: false,
+        });
+        await expect(updatePendingRequestedAction({
+            actorUserId: owner.id, sessionId: session.id, localId, requestedAction,
+        })).resolves.toMatchObject({
+            ok: true,
+            activationTarget: { accountId: owner.id, requestId: localId },
+        });
+        await expect(db.session.findUniqueOrThrow({
+            where: { id: session.id },
+            select: { pendingActivationRequestId: true, pendingActivationStatus: true },
+        })).resolves.toEqual({ pendingActivationRequestId: localId, pendingActivationStatus: 'waiting' });
+        await expect(db.sessionPendingMessage.findUniqueOrThrow({
+            where: { sessionId_localId: { sessionId: session.id, localId } },
+            select: { requestedAction: true, providerAction: true },
+        })).resolves.toEqual({ requestedAction, providerAction: null });
+    });
+
     type ResolveAcceptedPendingDeliveryParams = Parameters<typeof resolveAcceptedPendingDeliveryOwner>[0];
     const resolveAcceptedPendingDelivery = async (
         params: Omit<ResolveAcceptedPendingDeliveryParams, "trustedPublisherFence"> & {

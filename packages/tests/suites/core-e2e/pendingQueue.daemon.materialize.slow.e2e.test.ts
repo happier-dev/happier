@@ -17,6 +17,8 @@ import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { readFakeClaudeSessionId } from '../../src/testkit/providers/fakeClaudeContinuity';
+import { fetchJson } from '../../src/testkit/http';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -155,6 +157,27 @@ describe('core e2e: pending queue v2 daemon materializes into transcript', () =>
         const pending = await listPendingQueueV2({ baseUrl: serverBaseUrl, token: authToken, sessionId });
         return pending.status === 200 && Array.isArray(pending.data?.pending) && pending.data.pending.length === 0;
       }, { timeoutMs: 60_000 });
+
+      // Publish the provider resume identity before stopping the disposable runner.
+      await waitFor(async () => Boolean(await readFakeClaudeSessionId({
+        baseUrl: serverBaseUrl, token: authToken, sessionId, secret,
+      })), { timeoutMs: 60_000 });
+      const stopped = await daemonControlPostJson<{ status: string }>({
+        port: daemon.state.httpPort, path: '/stop-session', controlToken, body: { sessionId },
+      });
+      expect(stopped.data.status).toBe('stopped');
+
+      const steer = mkPrompt('resume-with-explicit-steering');
+      const enqueued = await fetchJson(`${serverBaseUrl}/v2/sessions/${encodeURIComponent(sessionId)}/pending`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...steer, messageRole: 'user', requestedAction: { v: 1, kind: 'steer_now' } }),
+      });
+      expect(enqueued.status).toBe(200);
+      await waitFor(async () => {
+        const messages = await fetchAllMessages(serverBaseUrl, authToken, sessionId);
+        return messages.some(message => message.localId === steer.localId);
+      }, { timeoutMs: 60_000, context: 'explicit steering resumes the stopped session and drains its input' });
 
       passed = true;
     } finally {
