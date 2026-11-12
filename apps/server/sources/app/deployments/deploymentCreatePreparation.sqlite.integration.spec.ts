@@ -220,7 +220,9 @@ describe('reviewed create preparation authority', () => {
             const allowed = await read(builder.id);
             expect(allowed.statusCode, allowed.body).toBe(200);
             expect(allowed.json()).toMatchObject({ machine: { id: builder.id, installationId: builder.installationId } });
-            for (const request of [() => read(other.id), () => read(builder.id, foreign.readPath)]) {
+            // A retained preview's parent template, and so its builder, is in the root's admitted scope.
+            if (placement === 'retained') expect((await read(other.id)).statusCode).toBe(200);
+            for (const request of [...(placement === 'template' ? [() => read(other.id)] : []), () => read(builder.id, foreign.readPath)]) {
                 const refused = await request();
                 expect(refused.statusCode, refused.body).toBe(401);
                 expect(refused.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'deployment_preparation' });
@@ -231,11 +233,10 @@ describe('reviewed create preparation authority', () => {
             expect(invisible.statusCode, invisible.body).toBe(404);
             expect(invisible.json()).toMatchObject({ error: 'Machine not found' });
             await db.machine.update({ where: { id: builder.id }, data: { accountId: f.actor.id } });
-            // An unrelated controller cannot spend this root's selected placement.
+            // Mint decided placement once; a later controller edit applies at the next admission, not mid-operation.
             await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { controllerMachineId: other.id } });
-            const mismatchedController = await read(builder.id);
-            expect(mismatchedController.statusCode, mismatchedController.body).toBe(401);
-            expect(mismatchedController.json()).toMatchObject({ authorizationRefusal: 'deployment_preparation' });
+            const laterControllerEdit = await read(builder.id);
+            expect(laterControllerEdit.statusCode, laterControllerEdit.body).toBe(200);
         }, { authentication: 'real' });
     });
 
@@ -426,7 +427,8 @@ describe('reviewed create preparation authority', () => {
                 if (status === 401) expect(response.json()).toMatchObject({ error: 'invalid_token',
                     authorizationRefusal: 'deployment_preparation' });
             }
-            for (const [domainId, status] of [[domain.id, 200], [`${domain.id}-missing`, 404]] as const) {
+            // The admitted read scope decides the Domain operand: an id outside it is refused before the route reads.
+            for (const [domainId, status] of [[domain.id, 200], [`${domain.id}-missing`, 401]] as const) {
                 const request = readPath(`/v1/deployments/environments/${child.id}/domains/${domainId}?serverId=${serverId}`,
                     'deployments.domains.get');
                 const response = await app.inject({ method: 'GET', url: request.path, headers: request.headers });
@@ -1304,7 +1306,8 @@ describe('reviewed create preparation authority', () => {
             const runtime = await readMachine(f.machine.id);
             expect(runtime.statusCode, runtime.body).toBe(200);
             expect(runtime.json()).toMatchObject({ machine: { id: f.machine.id, installationId: f.machine.installationId } });
-            if (separateController) expect((await readMachine(controller.id)).statusCode).toBe(401);
+            // The executing controller is the admitted Environment's own controller operand.
+            if (separateController) expect((await readMachine(controller.id)).statusCode).toBe(200);
             const read = (sourceId: string, home = serverId) => {
                 const path = `/v1/projects/sources/${encodeURIComponent(sourceId)}?serverId=${encodeURIComponent(home)}`;
                 const effectActionId = 'projects.sources.read';

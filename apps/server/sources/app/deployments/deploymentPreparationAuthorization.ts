@@ -136,9 +136,20 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
         if (preparation?.operation === 'template' || preparation?.operation === 'create' && preparationEffectRead) {
             seeds.environment.clear();
             if (resolvedEnvironmentId) seeds.environment.add(resolvedEnvironmentId);
+            // A preview Create names its parent template, which mint admitted; it is this root's operand, not a sibling.
+            if (preparation.operation === 'create' && preparation.preview) seeds.environment.add(preparation.preview.templateEnvironmentId);
         }
         if (preparation?.operation === 'prepare') {
             for (const id of seeds.environment) if (id !== preparation.environment?.id) seeds.environment.delete(id);
+        }
+        // A deploy-family root over an admitted preview reads the template it was derived from
+        // (the daemon's preview admission), as every other read below does.
+        const deployFamily = deploymentOperationForRootActionV1(binding.actionId);
+        if (!preparation && (deployFamily === 'deploy' || deployFamily === 'rollback' || deployFamily === 'promote')
+            && seeds.environment.size > 0) {
+            const previews = await tx.deploymentEnvironment.findMany({ where: { id: { in: [...seeds.environment] }, purpose: 'preview',
+                deletedAt: null }, select: { previewTemplateEnvironmentId: true } });
+            for (const preview of previews) if (preview.previewTemplateEnvironmentId) seeds.environment.add(preview.previewTemplateEnvironmentId);
         }
         return { environmentIds: seeds.environment, sourceIds: seeds.source, artifactIds: seeds.artifact, machineIds: seeds.machine };
     }

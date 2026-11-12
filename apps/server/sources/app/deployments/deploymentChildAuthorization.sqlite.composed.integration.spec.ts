@@ -1251,7 +1251,9 @@ describe('deployment children retain their controller Action authority', () => {
                     const response = await read();
                     expect(response.statusCode, response.body).toBe(200);
                 } else {
-                    await expectHttpRefusalWarning({ phase: 'effect_family', method: 'GET', path: path.split('?')[0] }, async () => {
+                    // The refusal names its public catalog root and effect so a live 401 can be attributed.
+                    await expectHttpRefusalWarning({ phase: 'effect_family', method: 'GET', path: path.split('?')[0],
+                        rootActionId: actionId, effectActionId }, async () => {
                         const response = await read();
                         expect(response.statusCode, response.body).toBe(401);
                         expect(response.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'effect_family' });
