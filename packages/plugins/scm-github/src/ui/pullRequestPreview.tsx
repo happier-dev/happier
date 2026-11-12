@@ -13,6 +13,8 @@ import {
   usePluginHostApi,
   usePluginTranslation,
   useExecutePluginAction,
+  projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
   useSurfaceContext,
   useTabPanelActivity,
   type PluginTranslate,
@@ -22,6 +24,7 @@ import {
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { buildGithubPreviewEnvironmentQueryV1 } from '../triage/previewQuery.js';
@@ -543,30 +546,39 @@ function PreviewPublication({ publication }: Readonly<{ publication: NonNullable
   const text = usePluginTranslation();
   const action = React.useMemo(() => ({ pluginId: GITHUB_PLUGIN_ID,
     localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus }), []);
-  const { execute } = useExecutePluginAction(action);
+  const { activeSignal } = useTabPanelActivity();
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<ReturnType<typeof GithubPullRequestPreviewStatusResultV1Schema.parse> | null>(null);
   const current = publication.kind === 'current' || result?.kind === 'applied';
   const failure = result?.kind === 'failed' || result?.kind === 'uncertain' ? result.failure
     : publication.kind === 'unavailable' ? publication.failure : undefined;
-  const retry = async () => {
-    if (publication.kind === 'current' || busy) return;
-    setBusy(true);
-    try {
-      const execution = await execute(publication.input);
-      const parsed = execution.status === 'success' ? GithubPullRequestPreviewStatusResultV1Schema.safeParse(execution.result) : null;
-      setResult(execution.status !== 'success' ? { kind: 'failed', failure: dispatchFailure(execution, 'github-preview-status-failed') }
-        : parsed?.success ? parsed.data : { kind: 'failed', failure: UNREADABLE_RESULT });
-    } finally { setBusy(false); }
-  };
+  const retryControl = React.useMemo(() => ({
+    prepare: ({ signal }) => {
+      if (signal.aborted || publication.kind === 'current') return null;
+      setBusy(true);
+      return { input: publication.input };
+    },
+    onSettled: settlement => {
+      setBusy(false);
+      const execution = projectPluginActionControlExecutionV1(settlement, text);
+      if (isPluginActionConfirmationDeclined(execution) || execution.status === 'idle' || execution.status === 'pending') return;
+      if (execution.status === 'success') {
+        const parsed = GithubPullRequestPreviewStatusResultV1Schema.safeParse(execution.result);
+        setResult(parsed.success ? parsed.data : { kind: 'failed', failure: UNREADABLE_RESULT });
+      } else {
+        const failure = dispatchFailure(execution, 'github-preview-status-failed');
+        setResult(execution.status === 'outcomeUnknown' ? { kind: 'uncertain', failure } : { kind: 'failed', failure });
+      }
+    },
+  } satisfies PluginUiActionControlController), [publication, text]);
   return <><Item title={current ? text('plugins.github.ui.preview.prUpdated', 'PR updated')
     : result?.kind === 'uncertain' ? text('plugins.github.ui.preview.prUpdateUnconfirmed', 'PR update not confirmed')
     : failure || result?.kind === 'refused' ? text('plugins.github.ui.preview.prUpdateUnavailable', 'PR update unavailable')
     : text('plugins.github.ui.preview.prUpdatePending', 'PR update pending')}
     {...(failure ? { subtitle: failureText(text, failure) } : result?.kind === 'refused' ? { subtitle: result.reason } : {})}
-    accessory={current ? undefined : <Button size="small" variant="plain" disabled={busy}
-      title={busy ? text('plugins.github.ui.preview.prUpdating', 'Updating PR…') : text('plugins.github.ui.preview.retryPrUpdate', 'Retry PR update')}
-      onPress={retry} />} />
+    accessory={current ? undefined : <Action.Control action={action} controller={retryControl} signal={activeSignal}
+      variant="plain" disabled={busy}
+      title={busy ? text('plugins.github.ui.preview.prUpdating', 'Updating PR…') : text('plugins.github.ui.preview.retryPrUpdate', 'Retry PR update')} />} />
     {failure ? <GithubReadFailureDetails failures={[failure]} /> : null}
   </>;
 }

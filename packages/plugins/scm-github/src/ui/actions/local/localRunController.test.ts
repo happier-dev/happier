@@ -50,7 +50,13 @@ function fixture(options: { mutationResult?: unknown; allowExecution?: PluginUiA
     const result = await execute('projects.worker.preferences.set', prepared.input);
     await controller.allowControl.onSettled(options.allowExecution ?? { ok: true, result });
   };
-  return { controller, run, allow, execute, observed: () => observed, setObservation(next: LocalActInspection) { observed = next; } };
+  const stop = async () => {
+    const prepared = await controller.stopControl.prepare({ signal: new AbortController().signal });
+    if (!prepared) return;
+    await execute('action.operations.cancel', prepared.input);
+    controller.stopControl.onSettled({ ok: true, result: null });
+  };
+  return { controller, run, allow, stop, execute, observed: () => observed, setObservation(next: LocalActInspection) { observed = next; } };
 }
 describe('local form scoped producer', () => {
   it('prepares the exact existing preference change for a host Allow control without writing or starting a command', async () => {
@@ -333,7 +339,7 @@ describe('local form scoped producer', () => {
     settle(execution); await running;
     expect(h.controller.getSnapshot().lastResult).toBe(execution);
     expect(h.controller.getSnapshot().operationWorkspace).toEqual(workspace);
-    await h.controller.openOutput(); await h.controller.stop();
+    await h.controller.openOutput(); await h.stop();
     const ref = { serverId: 'home', machineId: 'custodian-a', operationId: 'accepted-a' };
     expect(h.execute.mock.calls.filter(([action]) => action === 'projects.execution.output.open').map(([, input]) => input)).toEqual([ref]);
     expect(h.execute.mock.calls.filter(([action]) => action === 'action.operations.cancel').map(([, input]) => input)).toEqual([ref]);
@@ -359,7 +365,7 @@ describe('local form scoped producer', () => {
       h.controller.receiveOperation(address, PluginUiActionOperationHostReadResultV1ProtocolSchema.parse(observed));
     receive(ref, { operation: { ...operation, state: 'running', revision: 2, startedAt: 2 }, observation: 'available' });
     expect(h.controller.getSnapshot().operation?.state).toBe('running');
-    await h.controller.stop();
+    await h.stop();
     expect(h.controller.canRun()).toBe(false);
     const terminal = { ...operation, state, revision: 3, startedAt: 2, settledAt: 3,
       ...(state === 'failed' ? { error: { errorCode: 'process_failed', error: 'Process failed' } } : {}) };

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+  Action,
   Button,
   Icon,
   Item,
@@ -15,7 +16,7 @@ import {
   usePluginTranslation,
   type StepMarker,
 } from '@happier-dev/plugin-ui';
-import { resolveTriageRowFactStatusToneV1, type TriageEntryRefV1, type TriageRowFactValueV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1, resolveTriageRowFactStatusToneV1, type TriageEntryRefV1, type TriageRowFactValueV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageFixPullRequestV1 } from '../../corpus/marks/fixPullRequests.js';
 import type { TriageFixPullRequestsStateV1 } from './useTriageFixPullRequests.js';
@@ -135,13 +136,13 @@ export function TriageFixPullRequests(props: Readonly<{
     ?? candidate.entryRef.entryId;
   const unlinkLabel = text('plugins.triage.surface.detail.fixPr.unlink', 'Unlink');
   const unlink = (candidate: TriageFixPullRequestV1) => (
-    <Button
+    <Action.Control
+      action={TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1}
+      controller={state.unlinkControl(candidate.entryRef)}
       title={unlinkLabel}
       accessibilityLabel={`${unlinkLabel} ${titleOf(candidate)}`}
       variant="plain"
-      size="small"
       disabled={state.busy}
-      onPress={() => state.unlink(candidate.entryRef)}
     />
   );
   const moreLabel = (candidate: TriageFixPullRequestV1) => text('plugins.triage.surface.detail.fixPr.more', 'More for {title}',

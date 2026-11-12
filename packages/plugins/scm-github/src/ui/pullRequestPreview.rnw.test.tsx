@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createPluginTestkit,
   createPluginUiTestkit,
+  createPluginUiActionControlTestHost,
   createSurfaceContextFixture,
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
@@ -12,7 +13,7 @@ import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v
 import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../triage/contribution.js';
+import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1, GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../triage/contribution.js';
 import { GithubPreviewResultV1Schema } from '../triage/detail/contracts.js';
 import {
   OBSERVED_HEAD,
@@ -21,6 +22,7 @@ import {
 } from '../triage/testkit/githubMutation.test-support.js';
 import { renderSurface } from './renderSurface.js';
 import type { PluginUiResourceReference } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -39,6 +41,7 @@ async function mountOverview(
   options: Parameters<typeof previewStatusTransport>[0],
   serverId: string | null = 'srv_preview',
   directTabs = false,
+  settlement?: PluginUiActionControlExecution,
 ) {
   const transportOptions = {
     pullRequestState: 'open',
@@ -91,6 +94,11 @@ async function mountOverview(
   let resourceReference: PluginUiResourceReference | undefined;
   let digest = `sha256:${'1'.repeat(64)}`;
   const opened: unknown[] = [];
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    if (typeof action === 'string' || action.localId !== GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus)
+      throw new Error('Expected the declared Preview publication Action');
+    return settlement ?? { ok: true, result: await plugin.invokeAction(action.localId, input, { surface: 'ui' }) };
+  });
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({
@@ -110,6 +118,7 @@ async function mountOverview(
       },
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        actionControl: controls.handler,
         readResource: async ({ resource }) => {
           resourceReads.push(resource);
           return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({ digest })), digest };
@@ -119,6 +128,8 @@ async function mountOverview(
         executeAction: async ({ action, input: actionInput, signal, requestId }) => {
           if (typeof action === 'string' || actionInput === undefined)
             throw new Error('Expected registered GitHub Action');
+          if (action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus)
+            throw new Error('Person writes must use the host Action control');
           if (action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readPreview) {
             previewReads.push(actionInput);
             previewRequestIds.push(requestId);
@@ -151,7 +162,7 @@ async function mountOverview(
     if (requestId === undefined) throw new Error('Expected an issued Preview request');
     return requestId;
   };
-  return { detail, previewReads, agentRead, opened, resourceReads, changed, lastPreviewRequestId, requests: transport.requests };
+  return { detail, controls, previewReads, agentRead, opened, resourceReads, changed, lastPreviewRequestId, requests: transport.requests };
 }
 
 describe('the PR Overview Preview step', () => {
@@ -247,14 +258,49 @@ describe('the PR Overview Preview step', () => {
   });
 
   it('retries the PR update while keeping the ready preview and its address', async () => {
-    const { detail, requests } = await mountOverview({ operation: 'deploy', domainState: 'active' });
+    const { detail, requests, controls } = await mountOverview({ operation: 'deploy', domainState: 'active' });
     await vi.waitFor(() => detail.getByText(`Deployed ${SHA}`));
-    await detail.press(await detail.getByRole('button', { name: 'Retry PR update' }));
+    await act(() => controls.press('Retry PR update'));
     await vi.waitFor(() => detail.getByText('PR updated'));
     expect(await detail.getByText('https://pr-1284.example.test/')).toBeDefined();
     expect(requests.filter(request => request.method === 'POST'
       && new URL(request.url).pathname.endsWith(`/statuses/${OBSERVED_HEAD}`))).toHaveLength(1);
   });
+  it.each(['approval_rejected', 'approval_canceled'])('keeps a declined PR update quiet (%s)', async errorCode => {
+    const { detail, requests, controls } = await mountOverview({ operation: 'deploy', domainState: 'active' }, 'srv_preview', false,
+      { ok: false, errorCode, error: 'Confirmation declined' });
+    await vi.waitFor(() => detail.getByText('PR update pending'));
+    await act(() => controls.press('Retry PR update'));
+    await expect(detail.getByText('PR update pending')).resolves.toBeDefined();
+    expect(requests.filter(request => request.method === 'POST'
+      && new URL(request.url).pathname.endsWith(`/statuses/${OBSERVED_HEAD}`))).toHaveLength(0);
+  });
+
+  it('keeps the exact domain refusal instead of reporting a successful PR update', async () => {
+    const { detail, controls } = await mountOverview({ operation: 'deploy', domainState: 'active' }, 'srv_preview', false,
+      { ok: true, result: { kind: 'refused', reason: 'head_advanced' } });
+    await vi.waitFor(() => detail.getByText('PR update pending'));
+    await act(() => controls.press('Retry PR update'));
+    await expect(detail.getByText('PR update unavailable')).resolves.toBeDefined();
+    await expect(detail.getByText('head_advanced')).resolves.toBeDefined();
+    await expect(detail.getByText('https://pr-1284.example.test/')).resolves.toBeDefined();
+  });
+
+  it.each([
+    { ok: true, result: { kind: 'uncertain' } },
+    { ok: false, errorCode: 'action_outcome_unknown', error: 'Receipt unavailable', requestId: 'preview-status-uncertain' },
+  ] satisfies PluginUiActionControlExecution[])('keeps an uncertain PR update distinct from a failure (%j)', async settlement => {
+    const { detail, controls } = await mountOverview({ operation: 'deploy', domainState: 'active' }, 'srv_preview', false, settlement);
+    await vi.waitFor(() => detail.getByText('PR update pending'));
+    await act(() => controls.press('Retry PR update'));
+    await expect(detail.getByText('PR update not confirmed')).resolves.toBeDefined();
+    await expect(detail.getByText('https://pr-1284.example.test/')).resolves.toBeDefined();
+    if (!settlement.ok) {
+      await detail.press(await detail.getByRole('button', { name: 'Details' }));
+      await expect(detail.getByText('preview-status-uncertain')).resolves.toBeDefined();
+    }
+  });
+
   it.each(['deploy', 'teardown'] as const)('updates a same-head %s receipt after its deployment collection changes', async operation => {
     const options: Parameters<typeof previewStatusTransport>[0] = { operation, receiptState: 'running', domainState: 'active' };
     const { detail, previewReads, changed } = await mountOverview(options);

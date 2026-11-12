@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControlController, PluginUiContributionIdentityV1 } from '@happier-dev/plugin-sdk/ui';
 import type { SessionPullRequestNativeStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import { resolveTriageCrossCopyContext } from './crossCopyContext.js';
@@ -26,9 +26,12 @@ export type TriageDetailPrimaryWriteV1 = Readonly<{
   reading?: boolean;
   /** Source-owned choices, with no implicit selection by the header. */
   methods?: readonly Readonly<{ id: string; title: string }>[];
-  /** Original declared Action and operands; the header forwards the source's execute callback. */
+  /** Original declared Action and operands, prepared unchanged for the host-owned press. */
   actionRef?: PluginUiContributionIdentityV1;
   inputFor?: (methodId?: string) => unknown;
+  /** Host-owned press preparation and original settlement for source Actions. */
+  controllerFor?: (methodId?: string) => PluginUiActionControlController;
+  signal?: AbortSignal;
   /** Exact acknowledged requirements for the shared destructive confirmation. */
   unmetRequirements?: readonly Readonly<{ kind: string; id: string; label: string }>[];
   /** Native status and ordinary-action availability are deliberately distinct. */
@@ -40,7 +43,7 @@ export type TriageDetailPrimaryWriteV1 = Readonly<{
   readRequirements?: () => Promise<void>;
   /** Source-rendered settled feedback, through the incumbent write presenter. */
   feedback?: React.ReactNode;
-  /** Enters the source's ordinary Action/confirmation path. Never bypass approval. */
+  /** Automation entry or navigation-only offer. UI Actions use controllerFor through a host-owned control. */
   execute(methodId?: string): Promise<void>;
 }>;
 

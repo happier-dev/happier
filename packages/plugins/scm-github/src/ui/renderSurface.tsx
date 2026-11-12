@@ -79,6 +79,8 @@ import {
   usePluginTheme,
   usePluginTranslation,
   useExecutePluginAction,
+  projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
   useReviewCommentProposalsForEntry,
   useSurfaceContext,
   useTabPanelActivity,
@@ -101,6 +103,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { GithubChecksRunDrilldown } from './detail/checksRunDrilldown.js';
 import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailure.js';
+import { useGithubWrite, type GithubObservedEntryHandlerV1, type GithubWriteControllerV1 } from './detail/useGithubWrite.js';
 import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
 import { GithubIssueNotifications } from './detail/notifications.js';
 import { GithubSubIssueOrder } from './detail/subIssueOrder.js';
@@ -268,7 +271,6 @@ import {
   type GithubLockReasonV1,
   githubMutationMayHaveChangedProviderStateV1,
   githubOfferedMutationsV1,
-  projectGithubMutationOutcomeV1,
   readGithubNamesV1,
   type GithubMutationOutcomeV1,
   type GithubMutationRefusalReasonV1,
@@ -562,21 +564,6 @@ function WriteOutcome({
   );
 }
 
-/** A settled Action gives the shared gate the provider outcome; only that gate can signal Triage. */
-type GithubObservedEntryHandlerV1 = (
-  execution: PluginActionExecution<unknown>,
-  outcome: GithubMutationOutcomeV1 | null,
-  actionLocalId: string,
-) => void;
-
-type GithubWriteControllerV1<T extends GithubMutationResultV1 = GithubMutationResultV1> = Readonly<{
-  /** `null` until one dispatch has settled; a press in flight settles nothing. */
-  outcome: GithubMutationOutcomeV1 | null;
-  pending: boolean;
-  /** Resolves with the Action's parsed result, `null` when it settled without a readable one. */
-  run: (payload: GithubWritePayloadV1, signal?: AbortSignal) => Promise<T | null>;
-}>;
-
 type GithubWritePayloadV1 =
   TriagePullRequestOperationOfferV1['variants'][number]['input']
   | NonNullable<ReturnType<typeof buildGithubPullRequestTargetInputV1>>
@@ -606,44 +593,6 @@ type GithubWritePayloadV1 =
   | NonNullable<ReturnType<typeof buildGithubPendingReviewSubmitInputV1>>
   | NonNullable<ReturnType<typeof buildGithubPendingReviewDeleteInputV1>>
   | NonNullable<ReturnType<typeof buildGithubReviewDismissInputV1>>;
-
-/**
- * One write's dispatch and its settled answer, held together.
- *
- * The in-flight guard is the execution hook's, not a second one here: it owns the
- * action's identity, so a second press while one is in flight is the same mutation
- * running twice. The outcome is cleared at dispatch rather than kept, because a
- * stale "Done" sitting above a new press is the worst thing this panel could show.
- */
-function useGithubWrite<T extends GithubMutationResultV1>(
-  localId: string,
-  parseResult: (value: unknown) => T | null,
-  onObserved: GithubObservedEntryHandlerV1,
-): GithubWriteControllerV1<T> {
-  const action = React.useMemo(
-    () => ({ pluginId: GITHUB_PLUGIN_ID, localId }),
-    [localId],
-  );
-  const { execution, execute } = useExecutePluginAction(action);
-  const [outcome, setOutcome] = React.useState<GithubMutationOutcomeV1 | null>(null);
-  const run = React.useCallback(async (
-    payload: GithubWritePayloadV1,
-    signal?: AbortSignal,
-  ): Promise<T | null> => {
-    setOutcome(null);
-    const settled = await execute(payload, signal === undefined ? undefined : { signal });
-    const parsed = settled.status === 'success' ? parseResult(settled.result) : null;
-    const outcome = projectGithubMutationOutcomeV1(settled, parsed);
-    setOutcome(outcome);
-    onObserved(settled, outcome, localId);
-    return parsed;
-  }, [execute, localId, onObserved, parseResult]);
-
-  return React.useMemo(
-    () => ({ outcome, pending: execution.status === 'pending', run }),
-    [execution.status, outcome, run],
-  );
-}
 
 function parseStateResult(value: unknown): GithubMutationResultV1 | null {
   const parsed = GithubPullRequestStateResultV1Schema.safeParse(value);
@@ -866,13 +815,14 @@ function MergeWrite({
             values={{ revision: head.slice(0, 7) }}
           />
         )}
-      <Button
+      <Action.Control
+        action={primaryWrite.actionRef!}
+        controller={primaryWrite.controllerFor!(chosen?.id)}
+        signal={primaryWrite.signal}
         title={primaryWrite.id === 'merge' ? 'Merge pull request' : primaryWrite.title}
         {...(primaryWrite.id === 'merge' ? { titleKey: 'plugins.github.ui.mutations.merge' } : {})}
         variant="primary"
-        busy={primaryWrite.pending}
         disabled={payload == null || primaryWrite.pending || terminal}
-        onPress={() => { if (payload != null) void primaryWrite.execute(chosen?.id); }}
       />
       {primaryWrite.feedback}
     </Stack>
@@ -909,14 +859,8 @@ function StateWrite({
   }
   return (
     <Stack gap="small">
-      <Button
-        title={title}
-        titleKey={titleKey}
-        variant="secondary"
-        busy={write.pending}
-        disabled={write.pending}
-        onPress={() => write.run(payload)}
-      />
+      <Action.Control action={write.action} controller={write.controllerFor(payload)}
+        title={title} titleKey={titleKey} variant="secondary" disabled={write.pending} />
       {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
     </Stack>
   );
@@ -952,17 +896,11 @@ function ExactWrite({
   }
   return (
     <Stack gap="small">
-      <Button
-        title={title}
-        titleKey={titleKey}
-        variant="secondary"
-        busy={primaryWrite?.pending ?? write.pending}
-        disabled={payload === null || (primaryWrite?.pending ?? write.pending)}
-        onPress={() => {
-          if (primaryWrite !== undefined) void primaryWrite.execute();
-          else if (payload !== null) void write.run(payload);
-        }}
-      />
+      {primaryWrite === undefined ? <Action.Control action={write.action} controller={write.controllerFor(payload)}
+        title={title} titleKey={titleKey} variant="secondary" disabled={payload === null || write.pending} />
+        : <Action.Control action={primaryWrite.actionRef!} controller={primaryWrite.controllerFor!()}
+          signal={primaryWrite.signal} title={title} titleKey={titleKey} variant="secondary"
+          disabled={payload === null || primaryWrite.pending} />}
       {primaryWrite === undefined ? write.outcome === null ? null : <WriteOutcome outcome={write.outcome} /> : primaryWrite.feedback}
     </Stack>
   );
@@ -1734,10 +1672,10 @@ function GithubRelationshipRow({ input, title, value, relatedKindId, add, remove
         onChange={setNumberValue}
       />
       <Row gap="small" wrap>
-        <Button title={add.title} titleKey={add.titleKey} variant="secondary" busy={addWrite.pending}
-          disabled={payload === null || pending} onPress={() => { if (payload !== null) void addWrite.run(payload); }} />
-        <Button title={remove.title} titleKey={remove.titleKey} variant="plain" busy={removeWrite.pending}
-          disabled={removal === null || pending} onPress={() => { if (removal !== null) void removeWrite.run(removal); }} />
+        <Action.Control action={addWrite.action} controller={addWrite.controllerFor(payload)}
+          title={add.title} titleKey={add.titleKey} variant="secondary" disabled={payload === null || pending} />
+        <Action.Control action={removeWrite.action} controller={removeWrite.controllerFor(removal)}
+          title={remove.title} titleKey={remove.titleKey} variant="plain" disabled={removal === null || pending} />
       </Row>
       {outcome === null ? null : <WriteOutcome outcome={outcome} />}
     </GithubPropertyRow>
@@ -1885,12 +1823,10 @@ function GithubTransferEditor({ input, write, onApplied }: Readonly<{
       disabled={write.pending} onChange={value => { if (typeof value === 'string') setDestination(value); }} />
     <Form.Toggle label={text('plugins.github.ui.administration.createLabels', 'Create missing labels')}
       value={createLabels} disabled={write.pending} onChange={setCreateLabels} />
-    <Button title={text('plugins.github.ui.administration.transferSubmit', 'Transfer')} variant="secondary"
-      disabled={payload === null || write.pending} busy={write.pending} onPress={async () => {
-        if (payload === null) return;
-        const result = await write.run(payload);
-        if (result?.kind === 'applied') onApplied(result);
-      }} />
+    <Action.Control action={write.action}
+      controller={write.controllerFor(payload, result => { if (result.kind === 'applied') onApplied(result); })}
+      title={text('plugins.github.ui.administration.transferSubmit', 'Transfer')} variant="secondary"
+      disabled={payload === null || write.pending} />
     {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
   </Stack>;
 }
@@ -1934,8 +1870,9 @@ function GithubIssueDeleteWrite({ input, onObserved, capabilities }: Readonly<{
     })} />
     <Text variant="body" value={text('plugins.github.ui.administration.deleteWarning',
       'This permanently deletes the issue and its comments on GitHub. It cannot be undone.')} />
-    <Button title={text('plugins.github.ui.administration.deleteSubmit', 'Delete issue')} variant="destructive"
-      busy={write.pending} disabled={payload === null || write.pending} onPress={() => { if (payload !== null) return write.run(payload); }} />
+    <Action.Control action={write.action} controller={write.controllerFor(payload)}
+      title={text('plugins.github.ui.administration.deleteSubmit', 'Delete issue')} variant="destructive"
+      disabled={payload === null || write.pending} />
     {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
   </GithubPropertyRow>;
 }
@@ -1967,12 +1904,10 @@ function GithubPullRequestRevertWrite({ input, onObserved, capabilities }: Reado
         value={body} onChange={setBody} disabled={write.pending} />
     </Form.Field>
     <Form.Toggle label={text('plugins.github.ui.administration.draft', 'Open as draft')} value={draft} onChange={setDraft} disabled={write.pending} />
-    <Button title={text('plugins.github.ui.administration.revertSubmit', 'Open revert PR')} variant="secondary"
-      busy={write.pending} disabled={payload === null || write.pending} onPress={async () => {
-        if (payload === null) return;
-        const result = await write.run(payload);
-        if (result?.kind === 'applied') setApplied(result);
-      }} />
+    <Action.Control action={write.action}
+      controller={write.controllerFor(payload, result => { if (result.kind === 'applied') setApplied(result); })}
+      title={text('plugins.github.ui.administration.revertSubmit', 'Open revert PR')} variant="secondary"
+      disabled={payload === null || write.pending} />
     {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
   </GithubPropertyRow>;
 }
@@ -3464,10 +3399,8 @@ function GithubRemarkEditor({
     : text('plugins.github.ui.commentEdit.label', 'Comment');
   const write = useGithubWrite(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit, parseCommentEditResult, onObserved);
   const payload = draft === body ? null : buildGithubCommentEditInputV1(input, target, draft);
-  const save = async (): Promise<void> => {
-    if (payload === null) return;
-    const result = await write.run(payload);
-    if (result?.kind === 'applied' && 'comment' in result) {
+  const onApplied = (result: GithubMutationResultV1): void => {
+    if (result.kind === 'applied' && 'comment' in result) {
       edits.saved(target.id, body, result.comment.body);
       edits.end();
     }
@@ -3478,13 +3411,13 @@ function GithubRemarkEditor({
         <MarkdownEditor accessibilityLabel={label} value={draft} onChange={setDraft} disabled={write.pending} />
       </Form.Field>
       <Row gap="small">
-        <Button
+        <Action.Control
+          action={write.action}
+          controller={write.controllerFor(payload, onApplied)}
           title="Save"
           titleKey="plugins.github.ui.commentEdit.save"
           variant="secondary"
-          busy={write.pending}
           disabled={payload === null || write.pending}
-          onPress={save}
         />
         <Button
           title="Cancel"
@@ -3595,9 +3528,9 @@ function GithubPendingReviewCreateWrite({ context }: Readonly<{
       <MarkdownEditor accessibilityLabel={text('plugins.github.ui.review.summaryOptional', 'Summary (optional)')}
         value={summary} onChange={setSummary} disabled={write.pending} />
     </Form.Field>
-    <Button title={text('plugins.github.ui.review.startReview', 'Start review')} variant="secondary"
-      busy={write.pending} disabled={payload === null || write.pending}
-      onPress={() => { if (payload !== null) return write.run(payload); }} />
+    <Action.Control action={write.action} controller={write.controllerFor(payload)}
+      title={text('plugins.github.ui.review.startReview', 'Start review')} variant="secondary"
+      disabled={payload === null || write.pending} />
     {write.outcome === null ? null : <WriteOutcome outcome={write.outcome} />}
   </GithubPropertyRow>;
 }
@@ -3629,9 +3562,9 @@ function GithubReviewLifecycleActions({ context, reviewId, state, item }: Readon
       <Button title="Submit" titleKey="plugins.github.ui.review.submit" variant="plain"
         accessibilityLabel={text('plugins.github.ui.review.submitItem', 'Submit {item}', { item })}
         onPress={() => context.edits.openReview(reviewId, 'submit')} />
-      <Button title="Delete draft review" titleKey="plugins.github.ui.review.deleteDraft" variant="plain"
-        busy={remove.pending} disabled={payload === null || remove.pending}
-        onPress={() => { if (payload !== null) void remove.run(payload); }} />
+      <Action.Control action={remove.action} controller={remove.controllerFor(payload)}
+        title="Delete draft review" titleKey="plugins.github.ui.review.deleteDraft" variant="plain"
+        disabled={payload === null || remove.pending} />
       {remove.outcome === null || remove.outcome.kind === 'applied' ? null : <WriteOutcome outcome={remove.outcome} />}
     </Row>
   );
@@ -3655,11 +3588,7 @@ function GithubReviewLifecycleForm({ context, reviewId, form }: Readonly<{
   const payload = form === 'dismiss'
     ? buildGithubReviewDismissInputV1(context.input, reviewId, message)
     : verdict === null ? null : buildGithubPendingReviewSubmitInputV1(context.input, reviewId, verdict, message);
-  const run = async (): Promise<void> => {
-    if (payload === null) return;
-    const result = await write.run(payload);
-    if (result?.kind === 'applied') context.edits.closeReview();
-  };
+  const onApplied = (): void => context.edits.closeReview();
   return (
     <Stack gap="small">
       {form === 'submit' ? (
@@ -3685,10 +3614,10 @@ function GithubReviewLifecycleForm({ context, reviewId, form }: Readonly<{
         <MarkdownEditor accessibilityLabel={messageLabel} value={message} onChange={setMessage} disabled={write.pending} />
       </Form.Field>
       <Row gap="small">
-        <Button
+        <Action.Control action={write.action} controller={write.controllerFor(payload, onApplied)}
           title={form === 'dismiss' ? 'Dismiss review' : 'Submit review'}
           titleKey={form === 'dismiss' ? 'plugins.github.ui.review.dismissReview' : 'plugins.github.ui.review.submitReview'}
-          variant="secondary" busy={write.pending} disabled={payload === null || write.pending} onPress={run} />
+          variant="secondary" disabled={payload === null || write.pending} />
         <Button title="Cancel" titleKey="plugins.github.ui.commentEdit.cancel" variant="plain"
           disabled={write.pending} onPress={context.edits.closeReview} />
       </Row>
@@ -4154,7 +4083,6 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
   suggestions: readonly ScmSuggestionV1[];
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
-  const host = usePluginHostApi();
   const sessions = input.linkedSessions;
   const [chosen, setChosen] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
@@ -4167,13 +4095,12 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
   const session = sessions.length === 1 ? sessions[0] : sessions.find((candidate) => candidate.sessionId === chosen);
   const sessionTitle = (candidate: TriageLinkedSessionProjectionV1) => candidate.displayTitle
     ?? text('plugins.github.ui.linkedSession', 'Session');
-  const apply = async (): Promise<void> => {
-    if (session === undefined) return;
-    setPending(true);
-    setAnswer(null);
+  const settle: import('@happier-dev/plugin-sdk/ui').PluginUiActionControlController['onSettled'] = (execution) => {
     try {
+      const projected = projectPluginActionControlExecutionV1(execution, text);
+      if (isPluginActionConfirmationDeclined(projected) || projected.status === 'pending') return;
       const parsed = ScmSuggestionApplyResponseSchema.safeParse(
-        await host.executeAction('scm.suggestion.apply', { sessionId: session.sessionId, suggestions: [...suggestions] }),
+        execution.ok ? execution.result : null,
       );
       if (!parsed.success) {
         setAnswer({ tone: 'warning', label: text('plugins.github.ui.suggestion.unknown', 'Check the Session\'s changes to see what was applied.') });
@@ -4206,12 +4133,17 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
         />
       ) : null}
       <Row gap="small">
-        <Button
+        <Action.Control action="scm.suggestion.apply"
           title={text('plugins.github.ui.suggestion.apply', 'Apply {count} suggestions in {session}', {
             count: String(suggestions.length),
             session: session === undefined ? text('plugins.github.ui.linkedSession', 'Session') : sessionTitle(session),
           })}
-          variant="secondary" busy={pending} disabled={session === undefined || pending} onPress={apply} />
+          variant="secondary" disabled={session === undefined || pending}
+          controller={{ prepare() {
+            if (session === undefined || pending) return null;
+            setPending(true); setAnswer(null);
+            return { input: { sessionId: session.sessionId, suggestions: [...suggestions] } };
+          }, onSettled: settle }} />
       </Row>
       {answer === null ? null : <Status tone={answer.tone} label={answer.label} />}
     </Stack>
@@ -4231,13 +4163,16 @@ function PagedThreadFeedbackFinding({
   const loadMore = useTriageSourcePanelPagingV1(`thread-replies:${finding.id}`, text('plugins.github.ui.loadEarlierReplies', 'Load earlier replies'),
     replies.state.canLoadMore, replies.state.pending, replies.loadMore);
   return (
-    <ThreadFeedbackFinding
-      finding={finding}
-      earlierReplies={replies.state.rows}
-      {...(replies.state.canLoadMore ? { loadMore } : {})}
-      pending={replies.state.pending}
-      {...context}
-    />
+    <Stack gap="small">
+      <ThreadFeedbackFinding
+        finding={finding}
+        earlierReplies={replies.state.rows}
+        {...(replies.state.canLoadMore ? { loadMore } : {})}
+        pending={replies.state.pending}
+        {...context}
+      />
+      <PageFailureBanner state={replies.state} />
+    </Stack>
   );
 }
 

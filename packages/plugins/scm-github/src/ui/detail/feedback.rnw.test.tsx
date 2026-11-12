@@ -4,8 +4,8 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import type { PluginUiActionControlEventV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit, PluginUiTestkitExecuteActionInput } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { formatTriageTimestampV1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,8 @@ import { renderSurface } from '../renderSurface.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
+
+let declineSuggestion = false;
 
 const SOURCE_CONTRIBUTION = Object.freeze({
   pluginId: GITHUB_PLUGIN_ID,
@@ -110,6 +112,8 @@ const dispatched: string[] = [];
 const mutationInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
 const pageRefreshes = new WeakMap<PluginUiTestkit, () => void>();
+const githubControls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
+const suggestionControls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 const publishControls = new WeakMap<PluginUiTestkit, () => {
   publish(event: PluginUiActionControlEventV1): void;
   presentation: { title: string; disabled?: boolean };
@@ -141,36 +145,7 @@ async function mountFeedback(
       {body}
     </TriageActivityAgentProvider>;
   }
-  let boundPublish: { publish(event: PluginUiActionControlEventV1): void; presentation: { title: string; disabled?: boolean } } | undefined;
-  await act(async () => {
-    fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'fixture-instance-201', mountNonce: 'fixture-mount-201' },
-      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: defineUiSurface((context) => <MountedPage context={context} />),
-      surfaceContext: createSurfaceContextFixture({ platform }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      launchInput: input,
-      handlers: {
-        actionControl: async ({ request, publish }) => {
-          if (request.kind === 'bind') {
-            expect(request.action).toEqual({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate });
-            boundPublish = { publish, presentation: request.presentation };
-            return;
-          }
-          if (request.kind === 'update') {
-            if (boundPublish) boundPublish.presentation = request.presentation;
-            return;
-          }
-          if (request.preparation === null) return;
-          const actionInput = request.preparation.input;
-          mutationInputs.push(actionInput);
-          publish({ kind: 'settled', requestId: request.requestId, execution: { ok: true, result: {
-            kind: 'applied', effect: 'changed', comment: {
-              id: 'IC_posted', body: (actionInput as { body: string }).body, author: 'me', createdAtMs: OBSERVED_AT_MS,
-            },
-          } } });
-        },
-        executeAction: async ({ action, input: actionInput }) => {
+  const executeBoundary = async ({ action, input: actionInput }: Pick<PluginUiTestkitExecuteActionInput, 'action' | 'input'>): Promise<JsonValue> => {
           if (action === 'scm.suggestion.apply') {
             mutationInputs.push({ localId: action, input: actionInput });
             return { success: false, files: [
@@ -279,12 +254,61 @@ async function mountFeedback(
             };
           }
           throw new Error(`unexpected action ${localId}`);
+  };
+  const githubHost = createPluginUiActionControlTestHost(async request => ({ ok: true, result: await executeBoundary(request) }));
+  const githubSlots = new Set<string>();
+  const suggestionHost = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    if (declineSuggestion) { declineSuggestion = false; return { ok: false, errorCode: 'approval_rejected', error: 'Declined' }; }
+    mutationInputs.push({ localId: action, input });
+    return { ok: true, result: { success: false, files: [
+      { path: 'src/pump.ts', status: 'applied' },
+      { path: 'src/tail.ts', status: 'refused', errorCode: 'suggestion_outdated', error: 'changed' },
+    ] } };
+  });
+  const suggestionSlots = new Set<string>();
+  let boundPublish: { publish(event: PluginUiActionControlEventV1): void; presentation: { title: string; disabled?: boolean } } | undefined;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-201', mountNonce: 'fixture-mount-201' },
+      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+      surface: defineUiSurface((context) => <MountedPage context={context} />),
+      surfaceContext: createSurfaceContextFixture({ platform }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      launchInput: input,
+      handlers: {
+        actionControl: async (hostInput) => {
+          const { request, publish } = hostInput;
+          if (request.kind === 'bind' && request.action === 'scm.suggestion.apply') suggestionSlots.add(request.subscriptionId);
+          if (suggestionSlots.has(request.subscriptionId)) return suggestionHost.handler(hostInput);
+          if (request.kind === 'bind' && typeof request.action !== 'string'
+            && request.action.localId !== GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate) githubSlots.add(request.subscriptionId);
+          if (githubSlots.has(request.subscriptionId)) return githubHost.handler(hostInput);
+          if (request.kind === 'bind') {
+            expect(request.action).toEqual({ pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate });
+            boundPublish = { publish, presentation: request.presentation };
+            return;
+          }
+          if (request.kind === 'update') {
+            if (boundPublish) boundPublish.presentation = request.presentation;
+            return;
+          }
+          if (request.preparation === null) return;
+          const actionInput = request.preparation.input;
+          mutationInputs.push(actionInput);
+          publish({ kind: 'settled', requestId: request.requestId, execution: { ok: true, result: {
+            kind: 'applied', effect: 'changed', comment: {
+              id: 'IC_posted', body: (actionInput as { body: string }).body, author: 'me', createdAtMs: OBSERVED_AT_MS,
+            },
+          } } });
         },
+        executeAction: executeBoundary,
       },
     }) as PluginUiTestkit;
   });
   pageRefreshes.set(fixture, () => refreshPage());
   // Binding happens when Activity opens, after this mount returns.
+  suggestionControls.set(fixture, suggestionHost);
+  githubControls.set(fixture, githubHost);
   publishControls.set(fixture, () => boundPublish);
   mounted.push(fixture);
   return fixture;
@@ -410,7 +434,7 @@ describe('the mounted GitHub Feedback plane', () => {
       setter.call(textarea, 'The tail is dropped.');
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Save' })); });
+    await act(async () => { await githubControls.get(detail)!.press('Save'); });
 
     expect(mutationInputs).toEqual([{
       v: 1,
@@ -492,7 +516,7 @@ describe('the mounted GitHub Feedback plane', () => {
         setter.call(textarea, next);
         textarea.dispatchEvent(new Event('input', { bubbles: true }));
       });
-      await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Save' })); });
+      await act(async () => { await githubControls.get(detail)!.press('Save'); });
     };
     await save('Edit me · Commented', 'Looks good once the tail is kept.');
     await save('Edit me', 'The tail is dropped at line 42.');
@@ -523,7 +547,7 @@ describe('the mounted GitHub Feedback plane', () => {
       setter.call(field, 'Approved before the rebase.');
       field.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Dismiss review' })); });
+    await act(async () => { await githubControls.get(detail)!.press('Dismiss review'); });
 
     expect(mutationInputs).toEqual([{ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss,
       input: expect.objectContaining({ reviewId: 'PRR_ok', message: 'Approved before the rebase.' }) }]);
@@ -543,13 +567,13 @@ describe('the mounted GitHub Feedback plane', () => {
       setter.call(field, 'The lifecycle needs one correction.');
       field.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Start review' })); });
+    await act(async () => { await githubControls.get(detail)!.press('Start review'); });
     expect(mutationInputs).toEqual([{ localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate,
       input: expect.objectContaining({ headRevision: HEAD_REVISION, body: 'The lifecycle needs one correction.' }) }]);
     // The containing Triage page publishes its ordinary post-mutation refresh signal.
     await refreshPage(detail);
     expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
-    expect(await detail.getByRole('button', { name: 'Delete draft review' })).toMatchObject({ role: 'button' });
+    expect(githubControls.get(detail)!.presentation('Delete draft review')).toMatchObject({ disabled: false });
     expect(await detail.getByRole('button', { name: 'Submit me · Not submitted yet' })).toMatchObject({ role: 'button' });
   });
 
@@ -577,10 +601,14 @@ describe('the mounted GitHub Feedback plane', () => {
 
     expect(await detail.queryByRole('button', { name: 'Start a review' })).toBeUndefined();
 
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Delete draft review' })); });
+    await act(async () => { await githubControls.get(detail)!.press('Delete draft review'); });
     await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Submit me · Not submitted yet' })); });
     await act(async () => { await detail.press(await detail.getByRole('radio', { name: 'Approve' })); });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Submit review' })); });
+    // The Actions panel also owns a disabled control with this title; press the enabled lifecycle form.
+    const submit = githubControls.get(detail)!.getSnapshot()
+      .find(control => control.presentation.title === 'Submit review' && !control.presentation.disabled);
+    expect(submit).toBeDefined();
+    await act(async () => { await githubControls.get(detail)!.pressById(submit!.id); });
 
     expect(mutationInputs).toEqual([
       { localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete, input: expect.objectContaining({ reviewId: 'PRR_draft' }) },
@@ -605,7 +633,11 @@ describe('the mounted GitHub Feedback plane', () => {
     const detail = await mountFeedback(launchInput('pull-request', [],
       [{ sessionId: 'session-fix-1', displayTitle: 'Fix the pump' }]));
     await openFeedback(detail);
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Apply 2 suggestions in Fix the pump' })); });
+    declineSuggestion = true;
+    await act(async () => { await suggestionControls.get(detail)!.press('Apply 2 suggestions in Fix the pump'); });
+    expect(await detail.queryByText("Check the Session's changes to see what was applied.")).toBeUndefined();
+    expect(suggestionControls.get(detail)!.presentation('Apply 2 suggestions in Fix the pump')?.disabled).not.toBe(true);
+    await act(async () => { await suggestionControls.get(detail)!.press('Apply 2 suggestions in Fix the pump'); });
 
     expect(mutationInputs).toEqual([{ localId: 'scm.suggestion.apply',
       input: { sessionId: 'session-fix-1', suggestions: [suggestion, outdated] } }]);
@@ -750,9 +782,7 @@ describe('the mounted GitHub Feedback plane', () => {
     await openFeedback(detail);
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', {
-        name: 'Resolve conversation at src/pump.ts:42',
-      }));
+      await githubControls.get(detail)!.press('Resolve conversation at src/pump.ts:42');
     });
 
     expect(mutationInputs).toEqual([{
@@ -798,7 +828,7 @@ describe('the mounted GitHub Feedback plane', () => {
     await expect(detail.findByRole('radio', { name: 'Please keep the returned error.' }))
       .resolves.toMatchObject({ state: { checked: true } });
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Post selected reply' }));
+      await githubControls.get(detail)!.press('Post selected reply');
     });
 
     expect(mutationInputs.at(-1)).toMatchObject({
@@ -842,13 +872,9 @@ describe('the mounted GitHub Feedback plane', () => {
     const detail = await mountFeedback(launchInput('pull-request'));
     await openFeedback(detail);
 
-    const buttons = await detail.getAllByRole('button');
-    const reopen = buttons
-      .find((button) => button.name?.startsWith('Reopen conversation') === true);
-    expect(buttons.map((button) => button.name)).toContain(
-      'Reopen conversation at Review conversation',
-    );
-    await act(async () => { await detail.press(reopen!); });
+    expect(githubControls.get(detail)!.presentation('Reopen conversation at Review conversation'))
+      .toMatchObject({ disabled: false });
+    await act(async () => { await githubControls.get(detail)!.press('Reopen conversation at Review conversation'); });
 
     expect(mutationInputs).toEqual([expect.objectContaining({
       threadId: 'PRRT_2',

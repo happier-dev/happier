@@ -27,7 +27,7 @@
  * host, so this module cannot invent a shape the Action would then have to reject.
  */
 
-import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
 import type {
   TriageDetailSurfaceInputV1,
@@ -559,7 +559,7 @@ export function projectGithubMutationOutcomeV1(
   execution: PluginActionExecution<unknown>,
   parsed: GithubMutationResultV1 | GithubSecurityAlertMutationResultV1 | null,
 ): GithubMutationOutcomeV1 | GithubSecurityAlertMutationOutcomeV1 | null {
-  if (execution.status === 'idle' || execution.status === 'pending') return null;
+  if (execution.status === 'idle' || execution.status === 'pending' || isPluginActionConfirmationDeclined(execution)) return null;
   if (execution.status === 'outcomeUnknown') return Object.freeze({ kind: 'uncertain', failure: null });
   if (execution.status === 'error') return Object.freeze({ kind: 'rejected', code: execution.code, message: execution.message });
   if (parsed === null) return Object.freeze({ kind: 'unreadable' });

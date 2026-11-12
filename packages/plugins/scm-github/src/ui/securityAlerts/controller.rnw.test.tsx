@@ -145,14 +145,18 @@ describe('the selected security alert controller', () => {
       } },
     }); });
     mounted.push(fixture);
-    await act(async () => { await current.mutations.dismiss('fix_started', 'Retained comment'); });
+    await act(async () => { expect(await current.mutations.dismissControl('fix_started', 'Retained comment').prepare({ signal })).toBeNull(); });
     expect(calls).toHaveLength(1);
-    await act(async () => { await current.mutations.dismiss('false positive', 'Retained comment'); });
-    expect(calls.at(-1)).toMatchObject({ localId: ids.dismissCodeScanning, input: {
-      localRef: { kindId: 'code-scanning-alert', collisionScope: 'github:1', entryId: '7' }, reason: 'false positive', comment: 'Retained comment',
-    } });
+    await act(async () => {
+      const control = current.mutations.dismissControl('false positive', 'Retained comment');
+      const prepared = await control.prepare({ signal });
+      expect(calls).toHaveLength(1);
+      expect(prepared?.input).toMatchObject({ reason: 'false positive', comment: 'Retained comment' });
+      control.onSettled({ ok: true, result: GithubSecurityAlertMutationResultV1Schema.parse({ kind: 'uncertain', failure: { class: 'unknown', code: 'response_lost' } }) });
+    });
+
     expect(current.mutations.outcome).toMatchObject({ kind: 'uncertain', failure: { code: 'response_lost' } });
-    expect(calls.map(call => call.localId)).toEqual([ids.read, ids.dismissCodeScanning]);
+    expect(calls.map(call => call.localId)).toEqual([ids.read]);
   });
 
   it.each(['dependabot-alert', 'code-scanning-alert'])('never sends %s through legacy issue/PR detail Actions', async kindId => {

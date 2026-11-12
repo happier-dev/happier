@@ -50,7 +50,7 @@ async function mountOffPageFix(replyKind: 'present' | 'denied' | 'wrongSource' =
       return <Stack style={{ width: 390 }}>
         <Text value={title} />
         <TriageFixPullRequests pickable={[]} state={{ kind: 'ready', candidates: [candidate], primary: candidate,
-          incomplete: false, busy: false, refusal: null, link: () => undefined, unlink: () => undefined }}
+          incomplete: false, busy: false, refusal: null, link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }) }}
           {...(navigation === null ? {} : { onOpenPrimary: () => { void navigation.open(); } })} />
       </Stack>;
     });

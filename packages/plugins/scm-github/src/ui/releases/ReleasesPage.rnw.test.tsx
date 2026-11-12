@@ -6,9 +6,10 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiContextEnrichmentV1, PluginUiPageNavigationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
-import type { ForgeReleaseAssetPageV1, ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
+import { ForgeReleaseActionInputSchemasV1, type ForgeReleaseAssetPageV1, type ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
 import {
   createPluginUiTestkit,
+  createPluginUiActionControlTestHost,
   createPluginClientTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
@@ -129,9 +130,52 @@ async function mountReleases(
     locations?: unknown[];
     navigation?: Array<PluginUiPageNavigationV1 | null>;
   }>,
-): Promise<PluginUiTestkit> {
+): Promise<PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> }> {
   let fixture!: PluginUiTestkit;
   let published = false;
+  const dispatch: NonNullable<PluginUiTestkitHostHandlers['executeAction']> = async request => {
+          const { action, input } = request;
+          const localId = (action as { localId: string }).localId;
+          options.calls.push(localId);
+          if (options.executeAction) return options.executeAction(request);
+          if (localId === GITHUB_OVERVIEW_TARGET_ACTION_ID) return {
+            kind: 'unavailable', failure: { class: 'transient', code: 'default-ref-unavailable' },
+          };
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.listReleases) {
+            if (options.listError) throw options.listError;
+            return options.listResult ?? {
+              kind: 'value',
+              value: { ...emptyPage, rows: options.rows },
+            } as JsonValue;
+          }
+          // The provider's latest is its own answer: here the stable release, not the newer rc.
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease)
+            return { kind: 'value', value: STABLE } as JsonValue;
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readRelease)
+            return { kind: 'value', value: published ? { ...DRAFT, draft: false, publishedAt: DRAFT.updatedAt } : options.exact ?? DRAFT } as JsonValue;
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft && options.lostPublish) {
+            published = true;
+            return { kind: 'outcome_unknown', releaseId: DRAFT.releaseId, webUrl: DRAFT.webUrl };
+          }
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.listAssets && options.assetPages) {
+            const index = input && typeof input === 'object' && 'cursor' in input ? 1 : 0;
+            return { kind: 'value', value: options.readAssetPage ? await options.readAssetPage(index) : options.assetPages[index] } as JsonValue;
+          }
+          return {
+            kind: 'unavailable',
+            failure: { class: 'transient', code: 'not-under-test' },
+          } as JsonValue;
+        };
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    if (typeof action !== 'object') throw new Error('Expected a declared GitHub release Action');
+    switch (action.localId) {
+      case GITHUB_RELEASE_ACTION_IDS_V1.createReleaseDraft: ForgeReleaseActionInputSchemasV1.createReleaseDraft.parse(input); break;
+      case GITHUB_RELEASE_ACTION_IDS_V1.editReleaseDraft: ForgeReleaseActionInputSchemasV1.editReleaseDraft.parse(input); break;
+      case GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft: ForgeReleaseActionInputSchemasV1.publishReleaseDraft.parse(input); break;
+      default: throw new Error('Unexpected release write');
+    }
+    return { ok: true, result: await dispatch({ requestId: 'host-release-write', action, input }) };
+  });
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: {
@@ -191,44 +235,18 @@ async function mountReleases(
           return subPath;
         },
         downloadFile: async request => { options.downloadCalls?.push(request); return options.downloadResult ?? { success: false, status: 'cancelled', error: 'Picker dismissed' }; },
-        executeAction: async request => {
-          const { action, input } = request;
-          const localId = (action as { localId: string }).localId;
-          options.calls.push(localId);
-          if (options.executeAction) return options.executeAction(request);
-          if (localId === GITHUB_OVERVIEW_TARGET_ACTION_ID) return {
-            kind: 'unavailable', failure: { class: 'transient', code: 'default-ref-unavailable' },
-          };
-          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.listReleases) {
-            if (options.listError) throw options.listError;
-            return options.listResult ?? {
-              kind: 'value',
-              value: { ...emptyPage, rows: options.rows },
-            } as JsonValue;
-          }
-          // The provider's latest is its own answer: here the stable release, not the newer rc.
-          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease)
-            return { kind: 'value', value: STABLE } as JsonValue;
-          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readRelease)
-            return { kind: 'value', value: published ? { ...DRAFT, draft: false, publishedAt: DRAFT.updatedAt } : options.exact ?? DRAFT } as JsonValue;
-          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft && options.lostPublish) {
-            published = true;
-            return { kind: 'outcome_unknown', releaseId: DRAFT.releaseId, webUrl: DRAFT.webUrl };
-          }
-          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.listAssets && options.assetPages) {
-            const index = input && typeof input === 'object' && 'cursor' in input ? 1 : 0;
-            return { kind: 'value', value: options.readAssetPage ? await options.readAssetPage(index) : options.assetPages[index] } as JsonValue;
-          }
-          return {
-            kind: 'unavailable',
-            failure: { class: 'transient', code: 'not-under-test' },
-          } as JsonValue;
+        actionControl: controls.handler,
+        executeAction: request => {
+          const localId = typeof request.action === 'object' ? request.action.localId : request.action;
+          if (localId === GITHUB_RELEASE_ACTION_IDS_V1.createReleaseDraft || localId === GITHUB_RELEASE_ACTION_IDS_V1.editReleaseDraft
+            || localId === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft) throw new Error('Release write must use the host control');
+          return dispatch(request);
         },
       },
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 function releaseActionUi(page: PluginUiTestkit): Parameters<PluginClientActionHandler>[1]['ui'] {
@@ -311,7 +329,7 @@ describe('the Releases Project page', () => {
     const calls: string[] = [];
     const page = await mountReleases({ rows: [DRAFT, RC4], calls, subPath: DRAFT.releaseId, lostPublish: true,
       assetPages: [DRAFT.assets] });
-    await act(async () => { await page.press(await page.findByRole('button', { name: 'Publish…' })); });
+    await act(async () => { await page.controls.press('Publish…'); });
     await page.getByText('Result unknown — check on GitHub');
     expect(calls.filter(id => id === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft)).toHaveLength(1);
     await act(async () => { await page.press(await page.getByRole('button', { name: 'Check status' })); });
@@ -713,7 +731,7 @@ describe('the Releases Project page', () => {
     // A denied read is not a write verdict: Draft release stays a working control.
     await act(async () => { await page.press(await page.getByRole('button', { name: 'Draft release' })); });
     await act(async () => { await page.press(await page.findByRole('button', { name: 'Write my own' })); });
-    await act(async () => { await page.press(await page.getByRole('button', { name: 'Save draft' })); });
+    await act(async () => { await page.controls.press('Save draft'); });
     expect(calls.filter(id => id === GITHUB_RELEASE_ACTION_IDS_V1.createReleaseDraft)).toHaveLength(1);
     await page.getByText('GitHub requires Contents: write to save this release. Your notes stay here; nothing was saved.');
     await page.getByRole('textbox', { label: 'Release notes', value: '## Highlights\n\n- ' });
@@ -790,7 +808,7 @@ describe('the Releases Project page', () => {
     await page.findByRole('textbox', { label: 'Release name', value: DRAFT.name });
     expect(await command('useRemote')).toEqual({ status: 'unavailable' });
     await act(async () => { await invoke(page, 'release-cmd', { kind: 'setField', field: 'body', value: 'My local notes' }); });
-    await act(async () => { await page.press(await page.getByRole('button', { name: 'Save draft' })); });
+    await act(async () => { await page.controls.press('Save draft'); });
     await page.getByText('This draft changed on GitHub since you opened it');
     await act(async () => { expect(await command('useRemote')).toEqual({ status: 'applied' }); });
     await page.findByRole('textbox', { label: 'Release notes', value: 'GitHub’s newer notes' });
@@ -798,7 +816,7 @@ describe('the Releases Project page', () => {
     lostCreate = true;
     await act(async () => { await invoke(page, 'release-cmd', { kind: 'setField', field: 'body', value: 'GitHub’s newer notes, edited' }); });
     expect(await command('checkStatus')).toEqual({ status: 'unavailable' });
-    await act(async () => { await page.press(await page.getByRole('button', { name: 'Save draft' })); });
+    await act(async () => { await page.controls.press('Save draft'); });
     await page.getByText('Result unknown — check on GitHub');
     await act(async () => { expect(await command('checkStatus')).toEqual({ status: 'applied' }); });
     expect(await page.queryByText('Result unknown — check on GitHub')).toBeUndefined();
@@ -845,10 +863,7 @@ describe('the Releases Project page', () => {
     });
     await page.getByText('New release');
     await page.getByText('Not saved · nothing is on GitHub yet');
-    const publish = await page.getByRole('button', {
-      name: 'Publish, available after you save the draft',
-    });
-    expect(publish.state?.disabled).toBe(true);
+    expect(page.controls.presentation('Publish…')?.disabled).toBe(true);
     expect(calls).not.toContain(
       GITHUB_RELEASE_ACTION_IDS_V1.createReleaseDraft,
     );

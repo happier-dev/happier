@@ -886,14 +886,12 @@ export function LocalActRunFormView(
               void controller.openOutput();
             }}
           />
-          <Button
-            size="small"
+          <Action.Control
+            action="action.operations.cancel"
+            controller={controller.stopControl}
+            signal={props.form.signal}
             variant="plain"
-            icon={<Icon name="stop" size="small" />}
             title={t('plugins.github.localRun.stop', 'Stop')}
-            onPress={() => {
-              void controller.stop();
-            }}
           />
         </Row>
       }

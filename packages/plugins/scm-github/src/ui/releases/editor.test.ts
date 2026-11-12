@@ -4,6 +4,29 @@ import { createReleaseEditorV1 } from './editor.js';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 
 describe('one controlled release editor', () => {
+  it('prepares a host Save without executing automation and settles the captured edit before a reviewed host Publish', async () => {
+    const release = createForgeReleaseV1Fixture();
+    const calls: string[] = [];
+    const assets = { rows: [], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null };
+    const edited = { ...release, body: 'Host-edited notes' };
+    const editor = createReleaseEditorV1({ target: { repository: release.repository }, initial: release,
+      invoke: async operation => { calls.push(operation); return { status: 'success', result: operation === 'readRelease'
+        ? { kind: 'value', value: edited } : { kind: 'value', value: assets } }; } });
+    await editor.invoke({ kind: 'setField', field: 'body', value: edited.body });
+    const prepared = await editor.saveControl.prepare({ signal: new AbortController().signal });
+    expect(prepared).toEqual({ input: { repository: release.repository, repositoryId: release.repositoryId, releaseId: release.releaseId,
+      observedUpdatedAt: release.updatedAt, changes: { body: edited.body } } });
+    expect(calls).toEqual([]);
+    editor.saveControl.onSettled({ ok: true, result: { kind: 'confirmed', release: edited } });
+    expect(editor.getSnapshot()?.dirty).toBe(false);
+    const publishing = await editor.publishControl.prepare({ signal: new AbortController().signal });
+    expect(calls).toEqual(['readRelease', 'listAssets']);
+    expect(publishing?.input).toMatchObject({ releaseId: release.releaseId, reviewed: { ...edited, assets }, makeLatest: 'legacy' });
+    editor.publishControl.onSettled({ ok: true, result: { kind: 'confirmed', release: { ...edited, draft: false } } });
+    expect(editor.getSnapshot()?.saved?.draft).toBe(false);
+    expect(editor.getSnapshot()?.busy).toBeNull();
+    editor.dispose();
+  });
   it('keeps explicit draft edit timestamp-only', async () => {
     const release = createForgeReleaseV1Fixture();
     const calls: unknown[] = [];
@@ -169,10 +192,10 @@ describe('one controlled release editor', () => {
     editor.dispose();
   });
 
-  it('preserves a declined or pending host approval without claiming an uncertain write', async () => {
+  it('preserves a pending host rebind without claiming an uncertain write', async () => {
     const release = createForgeReleaseV1Fixture();
     const editor = createReleaseEditorV1({ target: { repository: release.repository, repositoryId: release.repositoryId }, initial: release,
-      invoke: async () => ({ status: 'idle' }) });
+      invoke: async () => ({ status: 'pending' }) });
     await editor.invoke({ kind: 'setField', field: 'body', value: 'Still unsaved' });
     await editor.save();
     expect(editor.getSnapshot()?.outcome).toBeNull();
@@ -181,11 +204,34 @@ describe('one controlled release editor', () => {
     editor.dispose();
   });
 
-  it('does not replay a write after a generic host transport rejection', async () => {
+  it.each((['save', 'publish'] as const).flatMap(operation =>
+    (['approval_rejected', 'approval_canceled', 'denied'] as const).map(errorCode => ({ operation, errorCode }))))(
+    'keeps $operation retryable after $errorCode', async ({ operation, errorCode }) => {
+      const release = createForgeReleaseV1Fixture();
+      const editor = createReleaseEditorV1({ target: { repository: release.repository }, initial: release,
+        invoke: async read => ({ status: 'success', result: { kind: 'value', value: read === 'readRelease' ? release : { rows: [], omittedRowCount: 0, projectionTruncated: false, continuation: null, incomplete: null } } }) });
+      if (operation === 'save') await editor.invoke({ kind: 'setField', field: 'body', value: 'Keep unsaved notes' });
+      const before = editor.getSnapshot();
+      const control = operation === 'save' ? editor.saveControl : editor.publishControl;
+      const prepared = await control.prepare({ signal: new AbortController().signal });
+      expect(prepared).not.toBeNull();
+      control.onSettled({ ok: false, errorCode, error: 'Host refused this occurrence' });
+      const after = editor.getSnapshot();
+      expect(after?.busy).toBeNull();
+      expect(after?.outcome).toBeNull();
+      expect(after?.saved).toEqual(before?.saved);
+      expect(after?.fields).toEqual(before?.fields);
+      expect(after?.dirty).toBe(before?.dirty);
+      expect(after?.failure).toEqual(errorCode === 'denied' ? { class: 'transient', code: 'denied' } : null);
+      expect(await control.prepare({ signal: new AbortController().signal })).toEqual(prepared);
+      editor.dispose();
+  });
+
+  it('does not replay a write after a host reports an unknown outcome', async () => {
     const release = createForgeReleaseV1Fixture();
     let attempts = 0;
     const editor = createReleaseEditorV1({ target: { repository: release.repository }, initial: release,
-      invoke: async () => { attempts++; return { status: 'error', code: 'plugin_action_failed', message: 'Response unavailable', retryable: true }; } });
+      invoke: async () => { attempts++; return { status: 'outcomeUnknown', code: 'action_outcome_unknown', message: 'Response unavailable' }; } });
     await editor.invoke({ kind: 'setField', field: 'body', value: 'Keep these unsaved notes' });
     await editor.save();
     await editor.save();

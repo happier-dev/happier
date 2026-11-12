@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
-import { Banner, Button, projectPluginActionRejectionV1, usePluginTranslation, type PluginActionExecution } from '@happier-dev/plugin-ui';
+import { Banner, Button, isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, usePluginTranslation, type PluginActionExecution } from '@happier-dev/plugin-ui';
 import { readTriageSourceOperationOutcomeV1, type SessionPullRequestNativeStatusV1,
   type TriagePullRequestOperationOfferV1, type TriagePullRequestOperationsV1,
   type TriageSourceOperationOutcomeV1 } from '@happier-dev/triage-protocol/v1';
@@ -99,37 +99,42 @@ export function useTriagePullRequestPrimaryWriteV1(input: TriagePullRequestPrima
         && current.current.get(key) === record
         && displayed !== undefined && [displayed.primary, ...displayed.alternatives].includes(source);
     };
+    const settle = (execution: PluginActionExecution<unknown>) => {
+      const outcome = execution.status === 'success' ? readTriageSourceOperationOutcomeV1(execution.result) : null;
+      const feedback: Feedback | null = isPluginActionConfirmationDeclined(execution) ? null
+        : execution.status !== 'success' ? { kind: 'transport', value: execution }
+        : outcome ? { kind: 'source', value: outcome }
+          : isPluginActionApprovalRequestCreated(execution.result) ? { kind: 'approval' } : { kind: 'unreadable' };
+      const blocked = feedback?.kind === 'unreadable' || feedback?.kind === 'source' && feedback.value.kind === 'uncertain'
+        || feedback?.kind === 'transport' && feedback.value.status === 'outcomeUnknown';
+      publish(key, { signal: input.signal,
+        pending: feedback?.kind === 'transport' && feedback.value.status === 'pending', blocked, feedback });
+      if (mounted.current && !input.signal.aborted && shown.current.signal === input.signal) {
+        shown.current.onSettled?.(execution, outcome, source);
+      }
+    };
+    const prepare = (id?: string) => {
+      const active = current.current.get(key);
+      if (!mounted.current || input.signal.aborted || !offered() || source.disabledReason !== null
+        || active?.signal === input.signal && (active.pending || active.blocked)) return null;
+      const choice = variant(id);
+      if (!choice) return null;
+      publish(key, { signal: input.signal, pending: true, blocked: false, feedback: null });
+      return { input: choice.input };
+    };
     return { id: source.id, title: source.titleKey === undefined ? source.title : text(source.titleKey, source.title),
-      disabledReason, pending: state?.pending ?? false, actionRef: source.actionRef,
+      disabledReason, pending: state?.pending ?? false, actionRef: source.actionRef, signal: input.signal,
+      controllerFor: id => ({ prepare: () => prepare(id),
+        onSettled: execution => settle(projectPluginActionControlExecutionV1(execution, text)) }),
       ...(methods.length ? { methods } : {}),
       inputFor: id => disabledReason !== null || input.signal.aborted || !offered()
         || current.current.get(key)?.signal === input.signal && current.current.get(key)?.blocked ? null : variant(id)?.input ?? null,
       execute: async id => {
-        const active = current.current.get(key);
-        if (!mounted.current || input.signal.aborted || !offered() || source.disabledReason !== null
-          || active?.signal === input.signal && (active.pending || active.blocked) || !variant(id)) return;
-        publish(key, { signal: input.signal, pending: true, blocked: false, feedback: null });
-        let feedback: Feedback;
+        if (!prepare(id)) return;
         let execution: PluginActionExecution<unknown>;
-        let outcome: TriageSourceOperationOutcomeV1 | null = null;
-        try {
-          const result = await input.execute(source.id, id);
-          execution = { status: 'success', result };
-          outcome = readTriageSourceOperationOutcomeV1(result);
-          feedback = outcome ? { kind: 'source', value: outcome }
-            : isPluginActionApprovalRequestCreated(result) ? { kind: 'approval' } : { kind: 'unreadable' };
-        } catch (error) {
-          execution = projectPluginActionRejectionV1(error, text);
-          feedback = { kind: 'transport', value: execution };
-        }
-        const blocked = feedback.kind === 'unreadable' || feedback.kind === 'source' && feedback.value.kind === 'uncertain'
-          || feedback.kind === 'transport' && feedback.value.status === 'outcomeUnknown';
-        publish(key, { signal: input.signal,
-          pending: feedback.kind === 'transport' && feedback.value.status === 'pending', blocked, feedback });
-        // Observer failures cannot turn an already settled Action into another native/transport outcome.
-        if (mounted.current && !input.signal.aborted && shown.current.signal === input.signal) {
-          shown.current.onSettled?.(execution, outcome, source);
-        }
+        try { execution = { status: 'success', result: await input.execute(source.id, id) }; }
+        catch (error) { execution = projectPluginActionRejectionV1(error, text); }
+        settle(execution);
       } };
   };
   const primary = offer(input.operations.primary);

@@ -305,10 +305,15 @@ export function createLocalRunControllerV1(options: Readonly<{
       const ref = state.operationRef;
       if (ref && !retired) return await options.host.executeAction('projects.execution.output.open', ref);
     },
-    async stop() {
-      const ref = state.operationRef;
-      if (ref && !retired) return await options.host.executeAction('action.operations.cancel', ref);
-    },
+    stopControl: {
+      prepare({ signal }) {
+        const ref = state.operationRef;
+        return !retired && !signal.aborted && ref ? { input: ref } : null;
+      },
+      onSettled(execution) {
+        if (!retired) publish({ lastResult: execution, error: execution.ok ? null : execution.errorCode });
+      },
+    } satisfies PluginUiActionControlController,
     async invoke(operation: { kind: 'readSelection' } | { kind: 'setSelection'; selection: LocalRunSelection }): Promise<LocalActRunFormResult> {
       if (retired) return { status: 'unavailable' };
       if (operation.kind === 'readSelection') return { status: 'applied', selection: state.selection };

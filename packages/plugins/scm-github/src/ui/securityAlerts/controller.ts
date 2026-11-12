@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { useExecutePluginAction, usePluginHostApi, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { useExecutePluginAction, projectPluginActionControlExecutionV1, usePluginTranslation, usePluginHostApi, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { TriageDetailSurfaceInputV1, TriageSessionHandoffInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import { requestTriageSessionHandoffV1 } from '@happier-dev/triage-sources/runtime';
@@ -60,6 +62,7 @@ export function useGithubSecurityAlertDetail(input: TriageDetailSurfaceInputV1, 
 }> = {}) {
   const tabActivity = useTabPanelActivity();
   const host = usePluginHostApi();
+  const text = usePluginTranslation();
   const fixPullRequestNavigation = useTriageDetailFixPullRequestNavigation();
   const activity = options.activity ?? tabActivity;
   const request = useTriageDetailRequest(input);
@@ -113,25 +116,40 @@ export function useGithubSecurityAlertDetail(input: TriageDetailSurfaceInputV1, 
   const currentTarget = useRef(target);
   currentTarget.current = target;
   const writing = useRef(false);
-  const runMutation = useCallback(async (kind: 'dismiss' | 'reopen', reason?: string, comment?: string) => {
-    if (!activity.active || activity.activeSignal.aborted || writing.current || detailPayload === null) return;
+  const [mutationPending, setMutationPending] = useState(false);
+  const prepareMutation = useCallback((kind: 'dismiss' | 'reopen', reason?: string, comment?: string) => {
+    if (!activity.active || activity.activeSignal.aborted || writing.current || detailPayload === null) return null;
     const dependency = request.localRef.kindId === 'dependabot-alert';
     const schema = kind === 'dismiss' ? dependency ? GithubDependabotDismissInputV1Schema : GithubCodeScanningDismissInputV1Schema
       : dependency ? GithubDependabotReopenInputV1Schema : GithubCodeScanningReopenInputV1Schema;
     const parsed = schema.safeParse({ ...target, ...(kind === 'dismiss' ? { reason, ...(comment === undefined ? {} : { comment }) } : {}) });
-    if (!parsed.success) return;
+    if (!parsed.success) return null;
     writing.current = true;
+    setMutationPending(true);
+    return { input: parsed.data };
+  }, [activity.active, activity.activeSignal, detailPayload, request.localRef.kindId, target]);
+  const settleMutation = useCallback(async (execution: PluginActionExecution<unknown>) => {
     try {
-      const execution = await (kind === 'dismiss' ? dismissDispatch.execute : reopenDispatch.execute)(parsed.data, { signal: activity.activeSignal });
       if (activity.activeSignal.aborted || currentTarget.current !== target) return;
       const result = execution.status === 'success' ? GithubSecurityAlertMutationResultV1Schema.safeParse(execution.result) : null;
       const projected = projectGithubMutationOutcomeV1(execution, result?.success ? result.data : null);
       setSettlement({ target, outcome: projected });
       await completeTriagePostMutationIfNeeded(complete, execution, () => githubMutationMayHaveChangedProviderStateV1(projected));
-    } finally { writing.current = false; }
-  }, [activity.active, activity.activeSignal, complete, detailPayload, dismissDispatch.execute, reopenDispatch.execute, request.localRef.kindId, target]);
+    } finally { writing.current = false; setMutationPending(false); }
+  }, [activity.activeSignal, complete, target]);
+  const runMutation = useCallback(async (kind: 'dismiss' | 'reopen', reason?: string, comment?: string) => {
+    const preparation = prepareMutation(kind, reason, comment);
+    if (!preparation) return;
+    await settleMutation(await (kind === 'dismiss' ? dismissDispatch.execute : reopenDispatch.execute)(preparation.input, { signal: activity.activeSignal }));
+  }, [activity.activeSignal, dismissDispatch.execute, reopenDispatch.execute, prepareMutation, settleMutation]);
   const dismiss = useCallback((reason: string, comment?: string) => runMutation('dismiss', reason, comment), [runMutation]);
   const reopen = useCallback(() => runMutation('reopen'), [runMutation]);
+  const mutationControl = useCallback((kind: 'dismiss' | 'reopen', reason?: string, comment?: string) => ({
+    prepare: ({ signal }) => signal.aborted ? null : prepareMutation(kind, reason, comment),
+    onSettled: execution => settleMutation(projectPluginActionControlExecutionV1(execution, text)),
+  } satisfies PluginUiActionControlController), [prepareMutation, settleMutation, text]);
+  const dismissControl = useCallback((reason: string, comment?: string) => mutationControl('dismiss', reason, comment), [mutationControl]);
+  const reopenControl = useMemo(() => mutationControl('reopen'), [mutationControl]);
   const fix = useCallback((choices: Pick<TriageSessionHandoffInputV1, 'configuredActionId' | 'sessionChoice' | 'agentChoice' | 'delivery'>) => {
     if (!activity.active || activity.activeSignal.aborted || detailPayload === null) return undefined;
     const entry = { entryRef: input.observation.entryRef, sourceInstanceId: input.instance.instance.sourceInstanceId };
@@ -140,12 +158,12 @@ export function useGithubSecurityAlertDetail(input: TriageDetailSurfaceInputV1, 
   return { detail, locations, selectedLocation, selectLocation, snippet,
     fix,
     fixPullRequest: request.localRef.kindId === 'dependabot-alert' ? fixPullRequestNavigation : null,
-    mutations: { dismiss, reopen, outcome: settlement?.target === target ? settlement.outcome : null,
+    mutations: { dismiss, reopen, dismissControl, reopenControl, dismissAction, reopenAction, signal: activity.activeSignal, outcome: settlement?.target === target ? settlement.outcome : null,
       reasons: request.localRef.kindId === 'dependabot-alert' ? GITHUB_DEPENDABOT_DISMISS_REASONS_V1 : GITHUB_CODE_SCANNING_DISMISS_REASONS_V1,
       canDismiss: detail.state.kind === 'ready' && detail.state.value.detail.nativeState === 'open',
       canReopen: detail.state.kind === 'ready' && (detail.state.value.detail.nativeState === 'dismissed'
         || (request.localRef.kindId === 'dependabot-alert' && detail.state.value.detail.nativeState === 'auto_dismissed')),
-      pending: dismissDispatch.execution.status === 'pending' || reopenDispatch.execution.status === 'pending' } };
+      pending: mutationPending } };
 }
 
 export type GithubSecurityAlertControllerV1 = ReturnType<typeof useGithubSecurityAlertDetail>;

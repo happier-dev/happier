@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  Action,
   Button,
   CodeBlock,
   Column,
@@ -867,15 +868,13 @@ function AlertActions({
                     'Dismissed · stays dismissed on GitHub until reopened',
                   )}
                 />
-                <Button
+                <Action.Control
+                  action={m.reopenAction}
+                  controller={m.reopenControl}
+                  signal={m.signal}
                   title={text('plugins.github.ui.alert.reopen', 'Reopen')}
                   variant="secondary"
-                  size="small"
-                  busy={m.pending}
                   disabled={m.pending}
-                  onPress={() => {
-                    void m.reopen();
-                  }}
                 />
               </Row>
             ) : state === 'fixed' ? (
@@ -921,7 +920,7 @@ function useGithubSecurityAlertHeaderWrite(
   const publishes = offer !== undefined && panel !== undefined && panel !== 'actions';
   // The controller rebuilds its mutations record each render; the offer follows only the facts it shows, so the
   // header is not re-offered (and re-rendered) on every render of this body.
-  const { canDismiss, canReopen, pending, outcome, reopen } = controller.mutations;
+  const { canDismiss, canReopen, pending, outcome, reopen, reopenAction, reopenControl, signal } = controller.mutations;
   const reading = controller.detail.state.kind === 'loading';
   const write = React.useMemo((): TriageDetailPrimaryWriteV1 | null => {
     const feedback = outcome === null ? undefined : renderers.renderOutcome(outcome);
@@ -938,12 +937,12 @@ function useGithubSecurityAlertHeaderWrite(
       execute: async () => { openDismissForm(); },
     };
     if (canReopen) return {
-      ...common, id: 'alertReopen',
+      ...common, id: 'alertReopen', actionRef: reopenAction, controllerFor: () => reopenControl, signal,
       title: text('plugins.github.ui.alert.reopen', 'Reopen'),
       execute: async () => { await reopen(); },
     };
     return null;
-  }, [canDismiss, canReopen, openDismissForm, outcome, pending, reading, renderers, reopen, text]);
+  }, [canDismiss, canReopen, openDismissForm, outcome, pending, reading, renderers, reopen, reopenAction, reopenControl, signal, text]);
   React.useLayoutEffect(() => {
     if (!publishes) return undefined;
     offer(write);

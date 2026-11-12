@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import {
+  Action,
   Banner,
   Button,
   Field,
@@ -28,6 +29,7 @@ import {
 import {
   useReleaseEditorSnapshotV1,
 } from './hooks.js';
+import { GITHUB_RELEASE_ACTION_REFS_V1 } from './model.js';
 import type { ReleaseAssetDownloadsV1 } from './downloads.js';
 import type { useReleaseDetailV1 } from './detail.js';
 import { formatGithubPermissionsV1, formatReleaseDayV1, ReleaseAssets, ReleaseEdgeAligned, ReleaseSessionHelpButton, type ReleaseSessionHelpV1 } from './ReleaseStory.js';
@@ -164,15 +166,6 @@ function ComposerSheet(
       ? t('plugins.github.releases.compose.status.unsaved', 'Unsaved changes')
       : t('plugins.github.releases.compose.status.notSaved', 'Not saved');
 
-  const save = async () => {
-    setLastWrite(saved ? 'editReleaseDraft' : 'createReleaseDraft');
-    await editor.save();
-  };
-  const publish = async () => {
-    setLastWrite('publishReleaseDraft');
-    await editor.reviewPublish();
-    if (editor.getSnapshot()?.review) await editor.publishDraft();
-  };
   const close = () => props.onCommand('close');
 
   const unknownCopy =
@@ -862,38 +855,21 @@ function ComposerSheet(
   const publishDisabled =
     writeBlocked || !clean || published || conflict !== null;
   const saveButton = (
-    <Button
+    <Action.Control
+      action={GITHUB_RELEASE_ACTION_REFS_V1[saved ? 'editReleaseDraft' : 'createReleaseDraft']}
+      controller={{ prepare: options => { setLastWrite(saved ? 'editReleaseDraft' : 'createReleaseDraft'); return editor.saveControl.prepare(options); }, onSettled: editor.saveControl.onSettled }}
       variant={clean ? 'secondary' : 'primary'}
-      busy={busy === 'createReleaseDraft' || busy === 'editReleaseDraft'}
       disabled={saveDisabled}
       title={t('plugins.github.releases.compose.save', 'Save draft')}
-      onPress={() => {
-        void save();
-      }}
     />
   );
   const publishButton = (
-    <Button
+    <Action.Control
+      action={GITHUB_RELEASE_ACTION_REFS_V1.publishReleaseDraft}
+      controller={{ prepare: options => { setLastWrite('publishReleaseDraft'); return editor.publishControl.prepare(options); }, onSettled: editor.publishControl.onSettled }}
       variant={clean ? 'primary' : 'secondary'}
-      busy={
-        busy === 'publishReleaseDraft' ||
-        busy === 'readRelease' ||
-        busy === 'listAssets'
-      }
       disabled={publishDisabled}
-      icon={<Icon name="tag" size="small" />}
       title={t('plugins.github.releases.compose.publish', 'Publish…')}
-      onPress={() => {
-        void publish();
-      }}
-      accessibilityLabel={
-        clean
-          ? undefined
-          : t(
-              'plugins.github.releases.compose.publish.needsSave',
-              'Publish, available after you save the draft',
-            )
-      }
     />
   );
   const footer = confirmDiscard ? (

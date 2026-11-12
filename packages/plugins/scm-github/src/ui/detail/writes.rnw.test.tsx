@@ -5,8 +5,8 @@ import { Animated } from 'react-native';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/plugin-sdk/actions';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit, PluginUiTestkitExecuteActionInput } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HAPPIER_MOTION_V1 } from '@happier-dev/plugin-ui/components';
 import { TriageEvidenceDisclosureProvider, TriagePostMutationCompletionProvider,
@@ -129,6 +129,24 @@ const FIXTURE_OPERATIONS: Readonly<Record<string, JsonValue>> = projectGithubRep
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+let hostPrimaryWrites = 0;
+let rawPrimaryWrites = 0;
+let hostCloseWrites = 0;
+let rawCloseWrites = 0;
+const actionHosts = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
+function actionHost(fixture: PluginUiTestkit) {
+  const host = actionHosts.get(fixture);
+  if (!host) throw new Error('Missing control host');
+  return host;
+}
+async function pressMerge(fixture: PluginUiTestkit) {
+  if (actionHost(fixture).presentation('Merge pull request')) return actionHost(fixture).press('Merge pull request');
+  return fixture.press(await fixture.getByRole('button', { name: 'Merge pull request' }));
+}
+async function mergeDisabled(fixture: PluginUiTestkit) {
+  return actionHost(fixture).presentation('Merge pull request')?.disabled
+    ?? (await fixture.getByRole('button', { name: 'Merge pull request' })).state?.disabled;
+}
 let nextResult: JsonValue = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
 let nextActionGate: Promise<JsonValue> | null = null;
 let nextOverviewGate: Promise<JsonValue> | null = null;
@@ -203,26 +221,7 @@ async function mountDetail(
   let fixture!: PluginUiTestkit;
   const launch = launchInput(state, kindId, linkedSessions, panel ?? (primaryWrite === undefined ? undefined : 'overview'));
   const parsedLaunch = TriageDetailSurfaceInputV1Schema.parse(launch);
-  await act(async () => {
-    fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'fixture-instance-202', mountNonce: 'fixture-mount-202' },
-      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: (context) => (
-        <TriagePostMutationCompletionProvider
-          onComplete={async () => { completedMutations += 1; }}
-        >
-          {/* The SDK surface produces an opaque host element, not a React node. */}
-          {primaryWrite === undefined ? renderSurface(context) as React.ReactNode
-            : <TriageEvidenceDisclosureProvider disclosure={{ available: false, disclose: async () => ({ kind: 'inert' }), primaryWrite }}>
-              {renderSurface(context) as React.ReactNode}
-            </TriageEvidenceDisclosureProvider>}
-        </TriagePostMutationCompletionProvider>
-      ),
-      surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
-      launchInput: launch,
-      handlers: {
-        executeAction: async ({ action, input }) => {
+  const executeBoundary = async ({ action, input }: Pick<PluginUiTestkitExecuteActionInput, 'action' | 'input'>): Promise<JsonValue> => {
           if (typeof action === 'object' && action !== null
             && 'localId' in action
             && action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities) {
@@ -293,7 +292,44 @@ async function mountDetail(
                 || localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAutoMergeSet ? GithubPullRequestNativeMergeResultV1Schema : null;
           const native = schema?.safeParse(result);
           return native?.success ? projectNativeJsonValueForTransport(withGithubOperationOutcomeV1(native.data)) : result;
+        };
+  const isPrimary = (action: PluginUiTestkitExecuteActionInput['action']) => typeof action === 'object'
+    && (action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge
+      || action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady);
+  const controls = createPluginUiActionControlTestHost(async request => {
+    if (isPrimary(request.action)) hostPrimaryWrites += 1;
+    if (typeof request.action === 'object' && request.action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose) hostCloseWrites += 1;
+    try { return { ok: true, result: await executeBoundary(request) }; }
+    catch (error) {
+      if (!(error instanceof PluginError)) throw error;
+      return { ok: false, errorCode: error.code, error: error.message };
+    }
+  });
+  await act(async () => {
+    fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-202', mountNonce: 'fixture-mount-202' },
+      authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+      surface: (context) => (
+        <TriagePostMutationCompletionProvider
+          onComplete={async () => { completedMutations += 1; }}
+        >
+          {/* The SDK surface produces an opaque host element, not a React node. */}
+          {primaryWrite === undefined ? renderSurface(context) as React.ReactNode
+            : <TriageEvidenceDisclosureProvider disclosure={{ available: false, disclose: async () => ({ kind: 'inert' }), primaryWrite }}>
+              {renderSurface(context) as React.ReactNode}
+            </TriageEvidenceDisclosureProvider>}
+        </TriagePostMutationCompletionProvider>
+      ),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      launchInput: launch,
+      handlers: {
+        executeAction: request => {
+          if (isPrimary(request.action)) rawPrimaryWrites += 1;
+          if (typeof request.action === 'object' && request.action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose) rawCloseWrites += 1;
+          return executeBoundary(request);
         },
+        actionControl: controls.handler,
       },
     }) as PluginUiTestkit;
   });
@@ -301,6 +337,7 @@ async function mountDetail(
     expect(await fixture.queryByText('Checking repository permissions…')).toBeUndefined();
   });
   mounted.push(fixture);
+  actionHosts.set(fixture, controls);
   return fixture;
 }
 
@@ -356,6 +393,7 @@ async function waitForPublicationProposalRead(
 
 afterEach(async () => {
   recorded.splice(0);
+  hostPrimaryWrites = 0; rawPrimaryWrites = 0; hostCloseWrites = 0; rawCloseWrites = 0;
   completedMutations = 0;
   nextCapabilities = {
     kind: 'capabilities',
@@ -428,7 +466,7 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
     expect(await detail.getByText('Approval requested')).toBeDefined();
     expect(await detail.queryByText('This answer could not be read')).toBeUndefined();
@@ -643,8 +681,7 @@ describe('the mounted GitHub write controls', () => {
     expect(recorded.filter(({ action }) => typeof action === 'object' && action !== null
       && 'localId' in action
       && action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview)).toHaveLength(1);
-    await expect(detail.getByRole('button', { name: 'Update branch' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Update branch')).toBeDefined();
   });
 
   it('does not offer Update Branch when the exact provider overview reports not-behind', async () => {
@@ -691,7 +728,7 @@ describe('the mounted GitHub write controls', () => {
       },
     };
     const noMergeMethod = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
-    expect((await noMergeMethod.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+    expect(await mergeDisabled(noMergeMethod))
       .toBe(true);
     expect(await noMergeMethod.queryByText('No enabled merge method has been reported by GitHub.'))
       .toBeDefined();
@@ -708,7 +745,7 @@ describe('the mounted GitHub write controls', () => {
       },
     };
     const denied = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
-    expect((await denied.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+    expect(await mergeDisabled(denied))
       .toBe(true);
     expect((await denied.getByRole('button', { name: 'Close pull request' })).state?.disabled)
       .toBe(true);
@@ -733,8 +770,7 @@ describe('the mounted GitHub write controls', () => {
 
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
-    await expect(detail.getByRole('button', { name: 'Submit review' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Submit review')).toBeDefined();
     await expect(detail.getByRole('button', { name: 'Close pull request' }))
       .resolves.toMatchObject({ role: 'button', state: { disabled: true } });
     expect(await detail.queryByText('This repository does not support this change.'))
@@ -749,7 +785,7 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     await expect(detail.getByText('Not carried out'))
@@ -769,8 +805,7 @@ describe('the mounted GitHub write controls', () => {
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
     });
-    const merge = await detail.getByRole('button', { name: 'Merge pull request' });
-    const press = detail.press(merge);
+    const press = pressMerge(detail);
     await Promise.resolve();
     expect(animation).not.toHaveBeenCalled();
     settle({ kind: 'refused', reason: 'not_mergeable' });
@@ -784,7 +819,7 @@ describe('the mounted GitHub write controls', () => {
     nextResult = { kind: 'uncertain' };
     await act(async () => {
       await uncertain.press(await uncertain.getByRole('radio', { name: 'Create a merge commit' }));
-      await uncertain.press(await uncertain.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(uncertain);
     });
     expect(animation).not.toHaveBeenCalled();
 
@@ -792,7 +827,7 @@ describe('the mounted GitHub write controls', () => {
     nextActionError = new PluginError({ code: 'github_unavailable', message: 'GitHub refused the request.' });
     await act(async () => {
       await failed.press(await failed.getByRole('radio', { name: 'Create a merge commit' }));
-      await failed.press(await failed.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(failed);
     });
     expect(animation).not.toHaveBeenCalled();
   });
@@ -804,13 +839,13 @@ describe('the mounted GitHub write controls', () => {
     expect(animation).not.toHaveBeenCalled();
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
 
     expect(animation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       duration: HAPPIER_MOTION_V1.slowMs,
     }));
-    expect((await detail.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+    expect(await mergeDisabled(detail))
       .toBe(true);
   });
 
@@ -821,12 +856,12 @@ describe('the mounted GitHub write controls', () => {
 
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
 
     expect(animation).not.toHaveBeenCalled();
     expect(completedMutations).toBe(1);
-    expect((await detail.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+    expect(await mergeDisabled(detail))
       .toBe(true);
   });
 
@@ -844,7 +879,7 @@ describe('the mounted GitHub write controls', () => {
 
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
 
     expect(animation).not.toHaveBeenCalled();
@@ -854,6 +889,8 @@ describe('the mounted GitHub write controls', () => {
     const animation = vi.spyOn(Animated, 'timing');
     const launch = launchInput({ presentation: 'active', nativeLabel: 'Open' });
     let fixture!: PluginUiTestkit;
+    const controls = createPluginUiActionControlTestHost(async () => ({ ok: true,
+      result: projectNativeJsonValueForTransport(withGithubOperationOutcomeV1(GithubPullRequestMergeResultV1Schema.parse(nextResult))) }));
     await act(async () => {
       fixture = await createPluginUiTestkit({
         identity: { instanceId: 'fixture-instance-203', mountNonce: 'fixture-mount-203' },
@@ -862,7 +899,7 @@ describe('the mounted GitHub write controls', () => {
         surfaceContext: createSurfaceContextFixture({ reducedMotion: true }),
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
         launchInput: launch,
-        handlers: { executeAction: async ({ action }) => (
+        handlers: { actionControl: controls.handler, executeAction: async ({ action }) => (
           typeof action === 'object' && action !== null && 'localId' in action
             && action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities
             ? nextCapabilities
@@ -874,16 +911,50 @@ describe('the mounted GitHub write controls', () => {
       }) as PluginUiTestkit;
     });
     mounted.push(fixture);
+    actionHosts.set(fixture, controls);
     await vi.waitFor(async () => {
       expect(await fixture.queryByText('Checking repository permissions…')).toBeUndefined();
     });
     await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Re-read this overview from GitHub' })); });
     await act(async () => {
       await fixture.press(await fixture.getByRole('radio', { name: 'Create a merge commit' }));
-      await fixture.press(await fixture.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(fixture);
     });
 
     expect(animation).not.toHaveBeenCalled();
+  });
+
+  it('settles nonprimary close through the host control without raw UI execution', async () => {
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await act(async () => { await actionHost(detail).press('Close pull request'); });
+    expect(recorded).toContainEqual(expect.objectContaining({
+      action: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose },
+    }));
+    expect(hostCloseWrites).toBe(1);
+    expect(rawCloseWrites).toBe(0);
+    expect(completedMutations).toBe(1);
+  });
+
+  it.each([
+    ['Request review', GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers],
+    ['Withdraw review requests', GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers],
+  ] as const)('uses the native host control for %s with the entered reviewer', async (title, localId) => {
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Re-read this overview from GitHub' })); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Reviewers, None' })); });
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Reviewer user logins"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'hubot');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(actionHost(detail).presentation(title)?.disabled).toBe(false);
+    await act(async () => { await actionHost(detail).press(title); });
+    expect(recorded).toContainEqual({
+      action: { pluginId: GITHUB_PLUGIN_ID, localId },
+      input: expect.objectContaining({ users: ['hubot'] }),
+    });
+    expect(completedMutations).toBe(1);
   });
 
   it('mounts every approved Overview mutation including canonical review publication', async () => {
@@ -912,7 +983,7 @@ describe('the mounted GitHub write controls', () => {
       'Submit review',
       'Publish selected comment',
     ]) {
-      await expect(detail.getByRole('button', { name })).resolves.toMatchObject({ role: 'button' });
+      expect(actionHost(detail).presentation(name)).toBeDefined();
     }
     expect(await detail.queryByRole('button', { name: 'Merge pull request' })).toBeUndefined();
     await expect(detail.getByRole('textbox', { label: 'Reviewer user logins' }))
@@ -932,9 +1003,8 @@ describe('the mounted GitHub write controls', () => {
     await waitForPublicationProposalRead(detail);
     await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
-    const submit = await detail.getByRole('button', { name: 'Submit review' });
-    expect(submit.state?.disabled).toBe(true);
-    await expect(act(async () => { await detail.press(submit); })).rejects.toThrow();
+    expect(actionHost(detail).presentation('Submit review')?.disabled).toBe(true);
+    await expect(act(async () => { await actionHost(detail).press('Submit review'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
 
@@ -948,9 +1018,8 @@ describe('the mounted GitHub write controls', () => {
     await act(async () => {
       await detail.press(await detail.findByRole('radio', { name: 'Approve' }));
     });
-    const submit = await detail.getByRole('button', { name: 'Submit review' });
-    expect(submit.state?.disabled).toBe(true);
-    await expect(act(async () => { await detail.press(submit); })).rejects.toThrow();
+    expect(actionHost(detail).presentation('Submit review')?.disabled).toBe(true);
+    await expect(act(async () => { await actionHost(detail).press('Submit review'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
 
@@ -983,7 +1052,7 @@ describe('the mounted GitHub write controls', () => {
       },
     } as JsonValue;
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Publish selected comment' }));
+      await actionHost(detail).press('Publish selected comment');
     });
     await expect(detail.getByText(
       '1/2 review comments published; 1 unconfirmed; 0 not published. Verdict published.',
@@ -1014,7 +1083,7 @@ describe('the mounted GitHub write controls', () => {
       },
     } as JsonValue;
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Publish selected comment' }));
+      await actionHost(detail).press('Publish selected comment');
     });
     await expect(detail.getByText('Review partially published')).resolves.toMatchObject({
       content: 'Review partially published',
@@ -1187,8 +1256,7 @@ describe('the mounted GitHub write controls', () => {
     await waitForPublicationProposalRead(detail, 'radio');
     await expect(detail.findByRole('radio', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
-    await expect(detail.findByRole('button', { name: 'Post selected issue comment' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Post selected issue comment')).toBeDefined();
 
     nextResult = {
       kind: 'settled',
@@ -1203,7 +1271,7 @@ describe('the mounted GitHub write controls', () => {
       },
     } as JsonValue;
     await act(async () => {
-      await detail.press(await detail.findByRole('button', { name: 'Post selected issue comment' }));
+      await actionHost(detail).press('Post selected issue comment');
     });
     expect(recorded.at(-1)).toMatchObject({
       action: {
@@ -1228,8 +1296,7 @@ describe('the mounted GitHub write controls', () => {
 
     await expect(detail.getByRole('button', { name: 'Merge pull request' }))
       .resolves.toMatchObject({ role: 'button' });
-    await expect(detail.getByRole('button', { name: 'Close pull request' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Close pull request')).toBeDefined();
     await expect(detail.queryByRole('button', { name: 'Reopen pull request' }))
       .resolves.toBeUndefined();
   });
@@ -1237,8 +1304,7 @@ describe('the mounted GitHub write controls', () => {
   it('offers the closed pull request only its reopen', async () => {
     const detail = await mountDetail({ presentation: 'closed', nativeLabel: 'Closed' });
 
-    await expect(detail.getByRole('button', { name: 'Reopen pull request' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Reopen pull request')).toBeDefined();
     await expect(detail.queryByRole('button', { name: 'Merge pull request' }))
       .resolves.toBeUndefined();
     await expect(detail.queryByRole('button', { name: 'Close pull request' }))
@@ -1258,8 +1324,7 @@ describe('the mounted GitHub write controls', () => {
       'issue',
     );
 
-    await expect(detail.getByRole('button', { name: 'Reopen issue' }))
-      .resolves.toMatchObject({ role: 'button' });
+    expect(actionHost(detail).presentation('Reopen issue')).toBeDefined();
   });
 
   it('will not merge until a method is chosen, and dispatches nothing meanwhile', async () => {
@@ -1268,12 +1333,11 @@ describe('the mounted GitHub write controls', () => {
     // reached.
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
-    const merge = await detail.getByRole('button', { name: 'Merge pull request' });
-    expect(merge.state?.disabled).toBe(true);
+    expect(await mergeDisabled(detail)).toBe(true);
 
     // The control is not merely styled inert: the mounted surface refuses the
     // press outright, and nothing reaches the host.
-    await expect(act(async () => { await detail.press(merge); })).rejects.toThrow();
+    await expect(act(async () => { await pressMerge(detail); })).rejects.toThrow();
     expect(recorded).toEqual([]);
   });
 
@@ -1304,16 +1368,18 @@ describe('the mounted GitHub write controls', () => {
       && 'localId' in action && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge)).toHaveLength(0);
   });
 
-  it('sends the head the surface showed and the method the reader chose', async () => {
+  it('sends the head the surface showed and the method the reader chose through one host press', async () => {
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
 
     await act(async () => {
       await detail.press(await detail.getByRole('radio', { name: 'Squash and merge' }));
     });
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
 
+    expect(hostPrimaryWrites).toBe(1);
+    expect(rawPrimaryWrites).toBe(0);
     expect(recorded.filter(({ action }) => typeof action === 'object' && action !== null
       && 'localId' in action && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge)).toEqual([{
       action: {
@@ -1343,7 +1409,7 @@ describe('the mounted GitHub write controls', () => {
       await detail.press(await detail.getByRole('radio', { name: 'Create a merge commit' }));
     });
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Merge pull request' }));
+      await pressMerge(detail);
     });
 
     const refusal = GITHUB_WRITE_REFUSAL_COPY_V1.head_advanced.fallback;
@@ -1357,7 +1423,7 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountDetail({ presentation: 'closed', nativeLabel: 'Closed' });
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Reopen pull request' }));
+      await actionHost(detail).press('Reopen pull request');
     });
 
     expect(recorded.map((entry) => entry.action)).toEqual([{
@@ -1381,7 +1447,7 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     expect(recorded.map((entry) => entry.action)).toEqual([{
@@ -1395,7 +1461,7 @@ describe('the mounted GitHub write controls', () => {
   it('asks the canonical aggregate owner to reobserve after a settled write', async () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     expect(completedMutations).toBe(1);
@@ -1407,7 +1473,7 @@ describe('the mounted GitHub write controls', () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     expect(completedMutations).toBe(0);
@@ -1422,7 +1488,7 @@ describe('the mounted GitHub write controls', () => {
     });
 
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     expect(completedMutations).toBe(1);
@@ -1454,7 +1520,7 @@ describe('the mounted GitHub write controls', () => {
     } as JsonValue;
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+      await actionHost(detail).press('Close pull request');
     });
 
     await expect(detail.getByRole('button', { name: 'Merge pull request' }))
@@ -1513,7 +1579,7 @@ describe('the GitHub write-parity controls', () => {
 
   it('converts an open ready pull request to a draft with only its target', async () => {
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Convert to draft' })); });
+    await act(async () => { await actionHost(detail).press('Convert to draft'); });
 
     const write = recorded.find(({ action }) => typeof action === 'object' && action !== null && 'localId' in action
       && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestConvertToDraft);
@@ -1533,7 +1599,7 @@ describe('the GitHub write-parity controls', () => {
     await expect(detail.getByRole('textbox', { label: 'Description' }))
       .resolves.toMatchObject({ value: 'Keeps one normalization owner.' });
     // Nothing changed yet, so there is nothing to save.
-    expect((await detail.getByRole('button', { name: 'Save changes' })).state?.disabled).toBe(true);
+    expect(actionHost(detail).presentation('Save changes')?.disabled).toBe(true);
   });
 
   it('clears an issue milestone through the milestone row', async () => {
@@ -1543,7 +1609,7 @@ describe('the GitHub write-parity controls', () => {
     };
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' }, 'issue');
     await openRow(detail, 'Milestone');
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Clear milestone' })); });
+    await act(async () => { await actionHost(detail).press('Clear milestone'); });
 
     const write = recorded.find(({ action }) => typeof action === 'object' && action !== null && 'localId' in action
       && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet);
@@ -1557,7 +1623,7 @@ describe('the GitHub write-parity controls', () => {
     };
     const detail = await mountWritableDetail({ presentation: 'active', nativeLabel: 'Open' }, 'issue');
     await openRow(detail, 'Conversation');
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Lock conversation' })); });
+    await act(async () => { await actionHost(detail).press('Lock conversation'); });
 
     const write = recorded.find(({ action }) => typeof action === 'object' && action !== null && 'localId' in action
       && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryLock);
@@ -1567,7 +1633,7 @@ describe('the GitHub write-parity controls', () => {
   it('deletes a merged pull request\'s source branch at the head the reader saw', async () => {
     nextOverview = { ...(nextOverview as Record<string, JsonValue>), state: 'closed', merged: true };
     const detail = await mountWritableDetail({ presentation: 'resolved', nativeLabel: 'Merged' });
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Delete branch' })); });
+    await act(async () => { await actionHost(detail).press('Delete branch'); });
 
     const write = recorded.find(({ action }) => typeof action === 'object' && action !== null && 'localId' in action
       && action.localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete);
@@ -1585,7 +1651,7 @@ describe('the GitHub write-parity controls', () => {
     }
     for (const name of ['Add sub-issue', 'Remove sub-issue', 'Add blocker', 'Remove blocker',
       'Add blocked issue', 'Remove blocked issue', 'Link pull request', 'Unlink pull request']) {
-      await expect(issue.getByRole('button', { name })).resolves.toMatchObject({ role: 'button' });
+      expect(actionHost(issue).presentation(name)).toBeDefined();
     }
   });
 });

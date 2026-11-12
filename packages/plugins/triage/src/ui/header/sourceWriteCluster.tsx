@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  Action,
   Button,
   Icon,
   Menu,
@@ -14,7 +15,7 @@ import {
   type MenuGroup,
   type MenuItem,
 } from '@happier-dev/plugin-ui';
-import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+import { TriageSourceReadFailureDetails, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
 
 import {
   presentTriageMergeReadinessV1,
@@ -28,9 +29,8 @@ import {
  * The source's own write in the entry header (plan 06, lab 'forge-ci/b4'): Merge with the one line that says what
  * still blocks it, the requirements it opens, Merge's alternatives, and the native queue and auto-merge states.
  *
- * The source keeps custody of every write and its confirmation; this control only calls 'execute' on the write or
- * the alternative the reader chose, so the source's Action admission, the host's confirmation and agent approval
- * stay the only gates. A write without merge status (Mark ready) is one plain button.
+ * The source prepares its original operands and interprets settlement; the host owns each Action press and its
+ * confirmation. Navigation-only offers keep their source callback. A write without merge status (Mark ready) is one plain button.
  */
 
 const ROW_GLYPH: Readonly<
@@ -159,6 +159,7 @@ function ReadinessLine({
           )}
         </Stack>
         {view.rows.length === 0 ? null : <ReadinessRows rows={view.rows} />}
+        {view.checksFailure === null ? null : <TriageSourceReadFailureDetails failures={[view.checksFailure]} />}
         <Text variant="micro" tone="muted" value={footer} />
       </Stack>
     </Popover>
@@ -255,6 +256,7 @@ export type TriageMergeChoicesV1 = Readonly<{
 export function useTriageMergeChoicesV1(
   write: TriageDetailPrimaryWriteV1 | undefined,
   sourceLabel: string | undefined,
+  placement: 'own' | 'host' = 'host',
 ): TriageMergeChoicesV1 | null {
   const text = usePluginTranslation();
   const count = useReadinessCount();
@@ -272,7 +274,7 @@ export function useTriageMergeChoicesV1(
   const bypassOffered = write.alternatives?.some((alternative) => alternative.id === 'withoutWaiting') === true;
   const refused = (write.unmetRequirements?.length ?? 0) > 0;
   // Never a disabled bypass control: when the source does not offer it, one quiet line under the choices says so.
-  const explanation = refused && !bypassOffered ? (
+  const refusalExplanation = refused && !bypassOffered ? (
     <Text
       variant="meta"
       tone="secondary"
@@ -282,6 +284,13 @@ export function useTriageMergeChoicesV1(
       )}
     />
   ) : null;
+  // Cards have their readiness popover; the entry header keeps readiness and its Details in the one More menu.
+  const explanation = placement === 'host' && view?.checksFailure != null ? (
+    <Stack gap="small">
+      {refusalExplanation}
+      <TriageSourceReadFailureDetails failures={[view.checksFailure]} />
+    </Stack>
+  ) : refusalExplanation;
   if (items.length === 0 && groups.length === 0 && explanation === null && readinessItems.length === 0) return null;
   const label = text('plugins.triage.surface.merge.options', 'Merge options');
   return {
@@ -328,6 +337,19 @@ function MergeChoices({ choices }: Readonly<{ choices: TriageMergeChoicesV1 }>):
 }
 
 /** The write itself: a method is always the reader's explicit choice, never a default picked for them. */
+function TriageSourceWriteButton({
+  write, methodId, title = write.title, variant = 'secondary', disabled = false,
+}: Readonly<{ write: TriageDetailPrimaryWriteV1; methodId?: string; title?: string; variant?: 'primary' | 'secondary' | 'plain'; disabled?: boolean }>): React.ReactElement {
+  const blocked = disabled || write.pending || write.reading === true || write.disabledReason !== null;
+  if (write.actionRef !== undefined) return write.controllerFor === undefined
+    ? <Button title={title} variant={variant} size="small" disabled onPress={() => {}} />
+    : <Action.Control action={write.actionRef} title={title} variant={variant} disabled={blocked}
+      signal={write.signal} controller={write.controllerFor(methodId)}
+      fallback={<Button title={title} variant={variant} size="small" disabled onPress={() => {}} />} />;
+  return <Button title={title} variant={variant} size="small" disabled={blocked} busy={write.pending}
+    onPress={() => write.execute(methodId)} />;
+}
+
 function PrimaryWrite({
   write,
   quiet,
@@ -363,16 +385,11 @@ function PrimaryWrite({
   }
   const only = methods?.length === 1 ? methods[0] : undefined;
   return (
-    <Button
+    <TriageSourceWriteButton write={write} methodId={only?.id}
       // One method is still an explicit choice: the menu row it would have been is the button's name.
       title={only === undefined || blocked ? write.title : only.title}
       variant={quiet || blocked ? 'secondary' : 'primary'}
-      size="small"
       disabled={blocked}
-      busy={write.pending}
-      onPress={() =>
-        only === undefined ? write.execute() : write.execute(only.id)
-      }
     />
   );
 }
@@ -383,13 +400,15 @@ function NativeStateLine({
   words,
   detail,
   action,
+  failure,
 }: Readonly<{
   icon: IconName;
   words: string;
   detail: string | null;
   action: TriageDetailPrimaryWriteV1;
+  failure: TriageMergeReadinessV1['checksFailure'];
 }>): React.ReactElement {
-  return (
+  const line = (
     <Row gap="small" align="center">
       <Icon name={icon} size="small" tone="secondary" />
       <Text variant="meta" value={words} numberOfLines={1} />
@@ -401,15 +420,14 @@ function NativeStateLine({
           numberOfLines={1}
         />
       )}
-      <Button
-        title={action.title}
-        variant="plain"
-        size="small"
-        disabled={action.pending || action.disabledReason !== null}
-        busy={action.pending}
-        onPress={() => action.execute()}
-      />
+      <TriageSourceWriteButton write={action} variant="plain" />
     </Row>
+  );
+  return failure === null ? line : (
+    <Stack gap="small">
+      {line}
+      <TriageSourceReadFailureDetails failures={[failure]} />
+    </Stack>
   );
 }
 
@@ -429,7 +447,7 @@ export function TriageSourceWriteCluster(
   const text = usePluginTranslation();
   const count = useReadinessCount();
   const source = props.sourceLabel ?? text('plugins.triage.surface.merge.sourceFallback', 'the source');
-  const choices = useTriageMergeChoicesV1(write, props.sourceLabel);
+  const choices = useTriageMergeChoicesV1(write, props.sourceLabel, props.choices ?? 'own');
   const view = React.useMemo(
     () => presentTriageMergeReadinessV1(write, text, count, source),
     [write, text, count, source],
@@ -457,6 +475,7 @@ export function TriageSourceWriteCluster(
                 : text('plugins.triage.surface.merge.autoMerge.method.merge', 'Merge commit')
         }
         action={cancelAutoMerge}
+        failure={view.checksFailure}
       />
     );
   }
@@ -482,6 +501,7 @@ export function TriageSourceWriteCluster(
               })
         }
         action={write}
+        failure={view.checksFailure}
       />
     );
   }

@@ -3,6 +3,7 @@ import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
@@ -267,6 +268,14 @@ describe('Git pane PR card', () => {
     const original = createSessionPullRequestOperationGlanceBinding(operation);
     const binding = { ...original, link: { ...original.link, number: 42, url } };
     const calls: { action: unknown; input: unknown }[] = [];
+    const outcome = { kind: 'applied', outcome: {
+      kind: 'applied', effect: 'changed', confirmedState: null, confirmedEntryRef: null,
+      presentation: { title: 'Source confirms the change', description: 'The original source confirmed this operation.', tone: 'secondary' },
+    } } as const;
+    const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+      calls.push({ action, input });
+      return { ok: true, result: outcome };
+    });
     let reads = 0;
     let watches = 0;
     const fixture = await createPluginUiTestkit({
@@ -277,13 +286,14 @@ describe('Git pane PR card', () => {
         accountScope: { serverId: 'home-1', accountId: 'viewer-1' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
       handlers: {
+        actionControl: controls.handler,
         readResource: async () => { reads += 1; return { contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`,
           bytes: new TextEncoder().encode(JSON.stringify({ kind: 'ready', sessionId: SESSION_ID, pullRequests: [binding] })) }; },
         watchResource: () => { watches += 1; return { digest: `sha256:${'a'.repeat(64)}` }; },
-        executeAction: ({ action, input }) => { calls.push({ action, input }); return { kind: 'applied', outcome: {
-          kind: 'applied', effect: 'changed', confirmedState: null, confirmedEntryRef: null,
-          presentation: { title: 'Source confirms the change', description: 'The original source confirmed this operation.', tone: 'secondary' },
-        } }; },
+        executeAction: ({ action, input }) => {
+          if (operation === 'dequeue') throw new Error('Raw current-user write bypass');
+          calls.push({ action, input }); return outcome;
+        },
       },
     });
     mounted.push(fixture);
@@ -294,7 +304,7 @@ describe('Git pane PR card', () => {
       expect(calls).toEqual([]);
       await act(async () => { await fixture.press(await fixture.findByRole('menuitem', { name: 'Squash' })); });
     } else {
-      await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Leave queue' })); });
+      await act(async () => { await controls.press('Leave queue'); });
     }
     if (binding.nativeStatus.kind !== 'current' || !binding.nativeStatus.value.operations) throw new Error('Expected source offer');
     const offer = binding.nativeStatus.value.operations.primary;

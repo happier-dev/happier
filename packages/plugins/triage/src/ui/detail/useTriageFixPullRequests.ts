@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, usePluginTranslation, usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import type {
   TriageEntryRefV1,
   TriageFixPullRequestV1,
@@ -55,6 +56,7 @@ export type TriageFixPullRequestsStateV1 =
     refusal: 'conflict' | 'failed' | null;
     link(pullRequest: Readonly<{ entryRef: TriageEntryRefV1; display: Display }>): void;
     unlink(entryRef: TriageEntryRefV1): void;
+    unlinkControl(entryRef: TriageEntryRefV1): PluginUiActionControlController;
   }>;
 
 type FixHostV1 = Readonly<{
@@ -99,6 +101,7 @@ export function useTriageFixPullRequests(
   refreshGeneration = 0,
 ): TriageFixPullRequestsStateV1 | null {
   const hostApi = usePluginHostApi();
+  const text = usePluginTranslation();
   const owner = usePluginUiEphemeralSharedScope();
   const readiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const sourceContext = input?.sourceContext;
@@ -163,21 +166,28 @@ export function useTriageFixPullRequests(
     return () => controller.abort();
   }, [entryKey, hostApi, owner, readGeneration, refreshGeneration, readiness.pending, readiness.ready, readiness.revision]);
 
-  const write = useCallback((intent: TriageSetFixPullRequestInputV1): void => {
+  const beginWrite = useCallback(() => {
     setBusy(true);
     setRefusal(null);
-    void (async () => {
-      try {
-        const result = await transport.write(intent);
-        if (result?.status === 'conflict') setRefusal(result.status);
-      } catch {
-        setRefusal('failed');
-      } finally {
-        setBusy(false);
-        setReadGeneration((value) => value + 1);
+  }, []);
+  const settleWrite = useCallback((response: unknown, failed: boolean) => {
+    try {
+      if (failed) setRefusal('failed');
+      else if (response !== null) {
+        const result = TriageSetFixPullRequestResultV1Schema.parse(response);
+        if (result.status === 'conflict') setRefusal(result.status);
       }
-    })();
-  }, [transport]);
+    } catch {
+      setRefusal('failed');
+    } finally {
+      setBusy(false);
+      setReadGeneration((value) => value + 1);
+    }
+  }, []);
+  const write = useCallback((intent: TriageSetFixPullRequestInputV1): void => {
+    beginWrite();
+    void transport.write(intent).then(result => settleWrite(result, false), () => settleWrite(null, true));
+  }, [transport, beginWrite, settleWrite]);
 
   const retry = useCallback(() => {
     if (readiness.pending || readiness.ready === false) return;
@@ -189,6 +199,8 @@ export function useTriageFixPullRequests(
     if (settled.kind === 'unreachable') return readiness.pending ? { kind: 'reading' } : { kind: 'unreachable', retry };
     if (settled.kind !== 'read' || settled.owner !== owner || !sameTriageEntryRefV1(settled.entryRef, entryRef)) return { kind: 'reading' };
     const resolved = settled.resolved;
+    const unlinkInput = (fixPullRequest: TriageEntryRefV1): TriageSetFixPullRequestInputV1 =>
+      ({ v: 1, linked: false, entryRef, displayAtMark: display, fixPullRequest });
     return {
       kind: 'ready',
       candidates: resolved.candidates,
@@ -204,7 +216,19 @@ export function useTriageFixPullRequests(
         fixPullRequest: pullRequest.entryRef,
         displayAtLink: pullRequest.display,
       }),
-      unlink: (fixPullRequest) => write({ v: 1, linked: false, entryRef, displayAtMark: display, fixPullRequest }),
+      unlink: (fixPullRequest) => write(unlinkInput(fixPullRequest)),
+      unlinkControl: (fixPullRequest) => ({
+        prepare: () => {
+          if (busy) return null;
+          beginWrite();
+          return { input: unlinkInput(fixPullRequest) as unknown as JsonValue };
+        },
+        onSettled: settled => {
+          const execution = projectPluginActionControlExecutionV1(settled, text);
+          settleWrite(execution.status === 'success' ? execution.result : null,
+            execution.status !== 'success' && !isPluginActionConfirmationDeclined(execution));
+        },
+      }),
     };
-  }, [busy, display, entryRef, owner, refusal, retry, settled, write, readiness.pending]);
+  }, [busy, display, entryRef, owner, refusal, retry, settled, write, readiness.pending, beginWrite, settleWrite, text]);
 }

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { createHash } from 'node:crypto';
 import { act } from 'react';
 import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiTestkit, createPluginUiActionControlTestHost, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -27,47 +27,14 @@ const sharedScope: PluginEphemeralSharedScope = { acquire(_key, create) {
   const held = create(); return { value: held.value, release: () => held.dispose() };
 } };
 
-type ActionControlHandler = NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['actionControl']>;
-type ActionControlHostInput = Parameters<ActionControlHandler>[0];
-type BoundControl = Extract<ActionControlHostInput['request'], { kind: 'bind' }>;
-
-// Only the installed host gesture/executor is substituted; SDK transport and author controls stay real.
+// Installed host boundary; SDK transport and author controller stay real.
 function hostRunBoundary(execute: (input: unknown, action: Parameters<PluginUiHostApi['actionControl']>[0]['action']) => Promise<PluginUiActionControlExecution>) {
-  const bindings = new Map<string, { action: BoundControl['action']; presentation: BoundControl['presentation'];
-    publish: ActionControlHostInput['publish']; resolve?: () => void; reject?: (error: unknown) => void }>();
-  let gestures = 0;
-  const handler: ActionControlHandler = async ({ request, publish }) => {
-    if (request.kind === 'bind') {
-      expect(['projects.compute.exec', 'projects.worker.preferences.set']).toContain(request.action);
-      bindings.set(request.subscriptionId, { action: request.action, presentation: request.presentation, publish });
-      return { dispose: () => { bindings.delete(request.subscriptionId); } };
-    }
-    const binding = bindings.get(request.subscriptionId);
-    if (!binding) throw new Error('Retired host control');
-    if (request.kind === 'update') { binding.presentation = request.presentation; return; }
-    try {
-      if (request.preparation) publish({ kind: 'settled', requestId: request.requestId,
-        execution: await execute(request.preparation.input, binding.action) });
-      binding.resolve?.();
-    } catch (error) { binding.reject?.(error); throw error; }
-    finally { delete binding.resolve; delete binding.reject; }
-  };
-  const find = (title: string) => {
-    const binding = [...bindings.values()].find(value => value.presentation.title === title);
-    if (!binding) throw new Error(`Missing host-rendered Action control: ${title}`);
-    return binding;
-  };
-  return { handler,
-    presentation(title: string) { return find(title).presentation; },
-    async press(title: string) {
-      const binding = find(title);
-      expect(binding.presentation.disabled).not.toBe(true);
-      await new Promise<void>((resolve, reject) => {
-        binding.resolve = resolve; binding.reject = reject;
-        binding.publish({ kind: 'prepare', requestId: `host-gesture-${++gestures}` });
-      });
-    },
-  };
+  const host = createPluginUiActionControlTestHost(({ input, action }) => execute(input, action));
+  return { ...host, presentation(title: string) {
+    const presentation = host.presentation(title);
+    if (!presentation) throw new Error('Missing host-rendered Action control: ' + title);
+    return presentation;
+  } };
 }
 
 describe('mounted local form ordinary compute hook', () => {
@@ -411,8 +378,9 @@ describe('mounted local form ordinary compute hook', () => {
       const bytes = new TextEncoder().encode(JSON.stringify(PluginUiActionOperationHostReadResultV1ProtocolSchema.parse(observed)));
       return { contentType: 'application/json', bytes, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
     };
-    const controls = hostRunBoundary(async input => {
-      calls.push({ action: 'projects.compute.exec', input });
+    const controls = hostRunBoundary(async (input, action) => {
+      calls.push({ action, input });
+      if (action === 'action.operations.cancel') return { ok: true, result: null };
       const accepted = calls.filter(call => call.action === 'projects.compute.exec').length === 1
         ? operation : { ...operation, operationId: 'accepted-b', createdAt: 4 };
       observed = PluginUiActionOperationHostReadResultV1ProtocolSchema.parse({ operation: accepted, observation: 'available' });
@@ -449,7 +417,7 @@ describe('mounted local form ordinary compute hook', () => {
               { id: 'lint', needs: [], runsOn: ['ubuntu-22.04'] },
             ] },
           };
-          if (action === 'projects.compute.exec') throw new Error('Run must be a host-owned gesture');
+          if (action === 'projects.compute.exec' || action === 'action.operations.cancel') throw new Error('Write must be a host-owned gesture');
           if (action === 'projects.execution.output.open') return { kind: 'opened' };
           throw new Error(`Unexpected Action ${JSON.stringify(action)}`);
         },
@@ -484,6 +452,9 @@ describe('mounted local form ordinary compute hook', () => {
     await act(async () => { fixture.invalidateResource(resource, content().digest); });
     expect.soft(current.operationStatus).toBe('running');
     await fixture.getByText('Running on Build box');
+    expect(calls.filter(call => call.action === 'action.operations.cancel')).toHaveLength(0);
+    await act(async () => { await controls.press('Stop'); });
+    expect(calls.at(-1)).toEqual({ action: 'action.operations.cancel', input: ref });
     observed = { operation: { ...operation, state: 'succeeded', revision: 3, startedAt: 2, settledAt: 3 }, observation: 'reconnecting' };
     await act(async () => { fixture.invalidateResource(resource, content().digest); });
     expect(current.snapshot?.operation?.state).toBe('succeeded');

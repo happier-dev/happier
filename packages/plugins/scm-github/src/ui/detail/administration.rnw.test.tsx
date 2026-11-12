@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture,
+import { createPluginTestkit, createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture,
   type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema, TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-protocol/v1';
@@ -19,6 +19,7 @@ import { renderSurface } from '../renderSurface.js';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
 const plugins: Awaited<ReturnType<typeof createPluginTestkit>>[] = [];
+const actionHosts = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 afterEach(async () => {
   for (const surface of mounted.splice(0)) await act(() => surface.dispose());
   for (const plugin of plugins.splice(0)) await plugin.dispose();
@@ -92,6 +93,13 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
           ] } } }),
         ...(kind === 'pull-request' ? { reviewRevision: { headSha: OBSERVED_HEAD, baseSha: 'a'.repeat(40), nativeRevision: OBSERVED_HEAD } } : {}) },
       viewer: { involvement: [] } }, linkedSessions: [] });
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    if (typeof action === 'string') throw new Error('Expected registered GitHub Action');
+    const invocation = plugin.invokeAction(action.localId, input, { surface: 'ui' });
+    pending.push(invocation);
+    try { return { ok: true, result: await invocation }; }
+    finally { settleMutation(); }
+  });
   let detail!: PluginUiTestkit;
   const adapter = createPluginUiRnwSemanticSurfaceAdapter({ overlays: true });
   let textCount = async (_content: string) => 0;
@@ -103,7 +111,7 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
         textCount = async content => (await surface.snapshot()).texts?.filter(text => text.content === content).length ?? 0;
         return surface;
       } },
-      handlers: { openResource: ({ resource }) => { opened.push(resource); }, executeAction: async ({ action, input, signal }) => {
+      handlers: { actionControl: controls.handler, openResource: ({ resource }) => { opened.push(resource); }, executeAction: async ({ action, input, signal }) => {
         if (typeof action === 'string' || input === undefined) throw new Error('Expected registered Action');
         // Another plugin's public Action is a true host boundary; GitHub's own Actions run their real registration and HTTP client.
         if (action.localId === TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1) {
@@ -128,10 +136,11 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
     });
   });
   mounted.push(detail);
+  actionHosts.set(detail, controls);
   const settleWrite = () => act(async () => {
     await mutationSettled;
   });
-  return { detail, opened, configuredReads, settleWrite, releaseFacts, textCount,
+  return { detail, controls, opened, configuredReads, settleWrite, releaseFacts, textCount,
     settleFactsStarted: () => act(async () => { await factsStartedPromise; }),
     switchEntry: () => act(async () => {
       launch = { ...launch, observation: { ...launch.observation, entryRef: { ...launch.observation.entryRef, entryId: '8' } } };
@@ -147,7 +156,11 @@ async function mount(kind: 'issue' | 'pull-request', merged = true, refuse = fal
 }
 
 async function press(detail: PluginUiTestkit, name: string) {
-  await act(async () => { await detail.press(await detail.getByRole('button', { name })); });
+  await act(async () => {
+    const controls = actionHosts.get(detail);
+    if (controls?.presentation(name)) await controls.press(name);
+    else await detail.press(await detail.getByRole('button', { name }));
+  });
 }
 
 describe('GitHub entry administration controls', () => {
@@ -242,9 +255,9 @@ describe('GitHub entry administration controls', () => {
   });
 
   it('opens a merged PR revert through the registered Action and replaces the form with its new PR receipt', async () => {
-    const { detail, opened, writes, settleWrite } = await mount('pull-request');
+    const { detail, controls, opened, writes, settleWrite } = await mount('pull-request');
     await press(detail, 'Revert…');
-    expect((await detail.getByRole('button', { name: 'Open revert PR' })).state?.disabled).not.toBe(true);
+    expect(controls.presentation('Open revert PR')).toMatchObject({ disabled: false });
     await press(detail, 'Open revert PR');
     await settleWrite();
     expect(writes().map(readRecordedJsonBody)).toEqual([expect.objectContaining({ variables: {
@@ -262,13 +275,14 @@ describe('GitHub entry administration controls', () => {
   });
 
   it('reads same-connection configured repository choices only when Transfer is opened and opens the moved issue', async () => {
-    const { detail, configuredReads, opened, writes, settleWrite } = await mount('issue');
+    const { detail, controls, configuredReads, opened, writes, settleWrite } = await mount('issue');
     expect(configuredReads).toHaveLength(0);
     await press(detail, 'Transfer to another repository…');
     await press(detail, 'Destination repository');
     expect(await detail.queryByText('foreign/repository')).toBeUndefined();
     await act(async () => { await detail.press(await detail.getByRole('menuitemradio', { name: 'next/destination' })); });
     await act(async () => { await detail.press(await detail.getByRole('switch', { name: 'Create missing labels' })); });
+    expect(controls.presentation('Transfer')).toMatchObject({ disabled: false });
     await press(detail, 'Transfer');
     await settleWrite();
     expect(writes().map(readRecordedJsonBody)).toEqual([expect.objectContaining({ variables: {
@@ -280,10 +294,11 @@ describe('GitHub entry administration controls', () => {
   });
 
   it('names the issue and irreversible consequence before deleting, then retires the write into its receipt', async () => {
-    const { detail, writes, settleWrite } = await mount('issue');
+    const { detail, controls, writes, settleWrite } = await mount('issue');
     await press(detail, 'Delete issue…');
     await expect(detail.getByText('Delete #7 · Keep one normalization owner')).resolves.toBeDefined();
     await expect(detail.getByText('This permanently deletes the issue and its comments on GitHub. It cannot be undone.')).resolves.toBeDefined();
+    expect(controls.presentation('Delete issue')).toMatchObject({ disabled: false });
     await press(detail, 'Delete issue');
     await settleWrite();
     expect(writes()).toHaveLength(1);
@@ -292,12 +307,12 @@ describe('GitHub entry administration controls', () => {
   });
 
   it('keeps a refused revert editable and never claims a created PR', async () => {
-    const { detail, writes, settleWrite } = await mount('pull-request', true, true);
+    const { detail, controls, writes, settleWrite } = await mount('pull-request', true, true);
     await press(detail, 'Revert…');
     await press(detail, 'Open revert PR');
     await settleWrite();
     expect(writes()).toHaveLength(1);
     expect(await detail.queryByText('Opened #1300')).toBeUndefined();
-    expect((await detail.getByRole('button', { name: 'Open revert PR' })).state?.disabled).not.toBe(true);
+    expect(controls.presentation('Open revert PR')).toMatchObject({ disabled: false });
   });
 });

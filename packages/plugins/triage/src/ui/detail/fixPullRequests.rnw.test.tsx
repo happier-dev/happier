@@ -47,7 +47,7 @@ describe('fix-PR relationship read states', () => {
     const candidate = { entryRef, origins: ['session' as const], status: 'merged' as const, display: { title: 'Round totals on the server', scopeLabel: 'example/repository' } };
     const ready = await mount({
       kind: 'ready', candidates: [candidate], primary: candidate, incomplete: false, busy: false, refusal: null,
-      link: () => undefined, unlink: () => undefined,
+      link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }),
     });
     try {
       const step = document.querySelector('[data-testid="triage-story-fix-pr"]');
@@ -64,7 +64,7 @@ describe('fix-PR relationship read states', () => {
     const entryRef = { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '2490' };
     const empty = await mount({
       kind: 'ready', candidates: [], primary: null, incomplete: false, busy: false, refusal: null,
-      link: () => undefined, unlink: () => undefined,
+      link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }),
     }, [{ entryRef, title: 'Round totals on the server', scopeLabel: 'example/repository' }]);
     try {
       const step = document.querySelector('[data-testid="triage-story-fix-pr"]');
@@ -75,7 +75,7 @@ describe('fix-PR relationship read states', () => {
     // With nothing to offer the chapter still stands, so the story's numbering never skips it.
     const nothing = await mount({
       kind: 'ready', candidates: [], primary: null, incomplete: false, busy: false, refusal: null,
-      link: () => undefined, unlink: () => undefined,
+      link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }),
     });
     try {
       expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('No pull request is linked as the fix yet.');
@@ -92,7 +92,7 @@ describe('fix-PR relationship read states', () => {
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface: defineUiSurface(() => <TriageFixPullRequests pickable={[]} onOpenPrimary={() => { opened += 1; }} state={{
         kind: 'ready', candidates: [candidate], primary: candidate, incomplete: false, busy: false, refusal: null,
-        link: () => undefined, unlink: () => undefined,
+        link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }),
       }} />),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),

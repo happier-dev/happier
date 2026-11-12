@@ -503,17 +503,16 @@ describe('projectGithubMutationOutcomeV1', () => {
       .toEqual({ kind: 'unreadable' });
   });
 
-  it('reports a declined or failed dispatch as rejected, carrying its code', () => {
+  it('keeps declined confirmation quiet while preserving a rejected dispatch cause', () => {
     expect(projectGithubMutationOutcomeV1({
       status: 'error',
       code: 'plugin_action_current_intent_rejected',
       message: 'The confirmation was declined.',
       retryable: false,
-    }, null)).toEqual({
-      kind: 'rejected',
-      code: 'plugin_action_current_intent_rejected',
-      message: 'The confirmation was declined.',
-    });
+    }, null)).toBeNull();
+    expect(projectGithubMutationOutcomeV1({
+      status: 'error', code: 'permission_denied', message: 'Permission denied.', retryable: false,
+    }, null)).toEqual({ kind: 'rejected', code: 'permission_denied', message: 'Permission denied.' });
   });
 
   it('reports an unknown dispatch outcome as uncertain, never as a rejection', () => {

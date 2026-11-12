@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
@@ -12,7 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
 import { TRIAGE_DEFAULT_ACTIONS_V1, type TriageActionV1 } from '../../settings/actions.js';
-import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_DEFAULT_FIX_ACTION_ID_V1, TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1, TriagePullRequestStatusV1Schema } from '@happier-dev/triage-protocol/v1';
 import {
   readTriagePrimaryActionIdV1,
   resolveTriageReviewPreparationV1,
@@ -20,6 +21,8 @@ import {
   type TriageEntryActionRequestV1,
 } from './entryActionControls.js';
 import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+import { TriageSourceWriteCluster } from './sourceWriteCluster.js';
+import { operationOffers } from '../../sessions/testkit/sessionPullRequestOperations.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -373,7 +376,8 @@ describe('the mounted configured entry action controls', () => {
 });
 
 async function mountSourceWrite(sourceWrite: TriageDetailPrimaryWriteV1, id: string, compact = false,
-  actions: readonly TriageActionV1[] = [formalAction('formal-review-one', 'Review')]): Promise<PluginUiTestkit> {
+  actions: readonly TriageActionV1[] = [formalAction('formal-review-one', 'Review')],
+  actionHost?: ReturnType<typeof createPluginUiActionControlTestHost>): Promise<PluginUiTestkit> {
   const surface = defineUiSurface(() => (
     <TriageEntryActionControls
       target={{
@@ -392,6 +396,7 @@ async function mountSourceWrite(sourceWrite: TriageDetailPrimaryWriteV1, id: str
     />
   ));
   const fixture = await createPluginUiTestkit({
+    ...(actionHost ? { handlers: { actionControl: actionHost.handler } } : {}),
     identity: { instanceId: `fixture-instance-${id}`, mountNonce: `fixture-mount-${id}` },
     authorPlugin: { id: 'happier.triage', version: '0.0.0' },
     surface,
@@ -403,6 +408,83 @@ async function mountSourceWrite(sourceWrite: TriageDetailPrimaryWriteV1, id: str
 }
 
 describe("the source's own write in the header", () => {
+  it('lets the host own an offered PR button press without calling plugin automation', async () => {
+    const sent: unknown[] = [];
+    const host = createPluginUiActionControlTestHost(async request => { sent.push(request); return { ok: true, result: null }; });
+    const actionRef = { pluginId: 'happier.scm-github', localId: 'mark-ready' };
+    const settlements: unknown[] = [];
+    await mountSourceWrite({ title: 'Mark ready', disabledReason: null, pending: false, actionRef,
+      execute: async () => { throw new Error('Raw execution is not a UI press'); },
+      controllerFor: () => ({ prepare: async () => ({ input: { revision: 'reviewed' } }),
+        onSettled: execution => { settlements.push(execution); } }) }, 'host-primary', false, [], host);
+    await act(async () => { await host.press('Mark ready'); });
+    expect(sent).toEqual([{ action: actionRef, input: { revision: 'reviewed' } }]);
+    expect(settlements).toEqual([{ ok: true, result: null }]);
+  });
+
+  // Mirrors the existing expanded-status carrier emitted by the GitLab jobs read, including its issued request ID.
+  const checksRequestId = 'gitlab-pipeline-jobs-request-91';
+  function checksWrite(state: 'merge' | 'queue' | 'autoMerge' = 'merge', failedRead = true): TriageDetailPrimaryWriteV1 {
+    const value = TriagePullRequestStatusV1Schema.parse({
+      kind: 'status', observedAtMs: 1_000,
+      branch: { head: 'topic', base: 'main', headRevision: 'a'.repeat(40) },
+      checks: { state: 'unknown', passed: null, failed: null, pending: null, total: null, rows: [], incomplete: true,
+        ...(failedRead ? { failure: { class: 'permission', code: 'forbidden', requestId: checksRequestId } } : {}) },
+      review: { decision: 'approved', reviewers: [{ id: '41', name: 'Mara Chen', verb: 'approved' }], incomplete: false },
+      merge: { state: 'mergeable', blocker: null, conflicts: false,
+        ...(state === 'queue' ? { queue: { id: 'queue-7', state: 'queued', position: 2 } } : {}),
+        ...(state === 'autoMerge' ? { autoMerge: { enabled: true, method: 'squash' } } : {}) },
+      facts: [], operations: operationOffers,
+    });
+    return {
+      id: state === 'queue' ? 'dequeue' : 'merge', title: state === 'queue' ? 'Leave queue' : 'Merge',
+      disabledReason: null, pending: false, nativeStatus: { kind: 'current', value, checkedAtMs: 2_000 },
+      readiness: { label: 'Status incomplete', enabled: true, reason: null }, unmetRequirements: [],
+      alternatives: [{ id: state === 'autoMerge' ? 'cancelAutoMerge' : 'updateBranch',
+        title: state === 'autoMerge' ? 'Cancel auto-merge' : 'Update branch', disabledReason: null, pending: false,
+        execute: async () => { throw new Error('Reading diagnostics must not write'); } }],
+      execute: async () => { throw new Error('Reading diagnostics must not write'); },
+    };
+  }
+
+  async function expectChecksDetails(fixture: PluginUiTestkit): Promise<void> {
+    await expect(fixture.queryByText(checksRequestId)).resolves.toBeUndefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+    await expect(fixture.getByText('forbidden')).resolves.toBeDefined();
+    await expect(fixture.getByText(checksRequestId)).resolves.toBeDefined();
+  }
+
+  it.each([false, true])('discloses the issued Checks failure in the header menu while retaining observed facts and choices (compact=%s)', async (compact) => {
+    const fixture = await mountSourceWrite(checksWrite(), `checks-diagnostic-${compact}`, compact);
+    expect((await fixture.getByRole('button', { name: 'Review' })).state?.disabled).not.toBe(true);
+    await fixture.press(await fixture.getByRole('button', { name: 'More actions' }));
+    await fixture.getByText('Mara Chen approved');
+    await fixture.getByRole('menuitem', { name: 'Update branch' });
+    await expectChecksDetails(fixture);
+  });
+
+  it.each(['queue', 'autoMerge'] as const)('discloses the issued Checks failure beside the native %s state and its existing action', async (state) => {
+    const fixture = await mountSourceWrite(checksWrite(state), `checks-diagnostic-${state}`);
+    await fixture.getByText(state === 'queue' ? '#2 in the merge queue' : 'Merges when the requirements are met');
+    await fixture.getByRole('button', { name: state === 'queue' ? 'Leave queue' : 'Cancel auto-merge' });
+    await expectChecksDetails(fixture);
+  });
+
+  it.each([true, false])('keeps Checks diagnostics in the existing card readiness disclosure only when a failed read exists (failedRead=%s)', async (failedRead) => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `checks-diagnostic-card-${failedRead}`, mountNonce: 'one' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageSourceWriteCluster write={checksWrite('merge', failedRead)} sourceLabel="GitLab" />),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+    });
+    mounted.push(fixture);
+    await fixture.press(await fixture.getByRole('button', { name: 'Merge readiness: Status incomplete, GitLab sent only part of it' }));
+    await fixture.getByText('Mara Chen approved');
+    if (failedRead) await expectChecksDetails(fixture);
+    else await expect(fixture.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
+  });
+
   it('follows ⋯, so a write the source offers late joins the row without moving the controls already there', async () => {
     const fixture = await mountSourceWrite({
       title: 'Dismiss…', reading: true, disabledReason: null, pending: false, execute: async () => {},

@@ -3,10 +3,10 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TriagePullRequestOperationsV1Schema, TriageSourceOperationOutcomeV1Schema } from '@happier-dev/triage-protocol/v1';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { Action, defineUiSurface } from '@happier-dev/plugin-ui';
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 
 import { useTriagePullRequestPrimaryWriteV1 } from './pullRequestPrimaryWrite.js';
 import type { TriageDetailPrimaryWriteV1 } from './evidenceDisclosure.js';
@@ -24,7 +24,7 @@ const operations = TriagePullRequestOperationsV1Schema.parse({ readiness: 'block
       actionRef: { pluginId: 'example.source', localId: 'dequeue' }, variants: [{ id: 'only', input: { queueId: 'q-7' } }] }],
 });
 
-async function mount(input: Parameters<typeof useTriagePullRequestPrimaryWriteV1>[0]) {
+async function mount(input: Parameters<typeof useTriagePullRequestPrimaryWriteV1>[0], actionHost?: ReturnType<typeof createPluginUiActionControlTestHost>) {
   let write: TriageDetailPrimaryWriteV1 | null = null;
   let controller!: ReturnType<typeof useTriagePullRequestPrimaryWriteV1>;
   let rerender!: () => void;
@@ -35,7 +35,8 @@ async function mount(input: Parameters<typeof useTriagePullRequestPrimaryWriteV1
     controller = useTriagePullRequestPrimaryWriteV1(input);
     write = controller.primaryWrite;
     React.useEffect(() => { publications += 1; }, [write]);
-    return write?.feedback ?? null;
+    return <>{write?.actionRef && write.controllerFor ? <Action.Control action={write.actionRef} title="Host merge"
+      controller={write.controllerFor('combine')} signal={write.signal} /> : null}{write?.feedback}</>;
   }
   await act(async () => { mounted = await createPluginUiTestkit({
     identity: { instanceId: 'portable-primary-write', mountNonce: 'portable-primary-write-mount' },
@@ -43,6 +44,7 @@ async function mount(input: Parameters<typeof useTriagePullRequestPrimaryWriteV1
     surface: defineUiSurface(() => <Probe />),
     surfaceContext: createSurfaceContextFixture(),
     adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    ...(actionHost ? { handlers: { actionControl: actionHost.handler } } : {}),
   }); });
   return { read: () => { if (!write) throw new Error('Expected source write'); return write; },
     rerender: (next?: Parameters<typeof useTriagePullRequestPrimaryWriteV1>[0]) => act(async () => {
@@ -52,6 +54,22 @@ async function mount(input: Parameters<typeof useTriagePullRequestPrimaryWriteV1
 }
 
 describe('portable source primary write', () => {
+  it('prepares the reviewed PR choice for one host press and keeps the original settlement', async () => {
+    const calls: unknown[] = [];
+    const outcome = TriageSourceOperationOutcomeV1Schema.parse({ kind: 'applied', effect: 'changed',
+      confirmedState: null, confirmedEntryRef: null,
+      presentation: { title: 'Host merge confirmed', description: 'The source confirmed the change.', tone: 'secondary' } });
+    const host = createPluginUiActionControlTestHost(async request => { calls.push(request); return { ok: true, result: { outcome } }; });
+    const observed: unknown[] = [];
+    await mount({ operations, signal: new AbortController().signal,
+      execute: async () => { throw new Error('Raw plugin execution must not run for a press'); },
+      onSettled: (execution, admitted) => { observed.push({ execution, admitted }); } }, host);
+    await act(async () => { await host.press('Host merge'); });
+    expect(calls).toEqual([{ action: operations.primary.actionRef, input: operations.primary.variants[1]?.input }]);
+    expect(observed).toEqual([{ execution: { status: 'success', result: { outcome } }, admitted: outcome }]);
+    expect(await mounted?.getByText('Host merge confirmed')).toBeDefined();
+  });
+
   it('does not republish an unchanged mounted controller into its source header', async () => {
     const observations: string[] = [];
     const input = { operations, signal: new AbortController().signal,
