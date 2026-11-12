@@ -1,12 +1,13 @@
 import { useId, type ReactNode } from 'react';
 import { View } from 'react-native';
-import { Circle, Defs, Ellipse, G, Marker, Path, Pattern, Rect, Svg } from 'react-native-svg';
+import { Circle, Defs, Ellipse, G, Marker, Path, Pattern, Rect } from 'react-native-svg';
 import { HAPPIER_WIDGET_FRAME_METRICS } from '../../layout/WidgetFrame.js';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption, UsageChartColumn, UsageChartKey, UsageChartValues, resolveUsageChartInk, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartKeyItem, type UsageChartValuesLabels,
 } from './chartKit.js';
@@ -65,7 +66,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
   let chart: ReactNode = <View style={{ height: rows.length * 26 + 26 }} />;
   if (width !== null && !phone) {
     const label = 92, plot = width - label, step = plot / 168, rowHeight = 26, height = rows.length * rowHeight + 26, radius = Math.min(2.5, step * 0.4);
-    chart = <ChartDrawing style={{ height }} accessibilityLabel={props.label}><Svg accessible={false} aria-hidden width={width} height={height}>
+    chart = <ChartDrawing style={{ height }} accessibilityLabel={props.label}><Svg width={width} height={height}>
       {Array.from({ length: 8 }, (_, day) => <Path key={`v${day}`} d={`M${r1(label + day * 24 * step)},2V${height - 18}`} stroke={ink.grid} strokeWidth={1} />)}
       {rows.map((row, index) => {
         const y = index * rowHeight + rowHeight / 2 + 2;
@@ -87,7 +88,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
     chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 4 }}>
       {Array.from({ length: 7 }, (_, day) => {
         const height = head + 6 + rows.length * 7 + 4;
-        return <View key={day} style={{ height }}><Svg accessible={false} aria-hidden width={width} height={height}>
+        return <View key={day} style={{ height }}><Svg width={width} height={height}>
           {svgText.draw({ x: 0, y: head - 4, text: props.labels.day(day), tone: 'secondary', size: 'body' })}
           {rows.map((row, index) => (row.hours[day] ?? []).map((minutes, hour) => minutes === null ? null : <Circle key={`${index}-${hour}`} cx={r1((hour + 0.5) * step)} cy={head + 6 + index * 7}
             r={2.1} fill={minutes ? colour(row.agentId) : ink.track} fillOpacity={minutes ? scoreOpacity(props.model.encoding, minutes) : 1} />))}
@@ -95,7 +96,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
           datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
           bounds={{ x: hour * step, y: head + 2.5 + index * 7, width: step, height: 7 }} />))}</View>;
       })}
-      <Svg accessible={false} aria-hidden width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
+      <Svg width={width} height={14}>{[0, 6, 12, 18].map((hour) => svgText.draw({ x: hour * step, y: 11, text: props.labels.clock(hour) }, `h${hour}`))}</Svg>
     </ChartDrawing>;
   }
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
@@ -152,7 +153,7 @@ export function UsageOrbit(props: AgentsProps & Readonly<{ model: readonly Usage
           // The "unknown share" line owns the bottom row, so planet labels stay above it.
           { height: unknown.length ? height - ((svgText.styles.body.fontSize ?? 13) + 3) : height, line: (svgText.styles.body.fontSize ?? 13) + 3 });
         return <>
-          <Svg accessible={false} aria-hidden width={width} height={height}>
+          <Svg width={width} height={height}>
             {known.map((_, index) => <Ellipse key={`o${index}`} cx={cx} cy={cy} rx={r1(rx0 + index * step)} ry={r1((rx0 + index * step) * aspect)} stroke={ink.grid} strokeWidth={1} fill="none" />)}
             {placed.map(({ entry, x, y, radius }) => <Circle key={JSON.stringify(entry.agentId)} cx={r1(x)} cy={r1(y)} r={r1(radius)} fill={agentOf(props.agents, entry.agentId)?.color ?? ink.neutral} />)}
             {placed.map(({ entry, text, at, anchor }, index) => svgText.draw({ x: at, y: labelY[index]!, anchor, tone: 'secondary', size: 'body', halo: props.paint.paper, text }, `l${index}-${JSON.stringify(entry.agentId)}`))}
@@ -261,7 +262,7 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
         });
         const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? props.theme.colors.mutedText;
         const leaders = order.slice(-2).reverse();
-        return <><Svg accessible={false} aria-hidden width={width} height={height}>
+        return <><Svg width={width} height={height}>
           {bands.map((band) => <Path key={band.id ?? "unknown"} d={band.d} fill={colour(band.id)} fillOpacity={0.9} />)}
           {(() => {
             // Each leading Agent is named where its band is thickest (never the same week twice), kept inside the plot.
@@ -340,7 +341,7 @@ export function UsageShipped(props: AgentsProps & Readonly<{ model: UsageShipped
   </UsageChartColumn>;
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
-      {width !== null ? <Svg accessible={false} aria-hidden width={width} height={height}>
+      {width !== null ? <Svg width={width} height={height}>
         <Defs>
           <Pattern id={mix} width={5} height={5} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <Rect width={5} height={5} fill={props.agents[0]?.color ?? ink.neutral} /><Rect width={2.5} height={5} fill={props.agents[1]?.color ?? ink.neutral} />
@@ -443,7 +444,7 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
         const edges = (props.model.edges ?? []).filter((edge) => position.has(edge.from) && position.has(edge.to));
         const edgeMarks: ReactNode[] = [];
         return <>
-          <Svg accessible={false} aria-hidden width={width} height={height}>
+          <Svg width={width} height={height}>
             <Defs>{nodes.map((node) => <Marker key={JSON.stringify(node.agentId)} id={`${markerId}-arrow-${node.agentId}`} viewBox="0 0 8 8" refX={7} refY={4} markerWidth={9} markerHeight={9}
               markerUnits="userSpaceOnUse" orient="auto-start-reverse"><Path d="M0,0L8,4L0,8Z" fill={colour(node.agentId)} /></Marker>)}</Defs>
             {edges.map((edge, index) => {

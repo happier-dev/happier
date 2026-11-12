@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
-import { Circle, Ellipse, G, Path, Rect, Svg } from 'react-native-svg';
+import { Circle, Ellipse, G, Path, Rect } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataValue } from '../../data/dataModel.js';
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption,
   UsageChartColumn,
   UsageChartKey,
@@ -232,7 +233,7 @@ export function UsageNinetyPlanets(props: CalendarProps) {
         light: levelLight(level),
       })
     ) : (
-      <Svg accessible={false} aria-hidden width={box} height={box}>
+      <Svg width={box} height={box}>
         <Circle
           cx={box / 2}
           cy={box / 2}
@@ -258,7 +259,7 @@ export function UsageNinetyPlanets(props: CalendarProps) {
       >
         {width !== null ? (
           <>
-            <Svg accessible={false} aria-hidden
+            <Svg
               width={width}
               height={gridHeight}
               style={{ position: 'absolute', left: 0, top: 0 }}
@@ -374,7 +375,7 @@ export function UsageStreakThread(props: CalendarProps) {
         accessibilityLabel={props.label}
       >
         {width !== null && count ? (
-          <><Svg accessible={false} aria-hidden width={width} height={height}>
+          <><Svg width={width} height={height}>
             {streaks.runs.map((run) => {
               const current = sameRun(run, streaks.current),
                 best = sameRun(run, streaks.best);
@@ -513,7 +514,7 @@ export function UsageWeeksSkyline(props: CalendarProps) {
               let lastMonth = '';
               const targets: ReactNode[] = [];
               return (
-                <><Svg accessible={false} aria-hidden width={width} height={height}>
+                <><Svg width={width} height={height}>
                   <Path
                     d={`M0,${base + 0.5}H${width}`}
                     stroke={ink.base}
@@ -654,7 +655,7 @@ export function UsageAroundThePeriod(props: CalendarProps) {
               const size = Math.round(Math.min(56, height * 0.24));
               return (
                 <>
-                  <Svg accessible={false} aria-hidden width={width} height={height}>
+                  <Svg width={width} height={height}>
                     <Ellipse
                       cx={cx}
                       cy={cy}
@@ -932,7 +933,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
               const size = Math.ceil(radius * 2.6);
               return (
                 <>
-                  <Svg accessible={false} aria-hidden
+                  <Svg
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}
@@ -961,7 +962,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                       })}
                     </View>
                   ) : (
-                    <Svg accessible={false} aria-hidden
+                    <Svg
                       width={width}
                       height={height}
                       style={{ position: 'absolute', left: 0, top: 0 }}
@@ -969,7 +970,7 @@ export function UsageRingedByStreaks(props: CalendarProps<UsageRingsLabels>) {
                       <Circle cx={cx} cy={cy} r={radius} fill={ink.track} />
                     </Svg>
                   )}
-                  <Svg accessible={false} aria-hidden
+                  <Svg
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}

@@ -118,12 +118,12 @@ describe('public Usage chart producer', () => {
       expect(document.querySelector('[data-testid="external-harvest"]')?.textContent).toContain('Tomatoes');
       const daily = document.querySelector('[data-testid="external-harvest-daily.chart"]');
       expect(daily?.getAttribute('aria-label')).toContain('Monday: Vegetables 42');
-      expect(daily?.getAttribute('aria-label')).toContain('Tuesday: Vegetables Not reported');
+      expect(daily?.getAttribute('aria-label')).toContain('Tuesday: Vegetables —');
       const button = document.querySelector<HTMLElement>('[data-testid="external-harvest-hours-values-toggle"]')!;
       act(() => button.click());
       const values = document.querySelector('[data-testid="external-harvest-hours-values"]')?.textContent;
       expect(values).toContain('42 vegetables');
-      expect(values).toContain('Not reported');
+      expect(values).toContain('—');
       expect(values).not.toContain('tokens');
     } finally { await fixture.dispose(); }
   });

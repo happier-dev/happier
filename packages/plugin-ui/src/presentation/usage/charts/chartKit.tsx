@@ -1,6 +1,6 @@
 import { useCallback, useState, type ReactNode } from 'react';
-import { View } from 'react-native';
-import { G, Text as SvgText } from 'react-native-svg';
+import { Platform, View } from 'react-native';
+import { G, Svg, Text as SvgText, type SvgProps } from 'react-native-svg';
 
 import type { HappierUiTheme } from '../../../environment/types.js';
 import { HappierPressable } from '../../interaction/Pressable.js';
@@ -16,6 +16,15 @@ import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from '../../data/dataT
  * identities (name, colour, mark), the chart accent and the paper the chart sits on. Nothing here queries,
  * decrypts or decides what may be shown; a body draws exactly the model it is given.
  */
+
+/** Drawing ink is decorative; chart values have their own accessible presentation. */
+export function UsageDecorativeSvg(props: Omit<SvgProps,
+  'accessible' | 'aria-hidden' | 'accessibilityElementsHidden' | 'importantForAccessibility'>) {
+  // react-native-svg forwards native accessibility props verbatim to the web DOM.
+  return <Svg {...props} aria-hidden {...(Platform.OS === 'web' ? {} : {
+    accessible: false, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const,
+  })} />;
+}
 
 /** One Agent as the host knows it: catalogue name, identity colour and mark. */
 export type UsageChartAgent = Readonly<{ id: string; name: string; shortName?: string; color: string; mark?: ReactNode }>;

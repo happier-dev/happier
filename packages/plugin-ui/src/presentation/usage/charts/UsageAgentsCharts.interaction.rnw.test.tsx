@@ -173,8 +173,8 @@ describe('Agent chart exact data targets', () => {
       act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
       expect(chart.container.querySelector('[role="table"]')!.textContent).toContain('12.35%');
       expect(chart.container.querySelector('[role="table"]')!.textContent).toContain('1,234.567');
-      expect(chart.container.textContent).toContain('Not reported');
-      expect(chart.container.textContent).not.toContain('—');
+      expect(chart.container.textContent).toContain('—');
+      expect(chart.container.textContent).not.toContain('Not reported');
     } finally { chart.unmount(); }
   });
 
@@ -188,10 +188,10 @@ describe('Agent chart exact data targets', () => {
     try {
       target(chart.container, 'Claude Code · Known: 100%');
       target(chart.container, 'Claude Code · Quiet: 0%');
-      target(chart.container, 'Claude Code · Unknown: Not reported');
+      target(chart.container, 'Claude Code · Unknown: —');
       act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
       const rows = [...chart.container.querySelectorAll('[role="row"]')].map(row => row.textContent);
-      expect(rows).toContain('UnknownNot reportedNot reported');
+      expect(rows).toContain('Unknown——');
       expect(rows).toContain('Quiet00%');
     } finally { chart.unmount(); }
   });
@@ -216,7 +216,7 @@ describe('Agent chart exact data targets', () => {
       labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' }, kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />);
     try {
       target(chart.container, 'Claude Code: 12.35%');
-      target(chart.container, 'Codex: Not reported');
+      target(chart.container, 'Codex: —');
       target(chart.container, 'Claude Code → Codex · Session: 1,234');
       target(chart.container, 'Claude Code → Claude Code · Run: 2');
     } finally { chart.unmount(); }

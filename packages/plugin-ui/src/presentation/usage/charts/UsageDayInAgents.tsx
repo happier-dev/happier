@@ -4,9 +4,10 @@ import { View } from 'react-native';
 import { HappierText } from '../../text/Text.js';
 import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataValue } from '../../data/dataModel.js';
-import { Circle, Defs, G, Path, Pattern, Rect, Svg } from 'react-native-svg';
+import { Circle, Defs, G, Path, Pattern, Rect } from 'react-native-svg';
 
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption, UsageChartColumn, UsageChartKey, UsageChartValues, resolveUsageChartInk, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartAgent, type UsageChartBaseProps, type UsageChartValuesLabels,
 } from './chartKit.js';
@@ -151,7 +152,7 @@ function DayLanes(props: DayDrawProps & Readonly<{ phone: boolean }>) {
   const hatch = `usage-day-hatch-${useId().replace(/[^a-zA-Z0-9_-]/gu, '')}`;
   const colour = (id: string | null) => props.agents.find((agent) => agent.id === id)?.color ?? ink.neutral;
   return <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
-    <Svg accessible={false} aria-hidden width={width} height={height}>
+    <Svg width={width} height={height}>
       <Defs>
         <Pattern id={hatch} width={4} height={4} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <Rect width={4} height={4} fill={props.paint.paper} />
@@ -228,13 +229,13 @@ function DayDial(props: DayDrawProps) {
   });
   return <View style={{ gap: 8 }}>
     {!room ? <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <Svg accessible={false} aria-hidden width={Math.min(width, 360)} height={18}>
+      <Svg width={Math.min(width, 360)} height={18}>
         <Circle cx={5} cy={9} r={3.2} fill={props.paint.accent} />
         {svgText.draw({ x: 13, y: 13, text: `${props.labels.peakCount(model.peak.count)} · ${peakLine}`, tone: 'strong', size: 'body' })}
       </Svg>
     </View> : null}
     <ChartDrawing style={{ height: size }} accessibilityLabel={props.label}>
-      <Svg accessible={false} aria-hidden width={width} height={size}>
+      <Svg width={width} height={size}>
         {room ? <G>
           <Circle cx={5} cy={9} r={3.2} fill={props.paint.accent} />
           {svgText.draw({ x: 13, y: 13, text: props.labels.peakCount(model.peak.count), tone: 'strong', size: 'body' })}

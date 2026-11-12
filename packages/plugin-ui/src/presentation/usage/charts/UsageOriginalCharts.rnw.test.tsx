@@ -44,7 +44,7 @@ describe('Original shared Usage forms', () => {
       const chart = mount.container.querySelector('[data-testid="daily.chart"]')!;
       expect(chart).not.toBeNull();
       expect(chart.getAttribute('aria-label')).toContain('Monday: Activity level 4');
-      expect(chart.getAttribute('aria-label')).toContain('Tuesday: Activity level Not reported');
+      expect(chart.getAttribute('aria-label')).toContain('Tuesday: Activity level —');
       expect(chart.getAttribute('aria-label')).not.toMatch(/tokens|events|hours/u);
     } finally { mount.unmount(); }
   });

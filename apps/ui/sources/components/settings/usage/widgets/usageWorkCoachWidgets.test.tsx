@@ -829,7 +829,7 @@ describe('Work and Coach widget bodies', () => {
       id="usage_session_value" testID="value" />;
     const screen = await renderScreen(body([reported]));
     const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === t('usage.board.work.autopsyTitle'));
-    expect.soft(summary?.props.datum).toMatchObject({ value: '1.23456', subtitle: expect.stringMatching(/€1\.23.*reported/) });
+    expect.soft(summary?.props.datum).toMatchObject({ value: expect.stringMatching(/^1\.23456 \(€1\.23.*reported.*\)$/), subtitle: expect.stringMatching(/€1\.23.*reported/) });
     expect(screen.getTextContent()).toContain('€1.23');
     await screen.update(body([reported, estimated]));
     const turnDatums = screen.findAllByType(ChartDatum)

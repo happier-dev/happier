@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { View } from 'react-native';
-import { Circle, Ellipse, Path, Svg } from 'react-native-svg';
+import { Circle, Ellipse, Path } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
 import { ChartDatum, ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption,
   UsageChartColumn,
   UsageChartValues,
@@ -155,7 +156,7 @@ export function UsageAgentMoons(
                       })}
                     </View>
                   ) : (
-                    <Svg accessible={false} aria-hidden width={size} height={size}>
+                    <Svg width={size} height={size}>
                       <Circle
                         cx={size / 2}
                         cy={size / 2}
@@ -297,7 +298,7 @@ export function UsageMachines(
               const sunBox = Math.ceil(sun * 3.2);
               return (
                 <>
-                  <Svg accessible={false} aria-hidden
+                  <Svg
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}
@@ -467,7 +468,7 @@ export function UsageProjects(
     </HappierText>
   );
   const star = (size: number) => (
-    <Svg accessible={false} aria-hidden width={size} height={size}>
+    <Svg width={size} height={size}>
       <Circle
         cx={size / 2}
         cy={size / 2}
@@ -495,7 +496,7 @@ export function UsageProjects(
                 4 + scatter(projects[index]!.url, 7) * 16;
             return (
               <View style={{ height: 76 }}>
-                <Svg accessible={false} aria-hidden
+                <Svg
                   width={width}
                   height={40}
                   style={{ position: 'absolute', left: 0, top: 0 }}
@@ -692,7 +693,7 @@ export function UsageAtmosphere(
                       })}
                     </View>
                   ) : null}
-                  <Svg accessible={false} aria-hidden
+                  <Svg
                     width={width}
                     height={height}
                     style={{ position: 'absolute', left: 0, top: 0 }}

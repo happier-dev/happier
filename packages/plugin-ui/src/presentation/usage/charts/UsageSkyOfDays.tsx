@@ -6,7 +6,6 @@ import {
   Path,
   RadialGradient,
   Stop,
-  Svg,
 } from 'react-native-svg';
 
 import { HappierText } from '../../text/Text.js';
@@ -15,6 +14,7 @@ import { ChartDrawing, ChartMark } from '../../data/ChartDatum.js';
 import { formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption,
   UsageChartColumn,
   UsageChartKey,
@@ -338,7 +338,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
         accessibilityLabel={props.label}
       >
         {geometry && width !== null ? (
-          <Svg accessible={false} aria-hidden {...usageChartSvgSize(width, height, scaled)}>
+          <Svg {...usageChartSvgSize(width, height, scaled)}>
             <Defs>
               {gradientKeys.map((key) => {
                 const color = colourOf(key);

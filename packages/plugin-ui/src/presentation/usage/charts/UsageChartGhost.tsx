@@ -1,9 +1,10 @@
 import type { ReactElement } from 'react';
-import { Circle, Line, Svg } from 'react-native-svg';
+import { Circle, Line } from 'react-native-svg';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../../environment/types.js';
 import {
+  UsageDecorativeSvg as Svg,
   resolveUsageChartInk,
   useUsageChartSvgText,
   useUsageChartWidth,
@@ -211,7 +212,7 @@ export function UsageChartGhost(
       style={{ minWidth: 0, height }}
     >
       {width > 0 ? (
-        <Svg accessible={false} aria-hidden width={width} height={height}>
+        <Svg width={width} height={height}>
           {marks}
         </Svg>
       ) : null}

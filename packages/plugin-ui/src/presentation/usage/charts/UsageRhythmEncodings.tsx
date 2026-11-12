@@ -1,9 +1,10 @@
 import { View } from 'react-native';
-import { Circle, G, Path, Rect, Svg } from 'react-native-svg';
+import { Circle, G, Path, Rect } from 'react-native-svg';
 import { ChartDrawing, ChartMark, ChartPathMark } from '../../data/ChartDatum.js';
 import { formatHappierDataExactShare, formatHappierDataValue, formatHappierDataValueWithPrecision } from '../../data/dataModel.js';
 
 import {
+  UsageDecorativeSvg as Svg,
   UsageChartCaption, UsageChartColumn, UsageChartValues, resolveUsageChartInk, usageChartMix, usageChartRound as r1, usageSmoothPath,
   useUsageChartSvgText, useUsageChartWidth, type UsageChartBaseProps, type UsageChartValuesLabels,
 } from './chartKit.js';
@@ -51,7 +52,7 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
     : props.model.encoding === 'ordinal' ? props.labels.values.levelNames[value] ?? '' : formatHappierDataValueWithPrecision(formatHappierDataValue(value), props.labels.values.formatValue(value)))] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
-      {width !== null ? <Svg accessible={false} aria-hidden width={width} height={height}>
+      {width !== null ? <Svg width={width} height={height}>
         {(() => {
           const shapes = drawing.map(({ base, curve, area }, rowIndex) => {
             return <G key={rowIndex}>
@@ -140,7 +141,7 @@ export function UsageDaylight(props: UsageChartBaseProps & Readonly<{ model: Usa
   if (night) rows.push([props.labels.night(night.fromHour, night.toHour, night.share), '', night.share === null ? unknown : formatHappierDataExactShare(night.share)]);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
-      {width !== null ? <Svg accessible={false} aria-hidden width={width} height={height}>
+      {width !== null ? <Svg width={width} height={height}>
         {(() => {
           const column = width / 24;
           const top = 22;
