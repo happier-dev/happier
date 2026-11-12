@@ -94,7 +94,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { auth } from '@/app/auth/auth';
 import { verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
-    isDeploymentNativeHttpPurpose, isDeploymentReadPreparation } from '@/app/auth/externalActionExecutionAuthorization';
+    isDeploymentNativeHttpPurpose, isDeploymentReadPreparation, readAdmittedFiniteOperationPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
     isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands } from './deploymentPreparationAuthorization';
 import { db } from '@/storage/db';
@@ -134,7 +134,7 @@ import { createDeploymentInTx, transitionDeploymentInTx } from './deploymentServ
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
 import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
-import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
+import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
 import { readDeploymentReadAuthorizationInTx } from './deploymentReadAuthorization';
@@ -1382,9 +1382,11 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it.each([{ workflowOrigin: false, templateRoot: false }, { workflowOrigin: true, templateRoot: false },
-        { workflowOrigin: false, templateRoot: true }])('uses only accepted-job and installation reads for controller calls after credential withdrawal (%j)', async options => {
-        const f = await fixture('account', 'account', options);
+    it.each([{ workflowOrigin: false, templateRoot: false, membershipWithdrawal: false },
+        { workflowOrigin: true, templateRoot: false, membershipWithdrawal: false },
+        { workflowOrigin: false, templateRoot: true, membershipWithdrawal: false },
+        { workflowOrigin: false, templateRoot: false, membershipWithdrawal: true }])('uses only accepted-job and installation reads for controller calls after credential withdrawal (%j)', async options => {
+        const f = await fixture(options.membershipWithdrawal ? 'team' : 'account', 'account', options);
         const receiptSpec = getActionSpec('deployments.receipts.get');
         if (!receiptSpec.serverTransport) throw new Error('Receipt reads need their canonical transport');
         const receiptInput = { serverId, deploymentId: f.receipt.id };
@@ -1416,6 +1418,15 @@ describe('deployment children retain their controller Action authority', () => {
             expect.soft(queries.length, `${read.path}: ${queries.join(', ')}`).toBeLessThanOrEqual(2);
         }
         await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
+        if (options.membershipWithdrawal) {
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+            const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID() };
+            await expect(auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch + 1 },
+                actionId: f.authorization.binding.actionId, machineId: f.controller.id, target: envelope.target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+            { input: envelope.input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        }
         for (const read of reads) expect.soft(await verify(read), read.path).not.toBeNull();
         expect(await verify(reads[0], f.outsider.keys.secretKey)).toBeNull();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
@@ -5313,6 +5324,83 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('admits draft DNS %s only for the selected Link installation without retained Domain writes', async mode => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true, separateContentOwner: true, contentMode: mode });
+        const actionId = 'deployments.domains.verify';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { mode: 'preview' as const, serverId, environmentId: f.environment.id,
+            targetLinkId: f.link.id, expectedRevision: f.environmentRevision, expectedTargetLinkRevision: f.link.revision,
+            requestKey: crypto.randomUUID(), content: { hostname: 'private-preview.test', target: { service: 'web', containerPort: 8080 } } };
+        const requestId = crypto.randomUUID();
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding: { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target }, input,
+            material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+            : { v: 1 as const, requestId, target, input };
+        const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication, actionId, machineId: f.controller.id, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, {
+                input: mode === 'e2ee' ? deploymentNativeAdmission : input, deploymentNativeAdmission });
+        const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainDns', actionId, input,
+            machineId: f.member.id, installationId: f.member.installationId });
+        const packet = (params: DeploymentChildRpcV1 = job) => {
+            const method = params.machineId + ':' + RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, childRequestId = crypto.randomUUID();
+            const deploymentChildRouting = projectDeploymentChildRoutingV1(params);
+            return { method, requestId: childRequestId, params, originalActionEnvelope: envelope, externalActionExecution: {
+                v: 1 as const, authorization, effectActionId: actionId, target, installationId: f.controller.installationId,
+                deploymentChildRouting, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, method, requestId: childRequestId,
+                    params, deploymentChildRouting, privateKey: f.controller.keys.secretKey }) } };
+        };
+        const verify = async (params = job) => { const p = packet(params); return verifyExternalActionMachineRpcExecution(p.externalActionExecution, p); };
+        const writes: string[] = [];
+        const stop = observeSqliteRequests({ before: event => {
+            if ((event.model === 'DeploymentDomain' || event.model === 'Artifact') && event.action !== 'findUnique'
+                && event.action !== 'findFirst' && event.action !== 'findMany' && event.action !== 'count') writes.push(event.action);
+        } });
+        try {
+            expect(await verify()).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domainDns' } } });
+            expect(await verify({ ...job, machineId: f.outsider.id, installationId: f.outsider.installationId })).toBeNull();
+            expect(await verify({ ...job, installationId: crypto.randomUUID() })).toBeNull();
+            expect(await verify(DeploymentChildRpcV1Schema.parse({ ...job, input: { ...input, requestKey: 'another-preview' } }))).toBeNull();
+            expect(await verify(DeploymentChildRpcV1Schema.parse({ ...job, input: { ...input, expectedTargetLinkRevision: input.expectedTargetLinkRevision + 1 } }))).toBeNull();
+            const projected = projectDeploymentChildRoutingV1(job);
+            expect(JSON.stringify(projected)).not.toContain('private-preview.test');
+            const source = packet();
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                const path = '/v1/machines/' + f.member.id;
+                const response = await app.inject({ method: 'GET', url: path, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(source),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: actionId, target, installationId: f.controller.installationId, requestId,
+                        method: 'GET', path, body: undefined, deploymentChildExecution: source, privateKey: f.controller.keys.secretKey }),
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ machine: { id: f.member.id, installationId: f.member.installationId } });
+                await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+                    data: { status: 'suspended' } });
+                const continuation = await app.inject({ method: 'GET', url: path, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(source),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: actionId, target, installationId: f.member.installationId, requestId,
+                        method: 'GET', path, body: undefined, deploymentChildExecution: source, privateKey: f.member.keys.secretKey }),
+                } });
+                expect(continuation.statusCode, continuation.body).toBe(200);
+                expect(await verify()).toBeNull();
+            }, { authentication: 'real' });
+        } finally { stop(); }
+        expect(writes).toEqual([]);
+    });
+
     it.each([
         ['plain', 'domainDiscover'], ['e2ee', 'domainDiscover'],
         ['plain', 'domain'], ['e2ee', 'domain'],
@@ -6243,6 +6331,12 @@ describe('deployment children retain their controller Action authority', () => {
             const superseded = await send(body);
             expect(superseded.statusCode, superseded.body).toBe(409);
             await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
+            for (const invalid of [{ ...body, contentArtifactId: previous.contentArtifactId },
+                { ...body, contentHeaderVersion: body.contentHeaderVersion + 1 },
+                { ...body, contentBodyVersion: body.contentBodyVersion + 1 }]) {
+                const denied = await send(invalid);
+                expect(denied.statusCode, denied.body).toBe(409);
+            }
             const changed = await send(body);
             expect(changed.statusCode, changed.body).toBe(200);
             expect(changed.json()).toMatchObject({ ok: true, state: 'succeeded', deploymentRevision: f.receipt.revision + 1 });
@@ -6885,6 +6979,51 @@ describe('deployment children retain their controller Action authority', () => {
             expect(await inTx(tx => isDeploymentChildHttpPurposeInTx(tx, promotionRouting,
                 { method: 'POST', path: sourcePath, body: undefined, routeInput: sourceInput })), kind).toBe(false);
         }
+    });
+
+    it('continues accepted child machine reads after membership withdrawal while refusing new admission', async () => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true });
+        const accepted = await readAcceptedDeploymentReceiptInTx(db, f.authorization.binding);
+        if (!accepted) throw new Error('Expected accepted deployment');
+        expect(readAdmittedFiniteOperationPrincipal(f.authorization.binding)).toBeNull();
+        expect(readAdmittedFiniteOperationPrincipal(f.authorization.binding, undefined, accepted))
+            .toMatchObject({ accountId: f.account.id, authority: 'present_user' });
+        const read = async () => {
+            const verified = await f.verify();
+            expect(verified?.deploymentChildAdmission).toBeDefined();
+            if (!verified?.deploymentChildAdmission) throw new Error('Expected accepted child');
+            return readDeploymentChildMachineReadInTx(db, verified.deploymentChildAdmission, f.controller.id);
+        };
+        const mint = (account = f.account) => {
+            const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID() };
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: account.id, authentication: { kind: 'account', tokenEpoch: account.tokenEpoch },
+                actionId: f.authorization.binding.actionId, machineId: f.controller.id, target: envelope.target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+            { input: envelope.input });
+        };
+        expect(await read()).toMatchObject({ machineId: f.controller.id });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+        await db.machineTeamGrant.deleteMany({ where: { machineId: f.controller.id, teamId: f.team!.id } });
+        const membershipReads: string[] = [];
+        const stop = observeSqliteRequests({ before: query => {
+            if (query.model === 'TeamMembership' || query.model === 'MachineTeamGrant'
+                || query.model === 'Machine' && /"teamGrants"/u.test(JSON.stringify(query.args))) membershipReads.push(query.model);
+        } });
+        try {
+            expect(await read()).toMatchObject({ machineId: f.controller.id,
+                codecAdmission: { actorAccountId: f.account.id } });
+        } finally { stop(); }
+        expect(membershipReads).toEqual([]);
+        const review = projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse({ v: 1, actionId: 'deployments.deploy', kind: 'review',
+            input: { ...f.input, expectedRevision: f.environmentRevision }, machineId: f.member.id, installationId: f.member.installationId }));
+        expect(await isCurrentDeploymentChildInTx(db, f.authorization.binding, review)).toBe(false);
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint(outsider)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        expect(await isCurrentDeploymentChildInTx(db, { ...f.authorization.binding, accountId: outsider.id }, review)).toBe(false);
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { cancelRequestedAt: new Date() } });
+        expect(await f.verify()).toBeNull();
     });
 
     it('rechecks the Source Team grant for a new review, not for an already accepted child', async () => {
@@ -7595,7 +7734,7 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deployment.update({ where: { id: archive.id }, data: { rollbackOfDeploymentId: selected.id, operation: 'rollback' } });
         expect(await read('missing-origin')).toBeNull();
         await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
-        expect(await read(archive.id)).toBeNull();
+        expect(await read(archive.id)).not.toBeNull();
     });
 
     it('opens only the exact initial child codec under the retained controller proof', async () => {
@@ -7654,7 +7793,7 @@ describe('deployment children retain their controller Action authority', () => {
                     expect((await send(job.machineId, f.outsider.keys.secretKey)).statusCode).toBe(401);
                     expect((await send(job.machineId, f.controller.keys.secretKey, 'retired-source-installation')).statusCode).toBe(401);
                     await db.machineTeamGrant.deleteMany({ where: { machineId: job.machineId, teamId: f.team!.id } });
-                    expect((await send()).statusCode).toBe(401);
+                    expect((await send()).statusCode).toBe(job.kind === 'prepare' || job.kind === 'review' ? 401 : 200);
                     await db.machineTeamGrant.create({ data: { machineId: job.machineId, teamId: f.team!.id,
                         accessLevel: 'view', createdByAccountId: f.account.id } });
                 }
@@ -7766,7 +7905,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect((await app.inject({ method: 'POST', url: path, headers: { ...headers,
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: another.authorization.token }, payload: body })).statusCode).toBe(401);
             await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
-            expect((await send()).json()).not.toMatchObject({ ok: true });
+            expect((await send()).json()).toMatchObject({ ok: true });
         }, { authentication: 'real' });
     });
 
@@ -7814,9 +7953,12 @@ describe('deployment children retain their controller Action authority', () => {
                 operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: f.account.id,
                 actionOperationId: crypto.randomUUID(), ...await f.content('deployment-receipt.v1') } });
             expect((await send(app, f.builder.id, { ...origin, deploymentId: unrelated.id })).statusCode).not.toBe(200);
+            const foreignCustodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.machine.update({ where: { id: f.outsider.id }, data: { accountId: foreignCustodian.id } });
+            const foreignOrigin = { ...origin, holderMachineId: f.outsider.id, holderInstallationId: f.outsider.installationId };
+            expect((await send(app, f.outsider.id, foreignOrigin)).statusCode).not.toBe(200);
             await db.machineTeamGrant.create({ data: { machineId: f.outsider.id, teamId: f.team!.id,
                 accessLevel: 'view', createdByAccountId: f.account.id } });
-            const foreignOrigin = { ...origin, holderMachineId: f.outsider.id, holderInstallationId: f.outsider.installationId };
             expect((await send(app, f.outsider.id)).statusCode).not.toBe(200);
             expect((await send(app, f.outsider.id, foreignOrigin)).statusCode).toBe(200);
             await db.machine.update({ where: { id: f.outsider.id }, data: { installationId: crypto.randomUUID() } });
@@ -7825,7 +7967,7 @@ describe('deployment children retain their controller Action authority', () => {
             // Personal ownership cannot replace the Source Team's actual holder grant.
             expect((await send(app, f.outsider.id)).statusCode).not.toBe(200);
             await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
-            expect((await send(app, f.builder.id)).statusCode).not.toBe(200);
+            expect((await send(app, f.builder.id)).statusCode).toBe(200);
             await db.machineTeamGrant.create({ data: { machineId: f.builder.id, teamId: f.team!.id,
                 accessLevel: 'view', createdByAccountId: f.account.id } });
             await db.account.update({ where: { id: f.account.id }, data: { status: 'suspended' } });

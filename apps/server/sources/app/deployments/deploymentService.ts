@@ -59,6 +59,15 @@ function receiptResult(row: Receipt, environmentRevision: number, environmentRem
     return result;
 }
 
+/** Submitted content versions describe the incumbent receipt; only the Artifact writer advances them. */
+function transitionContentReference(row: Receipt, input: DeploymentTransitionInputV1) {
+    if (input.contentArtifactId !== undefined && input.contentArtifactId !== row.contentArtifactId) return null;
+    const reference = input.contentArtifactId !== undefined && input.contentHeaderVersion !== undefined && input.contentBodyVersion !== undefined
+        ? deploymentContentReference({ contentArtifactId: input.contentArtifactId, contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion })
+        : deploymentContentReference(row);
+    return isDeepStrictEqual(reference, deploymentContentReference(row)) ? reference : null;
+}
+
 /** Stop future stages without waiting for, or inventing observations from, the controller. */
 export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string, input: DeploymentCancelInputV1,
     authentication: DeploymentAuthentication = {},
@@ -68,7 +77,7 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
     if (!loaded.ok) return loaded;
     if (!canDeployDeploymentEnvironment(loaded.admission, loaded.row)) return deploymentFailure('deployment_access_denied');
     const row = await tx.deployment.findFirst({ where: { id: input.deploymentId, environmentId: loaded.row.id } });
-    if (!row) return deploymentFailure('deployment_unavailable');
+    if (!row) return deploymentFailure('deployment_unavailable', { phase: 'deployment.cancel.receipt', causeKind: 'not_found' });
     if (row.cancelRequestedAt) {
         return receiptResult(row, loaded.row.revision);
     }
@@ -232,7 +241,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (input.kind === 'cancel') return requestCancelDeploymentInTx(tx, actorAccountId, input, authentication);
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const row = await tx.deployment.findFirst({ where: { id: input.deploymentId, environmentId: input.environmentId } });
-    if (!row || row.actionOperationId !== input.actionOperationId) return deploymentFailure('deployment_unavailable');
+    if (!row || row.actionOperationId !== input.actionOperationId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.transition.receipt', causeKind: row ? 'access_denied' : 'not_found' });
     const acceptedExecution = readDeploymentAcceptedExecution(row);
     if (!acceptedExecution) return deploymentFailure('deployment_access_denied');
     const removeEnvironment = row.operation === 'teardown' && DeploymentTeardownDispositionV1Schema.safeParse(row.teardownProof).success;
@@ -267,13 +276,34 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if ((link.deletedAt || link.detachedAt) && !removedReplay) return deploymentFailure('deployment_conflict');
     if (row.operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== link.id) return deploymentFailure('deployment_conflict');
     const native = executionBinding?.deploymentNativeAdmission;
-    const restoreContentPublication = executionBinding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
-        && native && 'kind' in native && native.kind === 'restore' && native.mode === 'confirm';
-    if (restoreContentPublication && (!isMember || row.targetLinkId !== native.targetLinkId
-        || link.activeDeploymentId !== row.id || row.state !== input.state)) return deploymentFailure('deployment_conflict');
+    if (executionBinding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+        && native && 'kind' in native && native.kind === 'restore' && native.mode === 'confirm') {
+        // Restore changes the incumbent receipt's volume content, never its settled
+        // lifecycle or serving custody. Finish that publication here rather than
+        // exempting it from each aggregate transition rule below.
+        if (!isMember || row.targetLinkId !== native.targetLinkId || link.activeDeploymentId !== row.id
+            || row.state !== input.state || row.operation === 'teardown'
+            || input.servingDeploymentId !== undefined) return deploymentFailure('deployment_conflict');
+        const content = transitionContentReference(row, input);
+        if (!content) return deploymentFailure('deployment_conflict');
+        if (!input.contentUpdate) return receiptResult(row, loaded.row.revision);
+        if (row.revision !== input.expectedRevision || row.cancelRequestedAt) return deploymentFailure('deployment_conflict');
+        const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, content, input.contentUpdate, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
+        if (!updated.ok) return updated;
+        const changed = await tx.deployment.updateMany({ where: { id: row.id, revision: input.expectedRevision },
+            data: { revision: { increment: 1 }, ...updated.reference } });
+        if (changed.count !== 1) throw new Error('Locked deployment receipt changed during content publication');
+        const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
+        if (loaded.row.pendingDeployContent !== null && input.state !== 'queued' && input.state !== 'running') {
+            await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
+        }
+        const current = { ...row, revision: row.revision + 1, ...updated.reference };
+        await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, current.revision, row.id, false, accountIds);
+        return receiptResult(current, loaded.row.revision);
+    }
     // Member/build daemons publish child evidence only. The captured controller
     // alone settles the aggregate or changes uniform/resource custody.
-    if (!isController && !restoreContentPublication) {
+    if (!isController) {
         if (input.kind !== 'stage' || input.state !== 'running' || input.expectedTargetLinkRevision !== undefined || input.teardownProof) {
             return deploymentFailure('deployment_access_denied');
         }
@@ -281,21 +311,20 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             return deploymentFailure('deployment_conflict');
         }
     }
-    if (input.contentArtifactId !== undefined && input.contentArtifactId !== row.contentArtifactId) return deploymentFailure('deployment_conflict');
     // A replay consumes the committed terminal result; it never reapplies submitted content or activation.
-    if (!restoreContentPublication && row.state === input.state && isDeploymentSettledV1(input.state)) return receiptResult(row, loaded.row.revision,
-        removedReplay && loaded.row.deletedAt !== null);
-    let nextContent = input.contentArtifactId !== undefined && input.contentHeaderVersion !== undefined && input.contentBodyVersion !== undefined
-        ? deploymentContentReference({ contentArtifactId: input.contentArtifactId, contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion })
-        : deploymentContentReference(row);
-    if (!isDeepStrictEqual(nextContent, deploymentContentReference(row))) return deploymentFailure('deployment_conflict');
+    if (row.state === input.state && isDeploymentSettledV1(input.state)) {
+        if (input.contentArtifactId !== undefined && input.contentArtifactId !== row.contentArtifactId) return deploymentFailure('deployment_conflict');
+        return receiptResult(row, loaded.row.revision, removedReplay && loaded.row.deletedAt !== null);
+    }
+    let nextContent = transitionContentReference(row, input);
+    if (!nextContent) return deploymentFailure('deployment_conflict');
     if (!input.contentUpdate && row.state === input.state) return receiptResult(row, loaded.row.revision);
     const resumedTeardown = row.operation === 'teardown' && (row.state === 'failed' || row.state === 'outcome_unknown')
         && input.state === 'running' && !row.cancelRequestedAt;
     if (row.cancelRequestedAt && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
         return deploymentFailure('deployment_conflict');
     }
-    if (row.revision !== input.expectedRevision || (!restoreContentPublication && !resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
+    if (row.revision !== input.expectedRevision || (!resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
         || isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))))) return deploymentFailure('deployment_conflict');
     const admittedTeardownSelection = deploymentTeardownMembershipAdmissionSchema.safeParse(row.teardownProof);
     const teardownSubjects = input.teardownProof
@@ -323,7 +352,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
                 members: admittedTeardownSelection.data.admittedMachines, mode: 'drain',
             })) return deploymentFailure('deployment_conflict');
         }
-    } else if (input.teardownProof || (!restoreContentPublication && (input.state === 'succeeded' || input.state === 'running_unverified') && input.expectedTargetLinkRevision === undefined)) return deploymentFailure('deployment_conflict');
+    } else if (input.teardownProof || ((input.state === 'succeeded' || input.state === 'running_unverified') && input.expectedTargetLinkRevision === undefined)) return deploymentFailure('deployment_conflict');
     if (resumedTeardown) {
         const busy = await tx.deployment.findFirst({ where: { environmentId: row.environmentId, id: { not: row.id }, state: { in: deploymentInProgressStates() } }, select: { id: true } });
         if (busy) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
@@ -363,7 +392,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         state: input.state, revision: { increment: 1 }, ...nextContent,
         ...(input.teardownProof ? { teardownProof: { ...input.teardownProof, ...(removeEnvironment ? { removeEnvironment: true } : {}) } } : {}),
         ...(input.state === 'running' && !row.startedAt ? { startedAt: now } : {}),
-        ...(!restoreContentPublication && isDeploymentSettledV1(input.state) ? { settledAt: now } : {}),
+        ...(isDeploymentSettledV1(input.state) ? { settledAt: now } : {}),
         ...(resumedTeardown ? { settledAt: null } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
