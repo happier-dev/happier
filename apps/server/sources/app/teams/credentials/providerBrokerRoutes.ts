@@ -142,11 +142,6 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             authenticatedBrokerAccountId: request.userId,
             authority: broker.authority,
             expectedResourceRevision: broker.expectedResourceRevision,
-            readCurrentBrokerPresence: () => getMachineDaemonPresenceInventory({
-                accountId: request.userId,
-                io: app.machineDaemonPresence,
-                machineIds: [broker.authority.payload.target.machineId],
-            }),
             verifyAuthority: authority => verifyProviderBrokerRouteGrantSignatureV1({
                 authority,
                 signingCapability: signing.capability,
@@ -287,7 +282,8 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
                 actorAccountId: request.userId, rootActionId: admission.rootActionId,
                 ...(admission.admittedReviewedChildActionId ? { admittedReviewedChildActionId: admission.admittedReviewedChildActionId } : {}),
                 authentication: readSessionAccessAuthenticationFromRequest(request), request: parsed.data,
-                readCurrentPresence, nowMs: Date.now(), grantId: crypto.randomUUID(),
+                readCurrentPresence, readPoolSourceEligibility: createTeamCredentialPoolSourceEligibilityReader(app.forwardRpcForUser),
+                nowMs: Date.now(), grantId: crypto.randomUUID(),
                 signingKey: { keyId: signing.keyId, secretKey: signing.secretKey }, signal: eligibilityAbort.signal,
             });
             return reply.send(admitResponse(ProviderBrokerActionOpenResponseV3Schema, result));
@@ -361,7 +357,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
         }
         const observedAt = new Date();
         if (parsed.data.v === 3) {
-            const result = admitTeamCredentialActionBrokerRequest({ authenticatedBrokerAccountId: request.userId,
+            const result = await admitTeamCredentialActionBrokerRequest({ authenticatedBrokerAccountId: request.userId,
                 request: parsed.data, verifyAuthority: authority => verifyProviderBrokerActionRouteGrantSignatureV3({
                     authority, signingCapability: signing.capability, nowMs: observedAt.getTime(),
                 }) });

@@ -300,6 +300,7 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
+    const pendingMachineDisconnects = new Set<Promise<void>>();
     registerClientDisconnectCleanup(io);
     registerEngineHeartbeatDiagnostics(io, process.env, diagnostic => {
         // Opt-in only; emit at warn so the flag works under the default warn log level.
@@ -1042,9 +1043,11 @@ export function startSocket(app: Fastify) {
                 // A retiring predecessor must not mark its replacement offline.
                 // Release after the presence write, before notification work.
                 const releasePublisher = () => machineOwnershipRegistry.releaseOwner(publisher);
-                void recordMachineDisconnect(publisher, () => machineOwnershipRegistry.isOwner(publisher), releasePublisher).catch(error => {
+                const disconnect = recordMachineDisconnect(publisher, () => machineOwnershipRegistry.isOwner(publisher), releasePublisher).catch(error => {
                     log({ module: 'machine-presence', error }, 'Failed to publish Machine disconnect');
                 });
+                pendingMachineDisconnects.add(disconnect);
+                void disconnect.finally(() => pendingMachineDisconnects.delete(disconnect));
             }
 
             // Cleanup connections
@@ -1287,6 +1290,9 @@ export function startSocket(app: Fastify) {
         }
         humanPresence.close();
         await io.close();
+        // Socket closure starts asynchronous presence writes. Finish them
+        // before the later database shutdown disconnects their transaction.
+        await Promise.all(pendingMachineDisconnects);
         await tunnelRelayCoordinator.close();
         if (shouldEnableRedisAdapter) {
             closeRedisSocketClusterClient();
