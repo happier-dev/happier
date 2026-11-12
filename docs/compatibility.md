@@ -1,5 +1,19 @@
 # Compatibility and version skew
 
+## Resource finite-page delivery (unreleased 0.3)
+
+Resource subscriptions add a generic `pages` event carrying the same finite
+content envelope as `readResource`. Existing invalidation, completion and error
+events retain their behavior. The native log result union remains finite; an
+optional page `rowId` identifies a provider row for display-only deduplication,
+without claiming a provider resume cursor. Protocol, SDK projections, daemon
+watch and UI readers refresh together under the unpublished 0.3 direct cut;
+earlier strict development readers reject the new event or page field.
+The scoped predecessor inspection at `../0.2` frontier
+`91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` found none of the subscription/native
+log/SDK Resource source paths. No persisted format, wire epoch or predecessor
+adapter is introduced.
+
 ## Action daemon transport refusals (unreleased 0.3)
 
 The closed Action HTTP error vocabulary consumes the existing RPC failure-code
@@ -8068,6 +8082,18 @@ changes. No predecessor adapter, capability bit or persisted format is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `deployments.publish.prepare` adds optional `recommendation` to
+its closed prepared result. The nested target, evidence, uncertainty, correction
+and identity arrays are closed presentation facts; they grant no execution or
+credential authority. Missing fields retain existing prepared results. Unknown
+fields are rejected and are never promoted to routing or permission facts.
+Matching Protocol, CLI producer, SDK DTO and UI readers reload together; earlier
+strict development readers reject the new field. This unpublished V1 direct cut
+adds no wire epoch, persistence format, capability gate or predecessor adapter.
+The inspected `../0.2` frontier `7b0f74960b1393886b994dbda71dcb3439c1ab57`
+has no `packages/protocol/src/deployments/deploymentPublishPreparationV1.ts`
+contract and no scoped working changes to that path.
+
 Unreleased 0.3 `agents.backends.list` results add optional `executionTarget`
 through the existing closed `SessionExecutionTargetV1` schema. The result,
 its rows and nested routing/Agent identities remain closed; unknown fields
@@ -8095,15 +8121,31 @@ changes to that path.
 Unreleased 0.3 realtime Voice tool results validate owner-produced, privacy-projected
 output with the canonical strict JSON value schema. The provider-call input
 limits are unchanged; they no longer impose collection, string or nesting quotas
-on tool output. The closed V1 result envelope accepts optional `errorDetails`
+on tool output. The closed V1 result envelope accepts an optional host-owned
+`summary`, derived from already-redacted output, and optional `errorDetails`
 for non-success results, carrying the existing structured PluginError details
 through the same privacy projection as output. Success still forbids error
-fields, and unknown envelope fields remain rejected. Matching Protocol, UI and
+fields. Failure results retain their typed status/code while the canonical
+provider projection includes the human summary alongside them; unknown envelope
+fields remain rejected. Matching Protocol, UI and
 bundled Provider readers reload together because earlier strict development
 readers reject the new field. This is an unpublished direct development cut,
 without a new epoch, persistence migration or predecessor adapter. The inspected
 `../0.2` frontier `4c64c3f1ddfca82db8bcb61e7e8c87f6bd013e69` has no
 `packages/protocol/src/voice/realtime/events.ts` contract.
+
+Unpublished 0.3 realtime Voice adds microphone-commit, finished-transcript and
+response-lifecycle facts to the closed SDK canonical event union. Tool batches
+omit an independent response ID when the vendor exposes only call IDs; existing
+call/result grouping IDs are unchanged. The host binds person origin only to
+finished microphone input or typed composer input, preserves it through tool
+continuations, and treats missing origin as synthetic. These authority-relevant
+facts are consumed by the existing spoken Action confirmation owner, not a new
+approval rule. Matching SDK, UI and bundled Provider source readers refresh
+together under the unpublished 0.3 direct cut; this introduces no wire epoch,
+persisted format or compatibility adapter. The scoped-clean `../0.2` frontier
+`91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` has no
+`packages/plugin-sdk/src/voice/client.ts` contract or scoped working changes.
 
 Unreleased 0.3 Connected Account modes add optional `accessOnlyExport`, a closed
 declaration of access-token, expiry and public-metadata credential keys. The
@@ -9872,6 +9914,15 @@ rollback a supported direction. Do not add predecessor readers, dual writers,
 aliases, writer-floor waits, or rollback-only gates for unpublished author
 contracts; forward migration and current-version integrity still apply.
 
+The development Action-operation V2 domain reference for runtime target linking
+retains its Home, Environment and original request key, with the producer identifying
+native creation separately from association. Current UI and daemon readers reload
+together. The V1 outward projection omits this domain reference, as it already does
+for other current-only operation domains; it does not add it to the 0.2 reader's
+closed union. The existing encrypted operation record retains native-create evidence
+needed for exact-resource recovery and preventing replay; ordinary settled-history
+pruning must not erase that evidence.
+
 The unreleased `ui.listExtensions` manifest family is optional; manifests that
 omit it retain their prior normalized shape. Its descriptor, fields, sources
 and mark references are closed. It uses the existing UI declaration projection
@@ -11036,3 +11087,22 @@ No new epoch, adapter or persisted format is introduced. The inspected `../0.2`
 frontier at `52d077ee67fdcf7b5f6dfb64be5af9e9893887e4` has no
 `failureCause` or native-code fields in the corresponding runtime issue schema;
 that path has no local diff against its HEAD.
+
+
+## Environment secret request and Compose use review facts (unreleased 0.3)
+
+Built-in approval headers may carry `approvalListFacts.environmentSecretRequest`, an
+Environment id for a `deployments.bindings.set` request containing `person_selects`.
+A present fact must agree with the admitted body; absent optional facts preserve older Inbox
+readability and do not classify an inline Environment request. No secret names, references or
+values are indexed by this field. Existing reference-only choice, consent and replay owners
+remain authoritative.
+
+The private native deployment review may carry optional `variableUseWarnings` with a name
+and `unusedBinding` or `unboundVariable` kind. Native source interpolation names remain
+host-private and are removed by the final review projection. Matching development CLI, Protocol
+and UI readers load together; older strict development readers can reject this new review
+member. No protocol epoch, database migration or compatibility adapter is introduced. The
+inspected `../0.2` frontier at `91e2afbaca33e8589652c2d2b7e2abfa9a2cf049` has no
+corresponding approval Artifact header or deployment-review schema. Its approval-request paths
+have no local diff, and its released request reader is unchanged by this work.

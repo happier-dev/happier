@@ -1,5 +1,47 @@
 # Deployment
 
+## Platform variable roles (0.3 development)
+
+Vercel and Cloudflare platform targets project variable names, presence and
+ownership through the deployment binding Actions without returning provider
+values. Synchronization preserves unowned keys and other provider environments;
+provider metadata without a revision cannot establish external drift.
+Secret-reference writes acquire the exact Saved Secret revision through
+invocation-bound `services.secrets.readSavedSecret` and construct an ordinary
+HTTP body. Host custody registers redaction before returning material; the HTTP
+owner blocks cross-origin secret-body replay and the invocation owner sanitizes
+results and logs. Missing authorized key-holding E2EE custody returns
+`secret_use_client_required` before the affected provider write. Plain-value
+writes and owned-key removal use the same provider adapter roles.
+
+## Platform runtime logs (0.3 development)
+
+The canonical `deployments.logs.read` Action uses the retained provider deployment
+and admitted controller; platform logs need no fabricated Compose service.
+Vercel's adapter incrementally reads its first complete runtime frame, returns a
+finite page marked incomplete, and disposes the provider body. A quiet response
+remains cancellable by the containing read. The existing `readResource` path
+consumes this same Action and finite result.
+
+Follow uses the declared Action's existing read observer and the existing native
+log watch. The generic Resource subscription `pages` event carries finite content
+to that watch's own subscriber. It never re-executes the initial read to recover
+already-emitted frames. Rereadable Resources continue to invalidate normally;
+no watch-slot selector, history cursor or background log store is added.
+The Environment Runtime companion uses the same native/Forge log viewer as
+Machine service and deployment-step logs, including Find, copy and save. Hiding
+the pane or pausing Follow releases its existing watch demand; Retry reopens it.
+Partial rows remain visible after recoverable failure, with an incomplete notice.
+
+Vercel's documented runtime endpoint is a live `application/stream+json` response.
+It provides no historical paging or resumable cursor. The adapter's line framing
+uses the official CLI endpoint consumer as characterized in its recorded fixture;
+build events remain a separate request. Normalized row fields are retained in
+the native page's text, and optional row identity supports display-only duplicate
+suppression in the existing native projection. Initial read and a reopened live
+stream can overlap or leave gaps; neither identity nor Follow promises replay.
+Provider tenants, permissions, stream framing and retention remain release checks.
+
 ## Platform upload evidence (0.3 development)
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
@@ -190,6 +232,18 @@ admission. If that read is unavailable, it retains the Inbox notice with the
 safe reason and skips off-app delivery; it does not treat unavailable settings
 as an absent selection. This source wiring awaits loaded-runtime verification.
 
+Automation detail reads project the latest due occurrence for each current
+schedule revision, with its actual start and approval hold, in one set query per
+portable page. Backup freshness uses that exact trigger occurrence rather than
+another trigger's Automation-wide last-start timestamp. Disabled schedules and
+held approvals are distinct from never-started work. The precise
+`workflow.trigger.list` backup-freshness selector opens the named Automation and
+reuses the bound backup-target reader; it does not enumerate the Account.
+An absent `scheduleOccurrences` fact makes this precise read unavailable;
+generic lists omit `missedSchedules` rather than claiming no missed occurrence.
+These optional read projections are current 0.3 development contracts, add no
+persisted state, and require the current server and clients for exact freshness.
+
 Domain health reads reuse `deployments.health.current` and the existing saved
 Domain-bound HTTP and certificate checks. Reading a Domain starts no network
 probe. The shared projection combines retained check evidence with the Domain's
@@ -359,13 +413,22 @@ without repeating Source permissions during the admitted finite operation.
 
 Managed data targets declare their read-only query Action in the plugin's data
 role contribution. The shared UI preserves the recorded credential principal
-and renders the same result contract. Supabase uses its Management API's
+and dispatches to the Environment controller with the same result contract.
+The admitted project, branch, and database identify the query target. Supabase uses its Management API's
 [dedicated read-only query endpoint](https://supabase.com/docs/reference/api/v1-read-only-query),
 with PostgreSQL positional parameters and JSON keys `"1"`, `"2"`, in order.
+It verifies the endpoint's current database before submitting the person's SQL.
 Its public response lacks completeness and empty-result column metadata, so
-results explicitly report unknown completeness. Neon Management credentials
-alone do not provide a read-only database execution transport; that contribution
-returns `neon_read_only_database_credential_required`. MariaDB native queries
+results explicitly report unknown completeness. Neon uses its SQL HTTP transport
+with the `happier_ro` password from the managed target's `dataRole` Saved Secret
+binding. The binding is opened through the ordinary Environment secret
+materializer, never an Account Saved Secret lookup. The database owner must
+provision the limited PostgreSQL role; Neon Management credentials alone are
+insufficient. The shared PostgreSQL role-authority guard and the query execute
+in one read-only HTTP transaction against the admitted branch and database.
+Missing bindings or an unavailable endpoint produce an unavailable result;
+database refusals fail the query without exposing credentials. Real Neon and
+Supabase tenant journeys remain release checks. MariaDB native queries
 return `mariadb_read_role_authority_unproven` while its implicit PUBLIC-role
 bootstrap authority remains unsupported. Neither limitation falls back to a
 writable credential.
@@ -421,6 +484,13 @@ external-cache behavior remain release checks. See the
 and [compatibility boundary](compatibility.md#public-profile-integration-boundary-03-development).
 
 ## Own-server application deployment boundaries (0.3 development)
+
+The Store's Compose/image entries can choose an existing Project or open
+`/deployments/new` with the shared Project choice and Environment draft. New
+Project intent reaches `deployments.environments.create` through the ordinary
+preview and confirmed invocation; mounting or editing the draft creates no
+Source. The create result's `projectSourceId` addresses the resulting Environment
+without a read-after-write discovery step.
 
 Repository-backed platform Environments use the existing
 `deployments.environments.create` Action with
@@ -1383,15 +1453,36 @@ intent without newly allocated Artifact identities: an equivalent retry returns
 the recorded Environment, while changed source revision, choices or resolved
 configuration conflict. E2EE equality uses the requester's Account-keyed commitment;
 Plain Accounts use a keyless canonical digest. Neither branch creates another
-result store or changes the existing request-key retention. Selected bindings use the
-ordinary reviewed `deployments.bindings.set` child on the newly allocated
-Environment; secret references receive fresh audience/grant admission rather
+result store or changes the existing request-key retention. The creation owner marks
+an existing matching allocation with `replayed: true`. A copy with managed-data
+provisioning consumes that fact before any binding or provider child and returns
+the existing Environment with explicit inspection/configuration recovery. A new
+Action request cannot reprovision data by repeating the same creation request key.
+Selected bindings use the ordinary reviewed `deployments.bindings.set` child on
+the newly allocated Environment; secret references receive fresh audience/grant admission rather
 than copied live grants. The generic reviewed-child HTTP carrier preserves the
 original requester and create root. Running state, history, waivers, consent and
 credentials are not implicitly duplicated. Missing E2EE custody returns
 `client_required`; unavailable data/operational destinations return typed
 unavailable results rather than silently reusing resources. A failed child leaves
-the created Environment visible with an explicit continuation, not a rollback.
+the created Environment visible with acknowledged references and a safe current
+continuation when available. Unattempted data choices are named for recovery;
+Duplicate is never replayed to finish them.
+
+For attached managed data, the draft defaults to Omit. Reuse requires explicit
+selection of Saved Secret variable bindings and shares those connections through
+the ordinary binding writer; the resource stays attached to the source Environment.
+Create empty captures the target's declared `projects.provision` Action input and
+an explicitly chosen credential principal. After creation, the host supplies the
+new Environment coordinates, provisions the resource and attaches its returned
+identity through `deployments.targets.link`. Configure fresh connections through
+the existing managed-data editor before using the application. Managed backup
+restore is unavailable because the current data capability declares no restore
+Action. Failed or ambiguous provisioning preserves known saved references and
+recovery instructions without offering a blind provisioning replay. From Overview,
+open Add a service or database, then Managed database. Inspect the provider's
+resources and link any resource already provisioned, or explicitly create and
+configure attachments that were not attempted.
 
 Preview database, backup and alert selections remain unavailable at this leaf
 until their domain-owned schemas and first-configuration writers are connected.
@@ -1728,13 +1819,19 @@ normal target-link owner in one transaction. A refused first link rolls back the
 Environment too, and replay does not create a second link. The separate link
 Action remains available for changes to an existing Environment.
 
-Before the first deployment, Settings can change the Machine of a configured
-own-server runtime link through that same Link Action. The Home admits replacement
-only when the existing teardown owner proves there is no native custody to release,
-or the existing member-drain proof authorizes removal, and retains the predecessor
-link. A failed deployment without a serving pointer still requires cleanup proof.
-This development-source first-placement change does not move deployed application
-data between Machines.
+Settings and Move use the same Link Action to replace the selected own-server
+runtime. Replacement retains the predecessor link, its ordered Machines and its
+serving receipt; it neither stops the old workload nor proves it drained. Failed
+attempts retain their native custody too. The existing teardown and unlink owners
+require cleanup proof or explicit detach before releasing that predecessor,
+excluding common Machines that transferred to the selected link. The optional `drainedDeploymentId` input
+remains accepted for current development callers but does not decide replacement
+permission. Older development servers can refuse this preparation with
+`deployment_conflict`; there is no alternate Move or cleanup path.
+
+Changing the selected runtime does not copy deployed application data. Move's
+Workflow composes the existing deployment Actions for the supported source shape;
+data movement requires its explicit backup/restore steps.
 
 The public source port materializes the receipt's immutable commit through the
 SCM backend's optional `exportCommit` operation and the existing manifest/blob
@@ -1922,9 +2019,9 @@ and requires a successful native restore before the existing Domain owner enroll
 routes. Native health can be healthy or unverified when no health check is defined;
 unknown and unhealthy results cannot enroll. Successful uniform settlement activates membership only after signed
 Domain health is stored. Scoped teardown reconciles Domains to the surviving
-members before native removal; target-link replacement consumes that teardown's
-exact installation proof through `drainedDeploymentId`, retaining predecessor
-custody. These are development-source paths; the three-Machine join, rollback and
+members before native removal. Target-link replacement retains predecessor
+custody independently; unlink consumes the completed teardown proof before
+releasing the retired installation. These are development-source paths; the three-Machine join, rollback and
 drain journey still needs live proof. The connected native journey and P45's typed
 single-writer/data-move remedies remain unfinished; these source changes do not
 establish released multi-Machine execution support.
@@ -1963,6 +2060,10 @@ never replay an ambiguous write: they re-observe or return an explicit unknown
 outcome for exact adoption. Connection saves return opaque references for pooled
 `DATABASE_URL` and migration-safe `DIRECT_URL`; Supabase uses its provider-returned
 session pooler for the latter. The normal Environment binding owner binds both.
+The managed-data sheet reuses template Connect’s replacement review: each existing
+runtime variable whose value changes must be selected independently before Bind.
+A matching existing binding needs no replacement. Binding identities come from
+the shared Environment binding owner, and its revision CAS retains write authority.
 Provider link intent is prepared by the existing mode-aware client Artifact
 writer; server-visible target metadata receives references, not provider content
 or connection strings. The Resource leaves are explicit-refresh snapshots, not
@@ -2381,6 +2482,19 @@ references still use that storage writer directly. This client-side comparison i
 not a database uniqueness guarantee between concurrent preparations and does not
 establish platform runtime readiness.
 
+In development, a runtime target may also declare a create Action. The saved
+Environment's platform editor reads that Action's fields and credential purpose;
+the draft editor still prepares existing resources without creating them. Native
+creation runs on the Environment controller through `deployments.targets.link`,
+after admission into the existing encrypted Action operation record. Its original
+request key prevents another native create, and the acknowledged provider identity
+is retained before private Artifact publication or Home association. An incomplete
+link returns that exact resource for an explicit association retry. An unacknowledged
+native outcome remains uncertain and is observed on its original controller; changing
+future placement does not replay it elsewhere. Provider-console links use only a
+destination supplied by the adapter. These development paths remain under integration
+validation; real vendor tenants are release checks.
+
 Environment-created Automations carry an optional qualified
 `executionRecipe.deploymentEnvironment` reference in the existing V3 authoring
 transport. Its Home, Source and Environment identity is admitted before the
@@ -2591,7 +2705,14 @@ unknown. Test does not prove durability or restore integrity.
 Development-source backup metadata has one Protocol codec for source selection,
 retention and normalized native manifests; deployment-protocol consumes that codec
 for the Environment backup leaf. The manifest binds repository, snapshot/tree, source and configuration
-revision; it is not a separate backup store. The semantic run owner consumes
+revision; it is not a separate backup store. Source IDs remain unchanged in
+configuration and operation receipts. At the native tag boundary, lossless IDs
+keep their existing `src:` tags; IDs containing commas or trailing whitespace use
+percent-encoded `src-v1:` tags because the pinned
+[Restic parser splits commas and trims whitespace](https://github.com/restic/restic/blob/v0.19.1/internal/data/tag_list.go).
+The manifest owner reads both forms for run, inventory, verification and restore.
+Existing tags and retention groups are preserved; matching readers and writers
+reload together before writing the encoded form. The semantic run owner consumes
 native process results and verifies the exact snapshot, tree and payload
 checksum before returning verified manifests, retaining known snapshot identities
 on failure. Public `deployments.backups.inventory`, `deployments.backups.run`,
@@ -4311,6 +4432,36 @@ Native and upload consumers propagate that refusal without another ownership
 check. Stored definitions and workspace-free provider Git paths do not acquire
 a checkout and are unchanged.
 
+Deployment HTTP read eligibility derives from each ActionSpec's declared read
+effect and transport, within the mint's admitted purposes. Preparation receipt
+reads require its admitted deployment-child intent; a template mint without
+that intent cannot borrow history from its otherwise selected Environment.
+The existing admitted operand scope then binds the Home,
+Environment, Source, target and receipt; an eligible read is not a grant to
+another resource. Writes retain their exact preparation and retained-child
+purposes. Repository-backed template preparation carries its selected Workspace
+key in the signed admission and reads only that key through the Project row
+owner. These are matched 0.3 development Protocol/Home contracts; older strict
+development readers may reject the added optional Workspace projection.
+
+Backup capture reads the desired Domain placements retained for its selected
+target, including their captured Artifact versions. Prune reconstructs history
+through that target's predecessor lineage and opens only demanded receipt
+Artifacts. Standalone restore can publish revised volume bindings on the
+selected target's active generation through the existing receipt and Artifact
+CAS; it preserves lifecycle state, settlement time and target activation.
+Reviewed Backup Configure preparation reads the newly created preview child,
+using the preparation scope rather than the parent Environment.
+
+Create's own preview preparation reads its captured template before allocation;
+reviewed storage children read the allocated Environment. Allocation comes from
+the existing Account/request-key relation and does not require a Deploy intent.
+Native service adoption uses this same Create preparation owner. Its managed
+allocation lookup names the adopted Machine and Home. Reviewed Create binds its
+canonical child role and full storage-input digest; optional bindings bind their
+canonical child role and the Environment allocated by that root. An unreviewed
+adoption root cannot allocate an Environment itself.
+
 ## Authored Domain and binding Actions (0.3 development)
 
 A template install that has saved its definition but cannot save required secret
@@ -4425,3 +4576,27 @@ The handoff carries owner-read addresses and retained time/attempt/revision refe
 including a predecessor receipt when recorded, rather than log or metric snapshots.
 Notice capture time remains distinct from occurrence time. Missing history must be
 reported as unavailable; current health and vitals cannot reconstruct the past.
+
+
+## Environment secret recovery and Compose use review (0.3 development)
+
+An unavailable Saved Secret keeps its metadata-only binding notice. After withdrawal or
+deletion, Overview and Variables offer the existing Machine service controls for the
+Environment’s recorded native generations. Withdrawal leaves an admitted process running;
+Stop is an explicit service control. Start controls the same generation without recreating a deployment. Native service
+pushes decide when Start becomes available after Stop. The existing service Action owns
+Environment approval and current-generation admission.
+
+At deploy review, the native Compose normalizer supplies interpolation names from its merged
+source model. The host compares those names with admitted Environment variable bindings and
+projects optional name-only `variableUseWarnings`: bindings without an interpolation
+reference, and interpolation references without an Environment binding. These are nonblocking
+review warnings, not inferred missing or empty effective values: Compose may supply a default.
+The UI does not parse Compose when the Variables page opens, and no source text, secret value,
+reference address or guessed file/line location enters this fact. Unused extension definitions
+are excluded after native expansion. The existing native interpolation-reference scanner also
+protects secret build arguments; escaped `$$` remains literal in both consumers.
+
+Reference address changes are compared with the serving receipt by the existing materialization
+owner at deploy review. The review carries the binding name, phase and observed route when
+available. A running release keeps its recorded address until a person deploys again.

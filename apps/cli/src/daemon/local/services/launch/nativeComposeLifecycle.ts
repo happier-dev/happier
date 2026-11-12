@@ -20,6 +20,7 @@ import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from 
 import { resolveEnvironmentComposeProjectName } from '@/workspaces/projectSetup/projectNativeResolution';
 import { readNativeComposeSourceBytes } from './nativeComposeSource';
 import { assertStoredComposeToolSupport } from '@/workspaces/projectSetup/nativeComposeSource';
+import { nativeComposeSourceInterpolationNames } from '@/workspaces/projectSetup/nativeComposeInterpolation';
 import { projectNativeComposeReview, type NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentImageReferences, normalizeNativeComposePlatform,
     type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition, type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
@@ -1084,6 +1085,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         if (input.expectedEngineId !== undefined && engineId !== input.expectedEngineId) return nativeRefusal('native_origin_changed');
         const purpose = options?.purpose;
         const { model: normalized, configInputDigests, toolVersion } = await normalize(signal);
+        const composeVariableNames = nativeComposeSourceInterpolationNames(normalized);
         const declaredVolumes = normalized.volumes;
         for (const binding of input.storage?.namedVolumes ?? []) {
             if (record(declaredVolumes) && record(declaredVolumes[binding.volume])) {
@@ -1165,7 +1167,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 else if (sourceImages.has(service)) definition.image = sourceImages.get(service);
             }
             await writeFile(runtimeFile, JSON.stringify(normalized), { mode: 0o600 });
-            review = projectNativeComposeReview(model, input.source.rootPath, actualLaunch.secretRedactionLease.redact);
+            review = projectNativeComposeReview(model, input.source.rootPath, actualLaunch.secretRedactionLease.redact, composeVariableNames);
             if (unresolvedImages.length) review = { ...review, inspection: 'unknown', risks: [...review.risks,
                 ...unresolvedImages.map(service => ({ kind: 'inspection_unknown' as const,
                     service: actualLaunch.secretRedactionLease!.redact(service) }))] };

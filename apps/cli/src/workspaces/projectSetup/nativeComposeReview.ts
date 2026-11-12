@@ -4,13 +4,16 @@ import type { DeploymentApprovalReviewV1 } from '@happier-dev/deployment-protoco
 import { isNativeDefinitionRecord as record } from './nativePackageScripts';
 
 export type NativeComposeRuntimeReview = Pick<Extract<DeploymentApprovalReviewV1, { inspection: string }>,
-    'inspection' | 'services' | 'risks'>;
+    'inspection' | 'services' | 'risks'> & Readonly<{
+        /** Native source interpolation names only; the final review owner consumes this host-private fact. */
+        composeVariableNames?: readonly string[];
+    }>;
 type Scalar = NativeComposeRuntimeReview['services'][number]['replicas'];
 type RiskKind = NativeComposeRuntimeReview['risks'][number]['kind'];
 
 /** Only native effective facts enter review. Raw env/config/argv never leave this capture. */
 export function projectNativeComposeReview(model: Readonly<Record<string, unknown>>, releaseRoot: string,
-    redact: (value: string) => string): NativeComposeRuntimeReview {
+    redact: (value: string) => string, composeVariableNames?: readonly string[]): NativeComposeRuntimeReview {
     const services: NativeComposeRuntimeReview['services'][number][] = [];
     const risks: NativeComposeRuntimeReview['risks'][number][] = [];
     let inspection: NativeComposeRuntimeReview['inspection'] = 'complete';
@@ -64,5 +67,5 @@ export function projectNativeComposeReview(model: Readonly<Record<string, unknow
             ports, mounts });
     }
     if (!record(model.services) || !services.length) inspection = 'unknown';
-    return { inspection, services, risks };
+    return { inspection, services, risks, ...(composeVariableNames ? { composeVariableNames } : {}) };
 }

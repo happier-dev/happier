@@ -3,6 +3,7 @@ import { DeploymentApprovalReviewV1Schema } from '@happier-dev/deployment-protoc
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectOwnServerDeploymentReview } from '@/deployments/targets/ownServer/ownServerDeploymentReview';
 
+import { nativeComposeSourceInterpolationNames } from './nativeComposeInterpolation';
 import { projectNativeComposeReview } from './nativeComposeReview';
 
 /** The deploy approval page reads this projection through the Protocol reader; the two must not drift. */
@@ -74,4 +75,27 @@ describe('native Compose review projection', () => {
             expect(row).not.toHaveProperty('rollbackStorage.freeBytes');
         }
     });
+});
+
+
+it('reports interpolation use from the native source model without inventing empty values or disclosing source content', () => {
+    const environment = createDeploymentEnvironmentDetailV1();
+    const bindings = [
+        { purpose: 'variable' as const, name: 'USED', phase: 'runtime' as const, source: { kind: 'value' as const, value: 'private-value-sentinel' } },
+        { purpose: 'variable' as const, name: 'UNUSED', phase: 'runtime' as const, source: { kind: 'value' as const, value: 'private-other-sentinel' } },
+    ];
+    const source = { 'x-unused': { value: '${UNUSED} ${EXTENSION_ONLY}' }, services: { web: { environment: { URL: '${USED}', OPTIONAL: '${UNBOUND:-default}',
+        LITERAL: '$$ESCAPED' }, command: ['echo', 'private-source-sentinel'] } } };
+    const nativeReview = projectNativeComposeReview({ services: { web: {} } }, '/release', value => value, nativeComposeSourceInterpolationNames(source));
+    const review = projectOwnServerDeploymentReview({ machineId: 'machine-a', environment, servingReceipt: null,
+        inputBasis: { v: 1, environmentId: environment.environment.id, environmentRevision: 1, targetLinkId: 'target', targetLinkRevision: 1,
+            sourceIntent: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`, document: 'private-document-sentinel', profiles: [], services: ['web'] },
+            manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'review', toolVersion: '2.40.3',
+            services: ['web'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'install-a' }], bindings, images: [] },
+        nativeReview, target: { engine: 'native', requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' } });
+    expect(review).toMatchObject({ variableUseWarnings: [
+        { kind: 'unusedBinding', name: 'UNUSED' }, { kind: 'unboundVariable', name: 'UNBOUND' },
+    ] });
+    expect(DeploymentApprovalReviewV1Schema.parse(review)).toEqual(review);
+    expect(JSON.stringify(review)).not.toMatch(/private-|default|ESCAPED|EXTENSION_ONLY|composeVariableNames/);
 });

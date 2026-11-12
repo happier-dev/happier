@@ -168,3 +168,16 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(text).toContain('projects.deployments.review.risk.docker_socket');
   });
 });
+
+
+it.each([false, true])('presents name-only Compose use warnings from the host review (controller: %s)', async controller => {
+  const review = { ...machineReview, risks: [], variableUseWarnings: [
+    { kind: 'unusedBinding' as const, name: 'LOG_LEVEL' }, { kind: 'unboundVariable' as const, name: 'REDIS_URL' },
+  ] };
+  const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={{ review: controller
+    ? { ...machineReview, risks: [], runtimeMachines: [{ machineId: 'target', review }] } : review,
+    promotion: null }} serverId={getActiveServerSnapshot().serverId} testID="facts" />);
+  expect(screen.findHostByTestId('facts.risks')).not.toBeNull();
+  expect(screen.getTextContent()).toContain('LOG_LEVEL');
+  expect(screen.getTextContent()).toContain('REDIS_URL');
+});

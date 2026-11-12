@@ -322,7 +322,8 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
   });
   const warnings = review.storage?.warnings ?? [];
   const referenceChanges = review.referenceChanges ?? [];
-  if (risks.length === 0 && warnings.length === 0 && referenceChanges.length === 0) return null;
+  const variableUseWarnings = review.variableUseWarnings ?? [];
+  if (risks.length === 0 && warnings.length === 0 && referenceChanges.length === 0 && variableUseWarnings.length === 0) return null;
   const on = props.multiple && props.name ? { machine: props.name } : null;
   return (
     <AttentionBanner
@@ -332,6 +333,10 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
       title={props.decided ? t('projects.deployments.review.risksNotedTitle')
         : on ? t('projects.deployments.review.risksOn', on) : t('projects.deployments.review.risksTitle')}
       points={[
+        ...variableUseWarnings.map(warning => [
+          { code: warning.name }, ' · ', t(warning.kind === 'unusedBinding'
+            ? 'projects.deployments.editors.composeBindingUnused' : 'projects.deployments.editors.composeVariableUnbound'),
+        ]),
         ...referenceChanges.map(change => [
           { code: change.name }, ' · ',
           t(change.phase === 'build' ? 'projects.deployments.phaseBuild' : 'projects.deployments.phaseRuntime'), ' · ',

@@ -7,6 +7,7 @@ import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/
 import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentOwnedImageTag, normalizeNativeComposePlatform,
     type NativeComposeImageArchive, type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition,
     type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
+import { nativeComposeReferencesAnyVariable as referencesSecret } from '@/workspaces/projectSetup/nativeComposeInterpolation';
 import { publishNativeComposeImages } from './nativeComposeImagePublication';
 
 export type NativeComposeBuildSelection = Readonly<{
@@ -75,15 +76,6 @@ function secretArgument(): never {
         details: { reason: 'secret_build_argument' } });
 }
 
-/** Inspect references, not values: a conditional/empty secret remains a secret input.
- * Escaped $$ is a literal dollar under the Compose interpolation contract. */
-function referencesSecret(value: unknown, names: ReadonlySet<string>): boolean {
-    if (typeof value !== 'string') return false;
-    for (const token of value.matchAll(/\$\$|\$(?:\{)?([_a-zA-Z][_a-zA-Z0-9]*)/gu)) {
-        if (token[1] && names.has(token[1])) return true;
-    }
-    return false;
-}
 
 function selectedServices(model: Record<string, unknown>, names?: readonly string[]) {
     if (!record(model.services) || !Object.keys(model.services).length) return refuse('native_target_missing');

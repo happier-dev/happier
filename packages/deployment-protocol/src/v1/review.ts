@@ -79,6 +79,8 @@ const machineReview = {
   replaces: z.optional(z.nullable(z.strictObject({ deploymentId: id, revision: DeploymentReviewRevisionV1Schema }))),
   secretBindingNames: z.optional(z.array(z.string())),
   buildSupport: z.optional(DeploymentBuildSupportV1Schema),
+  /** Syntactic use in the native Compose source; no inferred effective values or secret contents. Nonblocking. */
+  variableUseWarnings: z.optional(z.array(z.strictObject({ kind: z.enum(['unusedBinding', 'unboundVariable']), name: z.string() }))),
   /** Resolved review inputs that differ from exact serving launch evidence. Values stay host-private. */
   /** `route` is the resolver's observed Happier network path for the reviewed address, when it has one. */
   referenceChanges: z.optional(z.array(z.strictObject({ name: z.string(), phase: EnvironmentVariableBindingV1Schema.shape.phase,

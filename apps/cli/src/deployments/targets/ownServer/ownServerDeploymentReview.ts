@@ -45,7 +45,15 @@ export function projectOwnServerDeploymentReview(input: Readonly<{
             ? [{ name: current.reference.name, phase: current.reference.phase,
                 ...(current.reference.route ? { route: current.reference.route } : {}) }] : [];
     });
-    return { ...input.nativeReview, machineId: input.machineId,
+    const { composeVariableNames, ...nativeReview } = input.nativeReview;
+    const boundNames = new Set(inputBasis.bindings.flatMap(binding => binding.purpose === 'variable' ? [binding.name] : []));
+    const usedNames = new Set(composeVariableNames);
+    const variableUseWarnings = composeVariableNames === undefined ? undefined : [
+        ...[...boundNames].filter(name => !usedNames.has(name)).map(name => ({ kind: 'unusedBinding' as const, name })),
+        ...composeVariableNames.filter(name => !boundNames.has(name)).map(name => ({ kind: 'unboundVariable' as const, name })),
+    ];
+    return { ...nativeReview, machineId: input.machineId,
+        ...(variableUseWarnings?.length ? { variableUseWarnings } : {}),
         ...(inputBasis.health ? { health: inputBasis.health } : {}),
         environment: { id: environment.environment.id, name: environment.content.name,
             ...(environment.content.ingress ? { ingress: environment.content.ingress } : {}) },
