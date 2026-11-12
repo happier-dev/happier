@@ -969,6 +969,12 @@ export async function executeSpawnSessionRequest(
                 diagnosticSessionId = committed.session.sessionId;
                 launchSessionAttachPayload = committed.session.attachPayload;
                 launchOptions = committed.session.options;
+                // Home now retains this Session for ordinary Retry/Resume.
+                // Its allocation must survive a later pre-runner refusal,
+                // including an exhausted connected-account pool.
+                if (managedAllocation && managedDirectoryOwner) {
+                    await managedDirectoryOwner.bind({ allocationId: managedAllocation.allocationId, sessionId: launchExistingSessionId });
+                }
                 if (committed.session.created) {
                     const committedSessionId = committed.session.sessionId;
                     launchResourceScope.register({
@@ -1519,7 +1525,7 @@ export async function executeSpawnSessionRequest(
             });
             if (spawnResult.type === 'success') diagnosticSessionId = spawnResult.sessionId || diagnosticSessionId;
             recordPreparationPhase('runner_webhook');
-            if (spawnResult.type === 'success' && spawnResult.sessionId && managedAllocation && managedDirectoryOwner) {
+            if (spawnResult.type === 'success' && spawnResult.sessionId && !launchExistingSessionId && managedAllocation && managedDirectoryOwner) {
                 try {
                     await managedDirectoryOwner.bind({ allocationId: managedAllocation.allocationId, sessionId: spawnResult.sessionId });
                 } catch (error) {

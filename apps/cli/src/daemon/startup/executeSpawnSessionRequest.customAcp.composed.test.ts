@@ -128,6 +128,10 @@ import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema,
+  ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId, buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from '../connectedServices/runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
+import { buildInactiveSessionResumeSpawnOptions } from '../sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 
 const preflightHome = vi.hoisted(() => ({ database: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary> | null }));
 // Only persistence is substituted. The UI CALL handler produces admission
@@ -273,10 +277,11 @@ beforeAll(async () => {
   runtimeHome = storage.home;
   installFixturePluginAvailabilityBoundary();
   runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
-    controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.custom-acp', 'happier.agent.claude', 'happier.agent.opencode', 'happier.scm.backend.git'] } });
+    controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.custom-acp', 'happier.agent.claude', 'happier.agent.codex', 'happier.agent.opencode', 'happier.scm.backend.git'] } });
   await runtime.registry.activateContributionsOnDemand([
     { pluginId: 'happier.agent.custom-acp', family: 'agents', localId: 'custom-acp' },
     { pluginId: 'happier.agent.claude', family: 'agents', localId: 'claude' },
+    { pluginId: 'happier.agent.codex', family: 'agents', localId: 'codex' },
     { pluginId: 'happier.agent.opencode', family: 'agents', localId: 'opencode' },
     { pluginId: 'happier.scm.backend.git', family: 'scmBackends', localId: 'git' },
   ]);
@@ -378,6 +383,119 @@ function readFixtureCatalogResponse(path: string) {
 }
 
 describe('Custom ACP fresh daemon launch composition', () => {
+  it('keeps a committed Home Voice carrier retryable after Codex pool quota refusal', async () => {
+    const sessionId = 'cvoiceretrydir111200000001';
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const accountId = '92fe29be-575b-4551-8e90-edaacc3ec7a4';
+    const now = Date.now();
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'codex-pool' },
+      incarnation: 'voice-retry-pool', displayName: 'Codex pool', policy: { autoSwitch: true, strategy: 'priority' },
+      activeConnectedAccountId: accountId, generation: 1, runtimeStateRevision: 0, state: {}, createdAt: now, updatedAt: now,
+      members: [{ v: 1, connectedAccountId: accountId, priority: 0, enabled: true, state: {}, createdAt: now, updatedAt: now }] });
+    const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{ ref: { service, accountId },
+      status: 'connected', authenticationModeId: 'oauth', configurationReady: false, configurationRevision: null,
+      revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv', scopes: [], providerIdentity: { accountId: 'voice-work' } }] });
+    const usage = createProviderAccountUsageStore();
+    const recordKey = { providerId: 'openai-codex', accountSubjectId: 'voice-work', subjectKind: 'account', quotaScope: 'account' } as const;
+    usage.recordSnapshot(ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordKey,
+      recordId: buildProviderAccountUsageRecordId(recordKey), providerId: recordKey.providerId,
+      accountSubject: { kind: 'providerSubject', id: 'voice-work' }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'weekly', label: 'Weekly', remainingPct: 0, utilizationPct: 100, used: 100, limit: 100,
+        unit: 'unknown', resetsAt: now + 60_000, status: 'ok', details: {} }] }), {
+      sources: [{ serviceId: buildQualifiedPluginContributionKey(service), profileId: accountId,
+        bindingKind: 'group_member', groupId: group.ref.groupId, groupGeneration: group.generation }],
+    });
+    const executable = await writeExecutableShim({ dir: storage.home, fileName: 'codex', contents: `#!${process.execPath}\nprocess.exit(0)\n` });
+    const env = createEnvKeyScope(['HAPPIER_CODEX_PATH']);
+    env.patch({ HAPPIER_CODEX_PATH: executable });
+    let row: V2SessionByIdResponse['session'] | undefined;
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+        encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' },
+      } }));
+      if (path === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
+      throw new Error(`Unexpected Voice retry Home fetch ${path}`);
+    });
+    const originalGet = vi.mocked(axios.get).getMockImplementation();
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      if (path === `/v2/sessions/${sessionId}` && row) return homeResponse({ session: row });
+      if (path === '/v4/connect/qualified/group') return homeResponse({ group });
+      if (path === '/v4/connect/qualified/accounts') return homeResponse(accounts);
+      if (originalGet) return await originalGet(url, options);
+      throw new Error(`Unexpected Voice retry Home GET ${path}`);
+    });
+    // Home HTTP is the persistence boundary. Keep the real creation, attach,
+    // allocation, quota selector, failure cleanup and Resume composition.
+    const writes = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      const path = new URL(String(url)).pathname;
+      const availability = readBundledPluginAvailabilityHttpFixture(path, body);
+      if (availability) return homeResponse(availability);
+      if (path === '/v2/sessions/lookup-by-tags') return homeResponse({ sessions: [] });
+      if (path === '/v1/sessions') {
+        row = createFixturePlainSession(body, sessionId);
+        return homeResponse({ session: row, created: true, organizationPlacement: { folderId: null, tagIds: [] } });
+      }
+      if (path === `/v2/sessions/${sessionId}/archive` && row) {
+        row = { ...row, archivedAt: 123 };
+        return homeResponse({ success: true, archivedAt: row.archivedAt });
+      }
+      throw new Error(`Unexpected Voice retry Home POST ${path}`);
+    });
+    try {
+      const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'voice-home', creationKey: 'retry-dir-1112' });
+      const agentTarget = AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity: { pluginId: service.pluginId, localId: 'codex' } });
+      const connectedServices = { v: 2 as const, bindingsByServiceId: {
+        [buildQualifiedPluginContributionKey(service)]: { source: 'connected' as const, selection: 'group' as const, groupId: group.ref.groupId },
+      } };
+      const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag,
+        recipe: { execution: { machineId: 'df38-machine', directory: { kind: 'managed' } },
+          organization: { folderId: null, tagIds: [] }, agentTarget, connectedServices,
+          modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null,
+          configuration: null, capabilitySelection: null, transcriptStorage: 'persisted',
+          terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null } });
+      const directories = createManagedSessionDirectories();
+      const allocation = directories.prepareForCreation({ sessionCreationTag });
+      const input = params('alpha', async () => { throw new Error('Exhausted pool must refuse before runner launch'); });
+      const createCoordinator: NonNullable<ExecuteSpawnSessionRequestParams['createConnectedServiceLaunchAuthGroupCoordinator']> = async ({ applyGeneration }) =>
+        createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({ token: storage.credentials.token,
+          accountUsageStore: usage, nowMs: () => Date.now(), applyGeneration });
+      const launch = { ...input, processEnv: { ...process.env }, providerAccountUsageStore: usage,
+        createConnectedServiceLaunchAuthGroupCoordinator: createCoordinator };
+      const quotaRefusal = { type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'no_eligible_member',
+        errorDetail: { kind: 'launch_error', code: 'no_eligible_member', connectedAccountPool: {
+          excluded: [expect.objectContaining({ profileId: accountId, reason: 'quota_exhausted' })],
+        } } };
+      expect(await executeSpawnSessionRequest({ ...launch, options: { ...input.options, agentTarget,
+        directory: allocation.directory, directoryKind: 'managed', sessionCreationTag, sessionCreationCorrespondence: correspondence,
+        connectedServices, creationAuthorization: { token: 'voice-home-create-admission' } } })).toMatchObject(quotaRefusal);
+      if (!row) throw new Error('Quota failure must happen after Home commits the carrier');
+      expect((await directories.listRecords()).find(record => record.allocationId === allocation.allocationId))
+        .toMatchObject({ sessionId });
+      expect((await lstat(allocation.directory)).isDirectory()).toBe(true);
+      const owner = StoredSessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
+      if (owner.t !== 'plain') throw new Error('Expected plain fixture carrier');
+      const metadata = projectSessionOwnerCompatibilityViewV1({
+        sharedMetadata: StoredSessionSharedMetadataV1Schema.parse(JSON.parse(row.metadata!)), ownerMetadata: owner.v,
+      });
+      const retry = buildInactiveSessionResumeSpawnOptions({ sessionId, rawSession: row, metadata });
+      if (!retry) throw new Error('Committed carrier must be eligible for ordinary Resume');
+      expect(retry.existingSessionId).toBe(sessionId);
+      expect(retry.directory).toBe(allocation.directory);
+      // Before the fix rollback removed the unbound allocation here, so this
+      // real reattach returned SESSION_DIRECTORY_MISSING instead of quota.
+      expect(await executeSpawnSessionRequest({ ...launch, options: { ...retry,
+        beforeSessionRunnerLaunch: input.options.beforeSessionRunnerLaunch } })).toMatchObject(quotaRefusal);
+      expect(await directories.resolveForSession({ sessionId, path: allocation.directory, sessionCreationTag }))
+        .toMatchObject({ ok: true, directory: allocation.directory });
+    } finally {
+      env.restore(); reads.mockRestore(); writes.mockRestore(); vi.stubGlobal('fetch', originalFetch);
+    }
+  });
+
   it('seeds an already committed managed replay-fork before entering its runner launch', async () => {
     const directories = createManagedSessionDirectories();
     const source = await directories.materializeForFreshSpawn({ sessionCreationTag: 'replay-source' });
