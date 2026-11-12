@@ -85,6 +85,21 @@ it('retains compact null-turn Session membership without inventing admitted turn
         sessions: [{ ...session, id: 'legacy-a' }], sessionMembership })).toEqual({ status: 'unknown' });
 });
 
+it('uses current compact lifecycle facts for eligibility when the original turn list is absent', () => {
+    const empty = { id: 'failed-empty', seq: 0, active: false, metadata: null, agentState: null,
+        sessionTurns: { v: 1 as const, sessionId: 'failed-empty', updatedAt: 300, turns: [] } };
+    const usageWorkFactsV1 = workEvidence.createUsageSessionWorkFactsV1(empty,
+        projectSessionUsageWorkEvidence(empty, [], { messagesComplete: true }));
+    const compact = { ...empty, sessionTurns: undefined, usageWorkFactsV1 };
+    const query = normalizeUsageQuery({ includeCoach: true });
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [compact] })).toEqual([]);
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [compact], selectedSessionIds: [compact.id] })).toEqual([]);
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [compact],
+        sessionMembership: { sessionIds: [compact.id], turns: [] } })).toEqual([compact.id]);
+    expect(selectUsageQueryWorkEvidenceSessionIds({ query,
+        sessions: [{ ...compact, usageWorkFactsV1: { ...usageWorkFactsV1, seq: 1 } }] })).toEqual([compact.id]);
+});
+
 it('retains matching legacy null-turn contributions in scoped Session demand', () => {
     const query = normalizeUsageQuery({ projects: ['historical-project'] });
     const contributions = [{ ...contribution('legacy', 'unused'), turnId: null, projectKey: 'historical-project' }];

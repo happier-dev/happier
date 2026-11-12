@@ -492,10 +492,17 @@ export function selectUsageQueryWorkEvidenceSessionIds(input: Readonly<{
 }>): readonly string[] {
     // Discovery is provisional until opened lifecycle facts prove whether work
     // ever started. Archive state does not decide Usage membership.
-    const unstarted = input.sessions.filter(session => session.seq === 0 && session.sessionTurns?.turns.length === 0
-        && !session.stateEvidence?.permissions.length && !session.stateEvidence?.waits.length
-        && !Object.keys(session.agentState?.requests ?? {}).length
-        && !Object.keys(session.agentState?.completedRequests ?? {}).length);
+    const unstarted = input.sessions.filter(session => {
+        if (session.seq !== 0) return false;
+        // Compact records retain the owner's derived lifecycle evidence instead
+        // of the original turn list. Both representations decide the same fact.
+        const saved = session.sessionTurns === undefined ? readCurrentUsageSessionWorkFactsV1(session)?.evidence : undefined;
+        const noTurns = session.sessionTurns?.turns.length === 0
+            || saved?.closedTurns?.length === 0 && !saved.facts?.length && !saved.permissions?.length;
+        return noTurns && !session.stateEvidence?.permissions.length && !session.stateEvidence?.waits.length
+            && !Object.keys(session.agentState?.requests ?? {}).length
+            && !Object.keys(session.agentState?.completedRequests ?? {}).length;
+    });
     if (input.selectedSessionIds && !unstarted.length) return input.selectedSessionIds;
     const membership = resolveAccountingWorkMembership(input.query, input.contributions, input.admittedTurns, input.sessionMembership);
     const empty = new Set(unstarted.filter(session => !membership.accountingSessions.has(session.id)).map(session => session.id));

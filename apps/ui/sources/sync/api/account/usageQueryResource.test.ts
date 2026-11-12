@@ -23,6 +23,7 @@ import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQu
 import { storage } from '@/sync/domains/state/storage';
 import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { planSyncActionsFromChanges, plannedChangesAffectUsageQuery, plannedChangesAffectUsageAccounting } from '@/sync/runtime/orchestration/changesPlanner';
@@ -97,6 +98,7 @@ import { buildUsagePriceEditorModel } from '@/sync/domains/usage/usagePriceEdito
 import { resolveUsageShownCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { countUsageCheckedSessions } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
 
 const scmTransport = vi.hoisted(() => vi.fn());
 function workBatch(request: { payload: ScmWorkEvidenceReadRequest }, result: Omit<ScmWorkEvidenceSessionResult, 'sessionId'>) {
@@ -140,7 +142,7 @@ const workContribution = { id: 'cost', observedAtMs: 500, sessionId: 'work-sessi
 
 const ownerSessionAccess = {
   effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
-    capabilities: createSessionAccessFixture().capabilities },
+    capabilities: createSessionAccessFixture().capabilities } satisfies NonNullable<UsageSessionEvidenceResponse['results'][number]['workFacts']>['session']['access'],
   responsibleAccountId: null, responsibleAccount: null,
 };
 
@@ -207,6 +209,44 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it.each(['empty', 'started', 'accounted'] as const)(
+    'keeps the Coach population canonical when an archived %s Session has compact facts without turns', async kind => {
+      const nowMs = 1_710_000_000_000;
+      vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+      const id = 'archived-launch';
+      const session = createSessionFixture({ id, seq: 0, active: false, createdAt: nowMs - 1_000, updatedAt: nowMs - 100,
+        sessionTurns: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: kind === 'started'
+          ? [{ turnId: 'completed', agentId: null, status: 'completed', startedAt: nowMs - 800,
+            terminalAt: nowMs - 600, updatedAt: nowMs - 100 }] : [] } });
+      const records = usageWorkEvidence.createUsageSessionFactRecordsV1(session,
+        projectSessionUsageWorkEvidence(session, [], { messagesComplete: true }));
+      const captured = await context(request => {
+        if (request.path === '/v2/usage/query') return Response.json({ ...value,
+          totals: kind === 'accounted' ? value.totals : { eventCount: 0,
+            tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+          sessionIds: kind === 'accounted' ? [id] : [], sessionMembership: { turns: [] },
+        } satisfies UsageAnalyticsQueryResponse);
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+          results: [{ sessionId: id, workFacts: { session: { id, seq: 0, createdAt: session.createdAt, updatedAt: session.updatedAt, active: false,
+            metadataVersion: session.metadataVersion, agentStateVersion: session.agentStateVersion,
+            metadataLayoutVersion: session.metadataLayoutVersion ?? 0, encryptionMode: 'plain',
+            dataEncryptionKey: null, viewerRole: 'owner', access: ownerSessionAccess.effectiveAccess },
+            records: records.filter(record => (input.workFactKinds ?? ['work']).includes(record.kind))
+              .map(record => ({ kind: record.kind, content: { t: 'plain', v: projectNativeJsonValueForTransport(record) } })) } }],
+        } satisfies UsageSessionEvidenceResponse);
+      });
+      const query = normalizeUsageQuery({ period: { relative: '7days' }, includeCoach: true,
+        includeTranscriptEvidence: true, includeWorkEvidence: false, includeQuota: false, includeComparison: false });
+      for (let visit = 0; visit < 2; visit++) {
+        const slice = (await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]!;
+        expect(countUsageCheckedSessions(slice.coach?.sessionCoverage)).toBe(kind === 'empty' ? 0 : 1);
+        expect(slice.coach?.sessionCoverage).toEqual(slice.howYouWork?.sessionCoverage);
+      }
+    });
+
   it('retains settled allowance rows and states when a replacement revision is partial', () => {
     const sourceA = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'a' } };
     const sourceB = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'b' } };
@@ -1855,7 +1895,7 @@ describe('usage query captured Resource adapter', () => {
     } finally { releaseAccounting(); releaseEvidence(); }
   });
 
-  it('retains accounting through captured mixed catalog, managed-policy and allowance pages, and reads real or unknown changes', async () => {
+  it('retains accounting through captured mixed catalog, policy, allowance and Deployment pages, and reads real or unknown changes', async () => {
     let revision = 1;
     const captured = await context(request => request.path === '/v2/usage/query'
       ? Response.json({ ...value, totals: { ...value.totals, eventCount: revision } }) : undefined);
@@ -1863,7 +1903,8 @@ describe('usage query captured Resource adapter', () => {
       includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [query] }) });
-    const release = entry.subscribe(() => {}, true);
+    let publications = 0;
+    const release = entry.subscribe(() => { publications++; }, true);
     const reads = () => home!.httpRequests.filter(row => row.path === '/v2/usage/query-batch').length;
     const settle = async () => { await flushHookEffects({ cycles: 20 });
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle'); };
@@ -1880,6 +1921,28 @@ describe('usage query captured Resource adapter', () => {
       await settle();
       const before = reads();
       const retained = entry.getSnapshot().value;
+      expect(before, 'One resolved accounting request admits one batch').toBe(1);
+      publications = 0;
+      // The live Overview/Work trace repeatedly received all three Deployment
+      // rows, including the content-free socket wake, with unchanged Usage demand.
+      for (let index = 0; index < 7; index++) {
+        const identity = { projectSourceId: 'usage-deployment-source', environmentId: 'usage-environment' };
+        const deploymentChanges = [
+          buildDeploymentAccountChangeV1({ ...identity, revision: index + 1 }),
+          buildDeploymentAccountChangeV1({ ...identity, deploymentId: 'usage-deployment', revision: index + 1 }),
+          buildDeploymentAccountChangeV1({ ...identity, activityChanged: true, revision: index + 1 }),
+        ];
+        if (index % 2 === 0) publishPage([...deploymentChanges.map((change, row) => ({
+          ...change, cursor: 10 + index * 3 + row, changedAt: index + 1,
+        })), machine]);
+        else publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+          t: 'account-change', changeKinds: ['account'], entityIds: deploymentChanges.map(change => change.entityId),
+        }, 'socket');
+        await settle();
+      }
+      expect.soft(reads() - before, 'Seven Deployment pages admit no replacement accounting batch').toBe(0);
+      expect.soft(entry.getSnapshot().value, 'Deployment wakes retain the admitted accounting bytes').toBe(retained);
+      expect.soft(publications, 'Deployment-only changes publish no Usage Resource updates').toBe(0);
       for (let catalogRevision = 5363; catalogRevision <= 5371; catalogRevision++) {
         publishPage([{ kind: 'account', entityId: buildConnectedAccountCatalogPhysicalKeyV1('configurations'), cursor: 3, changedAt: 1,
           hint: { connectedAccountCatalog: true, key: 'configurations', revision: catalogRevision } }, machine]);
@@ -1900,7 +1963,8 @@ describe('usage query captured Resource adapter', () => {
       expect.soft(reads() - before).toBe(1);
       expect.soft(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(2);
       revision = 3;
-      publishPage([{ kind: 'account', entityId: 'unknown-account-fixture', cursor: 7, changedAt: 1 }, machine]);
+      publishPage([{ kind: 'account', entityId: 'unknown-account-fixture', cursor: 7, changedAt: 1 }, machine,
+        { ...buildDeploymentAccountChangeV1({ environmentId: 'usage-environment', revision: 8 }), cursor: 8, changedAt: 1 }]);
       await settle();
       expect.soft(reads() - before, 'An unknown Account row remains conservative even on a mixed page').toBe(2);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(3);
@@ -8184,14 +8248,14 @@ describe('usage query Work composition', () => {
 
 
 describe('Usage compact fact publication', () => {
-  it('re-admits only named compact facts after their real Home record wake without reading transcripts', async () => {
+  it.each(['socket', 'scoped'] as const)('returns from Work 7D with retained accounting and re-admits named compact facts without reading transcripts (%s)', async delivery => {
     const [{ createUsageSessionWorkFactsV1, USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS },
       { buildSessionSystemRecordChangeV1 }] = await Promise.all([
       import('@happier-dev/protocol/usage/usageWorkEvidence'),
       import('@happier-dev/protocol/sessions/board/changeHint'),
     ]);
-    const nowMs = 1_710_000_000_000;
-    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    let nowMs = 1_710_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     const id = 'published-compact-session';
     const session = projectUsageSessionInput(createSessionFixture({ id, seq: 1, active: false,
       encryptionMode: 'plain', createdAt: nowMs - 1000, updatedAt: nowMs - 100 }));
@@ -8214,33 +8278,79 @@ describe('Usage compact fact publication', () => {
     });
     const requestStart = home!.requests.length;
     const query = normalizeUsageQuery({ period: { relative: '90days' }, includeComparison: false, includeCoach: false, includeWorkEvidence: false });
-    const read = async () => (await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]!.howYouWork;
+    const store = getUsageQueryResourceStore(captured);
+    const entry = store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    let publications = 0;
+    const observe = () => { publications++; };
+    let release = entry.subscribe(observe, true);
+    const read = async () => {
+      await flushHookEffects({ cycles: 20 });
+      await expect.poll(() => entry.getSnapshot().pending === 'idle' && entry.getSnapshot().value != null).toBe(true);
+      return decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.howYouWork;
+    };
+    const accountingReads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
     const demands = () => home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
       .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
     const publish = (sessionId: string) => {
       const change = buildSessionSystemRecordChangeV1('published-compact-record', {
         sessionId, address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS,
       });
-      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
-        t: 'account-change', changeKinds: [change.kind], entityIds: [change.entityId],
-        sessionSystemRecords: [change.hint.sessionRecords],
+      const detail = { changeKinds: [change.kind], sessionSystemRecords: [change.hint.sessionRecords] };
+      if (delivery === 'scoped') {
+        // A typed producer fact is the Usage consumer's boundary. The socket
+        // case above it also exercises that fact's real producer classification.
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [change.entityId], {
+          ...detail, usageAccountingAffects: false,
+        });
+      } else publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+        t: 'account-change', ...detail, entityIds: [change.entityId],
       }, 'socket');
     };
-    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
-    const initialReads = demands().length;
-    publish('another-compact-session');
-    expect((await read())?.sessionCoverage).toMatchObject({ notRead: 1 });
-    expect(demands()).toHaveLength(initialReads);
-    converted = true;
-    publish(id);
-    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
-    expect(demands().length).toBeGreaterThan(initialReads);
-    converted = false;
-    publish(id);
-    expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
-    expect(demands().filter(demand => demand.query.includeTranscriptEvidence)).toEqual([]);
-    expect(home!.requests.slice(requestStart).filter(request => request.path === '/v2/sessions/read-batch'
-      || request.method === 'GET' && /^\/v2\/sessions\//.test(request.path))).toEqual([]);
+    try {
+      expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+      const admittedAccounting = accountingReads();
+      expect(admittedAccounting, 'One resolved request admits one accounting batch').toBe(1);
+      release();
+      const work = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [
+        normalizeUsageQuery({ ...query, period: { relative: '7days' }, includeSessionEvidence: false, includeWorkEvidence: true }),
+      ] }) });
+      release = work.subscribe(() => {}, true);
+      await flushHookEffects({ cycles: 20 });
+      await expect.poll(() => work.getSnapshot().pending === 'idle' && work.getSnapshot().value != null).toBe(true);
+      expect(accountingReads(), 'Work admits its distinct seven-day request once').toBe(admittedAccounting + 1);
+      nowMs += 5 * 60_000;
+      converted = true;
+      publish(id);
+      await flushHookEffects({ cycles: 20 });
+      release();
+      release = entry.subscribe(observe, true);
+      expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
+      expect.soft(accountingReads(), 'Returning to Overview after a private fact wake keeps both resolved accounting admissions')
+        .toBe(admittedAccounting + 1);
+      converted = false;
+      publish(id);
+      expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+      const initialReads = demands().length;
+      const beforeUnrelated = publications;
+      publish('another-compact-session');
+      expect((await read())?.sessionCoverage).toMatchObject({ notRead: 1 });
+      expect(demands()).toHaveLength(initialReads);
+      expect.soft(publications - beforeUnrelated, 'An unconsumed compact record changes no Overview fact or read activity').toBe(0);
+      converted = true;
+      publish(id);
+      expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 0 });
+      expect(demands().length).toBeGreaterThan(initialReads);
+      expect(publications).toBeGreaterThan(beforeUnrelated);
+      converted = false;
+      publish(id);
+      expect((await read())?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1, notRead: 1 });
+      expect(demands().filter(demand => demand.query.includeTranscriptEvidence)).toEqual([]);
+      expect(home!.requests.slice(requestStart).filter(request => request.path === '/v2/sessions/read-batch'
+        || request.method === 'GET' && /^\/v2\/sessions\//.test(request.path))).toEqual([]);
+      expect(accountingReads() - admittedAccounting - 1,
+        'Private compact-fact publications refresh evidence without replacing accounting').toBe(0);
+    } finally { release(); }
   });
 });
 
