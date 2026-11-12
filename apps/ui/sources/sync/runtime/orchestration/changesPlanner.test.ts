@@ -32,7 +32,30 @@ import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/ser
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+
+it.each([false, true])('keeps Deployment changes out of generic Account refreshes (socket wake %s)', socket => {
+    const identity = { projectSourceId: 'source-a', environmentId: 'environment-a' };
+    const declarations = [identity, { ...identity, deploymentId: 'deployment-a' }, { ...identity, activityChanged: true as const }];
+    for (let revision = 1; revision <= 7; revision++) {
+        const changes = declarations.map(declaration => {
+            const change = buildDeploymentAccountChangeV1({ ...declaration, revision });
+            return { ...change, ...(socket ? { hint: undefined } : {}), cursor: revision, changedAt: revision };
+        });
+        const planned = planSyncActionsFromChanges(changes);
+        expect(planned.invalidate).toMatchObject({ settings: false, profile: false, sessions: false });
+        expect(plannedChangesAffectUsageQuery(planned)).toBe(false);
+        expect(plannedChangesAffectUsageAccounting(planned)).toBe(false);
+        // Mixed unknown or malformed rows must still take the conservative path.
+        for (const change of [{ ...changes[0]!, entityId: 'unknown-account-row' },
+            { ...changes[0]!, hint: { deployment: { environmentId: 'different' } } }]) {
+            const mixed = planSyncActionsFromChanges([...changes, change]);
+            expect(plannedChangesAffectUsageQuery(mixed)).toBe(true);
+            expect(plannedChangesAffectUsageAccounting(mixed)).toBe(true);
+        }
+    }
+});
 
 it('preserves exact managed rows across mixed pages and keeps access and unknown changes structural', () => {
     const row: ApiChangeEntry = { kind: 'account', entityId: 'managed-one', cursor: 1, changedAt: 0,

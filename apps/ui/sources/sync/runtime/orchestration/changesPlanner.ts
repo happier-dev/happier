@@ -1,6 +1,7 @@
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
     ChangeKindSchema,
@@ -610,6 +611,9 @@ export function planSyncActionsFromChanges(
         if (kind === 'account' && (isProfileCatalogAccountChangeEntityIdV1(change.entityId)
             || change.entityId === CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1
             || change.entityId === CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1)) continue;
+        // Deployment observers consume these exact keys. They change neither
+        // Account settings/profile nor Session membership on content-free wakes.
+        if (readDeploymentAccountChangeV1(change) !== null) continue;
         if (isSessionSystemRecordChangeEntityV1(change)) {
             if (!readSessionSystemRecordChangeV1(change)) unsupportedChanges.push({ cursor: String(change.cursor), kind: String(kind), entityId: change.entityId });
             continue;
@@ -1190,7 +1194,8 @@ export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): b
             'pet', 'automation', 'kv', 'pluginDomain', 'savedSecretResource'].includes(change.kind)) return false;
         if (change.kind === 'account' && (change.entityId === 'public-profile'
             || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
-            || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change))) return false;
+            || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change)
+            || readDeploymentAccountChangeV1(change) !== null)) return false;
         // Session evidence, allowances, settings and unknown changes retain
         // their incumbent freshness/admission path, including on mixed pages.
         return true;
