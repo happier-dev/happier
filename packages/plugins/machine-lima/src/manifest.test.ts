@@ -1,5 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -10,8 +13,10 @@ import { MachineProvisionerOptionsResultV1Schema, prepareMachineProvisionerStore
 import { LIMA_PLUGIN, LIMA_RECONCILIATION_SCHEMAS } from './manifest.js';
 import { LimaLaunchSchema, LimaResourceSchema } from './machine/schemas.js';
 
+const testDirectory = mkdtempSync(join(tmpdir(), 'happier-lima-actions-test-'));
+afterAll(() => rmSync(testDirectory, { recursive: true, force: true }));
 const resource = {
-  instance: 'happier-action-test', store: '/private/lima-test', image: 'https://example.test/ubuntu.img',
+  instance: 'happier-action-test', store: join(testDirectory, 'store'), image: 'https://example.test/ubuntu.img',
   arch: 'aarch64', vmType: 'vz', cpus: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 20 * 1024 ** 3, mounts: [],
 };
 const native = {
@@ -47,7 +52,42 @@ async function activatedAction(id: string, exec: Pick<ExecService, 'run'>, ready
   return { handler, context };
 }
 
-describe('activated public Lima actions', () => {
+// The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
+describe.skipIf(process.platform === 'win32')('activated public Lima actions', () => {
+  it.each([
+    { hostOS: 'darwin', arch: 'aarch64', vmType: 'vz' },
+    { hostOS: 'linux', arch: 'x86_64', vmType: 'qemu' },
+  ])('creates and recovers the same native identity inside a long selected persistent store on $hostOS', async ({ hostOS, arch, vmType }) => {
+    const store = join(testDirectory, 'long-selected-persistent-store-'.repeat(5));
+    const instance = 'happier-424cfeskscqixzgevqcbc981tdeoxvmc20zpn0akjnbxa3dg35';
+    let present = false;
+    let running = false;
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      const command = request.args?.[0];
+      if (command === 'info') return processResult(new TextEncoder().encode(JSON.stringify({
+        hostOS, hostArch: arch, vmTypes: [vmType],
+      })));
+      expect(request.cwd).toBe(store);
+      expect(request.env).toEqual({ LIMA_HOME: '.' });
+      if (command === 'create') present = true;
+      if (command === 'restart') running = true;
+      if (command === 'delete') present = false;
+      return processResult(new TextEncoder().encode(command === 'list' && present
+        ? JSON.stringify({ ...native, arch, vmType, config: { ...native.config, images: [{ location: resource.image, arch }] },
+          name: instance, dir: instance, status: running ? 'Running' : 'Stopped' }) : ''));
+    } };
+    const { memoryBytes, diskBytes, instance: _instance, ...identity } = resource;
+    const launch = { ...identity, store, arch, vmType, memoryGiB: memoryBytes / 1024 ** 3, diskGiB: diskBytes / 1024 ** 3 };
+    const acquire = await activatedAction('acquire', exec);
+    const result = LIMA_RECONCILIATION_SCHEMAS.result.parse(await acquire.handler({ managedId: 'test-row', launch }, acquire.context));
+    expect(result).toMatchObject({ kind: 'bound', resource: { value: { store, instance } } });
+    const reconcile = await activatedAction('reconcile', exec);
+    expect(await reconcile.handler({ correlation: { managedId: 'test-row', launch } }, reconcile.context))
+      .toMatchObject({ kind: 'bound', resource: { value: { store, instance } } });
+    const destroy = await activatedAction('destroy', exec);
+    expect(await destroy.handler({ resource: { ...resource, store, instance } }, destroy.context)).toEqual({ kind: 'confirmed' });
+  });
+
   it('resizes through the declared native role and publishes inspected physical dimensions', async () => {
     let cpus = resource.cpus;
     const exec: Pick<ExecService, 'run'> = { run: async request => {
@@ -307,7 +347,8 @@ describe('activated public Lima actions', () => {
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: resource.store });
+      expect(request.env).toEqual(args[0] === 'info' || args[0] === '--version' ? undefined : { LIMA_HOME: '.' });
+      expect(request.cwd).toBe(args[0] === 'info' || args[0] === '--version' ? undefined : resource.store);
       if (args[0] === '--version') return processResult(new TextEncoder().encode('limactl version 2.1.0'));
       if (args[0] === 'info') return processResult(new TextEncoder().encode(JSON.stringify({ hostOS: 'darwin', hostArch: 'aarch64', vmTypes: ['vz'] })));
       if (args[0] === 'list') {
@@ -395,7 +436,8 @@ describe('activated public Lima actions', () => {
     const effects: string[][] = [];
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       const args = [...(request.args ?? [])];
-      expect(request.env).toEqual({ LIMA_HOME: resource.store });
+      expect(request.env).toEqual({ LIMA_HOME: '.' });
+      expect(request.cwd).toBe(resource.store);
       if (args[0] !== 'list') effects.push(args);
       if (args[0] === 'stop') status = 'Stopped';
       if (args[0] === 'delete') present = false;
@@ -472,7 +514,8 @@ describe('activated public Lima actions', () => {
     });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin && Array.from(shell.stdin)).toEqual(Array.from(input));
-    expect(shell?.env).toEqual({ LIMA_HOME: resource.store });
+    expect(shell?.env).toEqual({ LIMA_HOME: '.' });
+    expect(shell?.cwd).toBe(resource.store);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);
   });
 

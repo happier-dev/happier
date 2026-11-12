@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { changeLimaPower, execLimaGuest, putLimaGuestFile } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
+import { changeLimaPower, execLimaGuest, inspectLimaInstance, putLimaGuestFile } from '@happier-dev/plugin-sdk/machine-provisioners/lima';
 import { createLimaSdkExecutor } from './nativeExecutor.js';
 
 const executable: ManagedExecutableRef = { kind: 'managedDependency', id: { pluginId: 'happier.machine.lima', localId: 'lima-cli' } };
-const identity = { instance: 'happier-test', store: '/private/lima-test' };
+const testDirectory = mkdtempSync(join(tmpdir(), 'happier-lima-native-test-'));
+afterAll(() => rmSync(testDirectory, { recursive: true, force: true }));
+const identity = { instance: 'happier-test', store: join(testDirectory, 'store') };
 const native = { name: identity.instance, dir: `${identity.store}/${identity.instance}`, status: 'Running' };
 
 function success(stdout = new Uint8Array()): PluginProcessResult {
@@ -13,7 +19,29 @@ function success(stdout = new Uint8Array()): PluginProcessResult {
     stdout, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 
-describe('public Lima process transport', () => {
+// The native filesystem store contract is POSIX; Lima supports Darwin and Linux hosts.
+describe.skipIf(process.platform === 'win32')('public Lima process transport', () => {
+  it('uses a short relative native home inside the exact missing long persistent store', async () => {
+    const store = join(testDirectory, 'long-selected-persistent-store-'.repeat(5));
+    const exec: Pick<ExecService, 'run'> = { run: async request => {
+      expect(request.cwd).toBe(store);
+      expect(request.env).toEqual({ LIMA_HOME: '.' });
+      const directory = await stat(store);
+      expect(directory.isDirectory()).toBe(true);
+      expect(directory.mode & 0o777).toBe(0o700);
+      return success(new TextEncoder().encode(JSON.stringify({ ...native, dir: identity.instance })));
+    } };
+    const executor = createLimaSdkExecutor({ exec, executable, signal: new AbortController().signal });
+    await expect(inspectLimaInstance({ executor, ...identity, store }))
+      .resolves.toMatchObject({ name: identity.instance, dir: `${store}/${identity.instance}` });
+  });
+
+  it.each(['../other/happier-test', '/another-store/happier-test'])('refuses a relative observation escaping the selected store: %s', async dir => {
+    const result = { exitCode: 0, out: JSON.stringify({ ...native, dir }) };
+    await expect(inspectLimaInstance({ executor: { capture: async () => result, run: async () => result }, ...identity }))
+      .rejects.toMatchObject({ code: 'LIMA_IDENTITY_MISMATCH' });
+  });
+
   it('uses the resolved native executable independently of the internal command label', async () => {
     const exec: Pick<ExecService, 'run'> = { run: async request => {
       expect(request.executable).toEqual(executable);
@@ -65,7 +93,8 @@ describe('public Lima process transport', () => {
     expect(await putLimaGuestFile({ executor, ...identity, guestPath: '/tmp/private-enrollment', bytes: payload })).toEqual({ kind: 'written' });
     const shell = requests.find((request) => request.args?.[0] === 'shell');
     expect(shell?.stdin).toEqual(payload);
-    expect(shell?.env).toEqual({ LIMA_HOME: identity.store });
+    expect(shell?.env).toEqual({ LIMA_HOME: '.' });
+    expect(shell?.cwd).toBe(identity.store);
     expect(shell?.args?.slice(-2)).toEqual(['/tmp/private-enrollment', '0600']);
     expect(requests.filter((request) => request.stdin !== undefined)).toEqual([shell]);
   });

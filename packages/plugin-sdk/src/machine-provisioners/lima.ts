@@ -1,11 +1,8 @@
 /** @moduleRealm daemon */
 import * as native from '@happier-dev/cli-common/machineLima';
 
-export type LimaCommandResult = Readonly<{ exitCode: number | null; out?: string; err?: string }>;
-export type LimaExecutor<TResult extends LimaCommandResult = LimaCommandResult> = Readonly<{
-  capture(command: string, args: readonly string[], options?: { env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
-  run(command: string, args: readonly string[], options?: { env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
-}>;
+export type LimaCommandResult = native.LimaCommandResult;
+export type LimaExecutor<TResult extends LimaCommandResult = LimaCommandResult> = native.LimaExecutor<TResult>;
 export type LimaInstance = Record<string, unknown>;
 export type LimaIdentity = Readonly<{ instance: string; store?: string }>;
 export type LimaInstanceOptions = LimaIdentity & Readonly<{ executor: LimaExecutor }>;

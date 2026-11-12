@@ -276,7 +276,8 @@ describe('public Lima native leaf', () => {
   it('reconciles lost creation response at the same store/name without allocating again', async () => {
     let present = false;
     const { executor, effects } = processBoundary((args, options) => {
-      expect(options?.env?.LIMA_HOME).toBe(launch.store);
+      expect(options?.env?.LIMA_HOME).toBe('.');
+      expect(options?.cwd).toBe(launch.store);
       if (args[0] === 'create') { present = true; throw new Error('lost process response'); }
       return { exitCode: 0, out: present ? JSON.stringify({ ...native, name: managedInstance, dir: `${launch.store}/${managedInstance}` }) : '', err: '' };
     });
@@ -307,7 +308,8 @@ describe('public Lima native leaf', () => {
   it('exact delete retains the neighboring VM and waits for confirmed absence', async () => {
     let present = true;
     const { executor, effects } = processBoundary((args, options) => {
-      expect(options?.env?.LIMA_HOME).toBe(launch.store);
+      expect(options?.env?.LIMA_HOME).toBe('.');
+      expect(options?.cwd).toBe(launch.store);
       if (args[0] === 'delete') {
         expect(args).toEqual(['delete', '--force', resource.instance]);
         present = false;

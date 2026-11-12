@@ -1,7 +1,7 @@
 export type LimaCommandResult = Readonly<{ exitCode: number | null; out?: string; err?: string }>;
 export type LimaExecutor<TResult extends LimaCommandResult = LimaCommandResult> = Readonly<{
-  capture(command: string, args: readonly string[], options?: { env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
-  run(command: string, args: readonly string[], options?: { env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
+  capture(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
+  run(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>>; input?: string | Uint8Array }): Promise<TResult>;
 }>;
 export type LimaInstance = Record<string, unknown>;
 export type LimaIdentity = Readonly<{ instance: string; store?: string }>;

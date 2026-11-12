@@ -5,6 +5,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { mkdir } from 'node:fs/promises';
 
 export type LimaProcessCommandResult = LimaCommandResult & Readonly<{ process: PluginProcessResult }>;
 
@@ -21,8 +22,9 @@ export function createLimaSdkExecutor({ exec, executable, signal }: Readonly<{
   exec: Pick<ExecService, 'run'>; executable: ManagedExecutableRef; signal: AbortSignal;
 }>): LimaExecutor<LimaProcessCommandResult> {
   const capture: LimaExecutor<LimaProcessCommandResult>['capture'] = async (_command, args, options) => {
+    if (options?.cwd !== undefined) await mkdir(options.cwd, { recursive: true, mode: 0o700 });
     const process = await exec.run({
-      executable, args, ...(options?.env ? { env: options.env } : {}),
+      executable, args, ...(options?.cwd === undefined ? {} : { cwd: options.cwd }), ...(options?.env ? { env: options.env } : {}),
       ...(options?.input === undefined ? {} : { stdin: typeof options.input === 'string' ? new TextEncoder().encode(options.input) : options.input }),
     }, { signal,
       ...(args[0] === 'start' || args[0] === 'restart' ? { descendantDisposition: 'preserve-on-success' as const } : {}),

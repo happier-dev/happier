@@ -546,7 +546,8 @@ export async function reportManagedAcquire(input: ManagedControllerReportV1, opt
             ...factsUpdate,
             ...(result.kind === "pending" ? { nativeOperationRef: result.nativeOperationRef } : {}),
             ...(result.kind === "unknown" ? { recovery: result.recovery } : {}),
-            ...(result.kind === "rejected" ? { allocation: "confirmed-absent" } : {}),
+            // Confirmed absence also settles cleanup requested by Cancel before this report.
+            ...(result.kind === "rejected" ? { allocation: "confirmed-absent", cleanup: getActivePrismaRuntime().DbNull } : {}),
             ...(canonical.observation ? { observation: canonical.observation } : {}),
         } });
         if (changed.count !== 1) throw new ManagedMachineError("intent_changed");

@@ -1033,6 +1033,39 @@ describe("managed acquisition durable authority", () => {
             .toEqual(row.admittedInput);
     });
 
+    it.each(['before', 'after'] as const)('settles canceled creation cleanup when native absence arrives %s Cancel', async order => {
+        const { homeId, account, controller, request } = await createManagedComputeFixture(`cancel-absence-${order}`);
+        const created = await admitManagedAcquire(request);
+        const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0,
+            requestId: request.input.requestId, controller };
+        const cancellation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0 };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation,
+            result: { kind: 'unknown', recovery: { reference: 'native-create', reason: 'native_acquisition_unconfirmed' } } });
+        if (order === 'after') {
+            const canceled = await cancelManagedCreation({ actorAccountId: account.id, input: cancellation });
+            expect(canceled.machine).toMatchObject({ creationState: 'canceled', allocation: 'may-exist',
+                intentRevision: 1, cleanup: { disposition: 'pending' } });
+            const uncertain = await reportManagedAcquire({ ...correlation, expectedIntentRevision: 1,
+                result: { kind: 'unknown', recovery: { reference: 'native-create', reason: 'native_read_unavailable' } },
+                observation: { observedAt: 1, availability: 'unavailable', reason: 'native_read_unavailable' },
+            }, { requestAuthority: 'intent' });
+            expect(uncertain.machine).toMatchObject({ allocation: 'may-exist', cleanup: { disposition: 'pending' } });
+        }
+        // Inspect's exact native not-found report uses the current intent; it performs no native Delete.
+        const absent = await reportManagedAcquire({ ...correlation, expectedIntentRevision: order === 'after' ? 1 : 0,
+            result: { kind: 'rejected', code: 'managed_not_found' },
+            observation: { observedAt: 2, availability: 'absent', reason: 'managed_not_found' },
+        }, { requestAuthority: 'intent' });
+        const settled = order === 'before'
+            ? await cancelManagedCreation({ actorAccountId: account.id, input: cancellation }) : absent;
+        expect(settled.machine).toMatchObject({ creationState: 'canceled', allocation: 'confirmed-absent',
+            intentRevision: 1, desired: 'delete', observation: { availability: 'absent' } });
+        expect(settled.machine.cleanup).toBeUndefined();
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } }))
+            .toMatchObject({ cleanup: null, allocation: 'confirmed-absent' });
+    });
+
     it.each(['unsubmitted', 'canceled', 'rejected'] as const)('settles Delete without a native target after %s creation', async state => {
         const { homeId, account, controller, request } = await createManagedComputeFixture(`delete-no-native-${state}`);
         const created = await admitManagedAcquire(request);

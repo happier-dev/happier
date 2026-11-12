@@ -58,9 +58,16 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
       || limaInstanceField(records[0], 'name') !== instance) {
     throw limaError('LIMA_IDENTITY_MISMATCH', 'native inspection does not identify exactly the requested instance');
   }
-  const record = records[0];
-  if (store !== undefined && limaInstanceField(record, 'dir') !== path.posix.join(validateLimaStore(store), instance)) {
-    throw limaError('LIMA_IDENTITY_MISMATCH', 'native instance belongs to a different Lima store');
+  let record = records[0];
+  if (store !== undefined) {
+    const expectedDir = path.posix.join(validateLimaStore(store), instance);
+    const nativeDir = limaInstanceField(record, 'dir');
+    const resolvedDir = typeof nativeDir === 'string' && !path.posix.isAbsolute(nativeDir)
+      ? path.posix.resolve(store, nativeDir) : nativeDir;
+    if (resolvedDir !== expectedDir) {
+      throw limaError('LIMA_IDENTITY_MISMATCH', 'native instance belongs to a different Lima store');
+    }
+    if (nativeDir !== resolvedDir) record = { ...record, ...('dir' in record ? { dir: resolvedDir } : { Dir: resolvedDir }) };
   }
   if (Array.isArray(record.errors) && record.errors.length > 0) {
     throw limaError('LIMA_INSPECT_UNAVAILABLE', 'native instance inspection reported errors');
@@ -69,7 +76,9 @@ export function decodeLimaInstanceOutput(output, { instance: rawInstance, store 
 }
 
 export async function runLimaCommand({ executor, store, args, input, interactive = false }) {
-  const options = { ...(store === undefined ? {} : { env: { LIMA_HOME: validateLimaStore(store) } }),
+  // Lima derives socket names from LIMA_HOME without expanding relative roots.
+  // Keep retained data in the selected store while native paths stay short.
+  const options = { ...(store === undefined ? {} : { cwd: validateLimaStore(store), env: { LIMA_HOME: '.' } }),
     ...(input === undefined ? {} : { input }) };
   const result = await executor[interactive ? 'run' : 'capture']('limactl', args, options);
   return result;
