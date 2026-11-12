@@ -1,4 +1,5 @@
 import { isPluginError, PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { isPluginActionApprovalRequestCreated, type PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { SessionPullRequestBindingResultV1Schema, SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
@@ -14,6 +15,7 @@ import { buildGithubEntryLocator, parseGithubRoutingToken } from './locator.js';
 import { toTriageLocator } from './mapping/protocol.js';
 import { resolveGithubTriageInstance, openGithubTriageClient } from './operations.js';
 import { decodeGithubRepositoryMetadata } from './repositories.js';
+import { classifyGithubResponseFailure } from './errors.js';
 import type { GithubTriageInvocationContext, GithubTriageObservationContext } from './invocation.js';
 
 const bindingAction = { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 };
@@ -180,32 +182,50 @@ export async function linkGithubTriageSession(input: unknown, context: PluginInv
   const admitted = admitInstance(request.instance);
   const pullRequest = exactPullRequest(request.localRef);
   if (admitted === null || pullRequest === null) return { status: 'failed' };
+  const refuse = (code: string, phase: string, retryable = false, requestId = context.requestId): never => {
+    throw new PluginError({ code, retryable, details: { phase, ...(requestId === undefined ? {} : { requestId }) } });
+  };
   try {
     if (!request.linked) {
       const current = await readRelations(request, (input, credentialRef) => executeBinding(input, context, credentialRef));
-      if (current === null) return { status: 'failed' };
+      if (current === null) return refuse('github_session_relations_invalid', 'read_relations');
       for (const link of current.links) {
         const removed = await executeBinding({ kind: 'unlink', sessionId: request.sessionId,
           bindingId: link.bindingId, expectedRevision: link.revision }, context, admitted.credentialRef);
-        if (removed.kind !== 'removed') return { status: 'failed' };
+        if (removed.kind !== 'removed') return refuse('github_session_relation_unlink_not_applied', 'unlink');
       }
       return { status: 'unlinked' };
     }
     const opened = await openGithubTriageClient(request.instance, context);
-    if (!opened.ok) return { status: 'failed' };
+    if (!opened.ok) return refuse(opened.failure.code, 'credential_acquisition',
+      opened.failure.class === 'transient' || opened.failure.class === 'rateLimit', opened.failure.requestId ?? context.requestId);
     const response = await opened.client.request({ url: `https://api.github.com/repositories/${pullRequest.repositoryId}` });
-    if (response.status !== 200) return { status: 'failed' };
+    if (response.status !== 200) {
+      const failure = classifyGithubResponseFailure(response, context.invokedAtMs);
+      return refuse(failure.code, 'repository_read', failure.class === 'transient' || failure.class === 'rateLimit',
+        failure.requestId ?? context.requestId);
+    }
     const repository = decodeGithubRepositoryMetadata(decodeGithubJsonResponse(response));
-    if (repository === null || repository.repositoryId !== pullRequest.repositoryId || repository.repositoryKey === null) return { status: 'failed' };
+    if (repository === null || repository.repositoryId !== pullRequest.repositoryId || repository.repositoryKey === null) {
+      return refuse('github_session_relation_repository_invalid', 'repository_decode');
+    }
     const selection = admitted.configuration.selection;
-    if (selection.kind === 'selected' && !selection.unitIds.includes(repository.repositoryKey)) return { status: 'failed' };
+    if (selection.kind === 'selected' && !selection.unitIds.includes(repository.repositoryKey)) {
+      return refuse('github_session_relation_repository_not_selected', 'repository_selection');
+    }
     const linked = await executeBinding({ kind: 'attach', sessionId: request.sessionId, credentialRef: admitted.credentialRef,
       pullRequest: { repository: repository.repositoryKey, number: pullRequest.number }, expectedRepositoryId: pullRequest.repositoryId }, context, admitted.credentialRef);
-    return { status: linked.kind === 'attached' ? 'linked' : 'failed' };
+    if (linked.kind !== 'attached') return refuse('github_session_relation_attach_not_applied', 'attach');
+    return { status: 'linked' };
   } catch (error) {
     context.signal.throwIfAborted();
     if (error instanceof Error && error.name === 'AbortError') throw error;
     if (isPluginError(error)) throw error;
-    return { status: 'failed' };
+    const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
+    throw new PluginError({ code: 'github_session_relation_write_failed', failureCause: {
+      phase: 'github.session_relation_write', errorClass, errorCode, httpStatus,
+    }, details: {
+      phase: 'relation_write', ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
+    } }, { cause: error });
   }
 }

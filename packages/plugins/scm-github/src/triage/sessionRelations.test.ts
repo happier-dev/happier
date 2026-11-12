@@ -32,6 +32,34 @@ function fixture(respond: (input: unknown) => unknown) {
 }
 
 describe('GitHub PR source relationship adapter', () => {
+  it('retains the repository HTTP refusal and request identity before any binding write', async () => {
+    const state = fixture(() => { throw new Error('No binding write after a refused repository read'); });
+    const transport = createStubGithubTransport({ respond: () => ({ status: 403,
+      headers: { 'x-github-request-id': 'github-repository-read-403' }, body: { message: 'Forbidden' } }) });
+    const context = { ...transport.context, requestId: 'relation-write-request-403',
+      services: { ...transport.context.services, actions: state.context.services.actions } };
+    await expect(linkGithubTriageSession({ v: 1, instance: state.instance, localRef: state.localRef,
+      sessionId: 'session-1', linked: true }, context)).rejects.toMatchObject({ code: 'github_forbidden',
+        details: { phase: 'repository_read', requestId: 'relation-write-request-403' } });
+    expect(state.calls).toEqual([]);
+  });
+  it('names a non-applied binding result instead of erasing it', async () => {
+    const state = fixture(() => ({ kind: 'removed' }));
+    await expect(linkGithubTriageSession({ v: 1, instance: state.instance, localRef: state.localRef,
+      sessionId: 'session-1', linked: true }, state.context)).rejects.toMatchObject({
+        code: 'github_session_relation_attach_not_applied', details: { phase: 'attach' },
+      });
+  });
+  it('retains an unclassified binding exception as a typed internal failure', async () => {
+    const cause = new Error('PRIVATE_BOUNDARY_CONTENT');
+    const state = fixture(() => { throw cause; });
+    const error = await linkGithubTriageSession({ v: 1, instance: state.instance, localRef: state.localRef,
+      sessionId: 'session-1', linked: true }, state.context).catch((error: unknown) => error);
+    expect(error).toMatchObject({ code: 'github_session_relation_write_failed', cause,
+      data: { failureCause: { phase: 'github.session_relation_write', errorClass: 'Error', errorCode: null } } });
+    if (!(error instanceof PluginError)) throw new Error('Expected a typed relationship failure');
+    expect(JSON.stringify(error.data)).not.toContain('PRIVATE_BOUNDARY_CONTENT');
+  });
   it('preserves a typed relationship read refusal instead of reporting a removed connection', async () => {
     const refusal = new PluginError({ code: 'plugin_action_machine_required', retryable: false });
     const state = fixture(() => { throw refusal; });
