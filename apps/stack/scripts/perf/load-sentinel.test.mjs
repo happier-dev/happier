@@ -222,22 +222,50 @@ test('foreground watcher detects a nested fixture edit and stops without leaving
   assert.match(posts[0], /watcherBinding/);
 });
 
-test('protocol cycle diagnostics identify the eager binding and authored cycle modules', async t => {
+test('canonical static protocol guard detects the machine-recipe eager-read edge without evaluating source', async t => {
   const { fixture, graph, entry } = await fixtureGraph(t);
-  const { formatGuardFailure } = await import('../../../cli/scripts/importCycleGuard.mjs');
-  await mkdir(fixture.path('packages/protocol/src'), { recursive: true });
-  for (const name of ['a.ts', 'b.ts', 'c.ts']) await writeFile(fixture.path('packages/protocol/src', name), 'export {};');
-  const diagnostic = formatGuardFailure([{ files: ['a.ts', 'b.ts', 'c.ts'],
-    edges: [['a.ts', 'b.ts'], ['b.ts', 'c.ts'], ['c.ts', 'a.ts']],
-    read: { from: 'a.ts', to: 'b.ts', binding: 'cycleBinding' } }]);
-  await writeFile(entry, `console.error(${JSON.stringify(diagnostic)}); process.exitCode = 1;`);
-  const posts = [];
-  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [graph],
-    signal: t.signal, post: async entry => posts.push(entry) });
+  const { copyFile, symlink } = await import('node:fs/promises');
+  const { createRequire } = await import('node:module');
+  const { dirname } = await import('node:path');
+  const require = createRequire(new URL('../../../cli/package.json', import.meta.url));
+  await symlink(dirname(require.resolve('typescript/package.json')), fixture.path('node_modules/typescript'), 'junction');
+  for (const name of ['importCycleGuard.mjs', 'importCycleEvaluation.mjs']) {
+    await copyFile(new URL(`../../../cli/scripts/${name}`, import.meta.url), fixture.path('apps/cli/scripts', name));
+  }
+  const root = fixture.path('packages/protocol/src');
+  await mkdir(root, { recursive: true });
+  const config = fixture.path('packages/protocol/tsconfig.json');
+  await writeFile(config, JSON.stringify({ compilerOptions: { module: 'ESNext', moduleResolution: 'Bundler' }, include: ['src/**/*.ts'] }));
+  const writeCycle = async eager => {
+    for (const [name, imported, binding, exported] of [
+      ['machineRecipeV1', 'machineFirewallV1', 'firewall', 'canonicalRecipeSchema'],
+      ['machineFirewallV1', 'contributions', 'contributions', 'firewall'],
+      ['contributions', 'machineRecipeV1', 'canonicalRecipeSchema', 'contributions'],
+    ]) await writeFile(`${root}/${name}.ts`, `import { ${binding} } from './${imported}';
+throw new Error('static fixture must never execute');
+export const ${exported} = ${eager ? `{ value: ${binding} }` : `() => ${binding}`};`);
+  };
+  const checkedGraph = { ...graph, args: ['--protocol', '--source-root', root, '--tsconfig', config,
+    '--baseline', fixture.path('empty-baseline.json')] };
+  const posts = [], results = [];
+  const sentinel = createLoadSentinel({ repoDir: fixture.root, graphs: [checkedGraph], signal: t.signal,
+    waitForQuiet: async () => {}, post: async notice => posts.push(notice), onResult: result => results.push(result) });
+  await writeCycle(false);
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'passed', 'static imports with deferred reads must not be evaluated');
+  await writeCycle(true);
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'failed');
+  assert.equal(results.at(-1).loadError.code, 'runtime_import_cycle');
+  assert.equal(posts.length, 1);
+  for (const name of ['machineRecipeV1.ts', 'machineFirewallV1.ts', 'contributions.ts']) assert.ok(posts[0].includes(name));
   await sentinel.request();
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /symbol=cycleBinding/);
-  for (const name of ['a.ts', 'b.ts', 'c.ts']) assert.ok(posts[0].includes(`packages/protocol/src/${name}`));
+  await writeCycle(false);
+  await sentinel.request();
+  assert.equal(results.at(-1).status, 'passed');
+  assert.equal(posts.length, 2);
+  assert.match(posts[1], /cleared/);
 });
 
 test('UI bundler failures preserve the binding and the resolved authored import path', async t => {
