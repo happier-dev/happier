@@ -23,7 +23,7 @@ describe('installed Session signed lifecycle scope', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open', installed = true) {
+    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
@@ -48,7 +48,12 @@ describe('installed Session signed lifecycle scope', () => {
         const requestId = crypto.randomUUID();
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
             target: { kind: 'machine', machineId: machine.id },
-            input: { sessionId: grandchild.id, ...(actionId === 'session.open' ? { intent: 'resume' } : {}) } });
+            input: actionId === 'discussion.second_opinion.start' ? {
+                intent: 'preview', source: { kind: 'session', message: { kind: 'session',
+                    session: { serverId: 'home-1', sessionId: root.id }, messageId: 'answer-1' } },
+                title: 'Review', question: 'Please check', reviewers: [],
+                retry: { creationLocalId: 'create-opinion', quoteLocalId: 'quote-opinion', questionLocalId: 'ask-opinion' },
+            } : { sessionId: grandchild.id, ...(actionId === 'session.open' ? { intent: 'resume' } : {}) } });
         // The production issuer and strict signed consumer use a disposable real
         // database. Only live publisher discovery is a process boundary fixture.
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(await auth.mintExternalActionExecutionAuthorization({
@@ -61,10 +66,10 @@ describe('installed Session signed lifecycle scope', () => {
                 sourceTurnId: 'turn', callerPermissionMode: null, requestId },
                 sessionActionSource: { machineId: machine.id, installationId: machine.installationId! } } : {}),
         }, { resolveCurrentSessionMachine }));
-        const verifyRequest = async (method: string, path: string, body?: unknown, sessionId?: string, effectActionId = actionId) => {
+        const verifyRequest = async (method: string, path: string, body?: unknown, sessionId?: string, effectActionId = actionId, sessionRouteActionId?: 'session.transcript.get') => {
             return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
                 effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
-                method, path, body, ...(sessionId ? { sessionRouteTarget: { kind: 'session' as const, sessionId } } : {}), resolveCurrentSessionMachine,
+                method, path, body, ...(sessionId ? { sessionRouteTarget: { kind: 'session' as const, sessionId, ...(sessionRouteActionId ? { actionId: sessionRouteActionId } : {}) } } : {}), resolveCurrentSessionMachine,
                 machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
                     effectActionId, target: authorization.binding.target, installationId: machine.installationId!,
                     requestId: authorization.binding.requestId, method, path, body, privateKey: keys.secretKey }),
@@ -72,8 +77,8 @@ describe('installed Session signed lifecycle scope', () => {
         };
         const verify = (sessionId: string, method = 'GET', body?: unknown, suffix = '', effectActionId = actionId) =>
             verifyRequest(method, `/v2/sessions/${encodeURIComponent(sessionId)}${suffix}`, body, sessionId, effectActionId);
-        const observe = (underSessionId: string) => verifyRequest('POST', '/v2/sessions/query', SessionListQueryV1Schema.parse({
-            v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], underSessionId,
+        const observe = (underSessionId?: string) => verifyRequest('POST', '/v2/sessions/query', SessionListQueryV1Schema.parse({
+            v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], ...(underSessionId ? { underSessionId } : {}),
         }));
         const verifyStopRpc = (effectActionId: 'session.stop' | 'session.archive' = 'session.stop') => {
             const method = `${machine.id}:${RPC_METHODS.STOP_SESSION}`;
@@ -89,6 +94,14 @@ describe('installed Session signed lifecycle scope', () => {
         return { account, machine, root, child, grandchild, otherRoot, createSession, attach, verify, observe, verifyRequest, verifyStopRpc,
             retirePublisher: () => { publisherCurrent = false; } };
     }
+
+    it.each(['usage.recap.compose', 'usage.recap.export', 'usage.recap.deliver',
+        'usage.coach.dismiss', 'usage.coach.snooze', 'usage.coach.apply', 'usage.coach.undo', 'artifact.get', 'action.operations.cancel'] as const)(
+        'admits shared feature discovery before the specialized Account purpose for %s', async actionId => {
+            const f = await fixture(actionId);
+            expect(await f.verifyRequest('GET', '/v1/features/authenticated')).not.toBeNull();
+            expect(await f.verifyRequest('GET', '/v1/features/authenticated?extra=1')).toBeNull();
+        });
 
     it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
         'admits a recursive descendant for %s and rejects removed or reparented membership', async actionId => {
@@ -133,9 +146,19 @@ describe('installed Session signed lifecycle scope', () => {
 
     it('admits lifecycle observation under a nested selected lead only while it remains in the readable subtree', async () => {
         const f = await fixture('session.archive');
+        // Keep cross-Account isolation observable even if a later subtree assertion fails.
+        const foreignAccount = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const foreign = await f.createSession(foreignAccount.id);
+        await f.attach(foreign.id, f.root.id);
+        expect(await f.observe(foreign.id)).toBeNull();
         expect(await f.observe(f.root.id)).not.toBeNull();
         expect(await f.observe(f.child.id)).not.toBeNull();
-        expect(await f.observe(f.otherRoot.id)).toBeNull();
+        expect.soft(await f.observe(f.otherRoot.id)).toBeNull();
+        expect.soft(await f.observe()).toBeNull();
+        expect.soft(await f.verifyRequest('POST', '/v2/sessions/read-batch', {
+            sessionIds: [f.otherRoot.id], underSessionId: f.otherRoot.id,
+            includeSnapshot: true, includeTurns: false, includeMessages: false,
+        })).toBeNull();
         await db.sessionFollowEdge.deleteMany({ where: { sourceSessionId: f.child.id, relation: 'manager' } });
         await f.attach(f.child.id, f.otherRoot.id);
         expect(await f.observe(f.child.id)).toBeNull();
@@ -143,12 +166,16 @@ describe('installed Session signed lifecycle scope', () => {
         expect(await f.observe(f.child.id)).toBeNull();
         await f.attach(f.child.id, f.root.id);
         expect(await f.observe(f.child.id)).not.toBeNull();
-        const foreignAccount = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const foreign = await f.createSession(foreignAccount.id);
-        await f.attach(foreign.id, f.root.id);
-        expect(await f.observe(foreign.id)).toBeNull();
         f.retirePublisher();
         expect(await f.observe(f.child.id)).toBeNull();
+    });
+
+    it('keeps Second opinion source transcript reads from admitting other caller Session GETs', async () => {
+        const f = await fixture('discussion.second_opinion.start');
+        expect(await f.verifyRequest('GET', `/v1/sessions/${f.root.id}/messages`, undefined,
+            f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).not.toBeNull();
+        expect(await f.verifyRequest('GET', `/v2/sessions/${f.root.id}/messages/replies/pending`, undefined,
+            f.root.id, 'discussion.second_opinion.start', 'session.transcript.get')).toBeNull();
     });
 
     it('retains the Archive root while admitting only its led Stop preparation effect', async () => {
