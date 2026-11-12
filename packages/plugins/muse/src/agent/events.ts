@@ -321,8 +321,9 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       && item.failureReason === previous.value.failureReason && item.fallbackText === previous.value.fallbackText) return;
     state.committed = true;
     const text = fallback ? item.fallbackText ?? '' : item.visibleOutput;
-    // Visible text supplements the native failure; it must not erase its cause.
-    const output = text === undefined || item.failureKind !== undefined || item.failureReason !== undefined
+    // Visible text supplements native failure status and details; it must not erase either.
+    const output = text === undefined || item.status !== undefined && item.status !== 'completed'
+      || item.failureKind !== undefined || item.failureReason !== undefined
       ? { ...(text === undefined ? {} : { text }), status: item.status ?? 'unknown',
         ...(item.failureKind === undefined ? {} : { failureKind: item.failureKind }),
         ...(item.failureReason === undefined ? {} : { failureReason: item.failureReason }) }
