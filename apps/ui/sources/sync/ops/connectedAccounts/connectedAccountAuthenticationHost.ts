@@ -122,7 +122,11 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
     }>> => {
         const accountAuthenticationModes = await readAccountAuthenticationModes(service);
         const known = declaration(service);
-        if (!known && !machineId && accountAuthenticationModes.status === 'available' && !accountAuthenticationModes.modeIds.length) {
+        const nativeDeclaration = authenticationDeclaration(service);
+        // Only a declared native draft may wait for its Machine. Unknown or
+        // conflicting services settle through the existing unavailable result.
+        if (!known && !machineId && nativeDeclaration && !nativeDeclaration.account
+            && accountAuthenticationModes.status === 'available' && !accountAuthenticationModes.modeIds.length) {
             return { description: null, accountAuthenticationModes };
         }
         if (machineId && (!known && !hasAccountArtifact(service)
