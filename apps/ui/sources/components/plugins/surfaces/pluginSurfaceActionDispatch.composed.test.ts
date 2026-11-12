@@ -8178,6 +8178,38 @@ describe('present-user confirmation for daemon-target Actions', () => {
         } finally { storage.setState(previous); }
     });
 
+    it.each([
+        { caller: 'mounted raw plugin', mounted: true, authority: undefined },
+        { caller: 'mounted plugin borrowing host context', mounted: true, authority: 'present_user' as const },
+        { caller: 'host-mediated control', mounted: false, authority: 'present_user' as const },
+    ])('keeps $caller at its own invocation authority', async ({ mounted, authority }) => {
+        clientActionSchemasByQualifiedId.set(`${CALLER_PLUGIN_ID}/set-complete`, { inputSchema: { type: 'object' } });
+        const requestCurrentIntent = vi.fn(async () => ({
+            status: 'unavailable' as const, code: 'plugin_action_current_intent_unavailable',
+        }));
+        // Only Machine RPC is substituted; caller resolution and approval policy stay real.
+        const contributed = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true, result: { ok: true, result: { completed: true } },
+        }));
+        const result = await dispatchPluginSurfaceAction({
+            ...(mounted ? { callerPluginId: CALLER_PLUGIN_ID, callerContributionLocalId: 'inspector-app',
+                callerBinding: mountedCallerBinding() } : {}),
+            action: { pluginId: CALLER_PLUGIN_ID, localId: 'set-complete' }, input: {},
+            hostAction: { execute: vi.fn(), context: { ...(authority ? { authority } : {}) } },
+            resolveContributedAction: identity => PluginProjectedActionV2Schema.parse({
+                ...resolveConfirmedDaemonTargetAction(identity), dangerLevel: 'writesLocal',
+                confirmationWhen: { presentUserUi: false },
+            }),
+            requestCurrentIntent, contributedAction: { machineId: 'machine-1', serverId: rpcHomes.get('server-client-action')!.id, execute: contributed },
+        });
+        expect(result).toMatchObject(mounted
+            ? { ok: false, reason: 'plugin_action_current_intent_unavailable' }
+            : { ok: true, result: { completed: true } });
+        expect(requestCurrentIntent).toHaveBeenCalledTimes(mounted ? 1 : 0);
+        if (mounted) expect(contributed).not.toHaveBeenCalled();
+        else expect(contributed.mock.calls[0]?.[1].presentUserIntent).toBeUndefined();
+    });
+
     it.each([false, true])('uses a declared read default while respecting explicit Ask-first=%s', async required => {
         const storage = getStorage();
         const previous = storage.getState();
