@@ -12,6 +12,25 @@ export function translated(value: MachineDetailPageTranslations): MachineDetailP
 
 export const english = {
     machineDetailPage: {
+        roles: {
+            title: "Roles",
+            editAction: "Edit roles",
+            description: ({ machine }: { machine: string }) => `What ${machine} runs. Work for a role that is off goes to another machine.`,
+            offline: ({ machine }: { machine: string }) => `${machine} isn’t online. Roles change once it’s back.`,
+            notManager: "Only the owner or an administrator can change roles.",
+            saveFailed: "Couldn’t change roles",
+            changed: "Roles changed somewhere else. These are the current ones.",
+            sessionsOffNote: "Running sessions keep going until they stop. New ones start elsewhere.",
+            sessions: { title: "Sessions", description: "Starts and hosts sessions, workflows and delegated runs." },
+            broker: { title: "Credential broker", description: "Lends connected provider accounts to your other machines." },
+            intake: { title: "Work intake", description: "Runs channels, webhooks and triggers that start work." },
+            deployments: { title: "Deployments", description: "Runs deployments, local services and backups." },
+            workspaces: { title: "Workspaces", description: "Syncs workspaces and runs project jobs." },
+            relay: { title: "Relay", description: "Relays peer connections, service exports and SSH tunnels." },
+            memory: { title: "Memory", description: "Indexes sessions for memory search." },
+            voice: { title: "Voice", description: "Runs local voice models." },
+            devices: { title: "Local tools", description: "Browser, computer use, simulators and process tools." },
+        },
         description: 'Start sessions here and see what runs on this machine.',
         placeholderTitle: 'Machine',
         online: 'Online',
@@ -26,6 +45,7 @@ export const english = {
             notAnswering: ({ machine }: { machine: string }) => `${machine} isn't answering. Try again in a moment.`,
             removed: ({ machine }: { machine: string }) => `${machine} was removed from your account.`,
             replaced: ({ machine }: { machine: string }) => `${machine} was replaced by a newer machine.`,
+            sessionsOff: ({ machine }: { machine: string }) => `Sessions are off on ${machine}. Edit roles in Security to turn them on.`,
         },
         openTerminalAction: "Open terminal",
         terminalSheetTitle: ({ machine }: { machine: string }) => `Terminal on ${machine}`,

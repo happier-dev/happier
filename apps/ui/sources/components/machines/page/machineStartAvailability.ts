@@ -2,6 +2,8 @@ import type { MachineSpawnReadiness } from '@/sync/domains/machines/identity/res
 import { t } from '@/text';
 
 import type { MachinePageTabId } from './machinePageTabQuery';
+import { machinePageHref, type MachinePageTarget } from './machinePageHref';
+import type { MachinesDoor } from './machinesDoor';
 
 /**
  * Why the Machine page's Start session is disabled, in words, from the canonical spawn readiness (MR6: a disabled
@@ -14,6 +16,7 @@ export function describeMachineStartUnavailable(readiness: MachineSpawnReadiness
         case 'rpcUnavailable': return t('machineDetailPage.startUnavailable.notAnswering', { machine });
         case 'revoked': return t('machineDetailPage.startUnavailable.removed', { machine });
         case 'replaced': return t('machineDetailPage.startUnavailable.replaced', { machine });
+        case 'roleInactive': return t('machineDetailPage.startUnavailable.sessionsOff', { machine });
         case 'ready':
         case 'unknown':
         case 'missing':
@@ -31,4 +34,9 @@ export function machineHeaderPrimary(input: Readonly<{ tab: MachinePageTabId; on
     if (input.tab !== 'overview') return null;
     if (input.needsYou) return 'needsYou';
     return input.online ? 'startSession' : null;
+}
+
+/** Where "Edit roles" opens: the Machine's Security tab, whose Roles section turns Sessions back on. */
+export function machineEditRolesHref(door: MachinesDoor, target: MachinePageTarget): string {
+    return machinePageHref({ door, target, tab: { id: 'security' } });
 }

@@ -26,7 +26,9 @@ import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { describeMachineStartUnavailable, machineHeaderPrimary } from './machineStartAvailability';
+import { describeMachineStartUnavailable, machineEditRolesHref, machineHeaderPrimary } from './machineStartAvailability';
+import { useMachinesDoor } from './machinesDoor';
+import { executeWorkspaceUiAction } from '@/components/appShell/workspace/workspaceActionRuntime';
 import type { MachinePageTabId } from './machinePageTabQuery';
 import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -196,10 +198,18 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         [machine, target.machineId, target.online, machineAccountScope],
     );
     // Why Start session is disabled, said at the button (MR6), from the same readiness owner that disabled it.
-    const startUnavailableReason = machineCanSpawn || !machine ? undefined : describeMachineStartUnavailable(
-        target.online === false ? { status: 'offline', machineId: machine.id }
-            : resolveMachineSpawnReadiness({ machine, selectedMachineId: target.machineId, scope: machineAccountScope }),
-        target.machineSentenceName);
+    const startReadiness = machineCanSpawn || !machine ? null
+        : resolveMachineSpawnReadiness({ machine, selectedMachineId: target.machineId, scope: machineAccountScope });
+    const startUnavailableReason = startReadiness ? describeMachineStartUnavailable(startReadiness, target.machineSentenceName) : undefined;
+    // Sessions are off on this Machine: the recovery is one tap away, through the canonical tab Action (machine roles).
+    const door = useMachinesDoor();
+    const editRolesHref = startReadiness?.status === 'roleInactive' && target.machineId
+        ? machineEditRolesHref(door, { machineId: target.machineId, serverId: target.serverId }) : null;
+    const handleEditRoles = React.useCallback(() => {
+        if (!editRolesHref) return;
+        void executeWorkspaceUiAction({ actionId: 'workspace.tabs.open', input: { href: editRolesHref, replace: true } },
+            href => router.push(href));
+    }, [editRolesHref, router]);
     const encryptionMode = useAccountEncryptionMode({
         enabled: !target.isServerSwitching && areServerProfileIdentifiersEquivalent(target.activeServerId, target.serverId),
     });
@@ -336,6 +346,14 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                         disabledReason={startUnavailableReason}
                         onPress={handleStartSession}
                     />
+                    {editRolesHref ? (
+                        <RoundButton
+                            testID="machine-detail-edit-roles"
+                            display="secondary"
+                            title={t('machineDetailPage.roles.editAction')}
+                            onPress={handleEditRoles}
+                        />
+                    ) : null}
                     {canOpenTerminal && !terminalInMenu ? (
                         <RoundButton
                             testID="machine-detail-open-terminal"
