@@ -1149,6 +1149,7 @@ test('Vitest script aliases reuse payload policy while opaque scripts retain run
     hooked: 'vitest run --config vitest.config.ts',
     prehooked: 'node before.mjs',
   } }));
+  copyFileSync(fileURLToPath(new URL('../../../../../packages/triage-sources/vitest.config.ts', import.meta.url)), join(cwd, 'vitest.config.ts'));
   const options = { repoRoot: fixture.root, cwd };
   const expected = await commandPolicy.resolvePackageCommandPolicy(['vitest', 'run', '--config', 'vitest.config.ts', 'src/plain.test.ts'], options);
   assert.equal(expected.kind, 'source-test');
@@ -1278,14 +1279,14 @@ test('verified plugin Vitest configs skip publication while dist configs retain 
       assert.equal(native.stdout, 'source-test,');
     });
   }
-  // OnePassword still has a partial hand-written resolver and needs emitted preparation.
+  // SOURCE-TEST-CLASS-1112: the shared resolver completes OnePassword's source graph.
   const partialResolverArgs = ['pnpm', '--dir', 'packages/plugins/onepassword', 'exec', 'vitest', 'run'];
-  assert.equal(resolveRemoteCommandPolicy(partialResolverArgs, { cwd: root }).kind, 'runtime');
+  assert.equal(resolveRemoteCommandPolicy(partialResolverArgs, { cwd: root }).kind, 'source-test');
   if (process.platform !== 'win32') {
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
       'policy', artifact, root, ...partialResolverArgs], { encoding: 'utf8' });
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, 'runtime');
+    assert.equal(native.stdout, 'source-test');
   }
   const cwd = fixture.path('packages/plugins/codex');
   await mkdir(cwd, { recursive: true });
@@ -1506,13 +1507,14 @@ test('verified Plugin SDK Vitest configs skip publication while emitted configs 
     });
   }
   for (const config of ['vitest.source.config.ts', './vitest.source.config.ts', 'vitest.declaration-closure.config.ts', 'vitest.external-fixture.config.ts', 'vitest.facade-current.config.ts']) {
+    const expected = config.includes('source.config') || config.includes('facade-current') ? 'source-test' : 'runtime';
     const args = ['vitest', 'run', `--config=${config}`];
-    assert.equal(resolveRemoteCommandPolicy(args, { cwd }).kind, 'runtime', config);
+    assert.equal(resolveRemoteCommandPolicy(args, { cwd }).kind, expected, config);
     if (process.platform === 'win32') continue;
     const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$3; shift 3; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
       'policy', artifact, root, cwd, ...args], { encoding: 'utf8' });
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, 'runtime', config);
+    assert.equal(native.stdout, expected, config);
   }
 });
 
@@ -1527,6 +1529,7 @@ test('verified UI Vitest configs skip emitted preparation in both dispatchers', 
     'vitest.gesture-web.config.ts', 'vitest.integration.config.ts',
     'vitest.legend-native.config.ts', 'vitest.legend-fabric.config.ts',
     'vitest.perf-newchat-baseline.config.ts', 'vitest.r9-tail.config.ts',
+    'vitest.artifact-cache.config.ts',
   ];
   for (const dispatcher of ['javascript', 'native']) {
     if (dispatcher !== 'javascript' && process.platform === 'win32') continue;
@@ -1551,10 +1554,8 @@ test('verified UI Vitest configs skip emitted preparation in both dispatchers', 
       });
     }
   }
-  // Partial resolvers and overrides must retain emitted preparation; a config
-  // name or inherited source resolver alone cannot establish this contract.
+  // Unknown configs and explicit resolution overrides retain emitted preparation.
   for (const args of [
-    ['--config=vitest.artifact-cache.config.ts'],
     ['--config=vitest.unknown.config.ts'],
     ['--config=../cli/vitest.gesture-web.config.ts'],
     ['--config=vitest.gesture-web.config.ts', '--root=../cli'],
@@ -2091,14 +2092,14 @@ test('the real UI hit area native probe has no workspace dist demand', async () 
   assert.deepEqual(commandPolicy.resolveCommandWorkspaceLocks(policy, repoRoot), []);
 });
 
-test('complete source Vitest resolvers skip publication while partial resolvers and overrides retain preparation', async () => {
+test('shared source Vitest resolvers skip publication while emitted configs and overrides retain preparation', async () => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/u, '');
   const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeCommandPolicy());
   for (const component of ['apps/server', 'packages/cli-common', 'packages/sdk', 'packages/embed', 'packages/channels-protocol', 'packages/email-transports-protocol', 'packages/plugins/channels', 'packages/plugins/channel-email', 'packages/plugins/channel-telegram', 'packages/plugins/channel-discord', 'packages/plugins/scm-github', 'packages/plugins/scm-gitlab', 'packages/plugins/app-context', 'packages/plugins/inspector']) {
     const args = ['node', 'node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.config.ts', 'src/ingress.test.ts'];
     const cases = [
-      { args, kind: ['apps/server', 'packages/plugins/scm-github'].includes(component) ? 'source-test' : 'runtime' },
+      { args, kind: component === 'packages/embed' ? 'runtime' : 'source-test', heavyClass: component === 'packages/plugins/channels' ? 'focused-validation' : 'validation' },
       ...['--config=vitest.integration.config.ts', '--root=../other', '--workspace=custom.workspace.ts', '--project=artifact']
         .map(override => ({ args: [...args, override], kind: component === 'apps/server' && override === '--config=vitest.integration.config.ts' ? 'source-test' : 'runtime' })),
       ...(component === 'apps/server' ? [{
@@ -2162,7 +2163,7 @@ test('confirmed workspace-source configs skip dist preparation in both dispatche
     });
   }
   for (const component of ['packages/plugins/machine-docker-sandboxes']) {
-    assert.equal(resolveRemoteCommandPolicy(['pnpm', 'exec', 'vitest', 'run'], { repoRoot: root, cwd: join(root, component) }).kind, 'runtime');
+    assert.equal(resolveRemoteCommandPolicy(['pnpm', 'exec', 'vitest', 'run'], { repoRoot: root, cwd: join(root, component) }).kind, 'source-test');
   }
 });
 
@@ -2570,6 +2571,7 @@ test('runtime validation placement includes canonical preparation demand without
         typecheck: 'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit',
       } }));
   }
+  copyFileSync(fileURLToPath(new URL('../../../../../packages/plugin-sdk/vitest.config.ts', import.meta.url)), join(root, 'packages/plugin-sdk/vitest.config.ts'));
   const options = { repoRoot: root, env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' } };
   const runtime = await commandPolicy.resolvePackageCommandPolicy(['pnpm', 'run', 'test:integration'], { ...options, cwd: join(root, 'apps/consumer') });
   assert.equal(runtime.heavyClass, 'validation', 'only the test payload reserves the validation envelope');
@@ -4013,6 +4015,7 @@ test('public source shard entrypoints retain source preparation through admissio
     [['node', 'apps/ui/scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], '.', 'apps/ui'],
     [['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'apps/cli', 'apps/cli'],
     [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.integration.config.ts'], 'apps/ui', 'apps/ui'],
+    [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.artifact-cache.config.ts'], 'apps/ui', 'apps/ui'],
     [['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], '.', 'apps/ui'],
   ]) {
     const args = ['apps/stack/bin/hstack-exec', '--heavyweight-admission',
@@ -4023,7 +4026,6 @@ test('public source shard entrypoints retain source preparation through admissio
   }
   for (const [args, cwd] of [
     [['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit', '--config', 'vitest.integration.config.ts'], '.'],
-    [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.artifact-cache.config.ts'], 'apps/ui'],
     [['node', 'custom/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'apps/ui'],
     [['node', 'scripts/runVitestShards.mjs'], 'apps/stack'],
   ]) assert.equal(resolveRemoteValidationKind(args, { cwd }), 'runtime', args.join(' '));
@@ -5348,14 +5350,14 @@ test('entry-load preparation emits runtime outputs without a strict type verdict
 });
 
 
-test('agents source tests skip publication while ElevenLabs retains runtime in both dispatchers', async t => {
+test('agents and ElevenLabs shared source resolvers skip publication in both dispatchers', async t => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   const fixture = await createTempFixture(t, { prefix: 'qualified-source-configs-' });
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
   for (const component of ['packages/agents', 'packages/plugins/elevenlabs']) {
     const cwd = join(root, component);
-    const expected = component === 'packages/agents' ? 'source-test' : 'runtime';
+    const expected = 'source-test';
     const requests = [
       { cwd: root, args: ['pnpm', '--dir', component, 'exec', 'vitest', 'run', 'src/example.test.ts'] },
       { cwd, args: ['pnpm', 'exec', 'vitest', 'run'] },

@@ -520,3 +520,14 @@ test('ordinary workspace-source Vitest configs use the canonical resolver instea
         }
     }
 });
+
+// SOURCE-TEST-CLASS-1112: a source SDK must not leak through to warm cli-common dist.
+test('source plugin resolves transitive SDK dependencies without emitted packages', () => {
+    const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+    const plugin = createWorkspacePackageSourcesPlugin([
+        { packageName: '@happier-dev/plugin-sdk', packageSourceRoot: resolve(repoRoot, 'packages/plugin-sdk/src') },
+    ]);
+    assert.equal(plugin.resolveId('@happier-dev/cli-common/tempDirs',
+        resolve(repoRoot, 'packages/plugin-sdk/src/runtime/tempTextFile.ts')),
+        resolve(repoRoot, 'packages/cli-common/src/tempDirs/index.ts'));
+});

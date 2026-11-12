@@ -1,14 +1,33 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-/** Recognize the CLI's complete workspace resolver and configs that retain it.
- * Partial/plugin-replacing configs and unknown setup expressions keep runtime
- * preparation. Read declarations only; loading Vitest would run global setup. */
-export function readVitestSourcePreparation(repoRoot, configPath, isKnownSourceConfig) {
-  const cliSourceResolver = resolve(repoRoot, 'apps/cli/scripts/vitestWorkspacePackageResolution.ts');
+/** Read resolver declarations without evaluating configs or running global setup. */
+export function readVitestSourcePreparation(repoRoot, configPath) {
+  const sourceResolver = resolve(repoRoot, 'scripts/testing/vitestWorkspacePackageResolution.ts');
+  const hasSourcePlugin = (path, source, name, symbolVisits = new Set()) => {
+    const key = `${path}:${name}`;
+    if (symbolVisits.has(key)) return false;
+    symbolVisits.add(key);
+    for (const match of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]((?:\.\.?\/)[^'"]+)['"]/gu)) {
+      for (const binding of match[1].split(',').map(value => value.trim())) {
+        const [imported, local = imported] = binding.split(/\s+as\s+/u);
+        if (local !== name) continue;
+        const target = resolve(dirname(path), match[2].replace(/\.ts$/u, '') + '.ts');
+        if (target === sourceResolver) return imported === 'createWorkspacePackageSourcesPlugin';
+        try { return hasSourcePlugin(target, readFileSync(target, 'utf8'), imported, symbolVisits); }
+        catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+      }
+    }
+    const declaration = new RegExp(`\\b(?:const|let)\\s+${name}\\s*=\\s*([\\s\\S]*?)(?:\\n\\};|;(?=\\s*(?:export|const|let|$)))`, 'u').exec(source);
+    if (!declaration) return false;
+    const expression = declaration[1];
+    for (const call of expression.matchAll(/\b(\w+)\s*(?:\(|\.resolveId\s*\()/gu)) {
+      if (hasSourcePlugin(path, source, call[1], symbolVisits)) return true;
+    }
+    return false;
+  };
   const visited = new Set();
   const read = (path) => {
-    if (isKnownSourceConfig(path)) return { buildsDist: false };
     if (visited.has(path)) return null;
     visited.add(path);
     let source;
@@ -18,24 +37,24 @@ export function readVitestSourcePreparation(repoRoot, configPath, isKnownSourceC
       throw error;
     }
     const hasPlugins = /\bplugins\s*:/u.test(source);
-    const resolverImport = /import\s*\{[^}]*\bworkspacePackageSourcesPlugin\b[^}]*\}\s*from\s*['"]([^'"]+)['"]/u.exec(source);
-    const directResolver = resolverImport
-      && resolve(dirname(path), resolverImport[1].replace(/\.ts$/u, '') + '.ts') === cliSourceResolver
-      && /\bplugins\s*:\s*\[\s*workspacePackageSourcesPlugin\s*[,\]]/u.test(source);
+    const pluginList = /\bplugins\s*:\s*\[([\s\S]*?)\]/u.exec(source);
+    const directResolver = pluginList && [...pluginList[1].matchAll(/\b(\w+)\b/gu)]
+      .some(match => hasSourcePlugin(path, source, match[1]));
     let inherited;
     if (!directResolver) {
-      for (const match of source.matchAll(/import\s+(\w+)\s+from\s+['"]((?:\.\.?\/)[^'"]*vitest(?:\.[\w-]+)*\.config)(?:\.ts)?['"]/gu)) {
+      for (const match of source.matchAll(/import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]((?:\.\.?\/)[^'"]*vitest(?:\.[\w-]+)*\.config)(?:\.ts)?['"]/gu)) {
+        const baseName = new RegExp(`\\bconst\\s+(\\w+)\\s*=\\s*${match[1]}(?:\\s+as\\s+[^;]+)?;`, 'u').exec(source)?.[1] ?? match[1];
         // Forwarding the complete plugin list preserves the source resolver
         // without inheriting the base config's test/globalSetup options.
-        if (new RegExp(`\\bplugins\\s*:\\s*${match[1]}\\.plugins\\s*[,}]`, 'u').test(source)) {
+        if (new RegExp(`\\bplugins\\s*:\\s*(?:${baseName}\\.plugins\\s*[,}]|\\[\\s*\\.\\.\\.\\(?${baseName}\\.plugins\\b)`, 'u').test(source)) {
           const base = read(resolve(dirname(path), `${match[2]}.ts`));
           if (base && !base.buildsDist) { inherited = base; break; }
         }
-        const spreadsBase = new RegExp(`\\.\\.\\.${match[1]}\\s*[,}]`, 'u').test(source);
-        const mergesBase = new RegExp(`\\bmergeConfig\\(\\s*${match[1]}\\s*,`, 'u').test(source)
+        const spreadsBase = new RegExp(`\\.\\.\\.${baseName}\\s*[,}]`, 'u').test(source);
+        const mergesBase = new RegExp(`\\bmergeConfig\\(\\s*${baseName}\\s*,`, 'u').test(source)
           && /import\s*\{[^}]*\bmergeConfig\b[^}]*\}\s*from\s*['"]vitest\/config['"]/u.test(source);
         if (!spreadsBase && !mergesBase) continue;
-        if (hasPlugins && !new RegExp(`\\.\\.\\.\\(?${match[1]}\\.plugins\\b`, 'u').test(source)) continue;
+        if (hasPlugins && !mergesBase && !new RegExp(`\\.\\.\\.\\(?${baseName}\\.plugins\\b`, 'u').test(source)) continue;
         inherited = read(resolve(dirname(path), `${match[2]}.ts`));
         if (inherited) break;
       }

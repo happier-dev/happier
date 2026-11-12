@@ -8,14 +8,12 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { resolveRemoteCommandPolicy, resolvePackageCommandPolicy, renderNativeCommandPolicy } from './remote_commands.mjs';
 import { resolveRemoteValidationPreparationComponents } from './validation_preparation_policy.mjs';
 
-test('partial source resolvers retain dist preparation for their emitted protocol dependencies', async t => {
+test('shared source resolvers complete their transitive graph while emitted configs retain preparation', async t => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   const fixture = await createTempFixture(t, { prefix: 'partial-vitest-preparation-' });
   const artifact = fixture.path('policy.sh');
   await writeFile(artifact, renderNativeCommandPolicy());
-  // These configs mix Protocol source with emitted SDK/deployment-protocol
-  // imports. Skipping preparation loads stale JS on a warm replica
-  // and fails missing imports on a cold replica, regardless of declarations.
+  // SOURCE-TEST-CLASS-1112: the shared resolver now closes transitive source imports.
   for (const component of [
     'apps/bootstrap', 'packages/agents', 'packages/channels-protocol', 'packages/deployment-protocol',
     'packages/cli-common', 'packages/embed', 'packages/sdk', 'packages/session-core',
@@ -25,25 +23,25 @@ test('partial source resolvers retain dist preparation for their emitted protoco
       'machine-boat', 'machine-crabbox', 'machine-cua', 'machine-fly', 'machine-lima',
       'machine-lume', 'machine-vercel', 'openai', 'xai', 'channel-discord', 'channel-email', 'channel-slack', 'channel-telegram',
       'channels', 'deployment-templates', 'inspector', 'onepassword',
-      'channels', 'deployment-templates', 'inspector', 'onepassword',
       'scm-azure-devops', 'scm-bitbucket', 'scm-gitlab'].map(name => `packages/plugins/${name}`),
   ]) {
     await t.test(component, () => {
       const args = ['pnpm', '--dir', component, 'exec', 'vitest', 'run'];
       const policy = resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: root });
-      assert.equal(policy.kind, 'runtime');
-      assert.deepEqual(resolveRemoteValidationPreparationComponents(policy.component, policy.kind), [component]);
+      const expected = component === 'packages/embed' ? 'runtime' : 'source-test';
+      assert.equal(policy.kind, expected);
+      assert.deepEqual(resolveRemoteValidationPreparationComponents(policy.component, policy.kind), expected === 'runtime' ? [component] : []);
       if (process.platform === 'win32') return;
       const native = spawnSync('/bin/sh', ['-c',
         '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
         'policy', artifact, root, ...args], { encoding: 'utf8' });
       assert.equal(native.status, 0, native.stderr);
-      assert.equal(native.stdout, 'runtime');
+      assert.equal(native.stdout, expected);
     });
   }
 });
 
-test('selected source configs prepare emitted dependencies too', async t => {
+test('selected shared source configs need no emitted dependency producer', async t => {
   const root = fileURLToPath(new URL('../../../../../', import.meta.url));
   const fixture = await createTempFixture(t, { prefix: 'selected-source-preparation-' });
   const artifact = fixture.path('policy.sh');
@@ -57,18 +55,19 @@ test('selected source configs prepare emitted dependencies too', async t => {
   ]) {
     const args = ['pnpm', '--dir', component, 'exec', 'vitest', 'run', '--config', config];
     const policy = resolveRemoteCommandPolicy(args, { repoRoot: root, cwd: root });
-    assert.equal(policy.kind, 'runtime', component);
-    assert.deepEqual(resolveRemoteValidationPreparationComponents(policy.component, policy.kind), [component]);
+    const expected = 'source-test';
+    assert.equal(policy.kind, expected, component);
+    assert.deepEqual(resolveRemoteValidationPreparationComponents(policy.component, policy.kind), []);
     if (process.platform === 'win32') continue;
     const native = spawnSync('/bin/sh', ['-c',
       '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
       'policy', artifact, root, ...args], { encoding: 'utf8' });
     assert.equal(native.status, 0, native.stderr);
-    assert.equal(native.stdout, 'runtime');
+    assert.equal(native.stdout, expected);
   }
   const triageAlias = await resolvePackageCommandPolicy([
     'pnpm', '--dir', 'packages/triage-protocol', 'run', 'test:source', 'src/testing/v1/conformance.test.ts',
   ], { repoRoot: root, cwd: root });
-  assert.equal(triageAlias.kind, 'runtime');
+  assert.equal(triageAlias.kind, 'source-test');
   assert.equal(triageAlias.component, 'packages/triage-protocol');
 });

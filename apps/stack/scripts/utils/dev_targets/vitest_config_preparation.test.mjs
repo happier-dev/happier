@@ -19,7 +19,8 @@ async function siblingFixture(t) {
     'apps/cli/vitest.integration.config.ts',
     'apps/cli/scripts/vitestWorkspacePackageResolution.ts',
     'apps/cli/src/test-setup.unit.ts', 'apps/cli/src/test-setup.integration.ts',
-    'apps/ui/vitest.integration.config.ts', 'apps/server/vitest.config.ts',
+    'apps/ui/vitest.integration.config.ts', 'apps/ui/vitest.config.ts',
+    'apps/server/vitest.config.ts', 'apps/server/vitestWorkspacePackageResolution.ts',
   ]) {
     await mkdir(dirname(fixture.path(file)), { recursive: true });
     await copyFile(join(repoRoot, file), fixture.path(file));
@@ -95,4 +96,25 @@ test('shared-only sibling setup honors the existing explicit skip-build contract
   const skipped = probe(fixture.root, 'apps/cli', 'vitest.config.ts', { skipBuild: '1' });
   assert.equal(skipped.kind, 'source-test');
   assert.equal(skipped.workspaceLock, '');
+});
+
+// SOURCE-TEST-CLASS-1112: selection must follow the installed resolver, not a package list.
+test('shared source resolver configs skip package-dist preparation in both dispatchers', async t => {
+  const { resolveRemoteCommandPolicy, renderNativeCommandPolicy } = await import('./remote_commands.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'shared-source-policy-' });
+  await writeFile(fixture.path('policy.sh'), renderNativeCommandPolicy());
+  for (const [component, config] of [
+    ['packages/plugins/channel-telegram', 'vitest.config.ts'],
+    ['packages/triage-sources', 'vitest.config.ts'],
+    ['packages/plugin-sdk', 'vitest.source.config.ts'],
+  ]) {
+    const args = ['pnpm', '--dir', component, 'exec', 'vitest', 'run', '--config', config, 'src/plain.test.ts'];
+    assert.equal(resolveRemoteCommandPolicy(args, { repoRoot, cwd: repoRoot }).kind, 'source-test', component);
+    if (process.platform === 'win32') continue;
+    const native = spawnSync('/bin/sh', ['-c',
+      '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s" "$policy_kind"',
+      'policy', fixture.path('policy.sh'), repoRoot, ...args], { encoding: 'utf8' });
+    assert.equal(native.status, 0, native.stderr);
+    assert.equal(native.stdout, 'source-test', component);
+  }
 });

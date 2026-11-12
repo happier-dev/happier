@@ -52,22 +52,6 @@ const COMMAND_ENVIRONMENT = Object.freeze({
 
 export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
   packageManagerCommands: Object.freeze(['npm', 'npx', 'pnpm', 'yarn']),
-  // Verified default configs resolve their workspace imports from source.
-  // Merely importing the resolver is insufficient: it maps only the declared
-  // packages, so partial configs keep emitted preparation (for example the
-  // machine-docker-sandboxes and Pi defaults). Graphs mixing Protocol source
-  // with emitted SDK/deployment-protocol also need dist preparation.
-  sourceTestComponents: Object.freeze([
-    'apps/server', 'apps/ui',
-    'packages/agents', 'packages/deployments', 'packages/forge-ci', 'packages/plugin-ui',
-    ...['backup-destinations', 'claude', 'cloudflare-ai-gateway',
-      'deepseek', 'deploy-cloudflare', 'deploy-vercel', 'deployment-neon',
-      'deployment-supabase', 'devcontainer', 'grok',
-      'kimi', 'machine-digitalocean', 'machine-hetzner', 'machine-modal', 'ohmypi', 'openrouter',
-      'posthog', 'scm-git', 'scm-github',
-      'sentry', 'triage', 'vercel-ai-gateway'].map(name => `packages/plugins/${name}`),
-  ]),
-  sourceTestConfigs: Object.freeze(['vitest.config.ts']),
   compilerNativeTestFiles: COMPILER_NATIVE_TEST_FILES,
   compilerTestSuites: COMPILER_TEST_SUITES,
   sourceConditionNativeTestPaths: Object.freeze([
@@ -123,36 +107,6 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'apps/stack/scripts/utils/dev_targets/runtime_observer.test.mjs',
     'apps/stack/scripts/utils/dev/daemon_watch_resilience.test.mjs',
     'apps/stack/scripts/stack_info_runtime_snapshot.test.mjs',
-  ]),
-  // Keep eligibility paired with the verified resolver, not a plugin-wide
-  // config glob. SDK/Codex defaults register workspace sources directly; these
-  // specialized lanes retain the CLI in-memory source resolver unchanged.
-  // Unknown configs may consume emitted packages and retain preparation.
-  pluginSourceTestConfigs: Object.freeze({
-    'packages/plugin-sdk': Object.freeze(['vitest.config.ts']),
-    'packages/plugins/claude': Object.freeze(['vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/cliproxyapi': Object.freeze(['vitest.config.ts']),
-    'packages/plugins/codex': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts', 'vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/elevenlabs': Object.freeze(['vitest.config.ts']),
-    'packages/plugins/kilo': Object.freeze(['vitest.config.ts', 'vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/opencode': Object.freeze(['vitest.config.ts', 'vitest.mcpToolPolicy.config.ts']),
-    'packages/plugins/openai': Object.freeze(['vitest.config.ts']),
-    'packages/plugins/pi': Object.freeze(['vitest.config.ts', 'vitest.mcpApproval.config.ts']),
-    // Like Pi, Qwen derives the complete transitive host workspace source map.
-    'packages/plugins/qwen': Object.freeze(['vitest.config.ts']),
-    'packages/plugins/xai': Object.freeze(['vitest.config.ts']),
-  }),
-  // Server Vitest lanes share the workspace-source resolver. Derive their
-  // configs from the package so specialized lanes also skip dist publication.
-  serverSourceTestConfigs: Object.freeze(readdirSync(new URL('../../../../../apps/server/', import.meta.url))
-    .filter(name => /^vitest(?:\.[^.]+)*\.config\.ts$/u.test(name)).sort()),
-  // These retain the full UI base workspace-source resolver. Added aliases
-  // select installed third-party artifacts, never emitted workspace output.
-  // The artifact-cache lane has a partial resolver and keeps preparation.
-  uiSourceTestConfigs: Object.freeze([
-    'vitest.integration.config.ts', 'vitest.gesture-web.config.ts',
-    'vitest.legend-native.config.ts', 'vitest.legend-fabric.config.ts',
-    'vitest.perf-newchat-baseline.config.ts', 'vitest.r9-tail.config.ts',
   ]),
   sourceTestScripts: Object.freeze(['vitest', 'vitest:local']),
   formatterCheckFlags: Object.freeze(['--check', '--list-different', '--help', '-h', '--version', '-V']),
@@ -492,18 +446,10 @@ const FINAL_COMMAND_RULES = [
   // preparation would build the emitted closure and escalate their parent
   // validation reservation for the rest of the test run.
   { when: { kind: ['runtime'], component: ['apps/cli'], script: ['test', 'test:local', 'test:unit', 'test:unit:local', 'test:unit:vitest', 'test:unit:vitest:local'], config: ['vitest.config.ts'], resolverOverride: ['0'] }, set: { runnerKnown: '1' } },
-  { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
-  ...Object.entries(REMOTE_COMMAND_CLASSIFICATION.pluginSourceTestConfigs).map(([component, configs]) => ({
-    when: { kind: ['runtime'], runnerKnown: ['1'], component: [component], config: configs, resolverOverride: ['0'] },
-    set: { kind: 'source-test' },
-  })),
   // Native source prerequisites are staged under their own admitted producer
   // lease before the payload. Retaining it through tests prevents a nested
   // compiler from waiting for its legitimate larger resource envelope.
   { when: { kind: ['source-test'], component: ['apps/cli'], workerTool: ['vitest'] }, set: { workspaceLock: '' } },
-  // Verified UI and server lanes keep their workspace-source resolvers.
-  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/ui'], config: REMOTE_COMMAND_CLASSIFICATION.uiSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
-  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/server'], config: REMOTE_COMMAND_CLASSIFICATION.serverSourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   // These suites execute the canonical compiler or its API in test bodies.
   // Reserve the composed workload before starting the parent: placement-only
   // demand cannot cover nested admission. Refine focused file selections
@@ -900,12 +846,7 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
   if ((facts.component === 'apps/cli' || policy.kind === 'runtime') && policy.workerTool === 'vitest'
     && policy.runnerKnown === '1' && facts.resolverOverride === '0' && policy.generatorCheck === '0'
     && facts.config === commandBasename(facts.config)) {
-    const preparation = readVitestSourcePreparation(repoRoot, join(repoRoot, facts.component, facts.config), path => {
-      const baseFacts = { ...facts, component: normalizeCommandPath(relative(repoRoot, dirname(path))), config: commandBasename(path) };
-      const basePolicy = applyCommandRules(baseFacts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
-      applyCommandRules(baseFacts, FINAL_COMMAND_RULES, basePolicy);
-      return basePolicy.kind === 'source-test';
-    });
+    const preparation = readVitestSourcePreparation(repoRoot, join(repoRoot, facts.component, facts.config));
     const skipBuild = isCliTestBuildSkipped(env);
     if (preparation && (!preparation.buildsDist || skipBuild)) {
       policy.kind = 'source-test';

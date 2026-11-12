@@ -589,41 +589,8 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_script" = 'test' ] || [ "$policy_script" = 'test:local' ] || [ "$policy_script" = 'test:unit' ] || [ "$policy_script" = 'test:unit:local' ] || [ "$policy_script" = 'test:unit:vitest' ] || [ "$policy_script" = 'test:unit:vitest:local' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_runnerKnown='1'
   fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/server' ] || [ "$policy_component" = 'apps/ui' ] || [ "$policy_component" = 'packages/deployments' ] || [ "$policy_component" = 'packages/forge-ci' ] || [ "$policy_component" = 'packages/plugin-ui' ] || [ "$policy_component" = 'packages/plugins/backup-destinations' ] || [ "$policy_component" = 'packages/plugins/claude' ] || [ "$policy_component" = 'packages/plugins/cloudflare-ai-gateway' ] || [ "$policy_component" = 'packages/plugins/deepseek' ] || [ "$policy_component" = 'packages/plugins/deploy-cloudflare' ] || [ "$policy_component" = 'packages/plugins/deploy-vercel' ] || [ "$policy_component" = 'packages/plugins/deployment-neon' ] || [ "$policy_component" = 'packages/plugins/deployment-supabase' ] || [ "$policy_component" = 'packages/plugins/devcontainer' ] || [ "$policy_component" = 'packages/plugins/grok' ] || [ "$policy_component" = 'packages/plugins/kimi' ] || [ "$policy_component" = 'packages/plugins/machine-digitalocean' ] || [ "$policy_component" = 'packages/plugins/machine-hetzner' ] || [ "$policy_component" = 'packages/plugins/machine-modal' ] || [ "$policy_component" = 'packages/plugins/ohmypi' ] || [ "$policy_component" = 'packages/plugins/openrouter' ] || [ "$policy_component" = 'packages/plugins/posthog' ] || [ "$policy_component" = 'packages/plugins/scm-git' ] || [ "$policy_component" = 'packages/plugins/scm-github' ] || [ "$policy_component" = 'packages/plugins/sentry' ] || [ "$policy_component" = 'packages/plugins/triage' ] || [ "$policy_component" = 'packages/plugins/vercel-ai-gateway' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugin-sdk' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/claude' ]; } && { [ "$policy_config" = 'vitest.mcpToolPolicy.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/cliproxyapi' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/codex' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.mcpApproval.config.ts' ] || [ "$policy_config" = 'vitest.mcpToolPolicy.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/kilo' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.mcpToolPolicy.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/opencode' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.mcpToolPolicy.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/pi' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.mcpApproval.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'packages/plugins/qwen' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
   if { [ "$policy_kind" = 'source-test' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_workerTool" = 'vitest' ]; }; then
     policy_workspaceLock=''
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/ui' ]; } && { [ "$policy_config" = 'vitest.integration.config.ts' ] || [ "$policy_config" = 'vitest.gesture-web.config.ts' ] || [ "$policy_config" = 'vitest.legend-native.config.ts' ] || [ "$policy_config" = 'vitest.legend-fabric.config.ts' ] || [ "$policy_config" = 'vitest.perf-newchat-baseline.config.ts' ] || [ "$policy_config" = 'vitest.r9-tail.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
-  fi
-  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/server' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.dbcontract.config.ts' ] || [ "$policy_config" = 'vitest.externalSessionMaterialize.integration.config.ts' ] || [ "$policy_config" = 'vitest.integration.config.ts' ] || [ "$policy_config" = 'vitest.ui.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
-    policy_kind='source-test'
   fi
   if { [ "$policy_workerTool" = 'vitest' ]; } && { [ "$policy_generatorCheck" = '0' ]; } && { [ "$policy_admissionWrapper" = '0' ]; } && { [ "$policy_resolverOverride" = '0' ]; } && { [ "$policy_heavyClass" = 'validation' ]; } && { [ "$policy_component" = 'packages/plugin-sdk' ]; } && { [ "$policy_config" = 'vitest.config.ts' ] || [ "$policy_config" = 'vitest.source.config.ts' ] || [ "$policy_config" = 'vitest.external-fixture.config.ts' ] || [ "$policy_config" = 'vitest.facade-current.config.ts' ]; }; then
     policy_heavyClass='compilation'

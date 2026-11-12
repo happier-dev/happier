@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import type { Alias } from 'vite';
+import { fileURLToPath } from 'node:url';
 
 import {
     pluginPackageNameToPackageId,
@@ -72,6 +73,15 @@ export function readHostWorkspacePackageSpecs(
         if (packageName.startsWith(pluginPrefix)) addWorkspacePackage(packageSpec(packageName, hostRoot));
     }
 
+    return readWorkspacePackageSourceClosure(repoRoot, [...workspacePackages.values()]);
+}
+
+/** Complete every source graph at the resolver owner, including transitive imports. */
+function readWorkspacePackageSourceClosure(
+    repoRoot: string,
+    seeds: readonly WorkspacePackageSpec[],
+): readonly WorkspacePackageSpec[] {
+    const workspacePackages = new Map(seeds.map(spec => [spec.packageName, spec]));
     const pending = [...workspacePackages.values()];
     for (let index = 0; index < pending.length; index += 1) {
         const owner = pending[index]!;
@@ -79,9 +89,15 @@ export function readHostWorkspacePackageSpecs(
             dependencies?: Readonly<Record<string, unknown>>;
         }>;
         for (const packageName of Object.keys(manifest.dependencies ?? {}).sort()) {
-            if (!packageName.startsWith(firstPartyPrefix) || workspacePackages.has(packageName)) continue;
-            const dependency = packageSpec(packageName, owner.packageName);
-            addWorkspacePackage(dependency);
+            if (!packageName.startsWith('@happier-dev/') || workspacePackages.has(packageName)) continue;
+            const packageId = packageName.slice('@happier-dev/'.length);
+            const packageSourceRoot = resolve(repoRoot, 'packages',
+                packageId.startsWith('plugins-') ? `plugins/${packageId.slice('plugins-'.length)}` : packageId, 'src');
+            if (!existsSync(packageSourceRoot)) {
+                throw new Error(`Missing source root for ${owner.packageName} workspace dependency ${packageName}: ${packageSourceRoot}`);
+            }
+            const dependency = { packageName, packageSourceRoot };
+            workspacePackages.set(packageName, dependency);
             pending.push(dependency);
         }
     }
@@ -280,6 +296,7 @@ export function createWorkspacePackageSourcesPlugin(
     name = 'happier-vitest-workspace-package-sources',
     options: WorkspacePackageSourceResolutionOptions = {},
 ) {
+    workspacePackages = readWorkspacePackageSourceClosure(fileURLToPath(new URL('../../', import.meta.url)), workspacePackages);
     return {
         name,
         enforce: 'pre' as const,
