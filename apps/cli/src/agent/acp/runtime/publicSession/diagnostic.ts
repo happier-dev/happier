@@ -3,6 +3,7 @@ import { AgentRuntimeDiagnosticDataV1Schema, AgentRuntimeJsonValueV1Schema } fro
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 } from '@happier-dev/protocol/runtime/agentSessionLimitsV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { readAcpRequestErrorCode } from '@/agent/acp/withRetry';
+import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 export function createPublicAcpDiagnostic(code: string, message?: string, error?: unknown): PluginDiagnosticData {
@@ -15,7 +16,9 @@ export function createPublicAcpDiagnostic(code: string, message?: string, error?
   const details = {
     ...(requestErrorCode !== null ? { requestErrorCode } : {}),
     ...(issue ? { v: 1, source: issue.source,
-      ...(issue.failureCause ? { failureCause: issue.failureCause } : {}),
+      failureCause: issue.failureCause ?? {
+        phase: 'turn', failureReason: 'unclassified_provider_error', ...readNativeStartupFailureDetail(error),
+      },
       ...(issue.source === 'usage_limit' && issue.usageLimit ? { usageLimit: issue.usageLimit } : {}),
     } : {}),
   };

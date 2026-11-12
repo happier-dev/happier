@@ -707,7 +707,7 @@ export function classifyPrimarySessionRuntimeIssue(
       ?? (providerFailure ? presentProviderCliRefusal(providerFailure).slice(0, 2).join(' ') : null)
       ?? buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests'
-        : source === 'agent_session_error' ? nativeFailurePreview ?? diagnosticPreview ?? SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source] : SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source]),
+        : source === 'agent_session_error' || source === 'agent_status_error' ? nativeFailurePreview ?? diagnosticPreview ?? SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source] : SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source]),
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
