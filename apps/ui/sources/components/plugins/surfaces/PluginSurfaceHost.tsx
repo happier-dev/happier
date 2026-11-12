@@ -2322,8 +2322,8 @@ function PluginSurfaceHostMount(props: Readonly<(
     // Publish each positive loading prerequisite used by the controller's
     // existing Machine gate. A failed read is an outage, not pending; Account
     // reads and surface activity remain independent of these Machine facts.
-    const machinePrerequisitesPending = !pluginExecution.unverified && ((needsMachineExecution && pluginExecution.loading)
-        || (mountedTargetSnapshotRequired && !mountedTargetReady && mountedTargetRead.phase === 'loading'));
+    const machinePrerequisitesPending = (needsMachineExecution && pluginExecution.loading)
+        || (mountedTargetSnapshotRequired && !mountedTargetReady && mountedTargetRead.phase === 'loading');
     const mountedTargetFallback = mountedTargetRead.phase === 'failed'
         ? resolveMountedTargetProjectionFallback(mountedTargetRead) : null;
     const daemonConnectionFailure = mountedTargetFallback?.state === 'unavailable'

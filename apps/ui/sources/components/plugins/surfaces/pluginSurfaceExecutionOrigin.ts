@@ -239,19 +239,13 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
                 && supply.phase === 'current' && supply.interactionEnabled
             ));
     }, [accountLifetime, params.entry, selectedSupply, selection.resolveExecutionOrigin]);
-    // The exact mounted supplier can enter establishment before the shell's
-    // committed selection publication catches up in layout. Its positive
-    // loading fact must accompany the fresh guard that already refuses it.
-    // Unknown availability is a refused read, not proof that an acquisition is
-    // running. The census/projection loading aggregate must not mask a known
-    // candidate's typed refusal. Selected suppliers still report establishment.
+    // Administration owns whether this candidate list is still loading.
+    // Its pending election can report unknown before the census settles.
     const unverified = selection.state.kind === 'unavailable'
         && selection.state.reasons.includes('unknown')
         && selection.candidates.length > 0;
-    const presentationSelection = React.useMemo(() => unverified && selection.loading
-        ? { ...selection, loading: false } : selection, [selection, unverified]);
-    const loading = !unverified && (selection.loading || projectionDemand.phase === 'loading'
-        || (selection.state.kind === 'selected' && selectedSupply?.phase === 'establishing'));
+    const loading = selection.loading || projectionDemand.phase === 'loading'
+        || (selection.state.kind === 'selected' && selectedSupply?.phase === 'establishing');
     const retry = React.useCallback(async () => {
         const targets = [...new Map(selection.candidates.map(candidate => {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
@@ -266,5 +260,5 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         if (!accountLifetime?.isCurrent()) return;
         for (const target of targets) publishMachineContributionRegistryProjectionInvalidation(target, 'refresh');
     }, [accountLifetime, selection.candidates]);
-    return { selection: presentationSelection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent };
+    return { selection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent };
 }

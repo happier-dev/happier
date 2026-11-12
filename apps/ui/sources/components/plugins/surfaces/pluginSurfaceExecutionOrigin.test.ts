@@ -87,6 +87,44 @@ describe('plugin surface execution requirement', () => {
         }
     });
 
+    it('keeps an unresolved candidate list pending until the Machine inventory settles', async () => {
+        const serverIdentityId = 'srv_surface_pending';
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://surface-pending.example.test',
+            serverIdentityId, accountId: 'account-surface-pending', credentials: { token: `e30.${Buffer.from(JSON.stringify({
+                sub: 'account-surface-pending', provenance: { v: 1, kind: 'account', authority: 'present_user' }, tokenEpoch: 0,
+            })).toString('base64url')}.signature` }, request: async url => new URL(String(url)).pathname === '/v1/machines'
+                ? Response.json({ machines: [] }) : null });
+        const scope = captureActiveServerAccountScopeLifetime()!.scope;
+        const materialization = { serverIdentityId, machineId: 'pending-source', materializationId: 'pending-installation',
+            pluginId: 'acme.surface-pending', version: '1.0.0', sourceClass: 'registryPackage' as const, portableRelease: true,
+            enabled: true, trustState: 'trusted' as const, observedAt: 1, uiArtifacts: [] };
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 1, intentReads: [], materializations: [materialization], snapshots: [],
+        } });
+        storage.setState({ machines: {}, machineListByServerId: {},
+            machineListStatusByServerId: { [connection.home.id]: 'loading', [serverIdentityId]: 'loading' } });
+        const hook = await renderHook(() => usePluginSurfaceExecutionOrigin({ pluginId: materialization.pluginId,
+            projection: EMPTY_PLUGIN_UI_PROJECTION, enabled: true, includeMachineCandidates: false }));
+        try {
+            // Publish after cold restoration's census turn, through the real inventory owner.
+            await act(async () => storage.setState({ machines: {}, machineListByServerId: {},
+                machineListStatusByServerId: { [connection.home.id]: 'loading', [serverIdentityId]: 'loading' } }));
+            expect(hook.getCurrent().selection.candidates).toHaveLength(1);
+            expect(hook.getCurrent().selection.state).toMatchObject({ kind: 'unavailable', reasons: ['unknown'] });
+            expect(hook.getCurrent().selection.loading).toBe(true);
+            expect(hook.getCurrent().loading).toBe(true);
+            expect(hook.getCurrent().selection.canExecute).toBe(false);
+            await act(async () => storage.setState({ machineListByServerId: { [connection.home.id]: [], [serverIdentityId]: [] },
+                machineListStatusByServerId: { [connection.home.id]: 'idle', [serverIdentityId]: 'idle' } }));
+            expect(hook.getCurrent().selection.loading).toBe(false);
+            expect(hook.getCurrent().loading).toBe(false);
+            expect(hook.getCurrent().selection.canExecute).toBe(false);
+        } finally {
+            await hook.unmount();
+            clearPluginAccountAvailabilityProjection();
+        }
+    });
+
     it('binds through real Account and machine owners and rejects a replaced occurrence before rerender', async () => {
         const census = ['machine-source', 'machine-other-source'].map(id => createPlainMachineRowFixture({
             id, accountId: 'account-surface-source',
