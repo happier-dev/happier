@@ -66,10 +66,12 @@ test('the cited invocation-service owner really binds every published service id
 
   assert.equal(publishedIds.length > 0, true);
   assert.deepEqual(boundIds, publishedIds);
+  const previewServices = ['deploymentExecEnv', 'deploymentSource'];
   for (const id of publishedIds) {
+    assert.ok(Object.hasOwn(CAPABILITY_MATRIX_DECLARATIONS_V1.services, id), `missing service metadata: ${id}`);
     assert.equal(
       CAPABILITY_MATRIX_DECLARATIONS_V1.services[id].availabilityDisposition,
-      'available',
+      previewServices.includes(id) ? 'preview' : 'available',
       id,
     );
   }

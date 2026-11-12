@@ -1550,6 +1550,20 @@
       "availabilityDisposition": "available"
     },
     {
+      "serviceId": "deploymentExecEnv",
+      "property": "deploymentExecEnv",
+      "publicType": "DeploymentExecEnvPortV1",
+      "authorEntrypoints": [
+        "./exec"
+      ],
+      "realms": [
+        "daemon"
+      ],
+      "producer": "src/services/io.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "preview"
+    },
+    {
       "serviceId": "deploymentSource",
       "property": "deploymentSource",
       "publicType": "DeploymentSourceMaterializationPortV1",

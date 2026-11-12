@@ -102,6 +102,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     providers: available(),
     managedServices: available(),
     deploymentSource: preview(),
+    deploymentExecEnv: preview(),
     machineProvisioners: available(),
     sessions: available(),
     resources: available(),
