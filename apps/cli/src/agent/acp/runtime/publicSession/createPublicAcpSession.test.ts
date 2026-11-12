@@ -67,7 +67,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withCursorEmptyResponseFailure } from '../../../../../../../packages/plugins/cursor/src/agent/runtime/emptyResponse';
 import { buildAcpModelSuffixOptionControls } from '../definition/modelSuffixOption';
-import { normalizePluginDeclarativeAcpRuntime } from '@/agent/acp/runtime/definition/plugin';
+import { buildAntigravityAcpRuntimeOptions } from '../../../../../../../packages/plugins/antigravity/src/agent/runtime/factory';
 import { configuredAcpRuntimeConfiguration } from '@/agent/acp/runtime/definition/configured';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import { createHostDeclarativeAcpAgentRuntimeFactory } from '@/plugins/runtime/runner/createHostDeclarativeAcpAgentRuntimeFactory';
@@ -184,6 +184,16 @@ function writePublicComposerAgent(dir: string): string {
         { id: 'default', name: 'Default' }, { id: 'auto_edit', name: 'Auto edit' }, { id: 'yolo', name: 'YOLO' },
       ] });
       const ok = (id, result) => {
+        // A successful config setter returns the complete current catalog.
+        // An empty catalog would withdraw reviewDepth before the next update.
+        if (scenario === 'configuration-update' && result.configOptions) {
+          result.configOptions = [
+            { id: 'model', name: 'Model', type: 'select', currentValue: selectedModel,
+              options: [{ value: 'model-initial', name: 'Initial' }, { value: 'model-next', name: 'Next' }] },
+            { id: 'reviewDepth', name: 'Review depth', type: 'select', currentValue: selectedOptions.reviewDepth ?? 'brief',
+              options: [{ value: 'brief', name: 'Brief' }, { value: 'thorough', name: 'Thorough' }] },
+          ];
+        }
         if (result.sessionId && scenario === 'config-catalog') {
           result.configOptions = configCatalog;
           send({ jsonrpc: '2.0', method: 'session/update', params: {
@@ -318,7 +328,9 @@ function writePublicComposerAgent(dir: string): string {
                 : scenario === 'auth-dynamic-large'
                   ? { payload: 'x'.repeat(17_000) }
                   : undefined,
-              authMethods: scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')
+              authMethods: scenario.startsWith('agy-select-')
+                ? [{ id: 'oauth-personal', name: 'Google OAuth' }, { id: 'gemini-api-key', name: 'Gemini key' }]
+                : scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')
                 ? [{ id: 'oauth-personal', name: 'Google OAuth' }]
                 : scenario === 'grok-interject'
                 ? [{ id: 'cached_token', name: 'Grok cached token' }]
@@ -330,6 +342,13 @@ function writePublicComposerAgent(dir: string): string {
             });
           } else if (request.method === 'authenticate') {
             lifecycleMethods.push('authenticate');
+            if (scenario.startsWith('agy-select-')) {
+              const expected = scenario === 'agy-select-key' ? 'gemini-api-key' : 'oauth-personal';
+              if (scenario === 'agy-select-missing' || request.params.methodId !== expected) {
+                send({ jsonrpc: '2.0', id: request.id, error: { code: -32000, message: 'Authentication required' } });
+                continue;
+              }
+            }
             authenticated = request.params.methodId === 'cursor_login'
               || (scenario === 'grok-interject' && request.params.methodId === 'cached_token')
               || ((scenario.startsWith('agy-quota-') || scenario.startsWith('agy-auth-')) && request.params.methodId === 'oauth-personal');
@@ -1490,9 +1509,7 @@ describe('createPublicAcpSession', () => {
   it.each(['agy-auth-setup', 'agy-auth-required', 'agy-auth-wrong-code'])('retains the declared authentication setup category through the real composer (%s)', async scenario => {
     await withTempDir('public-acp-auth-diagnostic-', async dir => {
       const fixture = createFixture(dir, scenario);
-      const declaration = PluginAgentContributionV2Schema.parse(ANTIGRAVITY_PLUGIN_MANIFEST.contributes.agents?.[0]);
-      if (!('runtime' in declaration) || declaration.runtime.kind !== 'acp') throw new Error('Expected declared ACP runtime');
-      const { definition } = normalizePluginDeclarativeAcpRuntime(declaration.runtime);
+      const { definition } = buildAntigravityAcpRuntimeOptions({});
       const failure = await createPublicAcpSession({ kind: 'create', sessionId: 'auth-diagnostic', cwd: dir },
         { ...fixture.options, definition }, { ...fixture.dependencies, agentId: 'antigravity' })
         .catch((error: unknown) => error);
@@ -1516,9 +1533,7 @@ describe('createPublicAcpSession', () => {
       const fixture = createFixture(dir, scenario);
       const diagnostic = 'Usage Limit Reached\n\nYou have reached your current quota for this period.';
       const serviceId = 'happier.agent.antigravity/antigravity-account';
-      const declaration = PluginAgentContributionV2Schema.parse(ANTIGRAVITY_PLUGIN_MANIFEST.contributes.agents?.[0]);
-      if (!('runtime' in declaration) || declaration.runtime.kind !== 'acp') throw new Error('Expected declared ACP runtime');
-      const { definition } = normalizePluginDeclarativeAcpRuntime(declaration.runtime);
+      const { definition } = buildAntigravityAcpRuntimeOptions({});
       if (!definition?.usageLimitDiagnostic) throw new Error('Expected the provider quota diagnostic declaration');
       const session = await createPublicAcpSession({ kind: 'create', sessionId: 'selected-quota', cwd: dir,
         launchEnvironment: { unset: [], values: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'group', serviceId,
@@ -2775,6 +2790,21 @@ describe('createPublicAcpSession', () => {
     });
   });
 
+  it.each([
+    ['oauth', {}], ['native-import', {}], ['key', { GEMINI_API_KEY: 'fake-gemini-key' }], ['missing', {}],
+  ] as const)('selects Antigravity launch authentication through the real composer (%s)', async (mode, values) => {
+    await withTempDir('public-acp-agy-select-', async dir => {
+      const fixture = createFixture(dir, 'agy-select-' + (mode === 'native-import' ? 'oauth' : mode));
+      const { definition } = buildAntigravityAcpRuntimeOptions(values);
+      const opened = createPublicAcpSession({ kind: 'create', sessionId: 'agy-select', cwd: dir,
+        launchEnvironment: { values, unset: [] } }, { ...fixture.options, definition }, fixture.dependencies);
+      if (mode === 'missing') { await expect(opened).rejects.toThrow(); return; }
+      const session = await opened;
+      try { expect(session.getProviderSessionId()).toBe('provider-created'); }
+      finally { await session.dispose(); }
+    });
+  });
+
   it('orders initialize, advertised-method verification, authentication, and session creation with closed metadata', async () => {
     await withTempDir('happier-public-acp-auth-', async (dir) => {
       const fixture = createFixture(dir, 'auth');
@@ -3339,26 +3369,13 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it('opens the Antigravity declarative ACP transport with its native MCP servers', async () => {
+  it('opens the Antigravity ACP transport with its native MCP servers', async () => {
     await withTempDir('happier-public-acp-antigravity-mcp-', async (dir) => {
       const fixture = createFixture(dir, 'vb4');
-      const parsedManifest = parsePluginManifest(ANTIGRAVITY_PLUGIN_MANIFEST);
-      if (!parsedManifest.ok) {
-        throw new Error(`Expected the Antigravity plugin manifest fixture to parse: ${JSON.stringify(parsedManifest)}`);
-      }
-      const agent = PluginAgentContributionV2Schema.parse(
-        parsedManifest.manifest.contributes.agents[0],
-      );
-      if (!('runtime' in agent) || agent.runtime.kind !== 'acp') {
-        throw new Error('Expected the Antigravity plugin to declare an ACP runtime');
-      }
-      if (!agent.runtime.definition?.mcp) {
-        throw new Error('Expected the Antigravity ACP runtime to declare an MCP policy');
-      }
-      const runtimeOptions: AgentAcpRuntimeOptions = Object.freeze({
-        transport: agent.runtime.transport,
-        definition: Object.freeze({ mcp: agent.runtime.definition.mcp }),
-      });
+      const options = buildAntigravityAcpRuntimeOptions({});
+      const runtimeOptions: AgentAcpRuntimeOptions = {
+        transport: options.transport, definition: { mcp: options.definition?.mcp },
+      };
       const release = vi.fn();
       const resolveManagedDependency = vi.fn(async () => ({
         command: process.execPath,
@@ -3374,8 +3391,8 @@ describe('createPublicAcpSession', () => {
         mcpServers: { happier: { command: 'happier-mcp', args: ['serve'] } },
       }, runtimeOptions, {
         ...fixture.dependencies,
-        pluginId: parsedManifest.manifest.id,
-        agentId: agent.id,
+        pluginId: ANTIGRAVITY_PLUGIN_MANIFEST.id,
+        agentId: 'antigravity',
         managedDependencies: { resolve: resolveManagedDependency },
       });
       const subscription = session.watch((event) => { events.push(event); });

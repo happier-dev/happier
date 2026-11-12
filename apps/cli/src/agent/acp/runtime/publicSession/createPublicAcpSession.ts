@@ -878,25 +878,28 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   const usageLimitDeclaration = options.definition?.usageLimitDiagnostic;
   const usageLimitPattern = usageLimitDeclaration ? new RegExp(usageLimitDeclaration.pattern, 'u') : null;
   const selectedAccounts = readConnectedServiceChildSelectionsFromEnv(request.launchEnvironment?.values ?? {});
-  const classifyDeclaredUsageLimitDiagnostic = (turn: ActiveTurn) => {
-    if (!usageLimitDeclaration || !usageLimitPattern) return null;
-    const message = [turn.assistantSegmentText, turn.lastModelOutputText]
-      .map(text => text.trim().replace(/\r\n/g, '\n'))
-      .find(text => usageLimitPattern.test(text));
-    if (!message || classifyProviderLimitEvidence(message).category !== 'usage_limit') return null;
-    const serviceId = buildQualifiedPluginContributionKey(usageLimitDeclaration.connectedAccountService);
-    const selection = selectedAccounts?.get(serviceId);
-    return { ...diagnostic('provider_usage_limit', 'Usage limit reached'), details: {
-      v: 1, source: 'usage_limit', runtimeAuthClassification: {
-        kind: 'usage_limit', limitCategory: 'usage_limit', serviceId,
-        profileId: selection?.kind === 'group' ? selection.activeProfileId : selection?.profileId ?? null,
-        groupId: selection?.kind === 'group' ? selection.groupId : null,
-        ...(selection?.kind === 'group' ? { groupGeneration: selection.generation } : {}),
-        ...(selection?.credentialRevision ? { expectedCredentialRevision: selection.credentialRevision } : {}),
-        resetsAtMs: null, retryAfterMs: null, quotaScope: 'account', planType: null,
-        source: 'stable_provider_message',
-      },
-    } };
+  const classifyDeclaredOutputDiagnostic = (turn: ActiveTurn) => {
+    if (usageLimitDeclaration && usageLimitPattern) {
+      const message = [turn.assistantSegmentText, turn.lastModelOutputText]
+        .map(text => text.trim().replace(/\r\n/g, '\n'))
+        .find(text => usageLimitPattern.test(text));
+      if (message && classifyProviderLimitEvidence(message).category === 'usage_limit') {
+        const serviceId = buildQualifiedPluginContributionKey(usageLimitDeclaration.connectedAccountService);
+        const selection = selectedAccounts?.get(serviceId);
+        return { ...diagnostic('provider_usage_limit', 'Usage limit reached'), details: {
+          v: 1, source: 'usage_limit', runtimeAuthClassification: {
+            kind: 'usage_limit', limitCategory: 'usage_limit', serviceId,
+            profileId: selection?.kind === 'group' ? selection.activeProfileId : selection?.profileId ?? null,
+            groupId: selection?.kind === 'group' ? selection.groupId : null,
+            ...(selection?.kind === 'group' ? { groupGeneration: selection.generation } : {}),
+            ...(selection?.credentialRevision ? { expectedCredentialRevision: selection.credentialRevision } : {}),
+            resetsAtMs: null, retryAfterMs: null, quotaScope: 'account', planType: null,
+            source: 'stable_provider_message',
+          },
+        } };
+      }
+    }
+    return projectAcpOutputDiagnostic(options.definition?.sessionUpdates, turn.assistantSegmentText);
   };
   let backendMessageProjectionTail: Promise<void> = Promise.resolve();
   const emitBackendMessage = async (message: ProjectedBackendMessage, turn: ActiveTurn): Promise<void> => {
@@ -1154,8 +1157,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         if (!current || current.turnId !== turn.turnId || disposed || runtimeEnded) return;
         const failure = !current.cancelCause
           && (!outcome || outcome.kind === 'completed' || outcome.kind === 'refused')
-          ? classifyDeclaredUsageLimitDiagnostic(current)
-            ?? projectAcpOutputDiagnostic(options.definition?.sessionUpdates, current.assistantSegmentText) : null;
+          ? classifyDeclaredOutputDiagnostic(current) : null;
         if (failure) {
           publish({ kind: 'turn-failed', turnId: turn.turnId, diagnostic: failure });
         } else if (outcome?.kind === 'aborted') {
