@@ -128,10 +128,20 @@ describe("home.reachability routes", () => {
                 service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" }, accountId: credentialAccountId,
             } },
         }]));
+        const unverified = await post(app, "/v1/home/reachability/get", owner.token, {});
+        expect(unverified.json()).toMatchObject({
+            publicAddress: { url: null, source: "none" },
+            hostAccess: { method: "cloudflare_tunnel", exposure: "public", shareUrl: null },
+        });
+        expect(unverified.body).not.toContain(credentialAccountId);
+
+        // A desired tunnel hostname is not verified reachability. A configured
+        // LAN/custom URL is reported directly by its real access provider.
+        await configureRelayAccess(createBuiltinRelayAccessSelection("lan", { url: "https://custom.home.test" }));
         const inferred = await post(app, "/v1/home/reachability/get", owner.token, {});
         expect(inferred.json()).toMatchObject({
-            publicAddress: { url: "https://tunnel.home.test", source: "inferred", inferredFrom: "relay_access" },
-            hostAccess: { method: "cloudflare_tunnel", exposure: "public", shareUrl: "https://tunnel.home.test" },
+            publicAddress: { url: "https://custom.home.test", source: "inferred", inferredFrom: "relay_access" },
+            hostAccess: { method: "lan", exposure: "private", shareUrl: "https://custom.home.test" },
         });
         expect(inferred.body).not.toContain(credentialAccountId);
         // Inference is read-only: nothing was written to the environment or stored as a setting.

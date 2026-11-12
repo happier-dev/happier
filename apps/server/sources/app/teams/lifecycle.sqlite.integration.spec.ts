@@ -77,6 +77,7 @@ describe("Team lifecycle (SQLite integration)", () => {
                 authenticationPolicyStatus: "available",
                 managedDefaults: null,
                 managedDefaultsStatus: "available",
+                homeDefaults: null,
             });
             expect(result.team.admission.historyChoice).toEqual({
                 admin: "choice", member: "choice", guest: "hidden",
@@ -470,6 +471,7 @@ describe("Team lifecycle (SQLite integration)", () => {
                 authenticationPolicyStatus: "available",
                 managedDefaults: null,
                 managedDefaultsStatus: "available",
+                homeDefaults: null,
             });
             // A history default is the intent for the next admission; an existing
             // horizon was minted once at activation and is never rewritten.

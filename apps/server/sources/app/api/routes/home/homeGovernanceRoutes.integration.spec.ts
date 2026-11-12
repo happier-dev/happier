@@ -678,7 +678,9 @@ describe("Home governance routes", () => {
                     // mTLS needs trusted proxy headers the deployment does not set.
                     expect.objectContaining({ id: "mtls", unavailable: { requires: [] } }),
                 ]),
-                permittedAccountModes: ["e2ee"],
+                // The choices include keyless Accounts the Home could enable
+                // while the deployment leaves that key unset.
+                permittedAccountModes: ["plain", "e2ee"],
                 recommendedProvisioningMode: "e2ee",
                 signInService: { deploymentMode: "external", canDisable: true },
             });

@@ -136,7 +136,7 @@ describe("Provider-reset Account replacement", () => {
     it('rolls back replacement and membership transfer when a different desired username is held', async () => {
         const oldAccountId = await createAccount({ homeRole: 'owner', username: 'original' });
         const membership = await createTeamWithMember({ accountId: oldAccountId });
-        await db.releasedUsername.create({ data: { username: 'held-name', expiresAt: new Date(Date.now() + 86_400_000) } });
+        await createAccount({ username: 'held-name' });
         const replacementAccountId = nextId('held-replacement');
         await expect(inTx(tx => replaceAccountForProviderResetInTx(tx, {
             oldAccountId,
@@ -220,7 +220,11 @@ describe("Provider-reset Account replacement", () => {
             .toEqual({ value: null });
         const changes = await db.accountChange.findMany({ where: { entityId: session.id, kind: "session" }, select: { accountId: true } });
         expect(changes.map(change => change.accountId)).toEqual(expect.arrayContaining([oldAccountId, replacementAccountId]));
-        expect(await db.accountChange.count({ where: { entityId: session.id, kind: "share" } })).toBe(0);
+        const ownerWakes = await db.accountChange.findMany({
+            where: { entityId: session.id, kind: "share" },
+            select: { accountId: true },
+        });
+        expect(ownerWakes).toEqual([{ accountId: ownerAccountId }]);
     });
 
     it("transfers Home role and membership lifetimes into one committed transaction", async () => {

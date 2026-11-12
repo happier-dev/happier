@@ -42,19 +42,23 @@ describe("Machine effective access membership effects (SQLite integration)", () 
         await db.machineGroupGrant.create({ data: { machineId: machine.id, teamGroupId: group.id, accessLevel: "view", createdByAccountId: owner.id } });
         const session = await db.session.create({ data: { accountId: member.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
         await db.accessKey.create({ data: { accountId: member.id, machineId: machine.id, sessionId: session.id, data: "retained-session-key" } });
-        function connect(accountId: string, sessionId: string, machineId: string) {
+        function connect(accountId: string, machineId: string, sessionId?: string) {
             // Socket transport is the system boundary; the real event-router and access union remain active.
             const disconnect = vi.fn();
-            const socket = Object.assign(createFakeSocket({ data: { clientType: "session-scoped" } }), { disconnect });
-            const connection: ClientConnection = { connectionType: "session-scoped", userId: accountId, sessionId, machineId, socket: socket as unknown as Socket };
+            const connectionType = sessionId ? "session-scoped" : "machine-scoped";
+            const socket = Object.assign(createFakeSocket({ data: { clientType: connectionType } }), { disconnect });
+            const connection: ClientConnection = sessionId
+                ? { connectionType: "session-scoped", userId: accountId, sessionId, machineId, socket: socket as unknown as Socket }
+                : { connectionType: "machine-scoped", userId: accountId, machineId, socket: socket as unknown as Socket };
             eventRouter.addConnection(accountId, connection);
             connections.push(connection);
             return disconnect;
         }
-        const disconnected = connect(member.id, session.id, machine.id);
-        const unrelatedDisconnected = connect(owner.id, session.id, machine.id);
-        const otherMachineDisconnected = connect(member.id, session.id, randomUUID());
-        return { owner, member, team, membership, group, machine, session, disconnected, unrelatedDisconnected, otherMachineDisconnected };
+        const disconnected = connect(member.id, machine.id);
+        const unrelatedDisconnected = connect(owner.id, machine.id);
+        const otherMachineDisconnected = connect(member.id, randomUUID());
+        const publisherDisconnected = connect(member.id, machine.id, session.id);
+        return { owner, member, team, membership, group, machine, session, disconnected, unrelatedDisconnected, otherMachineDisconnected, publisherDisconnected };
     }
 
     it("preserves overlapping grants and evicts only the final-loss actor's exact Machine sockets, retaining history and keys", async () => {
@@ -68,6 +72,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             teamId: f.team.id, membershipId: f.membership.id, accountId: f.member.id, status: "suspended",
         }));
         expect(f.disconnected).toHaveBeenCalledWith(true);
+        expect(f.publisherDisconnected).not.toHaveBeenCalled();
         expect(f.unrelatedDisconnected).not.toHaveBeenCalled();
         expect(f.otherMachineDisconnected).not.toHaveBeenCalled();
         expect(await db.accountChange.count({ where: { accountId: f.member.id, entityId: f.machine.id, kind: "machineRecipientAccess" } })).toBe(1);
@@ -108,6 +113,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             contribution: { kind: "native" }, desired: "absent", historyAccess: "all_existing",
         }));
         expect(groupOnly.disconnected).toHaveBeenCalledWith(true);
+        expect(groupOnly.publisherDisconnected).not.toHaveBeenCalled();
         const f = await fixture();
         const second = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         await db.teamMembership.create({ data: { teamId: f.team.id, accountId: second.id, role: "member" } });
@@ -115,6 +121,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             await tx.teamMembership.deleteMany({ where: { teamId: f.team.id } });
         }));
         expect(f.disconnected).toHaveBeenCalledWith(true);
+        expect(f.publisherDisconnected).not.toHaveBeenCalled();
         for (const accountId of [f.member.id, second.id]) {
             expect(await db.accountChange.count({ where: { accountId, entityId: f.machine.id, kind: "machineRecipientAccess" } })).toBe(1);
             expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: accountId, machineId: f.machine.id }))).toBeNull();
@@ -143,6 +150,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             principal: { kind: "account", accountId: f.member.id }, leave: true,
         }))).toMatchObject({ kind: "left", effectiveAccess: "none" });
         expect(f.disconnected).toHaveBeenCalledWith(true);
+        expect(f.publisherDisconnected).not.toHaveBeenCalled();
         expect(f.unrelatedDisconnected).not.toHaveBeenCalled();
         expect(f.otherMachineDisconnected).not.toHaveBeenCalled();
         expect(await db.accessKey.findUnique({ where: { accountId_machineId_sessionId: {

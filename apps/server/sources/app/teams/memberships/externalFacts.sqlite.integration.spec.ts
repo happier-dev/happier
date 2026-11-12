@@ -11,6 +11,7 @@ import {
     applyExternalTeamMembershipInTx,
     removeExternalGroupBindingInTx,
     revokeExternalSourceFactsInTx,
+    withdrawIneligibleDirectoryGroupContributionsInTx,
 } from "./externalFacts";
 
 describe("Team external-fact seam (SQLite integration)", () => {
@@ -622,6 +623,63 @@ describe("Team external-fact seam (SQLite integration)", () => {
             },
             select: { sessionAccessStartsAt: true },
         })).resolves.toEqual({ sessionAccessStartsAt: null });
+    });
+
+    it.each(["active", "suspended"] as const)("withdraws only newly ineligible contributions when a %s identity loses management", async (releasedIdentityState) => {
+        const person = await account();
+        const acme = await team(`Directory handoff ${releasedIdentityState}`);
+        const okta = await source(acme.id, "Okta");
+        const entra = await source(acme.id, "Entra");
+        const developers = await group(acme.id, "Developers");
+        const oldBinding = await binding({
+            teamId: acme.id,
+            teamGroupId: developers.id,
+            directorySourceId: okta.directorySource.id,
+        });
+        const independentBinding = await binding({
+            teamId: acme.id,
+            teamGroupId: developers.id,
+            directorySourceId: entra.directorySource.id,
+        });
+        const admitted = await inTx((tx) => admitTeamMemberInTx(tx, {
+            teamId: acme.id,
+            accountId: person.id,
+            role: "member",
+            historyAccess: "from_membership",
+        }));
+        if (!admitted.ok) throw new Error("expected admission");
+        const teamMembershipId = admitted.membership.teamMembershipId;
+        for (const externalGroupBindingId of [oldBinding.id, independentBinding.id]) {
+            await inTx((tx) => applyTeamGroupContributionInTx(tx, {
+                teamId: acme.id,
+                teamGroupId: developers.id,
+                teamMembershipId,
+                contribution: { kind: "external", externalGroupBindingId },
+                desired: "present",
+                historyAccess: "from_membership",
+            }));
+        }
+        const where = { teamGroupId_teamMembershipId: { teamGroupId: developers.id, teamMembershipId } };
+        const before = await db.teamGroupMembership.findUniqueOrThrow({ where });
+
+        await inTx((tx) => withdrawIneligibleDirectoryGroupContributionsInTx(tx, {
+            teamId: acme.id,
+            teamMembershipId,
+            accountId: person.id,
+            directorySourceId: okta.directorySource.id,
+            releasedIdentityState,
+            sessionAccessImpacts: new Map(),
+        }));
+
+        const retained = await db.teamGroupMembership.findUniqueOrThrow({
+            where,
+            include: { externalContributions: true },
+        });
+        expect(retained.externalContributions.map(({ externalGroupBindingId }) => externalGroupBindingId).sort())
+            .toEqual((releasedIdentityState === "active"
+                ? [oldBinding.id, independentBinding.id]
+                : [independentBinding.id]).sort());
+        expect(retained.sessionAccessStartsAt).toEqual(before.sessionAccessStartsAt);
     });
 
     it("removes one exact binding while native and other-source contributions survive", async () => {

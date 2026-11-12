@@ -213,7 +213,7 @@ describe("Team credential resource lifecycle", () => {
             teamId: team.id,
             custodianAccountId: actor.id,
             displayName: input.displayName,
-            disclosureCeiling: JSON.stringify({ policy: input.deliveryPolicy, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: input.deliveryPolicy }),
             sessionUsePolicy: input.sessionUsePolicy,
             requestPolicyJson: null,
             brokerMachineId: null,
@@ -513,7 +513,7 @@ describe("Team credential resource lifecycle", () => {
         // a direct grant into broker authority the custodian never granted.
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             enabled: false,
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }),
             allMembersDeliveryMode: null,
             sessionUsePolicy: "personal_allowed",
         });
@@ -635,7 +635,7 @@ describe("Team credential resource lifecycle", () => {
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
 
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }),
             allMembersDeliveryMode: null,
             revision: 1,
         });
@@ -696,7 +696,7 @@ describe("Team credential resource lifecycle", () => {
                 : { custodian: replacementOf(custodianBroker.id).custodian } },
         }))).resolves.toEqual({ ok: true, resourceId: custodianResource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: custodianResource.id } })).resolves.toMatchObject({
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }),
             allMembersDeliveryMode: null,
         });
         await expect(db.teamCredentialMemberGrant.findMany({ where: { resourceId: custodianResource.id } })).resolves.toEqual([]);
@@ -830,7 +830,7 @@ describe("Team credential resource lifecycle", () => {
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             enabled: false, displayName: "After", revision: 1, sourceBindingJson: JSON.stringify(nextSource),
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }), sessionUsePolicy: "team_context_required",
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }), sessionUsePolicy: "team_context_required",
             brokerMachineId: broker.id, brokerPoolId: null, allMembersDeliveryMode: JSON.stringify(["brokered"]),
             directSourceVersionsJson: null,
         });
@@ -1131,7 +1131,7 @@ describe("Team credential resource lifecycle", () => {
             revision: 1,
             displayName: "After manager edit",
             sourceBindingJson: JSON.stringify(source),
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] }, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered"] } }),
             brokerMachineId: broker.id,
             brokerPoolId: null,
         });
@@ -1175,7 +1175,7 @@ describe("Team credential resource lifecycle", () => {
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 2 });
         await expect(db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).resolves.toMatchObject({
             revision: 2,
-            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered", "direct"] }, experimentalBindingConfirmations: [] }),
+            disclosureCeiling: JSON.stringify({ policy: { preferredAllowedModes: ["brokered", "direct"] } }),
             sourceBindingJson: JSON.stringify(source),
         });
     });

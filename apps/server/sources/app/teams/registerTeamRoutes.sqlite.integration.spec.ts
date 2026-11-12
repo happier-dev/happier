@@ -125,11 +125,11 @@ describe("Team routes (SQLite integration)", () => {
             resourceId: "route-resource",
             displayName: "Shared subscription",
             source,
-            disclosureCeiling: "direct_allowed",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
             sessionUsePolicy: "personal_allowed",
             brokerPlacement: null,
             requestPolicy: null,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
             memberGrants: [],
             usageLimits: [],
@@ -150,11 +150,11 @@ describe("Team routes (SQLite integration)", () => {
         const memberMembership = await db.teamMembership.findFirstOrThrow({ where: { teamId, accountId: memberAccount.id } });
         const audience = await post("/v1/teams/credential-resources/audience/set", owner.id, {
             resourceId: "route-resource", expectedRevision: 0,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             // Direct delivery needs no broker Machine, so this case exercises
             // the projection rather than the placement rule that has its own.
-            groupGrants: [{ teamGroupId: group.id, deliveryMode: "direct" }],
-            memberGrants: [{ teamMembershipId: memberMembership.id, deliveryMode: "direct" }],
+            groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["direct"] }],
+            memberGrants: [{ teamMembershipId: memberMembership.id, allowedRoutes: ["direct"] }],
         });
         // Mutation answers remain value-free. The canonical administration
         // projection below proves the whole-audience replacement persisted;
@@ -163,8 +163,8 @@ describe("Team routes (SQLite integration)", () => {
         expect(audience.json()).toEqual({ resourceId: "route-resource", revision: 1 });
         const managerPage = await post("/v1/teams/credential-resources/list", owner.id, { teamId });
         expect(managerPage.json().resources[0]).toMatchObject({
-            groupGrants: [{ teamGroupId: group.id, deliveryMode: "direct" }],
-            memberGrants: [{ teamMembershipId: memberMembership.id, deliveryMode: "direct" }],
+            groupGrants: [{ teamGroupId: group.id, allowedRoutes: ["direct"] }],
+            memberGrants: [{ teamMembershipId: memberMembership.id, allowedRoutes: ["direct"] }],
         });
 
         await db.teamCredentialResource.create({
@@ -199,12 +199,15 @@ describe("Team routes (SQLite integration)", () => {
         expect(memberCatalog.json().resources).toEqual([{
             id: "route-resource",
             teamId,
+            sourceOwnerDisplayName: null,
             displayName: "Shared subscription",
             resourceRevision: 1,
             readiness: { kind: "available" },
             recoveryAction: null,
             mayBroker: false,
             mayReceiveDirect: true,
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
+            allowedRoutes: ["direct"],
             directMaterialState: "never_delivered",
             sessionUsePolicy: "personal_allowed",
             usageCapabilities: {
@@ -268,11 +271,11 @@ describe("Team routes (SQLite integration)", () => {
         const deniedCreate = await post("/v1/teams/credential-resources/create", owner.id, {
             teamId, resourceId: "restricted-route-resource", displayName: "Restricted subscription",
             source,
-            disclosureCeiling: "direct_allowed",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
             sessionUsePolicy: "personal_allowed",
             brokerPlacement: null,
             requestPolicy: null,
-            allMembersDeliveryMode: null,
+            allMembersAllowedRoutes: null,
             groupGrants: [],
             memberGrants: [],
             usageLimits: [],
@@ -288,11 +291,11 @@ describe("Team routes (SQLite integration)", () => {
             {
                 teamId, resourceId: "restricted-route-resource", displayName: "Restricted subscription",
                 source,
-                disclosureCeiling: "direct_allowed",
+                deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
                 sessionUsePolicy: "personal_allowed",
                 brokerPlacement: null,
                 requestPolicy: null,
-                allMembersDeliveryMode: null,
+                allMembersAllowedRoutes: null,
                 groupGrants: [],
                 memberGrants: [],
                 usageLimits: [],

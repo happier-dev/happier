@@ -294,7 +294,11 @@ describe('Team credential resource-test broker admission', () => {
             request: dispatchRequest,
             signal: new AbortController().signal,
         };
-        await expect(dispatch(dispatchInput)).resolves.toEqual({ ok: false, error: 'broker_unavailable' });
+        await expect(dispatch(dispatchInput)).resolves.toEqual({
+            ok: false,
+            error: 'broker_unavailable',
+            failureDetail: { code: 'broker_unavailable', stage: 'feature' },
+        });
         await expect(dispatch({
             ...dispatchInput,
             verifiedCredentialEvidence: undefined,
@@ -377,7 +381,11 @@ describe('Team credential resource-test broker admission', () => {
             ...dispatchInput,
             actorAccountId: custodian.id,
             verifiedCredentialEvidence: undefined,
-        })).resolves.toEqual({ ok: false, error: 'broker_unavailable' });
+        })).resolves.toEqual({
+            ok: false,
+            error: 'broker_unavailable',
+            failureDetail: { code: 'broker_unavailable', stage: 'feature' },
+        });
         await expect(admitRequest(signRequest({
             ...restrictedBindingWithoutEvidence,
             requestId: 'resource-test-departed-source-owner',
