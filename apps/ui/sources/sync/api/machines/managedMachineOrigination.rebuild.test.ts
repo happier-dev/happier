@@ -5,7 +5,8 @@ import tweetnacl from 'tweetnacl';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionInputSchemasV1, ManagedRebuildInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema,
-    ExternalActionResponseEnvelopeV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionResponseEnvelopeV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+    projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -244,6 +245,9 @@ it.each(['admitted', 'voice-admitted', 'unreviewed', 'authored'] as const)(
                     binding: { serverIdentityId: homeId, accountId, authentication: { kind: 'account', tokenEpoch: 1 },
                         actionId: 'machines.setup.apply', requestId, target: { kind: 'machine', machineId },
                         machineId, installationId: 'author-installation', custodianAccountId: accountId,
+                        deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+                            actionId: 'machines.setup.apply', envelope,
+                        }),
                         accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } }));
             }
             expect(path).toBe('/v1/actions/machines.setup.apply');
