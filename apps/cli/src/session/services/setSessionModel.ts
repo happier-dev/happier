@@ -1,3 +1,4 @@
+import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
 import type { StoredCredentials } from '@/persistence';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderBoundModelRefSchema, SessionModelSelectionResolutionError } from '@happier-dev/protocol/providers/model-selection';
@@ -95,7 +96,7 @@ type ResolvedSessionTransportContext = Extract<
 
 function resolveRequestedSelection(params: Readonly<{
   sessionTarget: ResolvedSessionTransportContext;
-  credentials: StoredCredentials;
+  metadata: ReturnType<typeof tryDecryptSessionOwnerMetadataView>;
   modelId: string;
   hasExplicitProviderConnectionId: boolean;
   explicitProviderConnectionId: ProviderConnectionId | null;
@@ -103,11 +104,7 @@ function resolveRequestedSelection(params: Readonly<{
   selection: ProviderBoundModelRef;
   currentSelection: ProviderBoundModelRef;
 }> | null {
-  const metadata = tryDecryptSessionOwnerMetadataView({
-    credentials: params.credentials,
-    rawSession: params.sessionTarget.rawSession,
-    accountEncryptionMode: params.sessionTarget.accountEncryptionCurrentness.mode,
-  });
+  const metadata = params.metadata;
   if (!metadata) return null;
   const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
   if (!backendTarget) {
@@ -248,18 +245,21 @@ export async function setSessionModel(params: Readonly<{
     return { ...result, sessionId: sessionTarget.sessionId };
   }
 
-  if (params.teamCredentialModel !== undefined) {
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials: params.credentials, rawSession: sessionTarget.rawSession,
+    accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode,
+  });
+  const teamCredentialModel = params.teamCredentialModel ?? (
+    params.modelId === undefined || Object.prototype.hasOwnProperty.call(params, 'providerConnectionId') ? null
+      : resolveAmbientTeamCredentialModelForModelIntent(metadata, params.modelId)
+  );
+  if (teamCredentialModel) {
     if (params.captureBefore || params.expected) return { ok: false, code: 'unsupported' };
     // Team refs are not encodable in the finite ProviderBoundModelRef grant vocabulary.
     if (params.callerInputConstraints && !isModelRefGrantedV1(params.callerInputConstraints, 'automatic')) {
       return { ok: false, code: 'model_not_granted', sessionId: sessionTarget.sessionId };
     }
-    const requested = TeamCredentialProviderModelSelectionV1Schema.parse(params.teamCredentialModel);
-    const metadata = tryDecryptSessionOwnerMetadataView({
-      credentials: params.credentials,
-      rawSession: sessionTarget.rawSession,
-      accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode,
-    });
+    const requested = TeamCredentialProviderModelSelectionV1Schema.parse(teamCredentialModel);
     if (!metadata) return { ok: false, code: 'unsupported' };
     const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
     if (!backendTarget || buildBackendTargetKeyV2(backendTarget) !== requested.agentTargetKey) {
@@ -278,6 +278,7 @@ export async function setSessionModel(params: Readonly<{
           deliveryMode: requested.deliveryMode,
           agentTargetKey: requested.agentTargetKey,
           modelId: requested.modelId,
+          ...(requested.nativeDelivery ? { nativeDelivery: requested.nativeDelivery } : {}),
         },
       }),
     });
@@ -298,6 +299,7 @@ export async function setSessionModel(params: Readonly<{
           expectedResourceRevision: requested.expectedResourceRevision,
           deliveryMode: requested.deliveryMode,
           teamId: requested.teamId,
+          ...(requested.nativeDelivery ? { nativeDelivery: requested.nativeDelivery } : {}),
         }],
         teamVisibilityGrantConsent: params.teamVisibilityGrantConsent,
       });
@@ -331,6 +333,7 @@ export async function setSessionModel(params: Readonly<{
             expectedResourceRevision: requested.expectedResourceRevision,
             deliveryMode: requested.deliveryMode,
             agentTargetKey: requested.agentTargetKey, modelId: requested.modelId,
+            ...(requested.nativeDelivery ? { nativeDelivery: requested.nativeDelivery } : {}),
           },
         }),
         updatedAt: state.updatedAt,
@@ -362,7 +365,7 @@ export async function setSessionModel(params: Readonly<{
     : ProviderConnectionIdSchema.parse(params.providerConnectionId);
   const request = resolveRequestedSelection({
     sessionTarget,
-    credentials: params.credentials,
+    metadata,
     modelId,
     hasExplicitProviderConnectionId,
     explicitProviderConnectionId,

@@ -1,3 +1,4 @@
+import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
 import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
@@ -99,7 +100,8 @@ import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, type CurrentSessionPrese
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUiProviderActionExecuteV1 } from './providerActionDeps';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
-import { SessionSpawnNewActionInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createUiSessionCapabilityActionDeps } from './sessionCapabilityActionDeps';
 import { createUiMachineRecipesRead } from './machineRecipeActionDeps';
@@ -161,7 +163,7 @@ import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
 import type { MemoryWindowV1, MemoryWindowRequestV1 } from '@happier-dev/protocol/memory/memoryWindow';
 import { clearDaemonMemoryIndex } from '@/sync/domains/memory/clearDaemonMemoryIndex';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionSpawnProtocolVersionV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
+import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { readSessionExchangeStatus } from '@/sync/api/session/sessionExchangeApi';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -216,6 +218,7 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { isActionAccountScopeChangedError } from '@/sync/domains/scope/actionAccountScopeError';
 import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
+import { admitDeploymentHomeInputV1 } from '@happier-dev/protocol/actions/executor/deploymentHomeAdmission';
 
 import { captureLazyActionAccountContext, captureApprovalSettlementAccount, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiPendingEditAction } from './pendingEdit';
@@ -403,7 +406,7 @@ import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentPromoteActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
@@ -959,7 +962,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   // Prepared private birth continuations keep their existing host-owned path.
   const forwardSessionSpawnNew = async (input: ReturnType<typeof SessionSpawnNewActionInputV2Schema.parse>, context: ActionExecutorContext) => {
     const { actionCaller: _actionCaller, actionRequestId, signal } = context;
-    const { placementOrigin, ...exactInput } = input;
+    const { placementOrigin, ...exactInput } = admitSessionSpawnNewActionInputV2(input);
     const serverId = resolveServerProfileScopeIdForIdentifier(input.executionTarget.serverId);
     const machine = storage.getState().machineListByServerId[serverId]
       ?.find((candidate) => candidate.id === input.executionTarget.machineId);
@@ -1041,8 +1044,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     }
     accountContext?.assertCurrent();
+    const rpcInput = SessionSpawnNewActionInputV2Schema.parse(materializeSessionCreationActionInput(
+      'session.spawn_new', projectSessionSpawnNewActionInputV2(placementOrigin && supportsOrigin ? { ...exactInput, placementOrigin } : exactInput), context,
+    ));
     const result = await dispatchSessionSpawnNewWithManagerPreparation({
-      payload: placementOrigin && supportsOrigin ? { ...exactInput, placementOrigin } : exactInput,
+      payload: admitSessionSpawnNewActionInputV2(rpcInput),
       signal,
     });
     if (accountContext) await refreshMachineAgentsAfterLaunchRefusal({
@@ -1058,12 +1064,23 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const parsed = ActionIdSchema.safeParse(readAdmittedActionId(actionId, input));
     if (!parsed.success) return false;
     if (isSessionSpawnNewActionIdV1(parsed.data)) return true;
+    if (isDeploymentAccountMachineTransportActionIdV1(parsed.data)) return true;
     const spec = getActionSpec(parsed.data);
     return spec.executionPlacement === 'machine' && spec.originalExecution?.daemonIngressSurfaces?.includes('ui') === true;
   };
   const executeMachineOwnedAction = async (args: Readonly<{
     actionId: string; input: unknown; context: ActionExecutorContext; confirmInFlow?: boolean; reviewDigest?: string;
   }>) => {
+    if (isDeploymentAccountMachineTransportActionIdV1(args.actionId)) {
+      if (!deploymentActionDeps?.deploymentAction) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const input = DeploymentActionInputSchemasV1[args.actionId].safeParse(args.input);
+      if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const context = args.confirmInFlow
+        ? bindPresentUserActionConfirmation(args.actionId, input.data, args.context, args.reviewDigest) : args.context;
+      // The existing transport selects the controller and preserves creation/read operands.
+      // Its receiver compares the confirmed review with its own prepared children.
+      return await deploymentActionDeps.deploymentAction(args.actionId, input.data, context);
+    }
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.
     const pluginInput = args.actionId === 'approval.request.create' && args.input !== null && typeof args.input === 'object'
@@ -1094,12 +1111,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1) {
       const input = DeploymentActionInputSchemasV1[DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1].safeParse(pluginInput);
       if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-      if (input.data.preview) {
-        if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        const selected = await deploymentActionDeps.readEnvironmentCreateController(input.data, args.context);
-        if (!selected.ok) return selected;
-        requestedMachineId = selected.machineId;
-      }
+      if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const selected = await deploymentActionDeps.readEnvironmentCreateController(input.data, args.context);
+      if (!selected.ok) return selected;
+      requestedMachineId = selected.machineId;
     }
     if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
       const input = DeploymentTemplateInstantiateInputV1Schema.safeParse(pluginInput);
@@ -1125,7 +1140,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }
     const environmentControllerAction = readAdmittedActionId(args.actionId, args.input);
     if (environmentControllerAction === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
-      || environmentControllerAction === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(environmentControllerAction)) {
+      || environmentControllerAction === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || isDeploymentPromoteActionIdV1(environmentControllerAction)
+      || isDeploymentAccountMachineTransportActionIdV1(environmentControllerAction)
+        && environmentControllerAction !== DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && !requestedMachineId) {
       const input = DeploymentActionInputSchemasV1[environmentControllerAction].safeParse(pluginInput);
       if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (!deploymentActionDeps) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
@@ -2645,6 +2662,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           || admittedTarget.serverId && !areServerProfileIdentifiersEquivalent(admittedTarget.serverId, accountContext.serverId))) {
           return { ok: false, errorCode: 'machine_target_mismatch', error: 'machine_target_mismatch' };
         }
+        if (session.archivedAt != null) {
+          const restored = await sessionUnarchiveWithServerScope(sessionId, {
+            authority: { scope: accountContext.accountLifetime.scope, request: accountContext.request },
+          });
+          if (!restored.success) return { ok: false, errorCode: restored.code ?? 'action_failed',
+            error: t('sessionInfo.failedToUnarchiveSession'), details: restored };
+        }
         const target = resolveSessionActionDefaultBackend({ session });
         if (intent === 'resume' && !tabId && !destination && machineTarget) {
           const execution = await executeOriginalAccountMachineAction({ account: accountContext, actionId: 'session.open',
@@ -3452,6 +3476,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     projectsOrganizationUpdate: async (input, context) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_organization_access_denied' };
       return updateProjectOrganizationV1({
+        normalizeServerId: resolveServerProfileScopeIdForIdentifier,
         accountScope: () => {
           try { accountContext.assertCurrent(); return { serverId: accountContext.serverId, accountId: accountContext.accountId }; }
           catch { return null; }
@@ -3461,6 +3486,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     projectsVisibilitySet: async (input, context) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_visibility_access_denied' };
       return setProjectVisibilityV1({
+        normalizeServerId: resolveServerProfileScopeIdForIdentifier,
         accountScope: () => {
           try { accountContext.assertCurrent(); return { serverId: accountContext.serverId, accountId: accountContext.accountId }; }
           catch { return null; }
@@ -4027,12 +4053,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             sessions: { [sessionId]: session }, sessionListRowsByServerId: {} }, { ...account.accountLifetime.scope, sessionId });
           if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
           if (requiresReplyCustody) {
-            const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => fetchMachineRows({ credentials: account.credentials,
-              readTransport: account.readTransport, signal: ownedSignal,
-              request: (path, init) => account.request(path, { ...init, signal: ownedSignal }) }));
+            const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
+              readTransport: account.readTransport, request: (path, init) => account.request(path, { ...init, signal: ownedSignal }),
+              machineIds: [target.machineId], signal: ownedSignal }));
             account.assertCurrent();
             throwIfAborted(signal);
-            const machine = machines.find(row => row.id === target.machineId && row.revokedAt === null && row.replacedByMachineId === null);
+            const row = machines.get(target.machineId);
+            const machine = row?.revokedAt === null && row.replacedByMachineId === null ? row : null;
             if (!supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionMessageReply')) {
               return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
             }
@@ -4354,12 +4381,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!session) {
         return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
       }
-      if (args.teamCredentialModel !== undefined) {
+      const teamCredentialModel = args.teamCredentialModel ?? (
+        Object.prototype.hasOwnProperty.call(args, 'providerConnectionId') ? null
+          : resolveAmbientTeamCredentialModelForModelIntent(readSessionOwnerMetadataView(session), normalizedModelId)
+      );
+      if (teamCredentialModel) {
+        if (args.captureBefore || args.expected) return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
         accountContext?.assertCurrent();
         if (args.callerInputConstraints && !isModelRefGrantedV1(args.callerInputConstraints, 'automatic')) {
           return { ok: false, errorCode: 'model_not_granted', error: 'model_not_granted' };
         }
-        const requested = args.teamCredentialModel;
+        const requested = teamCredentialModel;
         const target = resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session }));
         if (!target || buildBackendTargetKeyV2(target) !== requested.agentTargetKey) {
           return { ok: false, errorCode: 'model_selection_agent_target_unknown', error: 'model_selection_agent_target_unknown' };
@@ -4369,6 +4401,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           source: 'team_resource', resourceId: requested.resourceId, teamId: requested.teamId,
           expectedResourceRevision: requested.expectedResourceRevision, deliveryMode: requested.deliveryMode,
           agentTargetKey: requested.agentTargetKey, modelId: requested.modelId,
+          ...(requested.nativeDelivery ? { nativeDelivery: requested.nativeDelivery } : {}),
         } });
         const candidate = createModelIntentV2MetadataCasCandidate({ selection });
         const uncommitted = () => ({
@@ -4382,7 +4415,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             teamCredentialBinding: {
               operation: 'session.model.set',
               teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: requested.resourceId,
-                expectedResourceRevision: requested.expectedResourceRevision, deliveryMode: requested.deliveryMode, teamId: requested.teamId }],
+                expectedResourceRevision: requested.expectedResourceRevision, deliveryMode: requested.deliveryMode, teamId: requested.teamId,
+                ...(requested.nativeDelivery ? { nativeDelivery: requested.nativeDelivery } : {}) }],
               ...(args.teamVisibilityGrantConsent ? { teamVisibilityGrantConsent: args.teamVisibilityGrantConsent } : {}),
             },
           });
@@ -5083,10 +5117,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   // A confirmed re-execution after a receiving executor's refusal is a new invocation of the same exact input,
   // bound (at each path's existing binding site) to the review that executor carried back.
   const freshRequest = (context: ActionExecutorContext): ActionExecutorContext => ({ ...context, actionRequestId: randomUUID() });
-  const executeMachineAction = (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) =>
-    executeMachineActionAtDaemon(actionId, input, context, (actionInput, reviewDigest) => reviewDigest
+  const executeMachineAction = async (actionId: ActionId, input: unknown, context: ActionExecutorContext, confirmInFlow = false) => {
+    // Direct Machine ingress shares the canonical Home normalization used by the core executor,
+    // before input-bound consent and the signed receiving request are created.
+    if (isDeploymentActionIdV1(actionId)) {
+      const home = admitDeploymentHomeInputV1(input, context, resolveServerProfileScopeIdForIdentifier);
+      if ('errorCode' in home) return home;
+      input = home.input;
+    }
+    return executeMachineActionAtDaemon(actionId, input, context, (actionInput, reviewDigest) => reviewDigest
       ? executeMachineOwnedAction({ actionId, input: actionInput, context: freshRequest(context), confirmInFlow: true, reviewDigest })
       : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow }), deps.presentUserActionConfirmation);
+  };
 
   const executeAction = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext, confirmInFlow = false) => {
     const resolved = resolveContext(context, input, actionId);

@@ -1,3 +1,4 @@
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { PermissionIntent } from '../../types.js';
 import { SessionModelSelectionIntentV1Schema, readSessionModelSelectionIntentSourceV1, resolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
@@ -23,6 +24,17 @@ export function readSessionModelSelectionV2FromMetadata(metadata: unknown): Sess
   if (!obj) return null;
   const parsed = SessionModelSelectionV2Schema.safeParse(obj.modelSelectionIntentV2);
   return parsed.success ? parsed.data : null;
+}
+
+/** A model-only edit retains the Session's selected Team resource and delivery. */
+export function resolveAmbientTeamCredentialModelForModelIntent(
+  metadata: unknown,
+  modelId: string,
+): TeamCredentialProviderModelSelectionV1 | null {
+  const selection = readSessionModelSelectionV2FromMetadata(metadata);
+  if (selection?.ref.source !== 'team_resource') return null;
+  const { source: _source, ...ref } = selection.ref;
+  return { kind: 'team_credential_provider_model', ...ref, modelId };
 }
 
 /** Resolve canonical and deployed model intent once the session's canonical target is known. */

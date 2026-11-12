@@ -1372,6 +1372,22 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         expect(rpc.session).not.toHaveBeenCalled();
     });
 
+    it.each([true, false])('retains the Team binding for a model-only Action (active=%s)', async active => {
+        const ref = { source: 'team_resource' as const, resourceId: 'resource-1', teamId: 'team-1',
+            expectedResourceRevision: 7, deliveryMode: 'brokered' as const,
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'muse-spark-1.2' };
+        const remote = serveSession(seedSession(active, { modelSelectionIntentV2: { v: 2, updatedAt: 10, ref } }));
+        const result = await executeModel(modelInput('muse-spark-1.3'));
+        expect(result).toMatchObject(active ? { ok: false, errorCode: 'restart_required' }
+            : { ok: true, result: { status: 'intent_updated' } });
+        expect(remote.readMetadata().modelSelectionIntentV2?.ref).toEqual({ ...ref, modelId: 'muse-spark-1.3' });
+        expect(remote.writes.map(input => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(input)))
+            .toEqual([expect.objectContaining({ teamCredentialBindings: [expect.objectContaining({
+                resourceId: ref.resourceId, teamId: ref.teamId, deliveryMode: ref.deliveryMode,
+            })] })]);
+        expect(rpc.session).not.toHaveBeenCalled();
+    });
+
     it('rejects a Team model for a different Agent without mutating the Session', async () => {
         const remote = serveSession(seedSession(true));
         const result = await createDefaultActionExecutor().execute('session.model.set', { sessionId: 'session_1',
