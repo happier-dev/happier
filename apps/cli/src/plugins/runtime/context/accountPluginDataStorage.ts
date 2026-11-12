@@ -70,6 +70,7 @@ import { resolveAccountSettingsHttpBaseUrl } from '@/settings/accountSettings/re
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
+import { computePluginManifestDigestV2 } from '@happier-dev/protocol/plugins/manifest/digest';
 import type { AccountPluginWriterClaims } from './accountWriterClaims';
 import { runTracedExternalActionInnerStage, traceExternalActionInnerStage, type ExternalActionInnerDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 
@@ -929,7 +930,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                 // The payload belongs to this transport attempt. Admission keeps
                 // the declaration identity and result, not a second serialized
                 // copy of its complete schema graph for the Account lifetime.
-                const encodedClaim = serializeRequestBody({ manifest });
+                const digestClaim = { pluginId: manifest.id, manifestDigestSha256: computePluginManifestDigestV2(manifest) };
                 // A background publication can start the promise another Action later awaits.
                 // This diagnostic-only id joins those records without exposing claim inputs.
                 const diagnosticClaimAttemptId = process.env.HAPPIER_WEB_LATENCY_TRACE === '1' ? randomUUID() : undefined;
@@ -946,24 +947,33 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     accountChanged: claim !== undefined && claim.accountLifetimeToken !== lifecycle.accountLifetimeToken,
                     availabilityChanged: claim !== undefined && claim.availabilityChangeKey !== availabilityChangeKey,
                 });
-                const claimOnce = (prepare?: true) => post({
-                    path: COLLECTION_WRITERS_CLAIM_HTTP_PATH,
-                    body: { manifest, ...(prepare ? { prepare } : {}) },
-                    ...(prepare ? {} : { encodedBody: encodedClaim }),
-                    credentials,
-                    ...(operationSignal ? { operationSignal } : {}),
-                    parseError: (value, status) => {
-                        const code = asJsonObject(value as JsonValue)?.error;
-                        if (code === 'plugin_collection_contract_conflict' && status !== 409) return null;
-                        return typeof code === 'string'
-                            ? dataError(code, code === 'plugin_collection_contract_conflict'
-                                ? 'Account Collection contract changed without a schemaVersion bump. Update the plugin schemaVersion and migration, then reload the corrected plugin.'
-                                : 'Account Collection writer claim was refused')
-                            : null;
-                    },
-                    unavailableMessage: 'Account Collection writer claim',
-                    ...(diagnosticClaimAttemptId ? { diagnosticClaimAttemptId } : {}),
-                });
+                const claimOnce = async (prepare?: true) => {
+                    const send = (body: unknown) => post({
+                        path: COLLECTION_WRITERS_CLAIM_HTTP_PATH,
+                        body,
+                        credentials,
+                        ...(operationSignal ? { operationSignal } : {}),
+                        parseError: (value, status) => {
+                            const code = asJsonObject(value as JsonValue)?.error;
+                            if (code === 'plugin_collection_contract_conflict' && status !== 409) return null;
+                            return typeof code === 'string'
+                                ? dataError(code, code === 'plugin_collection_contract_conflict'
+                                    ? 'Account Collection contract changed without a schemaVersion bump. Update the plugin schemaVersion and migration, then reload the corrected plugin.'
+                                    : 'Account Collection writer claim was refused')
+                                : null;
+                        },
+                        unavailableMessage: 'Account Collection writer claim',
+                        ...(diagnosticClaimAttemptId ? { diagnosticClaimAttemptId } : {}),
+                    });
+                    try {
+                        return await send({ ...digestClaim, ...(prepare ? { prepare } : {}) });
+                    } catch (error) {
+                        if (!isPluginError(error) || error.code !== 'plugin_declaration_not_found') throw error;
+                    }
+                    // A miss asks for the admitted body once, through the same
+                    // publisher proof and claim owner as the digest request.
+                    return await send({ manifest, ...(prepare ? { prepare } : {}) });
+                };
                 const result: Promise<PluginError | null> = (async () => {
                     try {
                         await claimOnce();

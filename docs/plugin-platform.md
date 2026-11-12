@@ -287,8 +287,11 @@ contains only a real saved source revision and its saved service-check observer 
 current Environment controller, addressed through the invoking Home profile; changed
 alert choices do not borrow that saved selector. Reopening setup adopts the saved
 checks and investigation choice from that preview. Save changes updates alert or
-investigation choices through the same Save branch without adding a check. Full
-Save retains the existing validation and capability enrollment. Manifest admission retains the exact
+investigation choices through the same Save branch without adding a check. An
+Environment can save these deliberate choices before adding its first check;
+the same saved source owns them and its empty check list performs no probes.
+Machine-service sources still require a check. Full Save retains the existing
+validation and capability enrollment. Manifest admission retains the exact
 canonical Save result branch and accepts a disjoint strict `mode: preview` branch
 only with the corresponding readonly Action predicate. Event enrollment still
 parses only the canonical Save result. A contributed
@@ -1203,6 +1206,11 @@ Node's header/body deadlines and Bun's default fetch timeout, so a native image 
 or other long-running call can wait beyond five minutes without a competing
 transport cutoff. This is development behavior and requires an updated controller
 CLI, including the darwin payload when that Machine hosts the provider.
+The finite transport owns cancellation through that read. Once it has read the
+complete response, later cancellation does not discard the received status and
+body: callers must retain an acknowledged native mutation instead of reporting
+an unknown outcome. Cancellation before or during the body read still cancels
+the request. Streams keep their separate open-body cancellation lifecycle below.
 
 The CLI `HttpService.requestStream` extension accepts bodyless GET/HEAD reads
 through this same owner. `executeFetch` shares interception, redirect admission,
@@ -1225,6 +1233,12 @@ backpressure. Watch identity and disposal stay with the existing lifecycle;
 there is no read-by-watch-slot field or registry. Provider HTTP iterables never
 cross Action JSON, and reopening a runtime log establishes no historical cursor
 or gap-free replay guarantee.
+
+For Account-executed provider targets, nested Actions and Resource `readAction`
+calls use the admitted Account execution registry. Credential materialization
+independently uses the containing operation's held credential registry when
+present. Borrowing Machine-held credential descriptors does not change which
+registry owns the Account Action or Resource.
 
 Trusted in-process filesystem callers may supply their own read/page budgets;
 the service does not impose an additional byte or page-size ceiling. MCP
@@ -1630,10 +1644,15 @@ value becomes a host-deferred declaration field (Protocol
 `plugins/contributions/deferredDeclarationFields.ts`) that reads its plugin's schema
 file once per process on first use, and the precomputed hints ride on a
 non-enumerable sidecar, so Action forms and the daemon's UI registry projection never
-read a schema. Every asset carries the SHA-256 of the manifest text it was cut from;
-a schema file from another publication fails the first deferred read with a restart
-instruction. Inputs without a derived summary (inline manifests, fixture or older
-retained runtime roots) keep the plain full read.
+read a schema. Every asset carries the SHA-256 of the manifest text it was cut from,
+and the reader verifies the summary against the manifest bytes it ships beside: a
+missing or mismatched summary is never trusted and never drops the plugin; the reader
+parses the manifest itself and logs `bundled_declaration_asset_stale`. A mismatched
+schema file is completed from the verified manifest the same way; only a manifest
+rewritten under a running process raises `BundledPluginDeclarationChangedError`. The
+summary also carries `canonicalDeclarationDigest`, the server's release-less
+declaration digest (`createReleaseLessDeclarationV1`), read with
+`readBundledPluginCanonicalDeclarationDigest` without materializing schemas.
 
 Projections that copy Action declarations (`projectTargetedContributionActionDefinition`,
 the registry's Action normalization and localized presentation) forward deferred
@@ -2497,6 +2516,31 @@ Contributed client Action delivery consults the authenticated live RPC registry,
 a positive reconnect hint. A definitive missing-handler refusal, including the UI's decoded
 retirement receipt, preserves `actionHandlerInvocation: notStarted` through the existing settlement
 owner. An issued effect with a lost or malformed receipt retains unknown outcome and is not retried.
+
+### Machine roles (0.3 development source)
+
+A Machine's role set is the encrypted Machine metadata field `rolesV1 = { active: RoleId[] }`,
+owned by [`machineRolesV1.ts`](../packages/protocol/src/machines/roles/machineRolesV1.ts) next to
+`finitePolicyV1` and `resourcesPolicyV1` (OWNER-RULINGS 2026-11-12). A missing field means every
+built-in role (`sessions`, `broker`, `intake`, `deployments`, `workspaces`, `relay`, `memory`,
+`voice`, `devices`), which is the pre-roles behaviour, so 0.2 data needs no migration.
+
+- **One decision:** `resolveActiveMachineRolesV1` / `isMachineRoleActiveV1`. The daemon, spawn
+  readiness (`roleInactive`), the implicit launch default, the deployment draft default and the UI
+  all call it.
+- **Writes:** `machines.roles.set` is Machine-placed with Manage admission (same as
+  `machines.resources.policy.set`) and field compare-and-swap. Managed creation seeds the
+  install-type default through the same Action as a creation child.
+- **Daemon:** `apps/cli/src/daemon/roles/machineRolesRuntime.ts` reloads on the Machine-metadata
+  change hook and exposes the active set to role registration. An inactive role's handlers are not
+  registered, so the daemon answers `machine_role_inactive` (`RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE`).
+  Server-side broker placement follows the `providerBrokerIngress` capability, which is published only
+  while the broker handler is installed.
+- **Plugins:** the `machineRoles` manifest family uses the same declaration schema as the core
+  catalog. An entry with `partOf` adds its `backgroundServices` to that built-in role; an entry without
+  it is a new role qualified as `<pluginId>/<localId>`, off unless `defaultActive` and subject to
+  `requires`. Channels declare `partOf: 'intake'`, Machine services `partOf: 'deployments'`, and
+  CLIProxyAPI `partOf: 'broker'`.
 
 ### Background-service placement (unreleased 0.3)
 
@@ -5363,7 +5407,14 @@ A daemon-selected plugin's release-less Account
 declaration supplies server currentness for Collections, webhooks, Events and
 Machine provisioners. In development source, Availability retains these
 declarations per authenticated Machine installation in the existing intent
-record. A claim replaces only that Machine's declaration, including equal-version
+record. In unreleased 0.3 source, the host first claims the exact canonical
+manifest digest. The server resolves a held declaration only within that Account
+and plugin; `plugin_declaration_not_found` asks the host to send its full admitted
+manifest through the same claim and publisher-proof path. Bundled summaries carry
+the exact publisher-computed canonical digest in host-only metadata; byte-preserving
+normalization keeps it, while declaration projections drop it and hash their actual
+values. A digest hit therefore materializes no deferred Action schemas. An unchanged
+restart sends no manifest body. A claim replaces only that Machine's declaration, including equal-version
 localPath edits; plugin version does not order declarations across Machines.
 Webhook and Event currentness reads select the executing Machine's declaration.
 Account reads derive `machineDeclarations` from those entries; a single
@@ -9703,6 +9754,18 @@ removed; throttled demand returns the existing typed failure without provider
 HTTP, a timer or mutation replay. These are development-source contracts;
 loaded-runtime and release validation remain separate evidence.
 
+Demanded GitHub REST reads through the shared cadence owner retain ETagged
+representations within that admitted Account and credential lifetime. Subsequent
+GETs revalidate with `If-None-Match`; an authenticated 304 reuses the validated
+body and pagination metadata without spending the primary REST budget. Every
+read still passes current HTTP admission, and timing headers come only from the
+current response. Credential rotation and occurrence retirement clear retained
+representations. Existing caller-owned cursor validators keep their raw 304
+contract; GraphQL checks and viewer facts remain independent reads because a
+PR representation's validator does not cover them. No cache supplies a response
+without provider revalidation, and retaining a representation starts no work.
+This follows GitHub's [conditional request contract](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate).
+
 The development GitHub Channels comment/PR poll producer supplies the existing
 `retryHint` on successful baselines and batches from GitHub's poll/retry headers
 and primary REST budget headers. Without `x-poll-interval`, it spaces the next
@@ -10169,6 +10232,14 @@ provider reset evidence for the daemon's existing backoff. Claude's immediate
 the final response, including a retried 429 or 503, preserves that delay without
 adding a leaf minimum. The containing quota coordinator retains its own backoff
 policy.
+
+The SDK's pure `parseRetryAfterValue` owns numeric/date interpretation for
+quota and triage Retry-After headers. Callers retain their existing lexical
+admission and deadline policy: shared triage accepts integer seconds or an
+HTTP-date; GitLab accepts integer seconds before its reset-header fallback;
+Azure retains fractional-second evidence and rounds only the final deadline.
+Quota timing retains compact-duration support and millisecond truncation.
+This is a development-source helper, with no runtime ABI or wire change.
 
 In 0.3 development, UI Usage acquisition currentness is owned by
 `sync/api/account/usageQueryInvalidation.ts`. Retained qualified quota and

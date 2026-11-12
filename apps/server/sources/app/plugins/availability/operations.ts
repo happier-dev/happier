@@ -85,6 +85,7 @@ export type PluginAvailabilityOperationErrorCode =
     | "plugin_release_content_conflict"
     | "plugin_release_collection_contract_mismatch"
     | "plugin_release_not_found"
+    | "plugin_declaration_not_found"
     | "plugin_intent_revision_conflict"
     | "plugin_intent_writable_collections_not_ready"
     | "plugin_intent_release_selected"
@@ -2348,11 +2349,25 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         input: unknown;
         publisher?: VerifiedPluginInstallationPublisher;
     }>): Promise<PluginAvailabilityCollectionWritersClaimActionOutputV1> {
-        const { manifest, prepare } = parseOperationInput(PluginAvailabilityCollectionWritersClaimActionInputV1Schema, params.input);
-        const pluginId = manifest.id;
-        const claimedDeclaration = createReleaseLessDeclarationV1(manifest);
+        const input = parseOperationInput(PluginAvailabilityCollectionWritersClaimActionInputV1Schema, params.input);
+        const { prepare } = input;
+        const pluginId = 'manifest' in input ? input.manifest.id : input.pluginId;
         try {
             return await inTx(async (tx) => {
+                // A digest names only a previously admitted body in this Account.
+                // Reuse the same declaration/Collection admission below; it is not
+                // an authorization grant and never reads another Account's row.
+                const stored = 'manifest' in input ? null : await tx.accountPluginIntent.findUnique({
+                    where: { accountId_pluginId: { accountId: params.accountId, pluginId } },
+                    select: { releaseLessDeclaration: true },
+                });
+                const declarations = 'manifest' in input ? null
+                    : readReleaseLessDeclarationsV2(stored?.releaseLessDeclaration, pluginId);
+                const claimedDeclaration = 'manifest' in input ? createReleaseLessDeclarationV1(input.manifest)
+                    : [...(declarations?.machines.map(entry => entry.declaration) ?? []), declarations?.legacyDeclaration]
+                        .find(declaration => declaration?.manifestDigestSha256 === input.manifestDigestSha256);
+                if (!claimedDeclaration) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                const { manifest } = claimedDeclaration;
                 let claimed: readonly PluginCollectionContractRefV1[];
                 try {
                     claimed = await materializePluginCollectionContractsTx({

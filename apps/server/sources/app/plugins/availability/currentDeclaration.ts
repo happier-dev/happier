@@ -1,7 +1,7 @@
-import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { computePluginManifestDigestV2 } from '@happier-dev/protocol/plugins/manifest/digest';
 import type { ParsedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability/v1';
-import { computePluginUiArtifactSha256DigestV1, PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import { PluginUiArtifactDigestV1Schema, type PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 
 import type { Tx } from "@/storage/inTx";
 import { readDeclarationIntentIdentitiesTx, readSelectedDeclarationManifestsTx } from './declarationReadRows';
@@ -80,9 +80,7 @@ export function readCurrentPluginDeclarationV1(params: Readonly<{
 
 export function createReleaseLessDeclarationV1(manifest: ParsedPluginManifestV2): ReleaseLessDeclarationV1 {
     return {
-        manifestDigestSha256: computePluginUiArtifactSha256DigestV1(
-            new TextEncoder().encode(createCanonicalJsonSigningInput(manifest)),
-        ),
+        manifestDigestSha256: computePluginManifestDigestV2(manifest),
         manifest,
     };
 }

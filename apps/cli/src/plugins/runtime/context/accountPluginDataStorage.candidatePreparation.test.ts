@@ -42,6 +42,8 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { logger } from '@/ui/logger';
 
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
+import { PluginAvailabilityCollectionWritersClaimActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { computePluginManifestDigestV2 } from '@happier-dev/protocol/plugins/manifest/digest';
 import { loadPluginModule } from '../loadPluginModule';
 import { compileUniversalPluginUiCommonJs } from '../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 
@@ -724,7 +726,9 @@ describe('Account Data Collection candidate preparation', () => {
                 requests.push(url);
                 const request = JSON.parse(encoded);
                 if (url.endsWith('/collection-writers/claim')) {
-                    const manifest = PluginManifestV2Schema.parse(request.manifest);
+                    const claim = PluginAvailabilityCollectionWritersClaimActionInputV1Schema.parse(request);
+                    const manifest = 'manifest' in claim ? claim.manifest : manifests.find(value => value.id === claim.pluginId)!;
+                    if (!('manifest' in claim)) expect(claim.manifestDigestSha256).toBe(computePluginManifestDigestV2(manifest));
                     const source = normalizePluginAccountCollectionContractV1({ pluginId: manifest.id, contribution: sourceContribution });
                     const target = contracts.find(contract => contract.pluginId === manifest.id)!;
                     const ref = (contract: typeof source) => ({ pluginId: contract.pluginId, collectionId,

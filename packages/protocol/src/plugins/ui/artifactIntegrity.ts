@@ -7,7 +7,7 @@ const SHA256_HEX_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
 export type PluginUiArtifactDigestV1 = `sha256:${string}`;
 
-function isPluginUiArtifactDigestV1(value: string): value is PluginUiArtifactDigestV1 {
+export function isPluginUiArtifactDigestV1(value: string): value is PluginUiArtifactDigestV1 {
   return SHA256_HEX_DIGEST_PATTERN.test(value);
 }
 

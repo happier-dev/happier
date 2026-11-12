@@ -150,11 +150,18 @@ export type PluginAvailabilityIntentSetActionOutputV1 = z.infer<typeof PluginAva
  * `intent.set`, never overrides a present-user release selection, and never
  * lowers a collection's schemaVersion or the declaration version.
  */
-export const PluginAvailabilityCollectionWritersClaimActionInputV1Schema = lazyZodSchema(() => z.strictObject({
-  manifest: PluginPortableReleaseManifestV1Schema,
-  /** Read exact incumbent declarations/bindings without moving the writer. */
-  prepare: z.optional(z.literal(true)),
-}));
+export const PluginAvailabilityCollectionWritersClaimActionInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    pluginId: asProtocolZod(PluginIdSchema),
+    manifestDigestSha256: PluginUiArtifactDigestV1Schema,
+    prepare: z.optional(z.literal(true)),
+  }),
+  z.strictObject({
+    manifest: PluginPortableReleaseManifestV1Schema,
+    /** Read exact incumbent declarations/bindings without moving the writer. */
+    prepare: z.optional(z.literal(true)),
+  }),
+]));
 export type PluginAvailabilityCollectionWritersClaimActionInputV1 =
   z.infer<typeof PluginAvailabilityCollectionWritersClaimActionInputV1Schema>;
 

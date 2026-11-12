@@ -89,7 +89,7 @@ const PRECOMPUTED_DECLARATION_FIELDS = Symbol('happier.plugin.precomputedDeclara
 
 /**
  * Publisher-derived values that a projection would otherwise compute from a
- * deferred field (bundled Action input hints). Kept as a non-enumerable symbol
+ * deferred field (bundled Action input hints or a manifest digest). Kept as a non-enumerable symbol
  * sidecar: spreads, clones, JSON and strict JSON never carry it.
  */
 export function attachPrecomputedDeclarationFields(target: object, fields: Readonly<Record<string, unknown>>): void {
@@ -99,4 +99,10 @@ export function attachPrecomputedDeclarationFields(target: object, fields: Reado
 export function readPrecomputedDeclarationField(source: object, key: string): Readonly<{ value: unknown }> | null {
   const fields = (source as { [PRECOMPUTED_DECLARATION_FIELDS]?: Readonly<Record<string, unknown>> })[PRECOMPUTED_DECLARATION_FIELDS];
   return fields && Object.hasOwn(fields, key) ? { value: fields[key] } : null;
+}
+
+/** Preserve publisher facts only across an exact, byte-preserving normalization. */
+export function forwardPrecomputedDeclarationFields(source: object, target: object): void {
+  const fields = (source as { [PRECOMPUTED_DECLARATION_FIELDS]?: Readonly<Record<string, unknown>> })[PRECOMPUTED_DECLARATION_FIELDS];
+  if (fields) attachPrecomputedDeclarationFields(target, fields);
 }

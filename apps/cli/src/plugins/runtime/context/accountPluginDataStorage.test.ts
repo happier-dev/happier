@@ -3,7 +3,7 @@ import axios from 'axios';
 import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 import tweetnacl from 'tweetnacl';
 import * as collectionCodec from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
-import * as artifactIntegrity from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
+import { computePluginManifestDigestV2 } from '@happier-dev/protocol/plugins/manifest/digest';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import {
     FeaturesResponseSchema,
@@ -1470,9 +1470,9 @@ describe('Account plugin Data storage host', () => {
             return async (url: string, body: string) => {
                 calls.push(url);
                 if (url === CLAIM_URL) {
-                    // The claim carries exactly the admitted manifest; the
-                    // server derives Collections and the declaration from it.
-                    expect(JSON.parse(body)).toEqual({ manifest: JSON.parse(JSON.stringify(manifest)) });
+                    // This Home already holds the admitted declaration.
+                    expect(JSON.parse(body)).toEqual({ pluginId: manifest.id,
+                        manifestDigestSha256: computePluginManifestDigestV2(manifest) });
                     return claimResponse;
                 }
                 return readResponse;
@@ -1607,8 +1607,9 @@ describe('Account plugin Data storage host', () => {
             expect(calls.filter((url) => url === CLAIM_URL)).toHaveLength(2);
         });
 
-        it('uses the admitted declaration identity without hashing or transport reparsing', async () => {
-            const encodedClaim = JSON.stringify({ manifest: declaredManifest });
+        it('sends the canonical declaration digest without transport reparsing', async () => {
+            const encodedClaim = JSON.stringify({ pluginId: declaredManifest.id,
+                manifestDigestSha256: computePluginManifestDigestV2(declaredManifest) });
             const claimBodies: unknown[] = [];
             // Axios's adapter is the actual HTTP boundary. Keep its real request
             // transforms and the host's serializers, validators and retry owner.
@@ -1623,7 +1624,6 @@ describe('Account plugin Data storage host', () => {
             });
             // Passive native-engine observations measure the expensive work
             // itself; neither JSON operation has a substituted implementation.
-            const hash = vi.spyOn(artifactIntegrity, 'computePluginUiArtifactSha256DigestV1');
             const parse = vi.spyOn(JSON, 'parse');
             try {
                 const bind = claimingHost({
@@ -1635,10 +1635,8 @@ describe('Account plugin Data storage host', () => {
                 await expect(collection.get('task-1')).resolves.toBeNull();
                 await expect(collection.get('task-2')).resolves.toBeNull();
                 expect(claimBodies).toEqual([encodedClaim, encodedClaim]);
-                expect(hash).not.toHaveBeenCalled();
                 expect(parse.mock.calls.filter(([value]) => value === encodedClaim)).toHaveLength(0);
             } finally {
-                hash.mockRestore();
                 parse.mockRestore();
             }
         });

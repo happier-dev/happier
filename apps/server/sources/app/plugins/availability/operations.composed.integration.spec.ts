@@ -6,7 +6,7 @@ import { createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginI
 import { projectPluginAccountCollectionDeclaration } from "@happier-dev/plugin-sdk/collections";
 import { CORPUS_ACCOUNT_COLLECTIONS } from "../../../../../../packages/plugins/triage/src/corpus/collections/definitions.js";
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
-import { readStoredPluginManifestV2 } from "./currentDeclaration";
+import { createReleaseLessDeclarationV1, readStoredPluginManifestV2 } from "./currentDeclaration";
 
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -2261,6 +2261,45 @@ describe("plugin Availability operations", () => {
                 return { caller, event };
             });
         }
+
+        it("rejoins digest-only declarations without manifest bytes and requests the full declaration only on a miss", async () => {
+            await seedWebhookCapableMachine();
+            const publisher = { machineId: MACHINE_ID, installationId: CALLER.machineInstallationId };
+            const keyPair = tweetnacl.sign.keyPair();
+            await db.machine.update({ where: { id: MACHINE_ID }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+            const full = PluginManifestV2Schema.parse(declaredManifest());
+            const digest = createReleaseLessDeclarationV1(full).manifestDigestSha256;
+            await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
+                const path = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'];
+                const claim = (body: unknown, accountId = ACCOUNT_ID) => app.inject({ method: 'POST', url: path, payload: body,
+                    headers: { 'x-test-user-id': accountId, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({ ...publisher, keyPair, path, body }) } });
+                const identity = { pluginId: PLUGIN_ID, manifestDigestSha256: digest };
+                const missing = await claim(identity);
+                expect(missing.statusCode, missing.body).toBe(404);
+                expect(missing.json()).toEqual({ error: 'plugin_declaration_not_found' });
+                const admitted = await claim({ manifest: full });
+                expect(admitted.statusCode, admitted.body).toBe(200);
+                const revision = admitted.json().intent.revision;
+                for (let restart = 0; restart < 3; restart++) {
+                    const response = await claim(identity);
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json().intent.revision).toBe(revision);
+                }
+                const changed = PluginManifestV2Schema.parse({ ...full, displayName: 'Same-version declaration edit' });
+                const changedIdentity = { pluginId: PLUGIN_ID, manifestDigestSha256: createReleaseLessDeclarationV1(changed).manifestDigestSha256 };
+                expect((await claim(changedIdentity)).statusCode).toBe(404);
+                expect((await claim({ manifest: changed })).statusCode).toBe(200);
+                expect((await claim(changedIdentity)).statusCode).toBe(200);
+                // Another Account cannot resolve this Account's declaration or borrow its publisher.
+                expect((await claim(identity, 'another-declaration-account')).statusCode).toBe(403);
+                const unrelated = await operations().claimCollectionWriters({ accountId: 'another-declaration-account', input: identity })
+                    .then(() => null, (error: unknown) => error);
+                expect(unrelated).toMatchObject({ code: 'plugin_declaration_not_found' });
+                const read = await operations().readIntent({ accountId: ACCOUNT_ID, input: { pluginId: PLUGIN_ID } });
+                expect(read.currentDeclaration?.manifest.displayName).toBe('Same-version declaration edit');
+            });
+        });
 
         it("keeps equal-version declarations isolated by Machine and updates a same-Machine localPath edit", async () => {
             await seedWebhookCapableMachine();
