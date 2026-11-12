@@ -18522,6 +18522,8 @@ settingsSession: {
       databasePublic: "公开",
       databasePublished: "可从互联网访问。除非网络外的工具需要，请保持私有。",
       databaseNotPublished: "未公开",
+      databaseAvailability: "可用性",
+      databaseAvailabilityDetail: "它只在一台服务器上运行，因此不是高可用的。那台服务器丢失时，靠备份恢复。",
       databaseUsedByTitle: "使用方",
       databaseUsedByDescription: "应用通过其 Variables 访问此数据库。",
       databaseBackupsDescription: "此数据库在备份存储中的副本。",

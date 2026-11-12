@@ -18817,6 +18817,8 @@ settingsSession: {
       databasePublic: "公開",
       databasePublished: "インターネットから到達できます。ネットワーク外のツールが必要としない限り非公開にしてください。",
       databaseNotPublished: "公開していません",
+      databaseAvailability: "可用性",
+      databaseAvailabilityDetail: "1 台のサーバーで動いているため、高可用性ではありません。そのサーバーを失ったときはバックアップから復元します。",
       databaseUsedByTitle: "使用元",
       databaseUsedByDescription: "アプリは Variables を通じてこのデータベースに接続します。",
       databaseBackupsDescription: "バックアップ保存先にあるこのデータベースのコピー。",

@@ -22367,6 +22367,8 @@ const enProjects = {
       databasePublic: "Public",
       databasePublished: "Reachable from the internet. Keep it private unless a tool outside your network needs it.",
       databaseNotPublished: "Not published",
+      databaseAvailability: "Availability",
+      databaseAvailabilityDetail: "Runs on one server, so it isn’t highly available. A backup is how it comes back if that server is lost.",
       databaseUsedByTitle: "Used by",
       databaseUsedByDescription: "Apps reach this database through their Variables.",
       databaseBackupsDescription: "Copies of this database in your backup storage.",

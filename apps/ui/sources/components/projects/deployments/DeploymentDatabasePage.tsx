@@ -988,6 +988,13 @@ function ConnectionSection(
           published ? undefined : t('projects.deployments.databaseNotPublished')
         }
       />
+      {/* A self-hosted database is one service on one server (lab database/selfhosted, J5): say so where it runs. */}
+      <Item
+        testID={`${props.testID}.availability`}
+        title={t('projects.deployments.databaseAvailability')}
+        mode="info"
+        subtitle={t('projects.deployments.databaseAvailabilityDetail')}
+      />
       {props.scope
         ? secrets.map((secret) => {
             const entry = props.catalog.find(

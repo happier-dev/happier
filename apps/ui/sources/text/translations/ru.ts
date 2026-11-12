@@ -18856,6 +18856,8 @@ settingsSession: {
       databasePublic: "Публичный",
       databasePublished: "Доступна из интернета. Оставьте её закрытой, если она не нужна инструменту вне вашей сети.",
       databaseNotPublished: "Не опубликована",
+      databaseAvailability: "Доступность",
+      databaseAvailabilityDetail: "Работает на одном сервере, поэтому не является высокодоступной. Если сервер потерян, её вернёт резервная копия.",
       databaseUsedByTitle: "Используется",
       databaseUsedByDescription: "Приложения подключаются к базе через свои Variables.",
       databaseBackupsDescription: "Копии этой базы в вашем хранилище резервных копий.",

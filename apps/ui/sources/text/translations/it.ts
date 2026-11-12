@@ -18905,6 +18905,8 @@ settingsSession: {
       databasePublic: "Pubblico",
       databasePublished: "Raggiungibile da internet. Tienilo privato a meno che uno strumento fuori dalla tua rete ne abbia bisogno.",
       databaseNotPublished: "Non pubblicato",
+      databaseAvailability: "Disponibilità",
+      databaseAvailabilityDetail: "Gira su un solo server, quindi non è ad alta disponibilità. Un backup la riporta indietro se quel server va perso.",
       databaseUsedByTitle: "Usato da",
       databaseUsedByDescription: "Le app raggiungono questo database tramite le loro Variables.",
       databaseBackupsDescription: "Copie di questo database nel tuo spazio di backup.",

@@ -18728,6 +18728,8 @@ settingsSession: {
       databasePublic: "Publiczny",
       databasePublished: "Dostępna z internetu. Zostaw ją prywatną, chyba że potrzebuje jej narzędzie spoza Twojej sieci.",
       databaseNotPublished: "Nieopublikowana",
+      databaseAvailability: "Dostępność",
+      databaseAvailabilityDetail: "Działa na jednym serwerze, więc nie jest wysoko dostępna. Kopia zapasowa przywróci ją, jeśli ten serwer zostanie utracony.",
       databaseUsedByTitle: "Używana przez",
       databaseUsedByDescription: "Aplikacje łączą się z tą bazą przez swoje Variables.",
       databaseBackupsDescription: "Kopie tej bazy w Twoim magazynie kopii.",

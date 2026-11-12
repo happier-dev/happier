@@ -19009,6 +19009,8 @@ settingsSession: {
       databasePublic: "Pública",
       databasePublished: "Acessível a partir da internet. Mantém-na privada, a não ser que uma ferramenta fora da tua rede precise dela.",
       databaseNotPublished: "Não publicada",
+      databaseAvailability: "Disponibilidade",
+      databaseAvailabilityDetail: "Roda em um único servidor, então não tem alta disponibilidade. Um backup a recupera se esse servidor for perdido.",
       databaseUsedByTitle: "Usada por",
       databaseUsedByDescription: "As apps chegam a esta base através das suas Variables.",
       databaseBackupsDescription: "Cópias desta base no teu armazenamento de backups.",
