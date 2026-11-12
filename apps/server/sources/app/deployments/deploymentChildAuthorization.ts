@@ -3,7 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
-import { isDeploymentDomainRemoveActionIdV1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainRemoveActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentStateV1Schema, getDeploymentTargetLinkLineageV1, isDeploymentRollbackSourceEligibleV1,
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import { isDeploymentDomainDnsNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -256,15 +256,17 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         ...(archiveOrigin ? { archiveOrigin } : {}) };
 }
 
-/** Accepted jobs retain their captured custody; preparation still needs current requester admission. */
+/** ActionSpec selects preparation custody; accepted jobs retain their captured admission. */
 async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, routing: Exclude<DeploymentChildRoutingV1, { kind: 'dataRole' | 'snapshot' }>,
     authentication: DeploymentAuthentication = {},
 ): Promise<boolean | ActionExecuteFailure | Awaited<ReturnType<typeof readAcceptedDeploymentReceiptInTx>>> {
+    const rootAction = ActionIdSchema.safeParse(binding.actionId);
+    const preparationScope = rootAction.success ? getActionSpec(rootAction.data).deploymentPreparationScope?.(binding) : undefined;
     if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns') {
-        if (binding.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        if (preparationScope?.environment === 'template'
             && await readTemplateDeploymentEnvironmentIdInTx(tx, binding) !== routing.input.environmentId) return false;
-        if (binding.actionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+        if (preparationScope?.environment === 'create'
             && (binding.deploymentPreparationAdmission?.operation !== 'create'
                 || await readCreatedDeploymentEnvironmentIdInTx(tx, binding.accountId, binding.deploymentPreparationAdmission.requestKey)
                     !== routing.input.environmentId)) return false;
@@ -301,8 +303,6 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
         ]);
     }
     if (routing.kind !== 'prepare' && routing.kind !== 'review') return readAcceptedDeploymentChildInTx(tx, binding, routing);
-    const rootAction = ActionIdSchema.safeParse(binding.actionId);
-    const preparationScope = rootAction.success ? getActionSpec(rootAction.data).deploymentPreparationScope?.(binding) : undefined;
     if (preparationScope?.environment === 'template'
         && await readTemplateDeploymentEnvironmentIdInTx(tx, binding) !== routing.input.environmentId) return false;
     if (preparationScope?.environment === 'create' && routing.kind === 'review'
@@ -324,7 +324,7 @@ async function isCurrentDeploymentChildRoutingInTx(tx: Tx,
     if (!link || link.revision !== (routing.kind === 'prepare' ? routing.expectedTargetLinkRevision : routing.input.expectedTargetLinkRevision)) return false;
     const member = link.machines.some(value => value.installationId === routing.installationId);
     const builder = loaded.row.buildMachineId === routing.machineId;
-    const preparesTeardown = routing.kind === 'prepare' && routing.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+    const preparesTeardown = routing.kind === 'prepare' && getActionSpec(routing.actionId).deploymentReadScope?.childReadOnly === true;
     if (routing.kind === 'prepare' ? preparesTeardown ? !member : !builder : !member && !builder) return false;
     if (!loaded.row.controllerMachineId) return false;
     const denied = await admitDeploymentMachinesInTx(tx, owner, [

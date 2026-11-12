@@ -228,7 +228,7 @@ describe('Home-signed Environment metadata reads', () => {
                     expect(ordinary.statusCode, ordinary.body).toBe(200);
                     const replay = await app.inject({ method: 'GET', url: transport.path, headers: headers(transport.path, effect) });
                     expect.soft(replay.statusCode, `${effect}: ${replay.body}`).toBe(401);
-                    expect.soft(replay.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+                    expect.soft(replay.json()).toMatchObject({ authorizationRefusal: 'deployment_metadata_environment' });
                 }
                 const foreignPreparation = environmentRead(foreign.environment.id);
                 const denied = await app.inject({ method: 'GET', url: foreignPreparation.path,

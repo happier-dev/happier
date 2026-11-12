@@ -1,9 +1,11 @@
+import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import * as registryIds from '@happier-dev/protocol/registries/registryActionIdsV1';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
-import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { PROJECT_READINESS_ACTION_IDS_V1, type ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
+import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
@@ -21,7 +23,7 @@ export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: Ex
     authentication: DeploymentAuthentication = {},
 ): Promise<Readonly<{ environmentIds: readonly string[]; artifactIds: readonly string[] }> | null> {
     const admission = binding.registryAppUpdateAdmission;
-    if (!admission || binding.actionId !== 'registries.updates.check' || binding.target.kind !== 'machine'
+    if (!admission || binding.actionId !== registryIds.REGISTRY_UPDATES_CHECK_ACTION_ID_V1 || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId) return null;
     const rows = await Promise.all(admission.environments.map(async demand => {
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
@@ -48,11 +50,11 @@ export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
 
 /** A finite Query spends its signed scope; these reads select content custody, not fresh permission. */
 export async function readAdmittedDeploymentDataQueryScopeInTx(tx: Tx,
-    admission: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>
+    admission: Extract<DeploymentReadAdmissionV1, { actionId: typeof deploymentActionIds.DEPLOYMENT_DATA_QUERY_ACTION_ID_V1 }>
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[]; managedControllerMachineId?: string }> | null> {
     const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
-    if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+    if ('action' in admission) {
         const environment = await tx.deploymentEnvironment.findFirst({ where: { id: admission.environmentId,
             revision: admission.expectedRevision, deletedAt: null }, select: { ...select, controllerMachineId: true } });
         const links = environment ? await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: admission.environmentId,
@@ -76,7 +78,7 @@ export async function readAdmittedDeploymentDataQueryScopeInTx(tx: Tx,
 export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: DeploymentReadAdmissionV1, authentication: DeploymentAuthentication = {},
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
-    if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+    if ('action' in admission) {
         if (binding.actionId !== admission.actionId || binding.target.kind !== 'machine'
             || binding.target.machineId !== binding.machineId) return null;
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
@@ -91,7 +93,7 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId || admission.machineId !== binding.machineId
         || 'installationId' in admission && admission.installationId !== binding.installationId) return null;
-    if (admission.actionId === PROJECT_READINESS_ACTION_IDS_V1[0]) {
+    if ('projectId' in admission) {
         const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.projectId, authentication);
         if (!source.ok) return null;
         const contents = await Promise.all(admission.environments.map(async demand => {
@@ -121,7 +123,8 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<Readonly<{ artifactIds: readonly string[] }> | null> {
-    if (admission.actionId === 'deployments.health.current') {
+    const scope = getActionSpec(admission.actionId).deploymentReadScope;
+    if (scope?.target === 'current_health') {
         const link = await tx.deploymentTargetLink.findFirst({ where: {
             id: admission.targetLinkId, environmentId: environment.id,
         } });
@@ -131,26 +134,25 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             || link.targetKind !== 'ownServer') return null;
         return { artifactIds: [] };
     }
+    if (!scope || !('deploymentId' in admission)) return null;
     const [link, receipt] = await Promise.all([
         tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId, environmentId: environment.id },
             include: { machines: true } }),
         tx.deployment.findUnique({ where: { id: admission.deploymentId } }),
     ]);
-    const copy = admission.actionId === 'deployments.backups.restore'
+    const copy = scope.target === 'restore_receipt' && 'source' in admission
         && admission.source.kind === 'repository' && admission.source.origin;
     if (!link || !receipt || !copy && (receipt.environmentId !== environment.id || receipt.targetLinkId !== link.id)) return null;
-    if (admission.actionId !== 'deployments.logs.read') {
+    if (scope.target !== 'historical_receipt') {
         if (environment.deletedAt || environment.runtimeTargetLinkId !== link.id || link.deletedAt || link.detachedAt
             || link.role !== 'runtime' || link.sourceKind !== 'host' || link.targetKind !== 'ownServer'
-            || admission.actionId !== 'deployments.backups.restore' && link.activeDeploymentId !== receipt.id
+            || scope.target !== 'restore_receipt' && link.activeDeploymentId !== receipt.id
             || !copy && !link.machines.some(member => member.machineId === admission.machineId
                 && member.installationId === admission.installationId && member.state === 'active')
-            || ('expectedRevision' in admission && (admission.actionId === 'deployments.drift.read'
-                || admission.actionId === 'deployments.data.query'
-                || admission.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(admission.actionId)))
+            || ('expectedRevision' in admission && scope.requireEnvironmentRevision)
                 && admission.expectedRevision !== environment.revision) return null;
     }
-    if (admission.actionId === 'deployments.backups.restore') {
+    if (scope.target === 'restore_receipt') {
         const active = link.activeDeploymentId ? await tx.deployment.findFirst({ where: { id: link.activeDeploymentId,
             environmentId: environment.id, targetLinkId: link.id },
             select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } }) : null;

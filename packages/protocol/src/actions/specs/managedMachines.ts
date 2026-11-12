@@ -1,5 +1,7 @@
 import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { MACHINE_PRESET_INPUT_FIELDS, MACHINE_POOL_INPUT_FIELDS } from './machineInputHints.js';
+import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScope.js';
+import { isMachineSetupPlanOrApplyActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1, EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1, EphemeralRunnerActionInputSchemasV1, EphemeralRunnerActionOutputSchemasV1, type EphemeralRunnerActionIdV1 } from '../../ephemeralRunner/actionsV1.js';
@@ -36,6 +38,7 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.setup.apply': 'Apply machine setup',
   'machines.setup.remove': 'Remove machine setup items',
   'machines.setup.updates.apply': 'Install machine updates',
+  'machines.setup.updates.rollout': 'Update a fleet of Machines',
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
   'machines.managed.rebuild': 'Rebuild Dev Container',
@@ -50,7 +53,7 @@ function createManagedMachineActionSpecs() {
   return MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   const effect = actionId === 'machines.managed.acquire'
     || actionId === 'machines.managed.credentials.install'
-    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === 'machines.managed.setup.skip'
+    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
     || MANAGED_CONTROL_ACTION_IDS_V1.some(control => control === actionId);
   const account = actionId === 'machines.provisioners.list'
@@ -61,7 +64,8 @@ function createManagedMachineActionSpecs() {
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete';
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
-    ...(actionId === 'machines.setup.apply' ? { requesterAccountContentDemandForInput: () => true } : {}),
+    ...(isMachineSetupPlanOrApplyActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId) ? { deploymentPreparationScope: declareDeploymentPreparationScopeV1('setup') } : {}),
+    ...(isMachineSetupCombinedActionIdV1(actionId) ? { requesterAccountContentDemandForInput: () => true } : {}),
     ...(actionId === 'machines.managed.acquire' ? { hostReviewedChildren: (normalizedInput: unknown) => {
       const input = normalizedInput as ManagedAcquireInputV1;
       // The guest operands arrive after enrollment. Declare only work already
@@ -92,7 +96,7 @@ function createManagedMachineActionSpecs() {
       : effect ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
     title: titles[actionId],
     ...(actionId === 'machines.managed.acquire' ? { approvalPresentation: managedAcquireApprovalPresentation } : {}),
-    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' ? { approvalScope: 'machine' as const } : {}),
+    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 ? { approvalScope: 'machine' as const } : {}),
     ...({
       'machines.managed.bootstrap.retry': { confirmVerb: { key: 'common.retry', fallback: 'Retry' } },
       // Its own words, not "Cancel": the dialog's dismiss button already says Cancel.
@@ -149,7 +153,7 @@ function createManagedMachineActionSpecs() {
     // This requester-private census is assembled by the Account's existing
     // readers; it has no server endpoint that could read E2EE references.
     ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan'
-      || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' ? {} : {
+      || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 ? {} : {
       serverTransport: { method: 'POST' as const, path: managedMachineActionEndpointPathV1(actionId) },
     }),
     ...(effect ? { operation: {

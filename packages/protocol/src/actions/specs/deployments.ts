@@ -44,7 +44,15 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     } : undefined;
   const secretPath = id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? 'set.[].source.ref'
     : id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? 'bindings.[].source.ref' : null;
-  const inputHints = backupConfigure ? { description: deploymentBackupConfigureDescription, fields: [
+  const inputHints = deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) ? { description: 'Create or inspect the DNS records already required by the retained Domain. Select a DNS Action, connected account, hosted zone and TTL. A configured match does not establish public propagation, route readiness or application health.', fields: [
+      { path: 'serverId', title: 'Home', widget: 'text', required: true },
+      { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
+      { path: 'domainId', title: 'Domain', widget: 'text', required: true },
+      { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
+      { path: 'expectedDomainRevision', title: 'Domain revision', widget: 'number', required: true },
+      { path: 'dns', title: 'DNS account, hosted zone, TTL and record Action', widget: 'json', required: true },
+      { path: 'requestKey', title: 'Request key', widget: 'text', required: true },
+    ] } as const : backupConfigure ? { description: deploymentBackupConfigureDescription, fields: [
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
@@ -245,7 +253,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && !accountPage
       ? { approvalScope: 'environment' } : {}),
-    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
+    executionPlacement: isDeploymentTargetLinkActionIdV1(id) || rolloutReview || query || backup || backupConfigure || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_OBSERVATION_GET_ACTION_ID_V1 ? 'machine' : 'account', requiredAuthority: 'account_automation', placements: [],
     ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 ? {
       executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' => {
@@ -262,7 +270,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { executionPlacements: ['account', 'machine'],
       executionPlacementForInput: (input: unknown): 'account' | 'machine' =>
         readRecord(input).detachKeepRunning === true ? 'account' : 'machine' } : {}),
-    ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || isDeploymentDomainChildActionIdV1(id)
+    ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || deploymentActionIds.isDeploymentDomainDnsActionIdV1(id) || isDeploymentDomainChildActionIdV1(id)
       ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : rolloutReview || backup || backupConfigure || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
@@ -316,6 +324,9 @@ function createDeploymentActionSpecsV1() {
     } },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1, 'Remove deployment domain', '/v1/deployments/environments/:environmentId/domains/:domainId/remove'),
     deploymentReadScope: createDeploymentReadScopeV1({ childMetadataReads: DEPLOYMENT_DOMAIN_DISCOVERY_CHILD_METADATA_READS_V1 }), requesterAccountContentDemandForInput: () => true },
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, 'Create required DNS records', undefined), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true,
+    approvalPresentation: { summary: () => 'Create the records required by this Domain using the selected DNS account, hosted zone and TTL. Existing records are preserved.' } },
+  { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1, 'Verify required DNS record configuration', undefined, true), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_VERIFY_ACTION_ID_V1, 'Verify deployment domain', undefined, true),
     deploymentReadScope: createDeploymentReadScopeV1({ childMetadataReads: DEPLOYMENT_DOMAIN_DNS_CHILD_METADATA_READS_V1 }), requesterAccountContentDemandForInput: () => true },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1, 'Read deployment domain', '/v1/deployments/environments/:environmentId/domains/:domainId', true),

@@ -5,13 +5,17 @@ export * from '../../../local/services/adoptionV1.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import { actionInputServerId } from '../definition.js';
+import { declareDeploymentPreparationScopeV1 } from '../deploymentPreparationScope.js';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '../../../local/services/actionIdsV1.js';
 
 function createMachineServiceAdoptionActionSpecs() {
   return [{
-  id: 'machines.services.adopt', title: 'Adopt a Compose project',
+  id: MACHINE_SERVICE_ADOPT_ACTION_ID, title: 'Adopt a Compose project',
+  deploymentPreparationScope: declareDeploymentPreparationScopeV1('adopt'),
   description: 'Review a watched Compose project and create its Environment without changing the running project.',
   safety: 'danger', sideEffectClass: 'write', approval: { result: 'required' }, approvalScope: 'machine',
   approvalPolicy: { uiConfirmation: 'direct' }, executionPlacement: 'machine', placements: [],
+  originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
   operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'activity' } },
   operationReentry: snapshot => MachineServiceAdoptResultV1Schema.safeParse(snapshot.result).data?.kind === 'partial' ? 'reinvoke' : 'replay',
   toolExposure: { agent: 'discoverable_only' },

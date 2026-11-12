@@ -498,7 +498,7 @@ describe('reviewed create preparation authority', () => {
         if (reviewedChild) expect(await verify(job, { ...reviewedChild, role: 'preview.bindings' })).toBeNull();
     });
 
-    it('binds Link preparation reads and mutation to the admitted Environment and owner', async () => {
+    it.each(['connected', 'created'] as const)('binds %s provider Link preparation and publication to the admitted Environment and owner', async providerIntent => {
         const f = await fixture();
         const teams = await Promise.all(['Link owner', 'Other readable owner'].map(name => db.team.create({ data: { name } })));
         await db.teamMembership.createMany({ data: teams.map(team => ({ teamId: team.id, accountId: f.actor.id, role: 'owner' })) });
@@ -529,11 +529,21 @@ describe('reviewed create preparation authority', () => {
                 target: { kind: 'account', account: { service: { pluginId: 'fixture.deploy', localId: 'service' }, accountId: 'credential' } } },
                 providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project', providerEnvironment: 'production' },
                 providerEnvironment: { kind: 'production' } } };
-        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: f.binding.target, input };
+        // VERCEL-JOURNEY #139: native creation keeps Link's signed scope when
+        // the private providerCreate intent becomes a stored Link publication.
+        const { provider, ...linkInput } = input;
+        const rootInput = providerIntent === 'created' ? { ...linkInput, providerCreate: {
+            credentialRef: provider.credentialPrincipal.target.account,
+            credentialPrincipal: provider.credentialPrincipal,
+            providerEnvironment: provider.providerEnvironment,
+            providerAccountId: provider.providerIdentity.providerAccountId,
+            resourceName: 'reviewed-project', sourceMethod: 'upload',
+        } } : input;
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: f.binding.target, input: rootInput };
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
             accountId: f.actor.id, authentication: { kind: 'account', tokenEpoch: f.actor.tokenEpoch }, actionId,
             requestId: envelope.requestId, target: envelope.target, machineId: f.machine.id,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: rootInput });
         expect(authorization.binding.custodianAccountId).toBe(f.owner.id);
         expect(authorization.binding.deploymentLinkAdmission).toEqual({ environmentId: environment.id, owner });
         const mintInput = { ...authorization.binding, deploymentLinkAdmission: undefined };
@@ -928,18 +938,19 @@ describe('reviewed create preparation authority', () => {
                     effectActionId, target: binding.target, installationId: f.machine.installationId!,
                     requestId: binding.requestId, method: 'GET', path, body: undefined, privateKey: f.key.secretKey }),
             } });
-            // The parent is a declared Environment read; the root's own effect reads only its allocated Environment.
+            // O-DEPLOY ruling: the root also reads the preview parent named by its admitted input.
             const parentPath = `/v1/deployments/environments/${parent.id}?serverId=${serverId}`;
             const declaredParent = await read(parentPath, authorization, 'deployments.environments.get');
             expect(declaredParent.statusCode, declaredParent.body).toBe(200);
             const rootEffectParent = await read(parentPath, authorization, binding.actionId);
-            expect(rootEffectParent.statusCode, rootEffectParent.body).toBe(401);
+            expect(rootEffectParent.statusCode, rootEffectParent.body).toBe(200);
             for (const ref of [parentContent, candidate]) {
                 const result = await read(`/v1/artifacts/${ref.contentArtifactId}`);
                 expect(result.statusCode, result.body).toBe(200);
             }
             for (const id of [f.original.id, 'unknown-parent']) {
                 expect((await read(`/v1/deployments/environments/${id}?serverId=${serverId}`, authorization, 'deployments.environments.get')).statusCode).toBe(401);
+                expect((await read(`/v1/deployments/environments/${id}?serverId=${serverId}`, authorization, binding.actionId)).statusCode).toBe(401);
             }
             for (const ref of [targetContent, foreignCandidate]) {
                 expect((await read(`/v1/artifacts/${ref.contentArtifactId}`)).statusCode).toBe(401);

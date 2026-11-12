@@ -1,3 +1,7 @@
+import * as managedSchemas from '../machines/managed/actionsV1.js';
+import { MACHINE_REBOOT_ACTION_IDS } from '../machines/rebootActionIdsV1.js';
+import * as managedActionIds from '../machines/managed/actionIdsV1.js';
+import * as deploymentActionIds from './deploymentActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
@@ -14,14 +18,17 @@ import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Sche
 
 export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
   // Adopting a watched service is an Environment-creating root: it spends Create's preparation admission.
-  return value === 'deployments.prepare' ? 'prepare'
-    : value === 'deployments.environments.create' || value === MACHINE_SERVICE_ADOPT_ACTION_ID ? 'create'
-    : value === 'deployments.publish.prepare' ? 'catalog'
-    : value === 'deployments.templates.instantiate' ? 'template'
-      : value === 'machines.setup.plan' || value === 'machines.setup.apply' ? 'setup' : undefined;
+  return value === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 ? 'prepare'
+    : value === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === MACHINE_SERVICE_ADOPT_ACTION_ID ? 'create'
+    : value === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? 'catalog'
+    : value === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 ? 'template'
+      : value === managedActionIds.MACHINE_SETUP_PLAN_ACTION_ID_V1 || value === managedActionIds.MACHINE_SETUP_APPLY_ACTION_ID_V1
+        || value === managedActionIds.MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
+        || value === managedActionIds.MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1
+        || MACHINE_REBOOT_ACTION_IDS.some(actionId => actionId === value) ? 'setup' : undefined;
 }
 /** These deployment roots require preparation; setup carries optional reviewed operands. */
-export function isDeploymentPreparationActionIdV1(value: string): value is 'deployments.prepare' | 'deployments.templates.instantiate' | 'deployments.publish.prepare' {
+export function isDeploymentPreparationActionIdV1(value: string): value is typeof deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 | typeof deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 {
   const operation = deploymentPreparationOperationForActionV1(value);
   return operation !== undefined && operation !== 'setup' && operation !== 'create';
 }
@@ -103,14 +110,28 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId, revision: value.sourceRevision } }),
     machineId: value.machineId, installationId: value.installationId });
   if (operation === 'setup') {
+    if (actionId === managedActionIds.MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1) {
+      const rollout = managedSchemas.MachineSetupUpdatesRolloutInputV1Schema.parse(input);
+      return { operation, machineTargets: rollout.batches.flat().map(target => target.machineId), deployments: [] };
+    }
+    if (actionId === managedActionIds.MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1) {
+      const updates = managedSchemas.MachineSetupUpdatesApplyInputV1Schema.parse(input);
+      return { operation, machineTargets: [updates.machineId], deployments: [] };
+    }
+    if (MACHINE_REBOOT_ACTION_IDS.some(id => id === actionId))
+      return DeploymentPreparationAdmissionV1Schema.parse({ operation, machineTargets: [value.machineId], deployments: [] });
+    if (actionId === managedActionIds.MACHINE_SETUP_PLAN_ACTION_ID_V1 && value.updates !== undefined) {
+      const check = managedSchemas.MachineSetupPlanInputV1Schema.parse(input);
+      return { operation, machineTargets: [check.machineId], deployments: [] };
+    }
     // The target schema owns app operands and exact credential references in
     // reviewed native plans; neither authored configuration nor secrets leave it.
     const candidates = Array.isArray(value.targets) ? value.targets : [input];
     if (actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1 && !candidates.some(target => {
       const candidate = readRecord(target);
       const children = candidate.appChildren;
-      if (Array.isArray(children) && children.some(child => readRecord(child).actionId === 'deployments.deploy'
-        || readRecord(child).actionId === 'deployments.templates.instantiate')) return true;
+      if (Array.isArray(children) && children.some(child => readRecord(child).actionId === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1
+        || readRecord(child).actionId === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1)) return true;
       return false;
     })) return undefined;
     const root = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 ? MachineSetupApplyInputV1Schema.parse(input)
@@ -119,7 +140,7 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     const deployments = targets.flatMap(target => {
       if (target.homeId !== root.homeId) throw new TypeError('Setup preparation Home mismatch');
       return (target.appChildren ?? []).flatMap(child => {
-        if (child.actionId !== 'deployments.deploy') return [];
+        if (child.actionId !== deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1) return [];
         if (child.input.serverId !== root.homeId) throw new TypeError('Setup app preparation Home mismatch');
         return [{ machineId: target.machineId,
           environment: { id: child.input.environmentId, revision: child.input.expectedRevision },
@@ -129,7 +150,7 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       });
     });
     const catalogSources = targets.flatMap(target => (target.appChildren ?? []).flatMap(child => {
-      if (child.actionId !== 'deployments.templates.instantiate' || child.input.projectSourceId === undefined) return [];
+      if (child.actionId !== deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || child.input.projectSourceId === undefined) return [];
       if (child.input.serverId !== root.homeId) throw new TypeError('Setup app preparation Home mismatch');
       return [{ machineId: target.machineId, source: { id: child.input.projectSourceId } }];
     }));
@@ -144,7 +165,7 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       ...(catalogSources.length ? { catalogSources } : {}),
       ...(connectorGrants.length ? { connectorGrants } : {}) });
   }
-  if (actionId === 'deployments.templates.instantiate') {
+  if (actionId === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
     const environment = readRecord(value.environment);
     const destination = readRecord(value.destination);
     const deploy = readDeploymentTemplateDeployIntentV1(value);
@@ -161,7 +182,7 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
         ...(environment.buildMachineId === undefined ? {} : { buildMachineId: environment.buildMachineId }),
       } });
   }
-  if (actionId === 'deployments.prepare') {
+  if (actionId === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1) {
     const workspace = readRecord(value.workspace);
     const environmentId = value.environmentId ?? readRecord(value.target).environmentId;
     return DeploymentPreparationAdmissionV1Schema.parse({ operation: 'prepare',

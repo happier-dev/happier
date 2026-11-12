@@ -47,10 +47,10 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     DeploymentChildRoutingV1Schema, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, doesDeploymentChildInputMatchRootV1,
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
-import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
+import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
-    isDeploymentMembershipActionIdV1, isDeploymentTemplateStorageActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+    isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
@@ -152,7 +152,7 @@ import { readExternalActionPendingResetStartPurpose, isExternalActionPendingRese
 import { isExternalActionApprovalReplyPurpose } from './externalActionApprovalReplyPurpose';
 import { isExternalActionApprovalArtifactPurpose } from './externalActionApprovalArtifactPurpose';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isMachineSetupCombinedActionIdV1, isMachineSetupNativeCodecActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isArtifactSignedInLinkCreateHttpPurpose, readExternalActionArtifactSignedInLinkPurpose } from './externalActionArtifactSignedInLinkPurpose';
 import { isExternalActionDeploymentPendingCancelPurpose } from './externalActionDeploymentPendingCancelPurpose';
 import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
@@ -472,7 +472,7 @@ export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExec
 ): VerifiedExternalActionPrincipal | null {
     const native = binding.deploymentNativeAdmission;
     if (binding.handoffAdmission
-        || !acceptedDeployment && (binding.workflowActionOrigin || !native
+        || !acceptedDeployment && (binding.workflowActionOrigin || !native && !(isDeploymentDomainDnsActionIdV1(binding.actionId) && binding.environmentId)
             || deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission) !== undefined)
         || native && (native.environmentId !== binding.environmentId
             || 'actionId' in native && binding.actionId !== native.actionId
@@ -496,6 +496,7 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     preparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
 }>): Promise<WorkflowExternalActionAdmission | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorization.token);
+    const combinedActionId = input.origin.reviewedChild?.actionId ?? binding?.actionId;
     if (!binding || !matchesExternalActionAuthorizationBinding(binding, input.authorization.binding)
         || binding.serverIdentityId !== await initializeServerIdentityCache()
         || binding.custodianAccountId !== input.publisherCustodianAccountId
@@ -504,8 +505,8 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || binding.installationId !== input.publisherInstallationId
         || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
         || binding.admittedMachineRole !== 'manage'
-        || (input.origin.reviewedChild?.actionId ?? binding.actionId) !== MACHINE_SETUP_APPLY_ACTION_ID_V1
-        || deriveMachineSetupCombinedRunIdV1({ homeId: binding.serverIdentityId, accountId: binding.accountId,
+        || !combinedActionId || !isMachineSetupCombinedActionIdV1(combinedActionId)
+        || deriveMachineSetupCombinedRunIdV1({ actionId: combinedActionId, homeId: binding.serverIdentityId, accountId: binding.accountId,
             requestId: binding.requestId, reviewedChild: input.origin.reviewedChild }) !== input.origin.runId) return null;
     // A spawn-reviewed Setup parent admitted only its own Machine; its reviewed child digest pins the plan.
     const spawnSetupScope: Extract<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission']>,
@@ -1229,8 +1230,8 @@ export function isDeploymentReadPreparation(binding: ExternalActionExecutionAuth
         if (spec.sideEffectClass === 'read' && spec.serverTransport !== undefined) return true;
     }
     // Template writes retain their existing exact preparation/child purpose checks.
-    return binding.actionId === 'deployments.templates.instantiate'
-        && isDeploymentTemplateStorageActionIdV1(effectActionId);
+    const root = ActionIdSchema.safeParse(binding.actionId);
+    return root.success && getActionSpec(root.data).deploymentPreparationScope?.(binding).storageEffects.includes(effectActionId) === true;
 }
 
 /** Archive's existing report cascade may stop an active report under its unchanged root. */
@@ -1313,7 +1314,8 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const targetRetentionPurpose = await readDeploymentTargetRetentionHttpPurpose(db, binding, effectActionId, proof);
     const preparationRead = await readDeploymentPreparationHttpReadPurpose(db, binding, effectActionId, proof,
         actionId => isAccountActionHttpOperation(actionId, proof));
-    const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId);
+    const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
+        || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
     const prepareSessionMessage = readDeploymentPrepareSessionMessageHttpPurpose(binding, effectActionId, target, proof);
     const reviewedMachineSetupChild = binding.admittedMachineRole === 'manage'
@@ -1741,6 +1743,7 @@ async function verifyCommon(
 
 
     const reviewedAdmission = {
+        ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
         ...(actionMaterialAdmission ? { actionMaterialAdmission } : {}),
         ...(actionBrokerAdmission ? { actionBrokerAdmission } : {}),
         ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}),
@@ -1759,7 +1762,9 @@ async function verifyCommon(
     // A step of an admitted finite native operation spends its signed admission;
     // the native operation owner stops it through the executor's local signal.
     if (admittedFiniteOperation && !machineNpmProfilePurpose) return { binding, signedChildPurpose, effectActionId: effectActionId.data,
-        target, principal: admittedFiniteOperation, effectiveAuthority: admittedFiniteOperation.authority, ...reviewedAdmission };
+        target, principal: admittedFiniteOperation, effectiveAuthority: admittedFiniteOperation.authority, ...reviewedAdmission,
+        ...(isDeploymentDomainDnsActionIdV1(binding.actionId) && acceptedPreparationRead
+            ? { acceptedDeploymentReceipt: { read: acceptedPreparationRead } } : {}) };
 
     // One signed request admits each fact once. A change after this point applies
     // at the next request; the holder stops already-admitted work on its local signal.
@@ -1778,7 +1783,6 @@ async function verifyCommon(
     return { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal, effectiveAuthority: principal.authority,
         ...(machineNpmProfileAdmission ? { machineNpmProfileAdmission } : {}),
         ...reviewedAdmission,
-        ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
         ...(setupReceiver ? { setupReceiverMachineId: setupReceiver } : {}) };
 }
 
@@ -2800,6 +2804,17 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const environmentContentPreparation = await readDeploymentEnvironmentContentPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
         actionId => isAccountActionHttpOperation(actionId, proof));
     if (environmentContentPreparation !== null) return environmentContentPreparation;
+    if (isDeploymentDomainDnsActionIdV1(root) && verified.effectActionId === root && isReadOnlyArtifactHttpPurpose(proof)) {
+        if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+        const artifactId = readArtifactGetHttpPurpose(proof);
+        const batch = artifactId === null && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read'
+            ? ArtifactReadBatchHttpInputV1Schema.safeParse(proof.body) : undefined;
+        const artifactIds = artifactId !== null ? [artifactId] : batch?.success ? batch.data.artifactIds : [];
+        if (artifactIds.length === 0) return false;
+        const scope = await readAdmittedDeploymentScopeInTx(db, verified.binding, undefined, undefined, undefined,
+            { artifactIds });
+        return scope !== null && artifactIds.every(id => scope.artifactIds.has(id));
+    }
     if (root === 'artifact.get' && verified.effectActionId === root) return isReadOnlyArtifactHttpPurpose(proof)
         || isArtifactRecipientKeyPreparationHttpPurpose(proof);
     if (root === 'action.operations.cancel') return isExternalActionDeploymentPendingCancelPurpose({
@@ -3638,7 +3653,7 @@ export async function verifyExternalActionDomainExecutionRequest(
                 && path === '/v1/machines/setup/resolve');
         // Combined Setup uses one finite purpose for Run storage and selected
         // receiver installation publications, including plans without apps.
-        const setupWorkflowPurpose = managedRoot.data === MACHINE_SETUP_APPLY_ACTION_ID_V1
+        const setupWorkflowPurpose = isMachineSetupCombinedActionIdV1(managedRoot.data)
             ? readReviewedMachineSetupHttpPurpose(verified, proof) : null;
         setupMachineReadId = setupWorkflowPurpose?.machineId;
         const setupHostReviewPurpose = (method === 'GET' && proof.body === undefined && path === '/v1/machines'

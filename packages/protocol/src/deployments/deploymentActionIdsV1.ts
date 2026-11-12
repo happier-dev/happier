@@ -57,6 +57,16 @@ export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add';
+export const DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 = 'deployments.domains.dns.create' as const;
+export const DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 = 'deployments.domains.dns.verify' as const;
+export type DeploymentDomainDnsActionIdV1 = typeof DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 | typeof DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1;
+export function isDeploymentDomainDnsActionIdV1(value: string): value is DeploymentDomainDnsActionIdV1 {
+  return value === DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1;
+}
+export function isDeploymentDomainDnsVerifyActionIdV1(value: string): value is typeof DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 {
+  return value === DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1;
+}
+
 export const DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1 = 'deployments.domains.page';
 export const DEPLOYMENT_DATA_PAGE_ACTION_ID_V1 = 'deployments.data.page';
 export function isDeploymentAccountPageActionIdV1(value: string): value is
@@ -73,9 +83,9 @@ export function isDeploymentControllerSetActionIdV1(value: string): value is 'de
 
 /** These finite roots need only the admitted Environment's approval relationship. */
 export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string): value is
-  'deployments.environments.controller.set' | 'deployments.restart' | 'deployments.cancel' {
+  'deployments.environments.controller.set' | 'deployments.restart' | 'deployments.cancel' | DeploymentDomainDnsActionIdV1 {
   return isDeploymentControllerSetActionIdV1(value) || value === 'deployments.restart'
-    || value === DEPLOYMENT_CANCEL_ACTION_ID_V1;
+    || value === DEPLOYMENT_CANCEL_ACTION_ID_V1 || isDeploymentDomainDnsActionIdV1(value);
 }
 
 export const DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 = 'deployments.environments.delete';
@@ -89,6 +99,7 @@ export function isDeploymentTemplateStorageActionIdV1(value: string): boolean {
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1, DEPLOYMENT_DATA_PAGE_ACTION_ID_V1,
+  DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1,
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
   'deployments.environments.controller.set',

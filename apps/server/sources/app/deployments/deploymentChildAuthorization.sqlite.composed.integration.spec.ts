@@ -1,3 +1,4 @@
+import { projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -391,6 +392,73 @@ describe('deployment children retain their controller Action authority', () => {
             originalActionEnvelope, templateInput, rpc, verify, content, admissionInput, admissionHeaders, admissionPath, reviewedChild, workflowActionOrigin,
             accountKeys, memberContentKeys, artifactKeys };
     }
+
+    it.each(['deployments.domains.dns.create', 'deployments.domains.dns.verify'] as const)('retains DNS root %s Environment admission for signed content reads', async actionId => {
+        const f = await fixture('team', 'account', { readableEnvironment: true });
+        const foreign = await fixture('team', 'account', { readableEnvironment: true });
+        const domain = await db.deploymentDomain.create({ data: { environmentId: f.environment.id,
+            targetLinkId: f.link.id, createdByAccountId: f.account.id, state: 'pending',
+            ...await f.content('deployment-domain.v1') } });
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = { serverId, environmentId: f.environment.id, domainId: domain.id,
+            expectedRevision: f.environmentRevision, expectedDomainRevision: domain.revision, requestKey: crypto.randomUUID(),
+            dns: { action: { pluginId: 'happier.dns.route53', localId: 'records-create' },
+                credentialRef: { service: { pluginId: 'happier.dns.route53', localId: 'aws' }, accountId: 'selected' }, zoneId: 'selected', ttl: 300 } };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const mint = (environmentId = f.environment.id) => auth.mintExternalActionExecutionAuthorization({
+            accountId: f.account.id, serverIdentityId: serverId,
+            authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+            machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        }, { input: { ...input, environmentId } });
+        const sealed = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding: { serverIdentityId: serverId, accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId, requestId: envelope.requestId, target },
+            input, material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: nacl.randomBytes });
+        expect(projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId, envelope: sealed })).toBe(f.environment.id);
+        const authorization = await mint();
+        expect(authorization.binding.environmentId).toBe(f.environment.id);
+        await expect(mint(foreign.environment.id)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        const verify = (path: string, routeInput?: unknown, effectActionId: string = actionId) => verifyExternalActionDomainExecutionRequest({
+            authorizationToken: authorization.token, effectActionId,
+            encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'GET', path, body: undefined, routeInput,
+            machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                effectActionId, target, installationId: f.controller.installationId,
+                requestId: envelope.requestId, method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+        });
+        for (const [effect, selected] of [['deployments.environments.get', { serverId, environmentId: f.environment.id }],
+            ['deployments.domains.get', { serverId, environmentId: f.environment.id, domainId: domain.id }]] as const) {
+            const spec = getActionSpec(effect);
+            if (!spec.serverTransport) throw new Error('Declared metadata transport required');
+            const read = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: selected });
+            expect(await verify(read.path, selected, effect)).toMatchObject({
+                acceptedDeploymentReceipt: { read: { environmentId: f.environment.id } },
+            });
+        }
+        const foreignRead = { serverId, environmentId: foreign.environment.id };
+        const environmentSpec = getActionSpec('deployments.environments.get');
+        if (!environmentSpec.serverTransport) throw new Error('Environment transport required');
+        const foreignPath = bindHomeDomainHttpRequestV1({ transport: environmentSpec.serverTransport,
+            inputSchema: environmentSpec.inputSchema, input: foreignRead }).path;
+        expect(await verify(foreignPath, foreignRead, 'deployments.environments.get')).toBeNull();
+        const verifyBatch = (artifactIds: string[]) => {
+            const body = { artifactIds }, path = '/v1/artifacts/read';
+            return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token, effectActionId: actionId,
+                encodedTarget: encodeExternalActionResolvedTargetV1(target), method: 'POST', path, body, routeInput: body,
+                machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'POST', path, body, privateKey: f.controller.keys.secretKey }) });
+        };
+        expect(await verifyBatch([f.environment.contentArtifactId, domain.contentArtifactId])).not.toBeNull();
+        expect(await verifyBatch([domain.contentArtifactId, foreign.environment.contentArtifactId])).toBeNull();
+        for (const artifactId of [f.environment.contentArtifactId, domain.contentArtifactId])
+            expect(await verify('/v1/artifacts/' + encodeURIComponent(artifactId), { id: artifactId })).not.toBeNull();
+        const foreignId = foreign.environment.contentArtifactId;
+        expect(await verify('/v1/artifacts/' + encodeURIComponent(foreignId), { id: foreignId })).toBeNull();
+        // Existing admitted work retains its scope after membership withdrawal; mint is the authority boundary.
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+        expect(await verify('/v1/artifacts/' + encodeURIComponent(domain.contentArtifactId), { id: domain.contentArtifactId })).not.toBeNull();
+        await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    });
 
     it('classifies every deployment root and admits its generated declared read demands only inside its scope', async () => {
         expect([...DEPLOYMENT_ACTION_IDS_V1].sort()).toEqual(DEPLOYMENT_ACTION_SPECS_V1.map(spec => spec.id).sort());
@@ -7554,6 +7622,7 @@ describe('deployment children retain their controller Action authority', () => {
         const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${f.account.id}:${request.method}` || room === target.id ? [target] : []);
         const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const socket = Object.assign(createAuthenticatedFakeSocket({ id: 'deployment-controller', data: {
+            userId: f.account.id,
             ...(sender === 'machine' ? { clientType: 'machine-scoped', machineId: f.controller.id,
                 verifiedMachineInstallationId: f.controller.installationId }
                 : { clientType: 'user-scoped', clientPurpose: 'scoped-rpc' }),
@@ -7607,6 +7676,7 @@ describe('deployment children retain their controller Action authority', () => {
             const other = await db.account.create({ data: { encryptionMode: 'plain' } });
             const otherToken = await auth.createToken(other.id, undefined, { kind: 'account', authority: 'present_user' });
             const otherSocket = Object.assign(createAuthenticatedFakeSocket({ id: 'another-account', data: {
+                userId: other.id,
                 clientType: 'user-scoped', clientPurpose: 'scoped-rpc', authTokenKind: 'account',
             } }), { handshake: { auth: { token: otherToken } } });
             qualifyCurrentAccountStoredContentSocket(otherSocket);
@@ -7668,6 +7738,7 @@ describe('deployment children retain their controller Action authority', () => {
         const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${f.account.id}:${request.method}` || room === target.id ? [target] : []);
         const token = await auth.createToken(custodian.id, undefined, { kind: 'terminal', authority: 'account_automation' });
         const socket = Object.assign(createAuthenticatedFakeSocket({ id: 'archive-receiver', data: {
+            userId: custodian.id,
             clientType: 'machine-scoped', machineId: f.member.id, verifiedMachineInstallationId: f.member.installationId,
             authTokenKind: 'terminal', authAuthority: 'account_automation' } }), { handshake: { auth: { token } } });
         qualifyCurrentAccountStoredContentSocket(socket);
@@ -7698,7 +7769,8 @@ describe('deployment children retain their controller Action authority', () => {
                 headers: { 'x-test-user-id': f.account.id }, payload: { ...body, proof } });
             expect((await send()).statusCode).toBe(200);
             await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
-            expect((await send()).statusCode).toBe(403);
+            // GRANT-U4: an accepted job retains its captured builder placement until its natural end.
+            expect((await send()).statusCode).toBe(200);
             await db.machineTeamGrant.create({ data: { machineId: f.builder.id, teamId: f.team!.id,
                 accessLevel: 'view', createdByAccountId: f.account.id } });
         });

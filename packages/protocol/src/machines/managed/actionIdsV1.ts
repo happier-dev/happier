@@ -1,3 +1,4 @@
+import { MACHINE_REBOOT_ACTION_IDS } from '../rebootActionIdsV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../../actions/externalActionApi.js';
@@ -9,6 +10,11 @@ export const MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD = 'managed.admission.dra
 
 export const MACHINE_SETUP_PLAN_ACTION_ID_V1 = 'machines.setup.plan';
 export const MACHINE_SETUP_APPLY_ACTION_ID_V1 = 'machines.setup.apply';
+export const MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1 = 'machines.setup.updates.apply';
+export const MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 = 'machines.setup.updates.rollout';
+export function isMachineSetupCombinedActionIdV1(actionId: string): actionId is typeof MACHINE_SETUP_APPLY_ACTION_ID_V1 | typeof MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1 {
+  return actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 || actionId === MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1;
+}
 export const MACHINE_SETUP_REMOVE_ACTION_ID_V1 = 'machines.setup.remove';
 export const MANAGED_RESIZE_ACTION_ID_V1 = 'machines.managed.resize';
 export const MANAGED_CONTROL_ACTION_IDS_V1 = ['machines.managed.power.set', 'machines.managed.rebuild', MANAGED_RESIZE_ACTION_ID_V1,
@@ -66,6 +72,12 @@ export function readSessionAgentReadinessChildActionV1(
     && child.role === reviewedChild.role)?.action ?? null;
 }
 
+/** These finite native leaves need invocation data, not requester Account content. */
+export function isMachineSetupNativeCodecActionIdV1(actionId: string): boolean {
+  return actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 || actionId === MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
+    || MACHINE_REBOOT_ACTION_IDS.some(id => id === actionId);
+}
+
 /** Selects ordinary setup routing; admission remains owned by the caller's reviewed-child boundary. */
 export function isMachineSetupPlanOrApplyActionIdV1(actionId: string): boolean {
   return actionId === SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action
@@ -85,7 +97,7 @@ export const MANAGED_MACHINE_ACTION_IDS_V1 = [
   'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.birth.get', 'machines.managed.references.get',
   'machines.managed.inspect', MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, 'machines.managed.cancel',
   'machines.managed.credentials.install',
-  'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, 'machines.setup.updates.apply',
+  'machines.managed.setup.skip', 'machines.setup.plan', MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1, MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1, MACHINE_SETUP_UPDATES_ROLLOUT_ACTION_ID_V1,
   'machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.resize', 'machines.managed.retention.update', 'machines.managed.delete',
   'machines.managed.controller.update', 'machines.managed.retire',
 ] as const;
@@ -147,3 +159,7 @@ export function readManagedProvisionerCredentialRootRoleV1(actionId: string): 'c
   if (actionId === 'machines.provisioners.options') return 'options';
   return actionId === 'machines.managed.acquire' ? 'all' : null;
 }
+
+export const MANAGED_GET_ACTION_ID_V1 = 'machines.managed.get';
+export const MANAGED_LIST_ACTION_ID_V1 = 'machines.managed.list';
+export const MANAGED_RETENTION_UPDATE_ACTION_ID_V1 = 'machines.managed.retention.update';

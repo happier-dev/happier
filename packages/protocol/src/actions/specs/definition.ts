@@ -10,6 +10,8 @@ import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '.
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
 import type { ActionCaller, ActionExecutorContext, ActionMachineRuntimeDemandV1, HostReviewedChildrenPlanV1 } from '../executor/types.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import type { DeploymentPreparationScopeDeclarationV1 } from './deploymentPreparationScope.js';
+import type { DeploymentReadScopeV1 } from './deploymentReadScope.js';
 import type { ExternalActionTargetV1 } from '../externalActionApi.js';
 import { ActionSafetySchema } from '../safety.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
@@ -202,6 +204,9 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     }))),
     z.custom<(input: unknown) => HostReviewedChildrenPlanV1['children']>((value) => typeof value === 'function'),
   ])),
+  /** Local admitted-job declaration; never serialized as caller authority. */
+  deploymentPreparationScope: z.optional(z.custom<DeploymentPreparationScopeDeclarationV1>((value) => typeof value === 'function')),
+  deploymentReadScope: z.optional(z.custom<DeploymentReadScopeV1>()),
   // UI placements where the action can appear when the relevant surface is enabled.
   placements: z._default(z.array(ActionUiPlacementSchema), []),
   // Optional stable slash command token for UI slash-command placement.
@@ -580,6 +585,8 @@ export type ActionSpecWithoutApproval = Readonly<{
   approval: ParsedActionSpec['approval'];
   approvalPolicy?: ParsedActionSpec['approvalPolicy'];
   hostReviewedChildren?: ParsedActionSpec['hostReviewedChildren'];
+  deploymentPreparationScope?: ParsedActionSpec['deploymentPreparationScope'];
+  deploymentReadScope?: ParsedActionSpec['deploymentReadScope'];
   machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
   requesterAccountContentDemandForInput?: ParsedActionSpec['requesterAccountContentDemandForInput'];
   title: ParsedActionSpec['title'];

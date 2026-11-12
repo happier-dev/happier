@@ -1,3 +1,5 @@
+import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import * as managedIds from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { DeploymentEnvironmentGetInputV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentReceiptListInputV1Schema, DeploymentTransitionInputV1Schema,
     DeploymentDomainListInputV1Schema, type DeploymentChildRoutingV1, type DeploymentArtifactContentReferenceV1 } from '@happier-dev/protocol';
 import { readMemberDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
@@ -6,7 +8,6 @@ import type { DeploymentChildAdmission } from '@/app/deployments/deploymentChild
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -44,10 +45,11 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
 ): Promise<boolean | Readonly<{ artifactContentReference: DeploymentArtifactContentReferenceV1 }>
     | Readonly<{ metadataRead: Readonly<{ environmentId: string; deploymentId?: string; contentCustody: true }> }>> {
     const method = proof.method.toUpperCase();
+    const readScope = getActionSpec(routing.actionId).deploymentReadScope;
     if (routing.kind === 'snapshot') {
         const input = { homeId: routing.input.serverId, managedId: routing.managedId };
         return method === 'POST' && !proof.nativeIncumbentSource
-            && proof.path === managedMachineActionEndpointPathV1('machines.managed.get')
+            && proof.path === managedMachineActionEndpointPathV1(managedIds.MANAGED_GET_ACTION_ID_V1)
             && admittedChild?.snapshotManagedMachine?.id === routing.managedId
             && sameStrictJsonValue(proof.body, input)
             && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, input));
@@ -61,20 +63,20 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
             const content = admittedChild?.dataRoleArtifactContents?.find(reference => reference.contentArtifactId === artifactId);
             return content ? { artifactContentReference: content } : false;
         }
-        const metadata = [{ actionId: 'deployments.environments.get' as const, value: {
-            serverId: routing.input.serverId, environmentId: routing.input.environmentId } },
-        { actionId: 'deployments.receipts.get' as const, value: { serverId: routing.input.serverId,
-            environmentId: routing.input.environmentId, deploymentId: routing.deploymentId } }];
+        const metadata = (readScope?.childMetadataReads.dataRole ?? []).map(({ actionId, operand }) => ({
+            actionId, value: { serverId: routing.input.serverId, environmentId: routing.input.environmentId,
+                ...(operand === 'receipt' ? { deploymentId: routing.deploymentId } : {}) },
+        }));
         const selected = metadata.find(({ actionId, value }) => {
             const spec = getActionSpec(actionId);
             return spec.serverTransport !== undefined && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, value))
                 && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: value }).path === proof.path;
         });
         return selected ? { metadataRead: { environmentId: routing.input.environmentId,
-            ...(selected.actionId === 'deployments.receipts.get' ? { deploymentId: routing.deploymentId } : {}),
+            ...('deploymentId' in selected.value ? { deploymentId: routing.deploymentId } : {}),
             contentCustody: true } } : false;
     }
-    if (routing.kind === 'domain' || routing.kind === 'domainDiscover') {
+    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns') {
         if (method === 'POST' && routing.kind === 'domain' && !proof.nativeIncumbentSource) {
             const domainAdmission = admittedChild?.domainAdmission;
             if (proof.path === `/v1/deployments/machines/${encodeURIComponent(routing.machineId)}/connector-secret-grant`) {
@@ -84,7 +86,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
             const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
             if (!secret.success || secret.data.materialization.kind !== 'domain') return false;
             const body = secret.data, materialization = secret.data.materialization;
-            if (materialization.use && (routing.actionId !== 'deployments.domains.add' || !routing.capture.desired)) return false;
+            if (materialization.use && (!readScope?.childMayMaterializeDomainUse || !routing.capture.desired)) return false;
             const recipient = materialization.use ? { machineId: routing.machineId, installationId: routing.installationId }
                 : domainAdmission?.controller;
             return body.serverId === routing.input.serverId && body.environmentId === routing.input.environmentId
@@ -112,17 +114,17 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
             select: { projectSourceId: true, contentArtifactId: true } });
         if (!environment) return false;
         if (proof.path === `/v1/projects/sources/${encodeURIComponent(environment.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}`) return true;
-        const metadata = [{ actionId: 'deployments.environments.get' as const,
-            value: { serverId: input.serverId, environmentId: input.environmentId } },
-            ...(routing.kind === 'domain' ? [{ actionId: 'deployments.domains.get' as const, value: input }] : [])];
+        const metadata = (readScope?.childMetadataReads[routing.kind] ?? []).map(({ actionId, operand }) => ({
+            actionId, value: operand === 'domain' ? input : { serverId: input.serverId, environmentId: input.environmentId },
+        }));
         for (const { actionId, value } of metadata) {
             const spec = getActionSpec(actionId);
             if (spec.serverTransport && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, value))
                 && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: value }).path === proof.path) return true;
         }
         if (!artifactId) return false;
-        const content = routing.kind === 'domain' ? routing.capture.content : routing.input;
-        if (artifactId === content.contentArtifactId || artifactId === environment.contentArtifactId) return true;
+        const content = routing.kind === 'domain' ? routing.capture.content : routing.kind === 'domainDiscover' ? routing.input : undefined;
+        if (artifactId === content?.contentArtifactId || artifactId === environment.contentArtifactId) return true;
         const targetLinkId = routing.kind === 'domain' ? routing.capture.placement.targetLinkId : routing.input.targetLinkId;
         return await tx.deploymentTargetLink.findFirst({ where: { id: targetLinkId, environmentId: input.environmentId,
             contentArtifactId: artifactId }, select: { id: true } }) !== null;
@@ -130,7 +132,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     const input = routing.input;
     // Native teardown children report observations to their captured controller;
     // they never publish aggregate transitions or acquire fresh secret custody.
-    if ((routing.kind === 'teardown' || routing.kind === 'prepare' && routing.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) && method !== 'GET') return false;
+    if ((routing.kind === 'teardown' || routing.kind === 'prepare' && readScope?.childReadOnly) && method !== 'GET') return false;
     const native = proof.nativeIncumbentSource;
     if (native && (routing.kind !== 'review' || native.environmentId !== input.environmentId
         || method !== 'GET' || proof.body !== undefined)) return false;
@@ -164,7 +166,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     if (method !== 'GET' || proof.body !== undefined) return false;
     if (!native && routing.kind === 'member') {
         const list = DeploymentDomainListInputV1Schema.safeParse(proof.routeInput);
-        const spec = getActionSpec('deployments.domains.list');
+        const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1);
         if (list.success && list.data.serverId === input.serverId && list.data.environmentId === input.environmentId
             && spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
                 inputSchema: spec.inputSchema, input: list.data }).path === proof.path) return true;
@@ -178,7 +180,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     if (!native && (proof.path === '/v1/account/encryption/currentness' || proof.path === '/v1/features/authenticated')) return true;
     const environmentRead = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
     if (!native && environmentRead.success && environmentRead.data.serverId === input.serverId && environmentRead.data.environmentId === input.environmentId) {
-        const spec = getActionSpec('deployments.environments.get');
+        const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1);
         const transport = spec.serverTransport;
         if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path) return true;
     }
@@ -201,7 +203,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     if (native) {
         const deploymentId = native.restorationForDeploymentId ?? native.sourceDeploymentId;
         const receiptInput = DeploymentReceiptGetInputV1Schema.safeParse(proof.routeInput);
-        const spec = getActionSpec('deployments.receipts.get');
+        const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1);
         const metadata = receiptInput.success && receiptInput.data.serverId === input.serverId
             && receiptInput.data.environmentId === input.environmentId && receiptInput.data.deploymentId === deploymentId
             && spec.serverTransport !== undefined && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
@@ -226,7 +228,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     // Accepted work derives that source from the stored parent, never another request tuple.
     if (promotionReceipt && environmentRead.success && environmentRead.data.serverId === input.serverId
         && environmentRead.data.environmentId === promotionReceipt.environmentId) {
-        const spec = getActionSpec('deployments.environments.get');
+        const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1);
         if (spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
             inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path) return true;
     }
@@ -238,7 +240,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     if (sourceCustodyRead) {
         const list = DeploymentReceiptListInputV1Schema.safeParse(proof.routeInput);
         if (list.success && list.data.serverId === input.serverId && list.data.environmentId === input.environmentId) {
-            const spec = getActionSpec('deployments.receipts.list');
+            const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1);
             if (spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
                 input: list.data }).path === proof.path) return true;
         }
@@ -259,7 +261,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         || receiptIds.includes(receiptRead.data.deploymentId) && (!reviewScope
             || receiptRead.data.environmentId === input.environmentId && await tx.deployment.findFirst({ where: {
                 id: receiptRead.data.deploymentId, ...reviewReceiptScope }, select: { id: true } }) !== null))) {
-        const spec = getActionSpec('deployments.receipts.get');
+        const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1);
         const transport = spec.serverTransport;
         if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: receiptRead.data }).path === proof.path) return true;
     }
