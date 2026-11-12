@@ -4380,10 +4380,11 @@ describe('usage query captured Resource adapter', () => {
     inspector.connect();
     try {
       await entry.refresh();
-      const superseded = new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals);
+      const generations = [new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals)];
       for (eventCount = 2; eventCount <= 4; eventCount++) {
         await entry.refresh();
         expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount).toBe(eventCount);
+        generations.push(new WeakRef(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals));
         const release = entry.subscribe(() => {}, true);
         await flushHookEffects();
         release();
@@ -4391,7 +4392,8 @@ describe('usage query captured Resource adapter', () => {
       // End the weak-reference job before asking the actual V8 collector.
       await new Promise<void>(resolve => setImmediate(resolve));
       await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
-      expect(superseded.deref() === undefined, 'a live Resource must release superseded accounting facts').toBe(true);
+      expect(generations.filter(generation => generation.deref() !== undefined).length,
+        'four completed refreshes retain only the current accounting generation').toBe(1);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.totals.eventCount).toBe(4);
     } finally { inspector.disconnect(); }
   });

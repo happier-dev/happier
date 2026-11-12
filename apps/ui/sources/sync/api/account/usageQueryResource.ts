@@ -85,7 +85,7 @@ import { UsageHistoryEntry, readUsageHistoryFailure } from './usageHistoryReadSt
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
-import { projectUsageQueryBatch, projectUsageEnteredPrices, type HowYouWorkEvidenceSnapshot, type HowYouWorkReadSnapshot,
+import { projectUsageQueryBatch, settleUsageQueryProjection, projectUsageEnteredPrices, type HowYouWorkEvidenceSnapshot, type HowYouWorkReadSnapshot,
     type OpenedQuotaRead, type UsageQueryReprojection, type PreparedUsageAccountingSnapshot } from './usageQueryProjection';
 function readOpenedQuotaScope(context: UsageQueryAccountContext) {
     const state = readRegisteredStorageState();
@@ -1570,7 +1570,17 @@ export async function readUiUsageQueryBatch(
         requireCurrent(context, signal);
         // Settlement reuses this finite read's last consumed projection. The
         // retained reproject closure still evaluates future presentation wakes.
-        return projectionPending || !admittedPrevious ? reproject(signal) : admittedPrevious;
+        const result = projectionPending || !admittedPrevious ? reproject(signal) : admittedPrevious;
+        // The retained presentation closure needs the current admission, never
+        // the replaced read's fallback population or its projection witnesses.
+        previous = result;
+        priorAccounting.clear();
+        priorSlices.clear();
+        settleUsageQueryProjection(accounting, result);
+        // Progress delivery belongs to the finite read. Its callback closes
+        // over the Resource's replacement frame, including the prior batch.
+        options = undefined;
+        return result;
     } finally {
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();

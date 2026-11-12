@@ -160,6 +160,17 @@ type ReadProjection = {
 // its reproject closure. Retention ends with that read, not a new Account cache.
 const readProjections = new WeakMap<UsageQueryProjectionInput['accounting'], ReadProjection>();
 
+/** Replacement fallback facts end at settlement; keep only the admitted projection. */
+export function settleUsageQueryProjection(accounting: UsageQueryProjectionInput['accounting'], batch: UsageQueryBatchResult): void {
+    const state = readProjections.get(accounting);
+    if (!state) return;
+    const slices = new Map(batch.results.map(slice => [slice.key, slice]));
+    for (const [key, retained] of state.slices) {
+        state.slices.set(key, { ...retained, inputs: { ...retained.inputs,
+            previous: slices.get(key), prior: undefined, priorAccounting: undefined } });
+    }
+}
+
 export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQueryBatchResult {
     const { context, queries, accountingNowMs, accounting, priorAccounting, calendarQueryKeys } = input;
     const retainedState = readProjections.get(accounting);
