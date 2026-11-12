@@ -10,8 +10,16 @@ import {
   deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import type { MachineAuthorityPresentationV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useMachineAuthority } from '@/components/machines/security/useMachineAuthority';
+import { useServerScopedMachine } from '@/sync/store/hooks';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { ActionApprovalLooseningNotice } from '@/components/settings/actions/ActionApprovalLooseningNotice';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ActionScopedApprovalRow, type ActionScopedApprovalMode } from '@/components/settings/actions/ActionScopedApprovalRow';
 import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
 import { resolveActionSettingsTargetControlState } from '@/components/settings/actions/resolveActionSettingsControlState';
@@ -88,6 +96,8 @@ export const DeploymentPermissionsPanel = React.memo(
             copy="setting"
           />
         ) : null}
+        <EnvironmentAgentPowerNotice machineId={environment.controllerMachineId} serverId={environment.serverId}
+          machine={props.machineName(environment.controllerMachineId)} />
         <ItemGroup
           testID="project-deployments.environment.permissions"
           title={t('projects.deployments.whoMayDeploy')}
@@ -151,6 +161,46 @@ export const DeploymentPermissionsPanel = React.memo(
     );
   },
 );
+
+/**
+ * Lab d2 `access` (P40-R33): when agents on the controller Machine hold administrator power, Permissions says so first,
+ * from the Machine's one authority presentation (pushed fields, no read of its own). Healthy and unknown stay quiet.
+ */
+const readMachineOnline = (machine: Machine | null) => (machine ? isMachineOnline(machine) : null);
+
+function EnvironmentAgentPowerNotice(props: Readonly<{ machineId: string; serverId: string; machine: string }>) {
+  const router = useRouter();
+  // Its power is a current fact only while the Machine is online, as on its own Security tab.
+  const online = useServerScopedMachine(props.serverId, props.machineId, readMachineOnline);
+  const authority = useMachineAuthority({ machineId: props.machineId, serverId: props.serverId,
+    freshness: online === true ? 'current' : 'stale' });
+  return <EnvironmentAgentPowerNoticeView authority={authority} machine={props.machine}
+    onTurnOn={() => router.push(machinePageHref({ door: 'rail',
+      target: { machineId: props.machineId, serverId: props.serverId }, tab: { id: 'security' } }) as never)} />;
+}
+
+/** The notice from the Machine's authority presentation; the Machine's Security tab owns the reviewed change. */
+export function EnvironmentAgentPowerNoticeView(props: Readonly<{
+  authority: Pick<MachineAuthorityPresentationV1, 'agentHostAuthority' | 'separateUsers'>;
+  machine: string;
+  onTurnOn: () => void;
+}>) {
+  if (props.authority.agentHostAuthority !== 'administrator') return null;
+  const availability = props.authority.separateUsers.availability.kind;
+  return (
+    <AttentionBanner
+      testID="project-deployments.environment.permissions.agentPower"
+      tone="warning"
+      title={t('projects.deployments.overviewStatus.agentPowerTitle', { machine: props.machine })}
+      description={t('projects.deployments.overviewStatus.agentPowerBody', { machine: props.machine })}
+      {...(availability === 'can_turn_on' || availability === 'repairable' ? { action: {
+        label: t('projects.deployments.overviewStatus.agentPowerAction'),
+        testID: 'project-deployments.environment.permissions.agentPower.turnOn',
+        onPress: props.onTurnOn,
+      } } : {})}
+    />
+  );
+}
 
 /**
  * Approvals (P7 §2): one row per operation, Default | Ask first | Allowed for agents in this Environment, through the

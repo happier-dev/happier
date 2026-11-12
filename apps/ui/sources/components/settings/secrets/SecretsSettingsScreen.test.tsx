@@ -738,6 +738,37 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secret.ref}:edit-input`)).toBeNull());
     });
 
+    it('turns a Replace refused for backups into the re-key review, whose retry repeats the exact Replace', async () => {
+        const { Modal } = await import('@/modal');
+        const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, false, true));
+        const secret = entries[0]!;
+        const path = '/v1/account/saved-secrets/resources/update';
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [{
+            resourceId: 'secret-a', encryptionMode: 'plain', entry: secret,
+            storedContent: { t: 'plain', v: { v: 1, name: 'secret-a', kind: 'apiKey', value: 'original-secret' } },
+            recipientEnvelope: null,
+        }] } });
+        const details = { error: 'backup_rekey_required', backups: [{ environmentId: 'environment-a', role: 'repositoryPassword' }],
+            hasOtherBackups: false };
+        harness.answer(scope.serverId, path, { status: 409, body: details });
+        const shown = vi.mocked(Modal.show);
+        shown.mockClear();
+        await openSecretPage(secret.ref);
+        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:rotate`);
+        await act(async () => screen.changeTextByTestId(`saved-secret:${secret.ref}:edit-input`, 'next-value'));
+        await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:edit-save`);
+        await vi.waitFor(() => expect(shown.mock.calls.some(([config]) =>
+            (config.props as { input?: { details?: unknown } } | undefined)?.input?.details !== undefined)).toBe(true));
+        expect(alert).not.toHaveBeenCalled();
+        const review = shown.mock.calls.map(([config]) => config.props as { input?: { value: string; details: unknown;
+            retryReplace: () => Promise<boolean> } } | undefined).find(props => props?.input)!.input!;
+        expect(review).toEqual(expect.objectContaining({ value: 'next-value', details }));
+        harness.answer(scope.serverId, path, { body: { resourceId: 'secret-a', revision: 4 } });
+        await act(async () => { expect(await review.retryReplace()).toBe(true); });
+        const sent = harness.requestsFor(path);
+        expect(sent.at(-1)?.input).toEqual(sent.at(-2)?.input);
+    });
+
     it('settles an acknowledged rename while the Saved Secret material refresh is pending', async () => {
         const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, false, true));
         const secret = entries[0]!;

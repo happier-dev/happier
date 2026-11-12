@@ -266,3 +266,78 @@ describe('Environment → Permissions: chosen people', () => {
     await screen.unmount();
   });
 });
+
+
+describe('Environment → Permissions: recorded platform access', () => {
+  it.each(['account', 'team'] as const)('discloses the selected runtime %s principal separately from provider scope', async (kind) => {
+    const { Item } = await import('@/components/ui/lists/Item');
+    const { t } = await import('@/text');
+    const principal = kind === 'account'
+      ? { kind, accountId: 'linker-alice', purpose: { consumer: { pluginId: 'com.example.deploy', localId: 'inspect' }, purpose: 'deploy' },
+          target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.deploy', localId: 'hosting' }, accountId: 'saved-connection' } } }
+      : { kind, teamId: 'team-release', purpose: { consumer: { pluginId: 'com.example.deploy', localId: 'inspect' }, purpose: 'deploy' },
+          selection: { source: 'team_resource' as const, resourceId: 'team-credential', deliveryMode: 'brokered' as const } };
+    const link = createDeploymentTargetLinkHeaderV1({ id: 'selected-runtime', targetKind: 'web', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.deploy', localId: 'hosting' } } });
+    const data = createDeploymentTargetLinkHeaderV1({ id: 'data-link', role: 'data', targetKind: 'database', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } });
+    const detail = { ...manager(), runtimeTargetLink: link, targetLinks: [
+      { targetLink: data, content: { providerIdentity: { providerAccountId: 'wrong-provider', providerResourceId: 'wrong-project', providerEnvironment: 'wrong-scope' } } },
+      { targetLink: link, content: { credentialPrincipal: principal, providerIdentity: {
+          providerAccountId: 'release-org', providerResourceId: 'website', providerEnvironment: 'branch:release' },
+          providerEnvironment: { kind: 'preview' as const, gitBranch: 'release' } } },
+    ] };
+    const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
+      machineName={() => 'vps-1'} onOpenController={() => {}} />);
+    try {
+      const rows = screen.findAllByType(Item);
+      const row = (id: string) => rows.find(node => node.props.testID === `${prefix}.platform.${id}`)?.props;
+      expect(row('principal')).toBeDefined();
+      expect(row('principal')?.detail).toContain(kind === 'account' ? 'alice' : t('shareSheet.team'));
+      expect(row('principal')?.detail).not.toContain(t('shareSheet.you'));
+      expect(row('principal')?.subtitle).toBe(t(kind === 'account'
+        ? 'projects.deployments.platformLink.personalAccessDependency' : 'projects.deployments.platformLink.teamAccessDependency'));
+      expect(row('providerAccount')?.detail).toBe('release-org');
+      expect(row('providerProject')?.detail).toBe('website');
+      expect(row('providerScope')?.detail).toBe('branch:release');
+    } finally { await screen.unmount(); }
+  });
+
+  it('does not borrow a data link principal when runtime content is unavailable', async () => {
+    const detail = { ...manager(), targetLinks: [{ targetLink: createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'database', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } }),
+      content: { providerIdentity: { providerAccountId: 'data-org', providerResourceId: 'database', providerEnvironment: 'main' } } }] };
+    const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
+      machineName={() => 'vps-1'} onOpenController={() => {}} />);
+    try { expect(screen.findByTestId(`${prefix}.platform`)).toBeNull(); }
+    finally { await screen.unmount(); }
+  });
+});
+
+const { presentMachineAuthorityV1 } = await import('@happier-dev/protocol/machines/machineAuthorityV1');
+const { EnvironmentAgentPowerNoticeView } = await import('./DeploymentPermissionsPanel');
+
+describe('Environment → Permissions: agents with administrator power (lab d2 access, P40-R33)', () => {
+  const root = { version: 1, observedAt: 1, daemonUid: 0, daemonUsername: 'root', daemonPrimaryGroup: 'root',
+    daemonIdentity: 'root', rootEquivalentGroups: [], groupMembership: { state: 'current' },
+    passwordlessSudoToRoot: 'allowed', managedDropIn: 'absent' } as const;
+  const notice = 'project-deployments.environment.permissions.agentPower';
+
+  it('says agents on the controller have administrator power, and leads to turning isolation on', async () => {
+    const onTurnOn = vi.fn();
+    const authority = presentMachineAuthorityV1({ freshness: 'current', observation: root as never,
+      isolation: { kind: 'disabled' }, platform: 'linux' });
+    const screen = await renderScreen(<EnvironmentAgentPowerNoticeView authority={authority} machine="vps-2" onTurnOn={onTurnOn} />);
+    expect(screen.findByTestId(notice)).not.toBeNull();
+    await screen.pressByTestIdAsync(`${notice}.turnOn`);
+    expect(onTurnOn).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
+  it.each([
+    ['isolated agents', { freshness: 'current', observation: root, isolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, platform: 'linux' }],
+    ['an offline Machine', { freshness: 'stale', observation: root, isolation: { kind: 'disabled' }, platform: 'linux' }],
+  ] as const)('stays quiet for %s', async (_case, input) => {
+    const screen = await renderScreen(<EnvironmentAgentPowerNoticeView authority={presentMachineAuthorityV1(input as never)}
+      machine="vps-2" onTurnOn={() => {}} />);
+    expect(screen.findByTestId(notice)).toBeNull();
+    await screen.unmount();
+  });
+});

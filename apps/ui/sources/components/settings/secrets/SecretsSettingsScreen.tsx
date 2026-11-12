@@ -145,7 +145,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             if (currentScopeKey.current !== requestedScopeKey) return;
             setSharedMutationPending(false);
         };
-        const result = await catalog.updateResource({
+        const request: Parameters<typeof catalog.updateResource>[0] = {
             resourceId: parsed.id,
             expectedRevision: entry.revision,
             ...update,
@@ -158,9 +158,22 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 setSharedMutationPending(false);
                 Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
             },
-        });
+        };
+        const result = await catalog.updateResource(request);
         if (currentScopeKey.current !== requestedScopeKey) return;
         setSharedMutationPending(false);
+        // Replace refused because backups still use this value: the owner-approved re-key, inside this same Replace.
+        const lifetime = !result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
+            ? captureActiveServerAccountScopeLifetime() : null;
+        if (!result.ok && result.reason === 'backup_rekey_required' && update.nextValue !== undefined
+            && lifetime && areServerAccountScopesEqual(lifetime.scope, scope)) {
+            const { reviewSavedSecretBackupRekey } = await import('./SavedSecretBackupRekey');
+            const replaced = await reviewSavedSecretBackupRekey({
+                lifetime, secretName: entry.name ?? t('secrets.catalog.unavailableName'), value: update.nextValue,
+                details: result.details, retryReplace: async () => (await catalog.updateResource(request)).ok,
+            });
+            return replaced || undefined;
+        }
         if (!result.ok) {
             if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
             Modal.alert(t('common.error'), result.reason === 'outcome_unknown'
