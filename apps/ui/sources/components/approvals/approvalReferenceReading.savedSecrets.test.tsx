@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { renderHook } from '@/dev/testkit';
+import * as React from 'react';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -13,6 +14,7 @@ const { useApprovalReferenceReading, readApprovalReferenceForConfirmation } = aw
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
 const { storage } = await import('@/sync/domains/state/storage');
+const { ActionApprovalFieldsCard } = await import('./ActionApprovalFieldsCard');
 const initialSettingsScope = storage.getState().settingsScope;
 
 describe('Saved Secret names in binding approvals', () => {
@@ -65,6 +67,10 @@ describe('Saved Secret names in binding approvals', () => {
             expect(voiceReference).toEqual({ kind: 'savedSecret', id: refs[0] });
             const voiceReading = await renderHook(() => useApprovalReferenceReading(voiceReference!, refs[0], home));
             expect(voiceReading.getCurrent()).toMatchObject({ text: names[0], named: true });
+            const card = await renderScreen(<ActionApprovalFieldsCard presentation={voiceFields} serverId={home} />);
+            expect(card.getTextContent()).toContain(names[0]);
+            expect(card.getTextContent()).not.toContain(refs[0]);
+            await card.unmount();
         } finally { account.dispose(); }
     });
 });

@@ -15,6 +15,7 @@ import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPoli
 import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 import { admitTestExecSpawn, prepareTestNativeSocketDirectory, CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
 import { buildCodexCloudAuthFile } from '../../auth/services/openai/cloud/authFile.js';
+import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../../cli/supportedRuntime.js';
 
 export function codexNativePreparationFailureCases() {
   return [
@@ -217,7 +218,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       const turnId = message.method === 'turn/start'
         ? options.turnIdForStart?.(turnStartOccurrence) ?? `provider-turn-${turnStartOccurrence}` : 'fixture-turn';
       if (message.method === 'initialize') {
-        result = { userAgent: 'happier_cli/0.162.1 (fixture)' };
+        result = { userAgent: `happier_cli/${CODEX_SUPPORTED_RUNTIME_VERSION} (fixture)` };
         error = options.initializeFailure;
       } else if (message.method === 'config/read') {
         result = { config: { cli_auth_credentials_store: 'file', mcp_servers: options.nativeMcpServers ?? (options.mcpServers ? { happier__wilson: { enabled: true } } : {}), features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
@@ -401,7 +402,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       return await connectClient(request);
     } },
     run: async (request: { args: readonly string[] }) => ({
-      stdout: new TextEncoder().encode(request.args.includes('--version') ? 'codex-cli 0.159.2' : request.args.includes('models') ? JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] }) : ''),
+      stdout: new TextEncoder().encode(request.args.includes('--version') ? `codex-cli ${CODEX_SUPPORTED_RUNTIME_VERSION}` : request.args.includes('models') ? JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] }) : ''),
       stderr: new Uint8Array(),
       stdoutTruncated: false, stderrTruncated: false,
       termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } },
