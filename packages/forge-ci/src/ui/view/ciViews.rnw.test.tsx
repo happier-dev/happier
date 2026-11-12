@@ -6,11 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -18,6 +19,7 @@ import {
   ForgeCiJobV1Schema,
   type ForgeCiOperationIdV1,
   type ForgeCiRunV1,
+  type ForgeCiJobV1,
 } from '@happier-dev/triage-protocol/ci/v1';
 import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';
 import { createForgeCiAdapterV1 } from '../../runtime/adapter.js';
@@ -34,6 +36,7 @@ import { createForgeCiMountedViewV1 } from '../mountedCiIntent.js';
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
+const boundControls = new WeakMap<ForgeCiBindingV1, ReturnType<typeof createPluginUiActionControlTestHost>>();
 afterEach(async () => {
   await act(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
@@ -51,6 +54,7 @@ const RUNNING = {
 function boundary(
   options: Readonly<{
     run?: Partial<ForgeCiRunV1>;
+    job?: Partial<ForgeCiJobV1>;
     cancel?: 'accepted' | 'lost';
     declined?: 'forceCancelRun' | 'approveForkRun';
   }> = {},
@@ -64,25 +68,26 @@ function boundary(
   const job = {
     ...native.job,
     state: run.state.phase === 'completed' ? native.job.state : run.state,
+    ...options.job,
   };
   const calls: string[] = [];
   const inputs: unknown[] = [];
   const actionRefs = Object.fromEntries(
     Object.keys(ForgeCiActionInputSchemasV1).map((key) => [
       key,
-      { pluginId: 'fixture.forge', localId: key },
+      { pluginId: 'fixture.forge', localId: key.toLowerCase() },
     ]),
   ) as Record<ForgeCiOperationIdV1, PluginContributionRef>;
-  const adapter = createForgeCiAdapterV1({
-    actionRefs,
-    invoke: async (action, input) => {
-      calls.push(action.localId);
+  const operationOf = (action: PluginContributionRef) => (Object.keys(actionRefs) as ForgeCiOperationIdV1[]).find(key => actionRefs[key].localId === action.localId)!;
+  const invoke = async (action: PluginContributionRef, input: JsonValue) => {
+      const operation = operationOf(action);
+      calls.push(operation);
       inputs.push(input);
-      if (action.localId === options.declined) throw new PluginError({ code: 'denied', diagnostics: [
+      if (operation === options.declined) throw new PluginError({ code: 'denied', diagnostics: [
         { severity: 'error', code: 'plugin_action_current_intent_rejected' },
       ] });
-      if (action.localId === 'approveForkRun') return { kind: 'accepted', affected: { repository: run.ref.repository, run: run.ref } };
-      if (action.localId === 'cancelRun') {
+      if (operation === 'approveForkRun') return { kind: 'accepted', affected: { repository: run.ref.repository, run: run.ref } };
+      if (operation === 'cancelRun') {
         if (options.cancel === 'lost')
           throw new Error('transport closed before the answer');
         return {
@@ -91,17 +96,25 @@ function boundary(
         };
       }
       const value =
-        action.localId === 'readRun'
+        operation === 'readRun'
           ? run
           : {
-              rows: action.localId === 'listJobs' ? [job] : [],
+              rows: operation === 'listJobs' ? [job] : [],
               omittedRowCount: 0,
               projectionTruncated: false,
               continuation: null,
               incomplete: null,
             };
       return { kind: 'value', value };
-    },
+  };
+  const adapter = createForgeCiAdapterV1({ actionRefs, invoke });
+  const hostOperations: ForgeCiOperationIdV1[] = [];
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    if (typeof action === "string") throw new Error("Expected contributed CI Action");
+    ForgeCiActionInputSchemasV1[operationOf(action)].parse(input);
+    hostOperations.push(operationOf(action));
+    try { return { ok: true, result: await invoke(action, input) }; }
+    catch (error) { return { ok: false, error: "Host invocation failed", errorCode: error instanceof PluginError ? "plugin_action_current_intent_rejected" : "outcome_unknown", effectAttempted: !(error instanceof PluginError) }; }
   });
   const reads = createForgeCiReadsV1({
     adapter,
@@ -119,10 +132,13 @@ function boundary(
     },
     fix: () => undefined,
   };
-  return { run, job, calls, inputs, reads, ci };
+  boundControls.set(ci, controls);
+  return { run, job, calls, inputs, reads, ci, controls, hostOperations };
 }
 
-async function mount(element: React.ReactElement, navigation?: Array<PluginUiPageNavigationV1 | null>) {
+async function mount(element: React.ReactElement, navigation?: Array<PluginUiPageNavigationV1 | null>, offeredControls?: ReturnType<typeof createPluginUiActionControlTestHost>) {
+  const ci = (element.props as { ci?: ForgeCiBindingV1 }).ci;
+  const controls = offeredControls ?? (ci ? boundControls.get(ci) : undefined);
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -132,7 +148,7 @@ async function mount(element: React.ReactElement, navigation?: Array<PluginUiPag
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({}),
       launchInput: null,
-      handlers: navigation === undefined ? {} : { setPageNavigation: ({ navigation: value }) => { navigation.push(value); } },
+      handlers: { ...(controls ? { actionControl: controls.handler } : {}), ...(navigation ? { setPageNavigation: ({ navigation: value }: { navigation: PluginUiPageNavigationV1 | null }) => { navigation.push(value); } } : {}) },
     });
   });
   mounted.push(fixture);
@@ -140,6 +156,25 @@ async function mount(element: React.ReactElement, navigation?: Array<PluginUiPag
 }
 
 describe('shared CI status presentation', () => {
+  it('keeps a healthy job visible and discloses its unavailable step diagnostic', async () => {
+    const requestId = 'issued-inline-steps-request';
+    const failure = { class: 'unsupportedContract' as const, code: 'github_job_steps_missing', requestId };
+    const native = createForgeCiConformanceVectorsV1().github;
+    const job = ForgeCiJobV1Schema.parse({ ...native.job, state: RUNNING, steps: { kind: 'unavailable', failure } });
+    const b = boundary({ run: { state: RUNNING }, job });
+    const view = createForgeCiMountedViewV1({ mountId: 'steps-failure', phone: false });
+    try {
+      const fixture = await mount(<ForgeCiRunDetailView ci={b.ci} view={view} selection={b.job.ref.selection}
+        presentation="embedded" selectedJobId={b.job.ref.jobId} onOpenJob={() => undefined} />);
+      await expect(fixture.getByText(job.name)).resolves.toBeDefined();
+      const details = await fixture.getByRole('button', { name: 'Details' });
+      await act(async () => { await fixture.press(details); });
+      await expect(fixture.getByText(failure.code)).resolves.toBeDefined();
+      await expect(fixture.getByText(requestId)).resolves.toBeDefined();
+      expect(b.calls.filter(id => id === 'readJobLog')).toEqual([]);
+    } finally { await act(async () => { view.dispose(); b.reads.retire(); }); }
+  });
+
   it('sends the displayed full fork provenance through the one declared approval Action', async () => {
     const headSha = 'f'.repeat(40);
     const contributor = 'fork-contributor';
@@ -148,7 +183,8 @@ describe('shared CI status presentation', () => {
       state: { phase: 'waiting', outcome: null, nativeLabel: 'action_required', outcomeBucket: 'pending' } } });
     try {
       const fixture = await mount(<ForgeCiRunDetailView ci={b.ci} selection={b.job.ref.selection} presentation="embedded" onOpenJob={() => undefined} />);
-      await fixture.press(await fixture.getByRole('button', { name: 'Approve fork run' }));
+      await fixture.getByText(b.run.title ?? '');
+      await act(async () => { await b.controls.press('Approve fork run'); });
       const index = b.calls.indexOf('approveForkRun');
       expect(index).toBeGreaterThanOrEqual(0);
       expect(b.inputs[index]).toMatchObject({ repository: b.run.ref.repository, runId: b.run.ref.runId,
@@ -217,6 +253,24 @@ describe('rate-limit read recovery', () => {
 });
 
 describe('ForgeCiRunDetailView', () => {
+  it.each([
+    { running: true, operation: 'cancelRun', title: 'Cancel run' },
+    { running: false, operation: 'rerunFailed', title: 'Re-run failed jobs' },
+  ])('binds $operation to the host physical control and sends one exact attempt', async ({ running, operation, title }) => {
+    const b = boundary({ ...(running ? { run: { state: RUNNING } } : {}) });
+    try {
+      const fixture = await mount(<ForgeCiRunDetailView ci={b.ci} selection={b.job.ref.selection} presentation="embedded" onOpenJob={() => undefined} />, undefined, b.controls);
+      await fixture.getByText(b.run.title ?? "");
+      expect(b.controls.presentation(title)).toBeDefined();
+      await act(async () => { await b.controls.press(title); });
+      const index = b.calls.indexOf(operation);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(b.inputs[index]).toEqual({ repository: b.run.ref.repository, runId: b.run.ref.runId, attempt: '2' });
+      expect(b.calls.filter(id => id === operation)).toHaveLength(1);
+      expect(b.hostOperations).toEqual([operation]);
+    } finally { b.reads.retire(); }
+  });
+
   it('opens a routed job on Jobs and returns to the real Summary through the same controlled page Tabs', async () => {
     const b = boundary();
     const navigation: Array<PluginUiPageNavigationV1 | null> = [];
@@ -276,7 +330,7 @@ describe('ForgeCiRunDetailView', () => {
   });
 
   it('leads a failed run with what failed from the jobs projection, reading no logs, annotations or workflow files', async () => {
-    const { ci, calls, reads, job } = boundary();
+    const { ci, calls, reads, job, controls } = boundary();
     try {
       const fixture = await mount(
         <ForgeCiRunDetailView
@@ -287,7 +341,7 @@ describe('ForgeCiRunDetailView', () => {
         />,
       );
       await fixture.getByText('feat(protocol): project source schema');
-      await fixture.getByRole('button', { name: 'Re-run failed jobs' });
+      expect(controls.presentation('Re-run failed jobs')).toBeDefined();
       await fixture.getByRole('button', { name: 'Fix in a session' });
       await fixture.getByText('failed in “Test”');
       expect(calls).not.toContain('readJobLog');
@@ -303,7 +357,7 @@ describe('ForgeCiRunDetailView', () => {
   });
 
   it('offers Force-cancel only once a normal cancel was accepted and the run is still going', async () => {
-    const { ci, reads, job } = boundary({
+    const { ci, reads, job, controls } = boundary({
       run: { state: RUNNING, webUrl: 'https://github.com/example/project/actions/runs/101' },
       cancel: 'accepted',
     });
@@ -316,10 +370,11 @@ describe('ForgeCiRunDetailView', () => {
           onOpenJob={() => undefined}
         />,
       );
-      expect(await fixture.queryByRole('button', { name: 'Force-cancel…' })).toBeUndefined();
-      await fixture.press(await fixture.getByRole('button', { name: 'Cancel run' }));
-      await fixture.getByRole('button', { name: 'Cancelling…' });
-      await fixture.getByRole('button', { name: 'Force-cancel…' });
+      await fixture.getByText('feat(protocol): project source schema');
+      expect(controls.presentation('Force-cancel…')).toBeUndefined();
+      await act(async () => { await controls.press('Cancel run'); });
+      expect(controls.presentation('Cancelling…')?.disabled).toBe(true);
+      expect(controls.presentation('Force-cancel…')).toBeDefined();
     } finally {
       await act(async () => {
         reads.retire();
@@ -337,9 +392,10 @@ describe('ForgeCiRunDetailView', () => {
     try {
       const fixture = await mount(<ForgeCiRunDetailView ci={b.ci} selection={b.job.ref.selection}
         presentation="embedded" onOpenJob={() => undefined} />);
-      if (operation === 'forceCancelRun') await fixture.press(await fixture.getByRole('button', { name: 'Cancel run' }));
+      await fixture.getByText(b.run.title ?? '');
+      if (operation === 'forceCancelRun') await act(async () => { await b.controls.press('Cancel run'); });
       const readsBefore = b.calls.filter(call => call === 'readRun' || call === 'listJobs').length;
-      await fixture.press(await fixture.getByRole('button', { name: operation === 'forceCancelRun' ? 'Force-cancel…' : 'Approve fork run' }));
+      await act(async () => { await b.controls.press(operation === 'forceCancelRun' ? 'Force-cancel…' : 'Approve fork run'); });
       await fixture.getByText('You declined the confirmation. Nothing on GitHub was changed.');
       expect(await fixture.queryByText('Result unknown — check on GitHub')).toBeUndefined();
       expect(b.calls.filter(call => call === 'readRun' || call === 'listJobs')).toHaveLength(readsBefore);
@@ -347,7 +403,7 @@ describe('ForgeCiRunDetailView', () => {
   });
 
   it('says a lost cancel answer is unknown and never sends it again', async () => {
-    const { ci, calls, reads, job } = boundary({
+    const { ci, calls, reads, job, controls } = boundary({
       run: { state: RUNNING },
       cancel: 'lost',
     });
@@ -360,12 +416,11 @@ describe('ForgeCiRunDetailView', () => {
           onOpenJob={() => undefined}
         />,
       );
-      await fixture.press(
-        await fixture.getByRole('button', { name: 'Cancel run' }),
-      );
+      await fixture.getByText('feat(protocol): project source schema');
+      await act(async () => { await controls.press('Cancel run'); });
       await fixture.getByText('Result unknown — check on GitHub');
       expect(calls.filter((call) => call === 'cancelRun')).toHaveLength(1);
-      expect(await fixture.queryByRole('button', { name: 'Force-cancel…' })).toBeUndefined();
+      expect(controls.presentation('Force-cancel…')).toBeUndefined();
     } finally {
       await act(async () => {
         reads.retire();

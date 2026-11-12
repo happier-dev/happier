@@ -12,7 +12,7 @@ import type { ForgeCiStateSubjectV1 } from './ForgeCiStateNotice.js';
 /**
  * Everything a shared CI view needs from the forge plugin that mounts it, built once per mount by that plugin
  * (GitHub's `useGithubCiBindingV1`). The views stay forge-neutral: they read through `reads`, write through
- * `adapter` (the host applies person/agent policy and confirmation), download through the host with `actionRefs`,
+ * the host's physical controls with `actionRefs`, retain `adapter` for automation, download through the host,
  * and speak the forge and account names from `about`.
  */
 export type ForgeCiBindingV1 = Readonly<{

@@ -1,9 +1,10 @@
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { projectTriageSourceInvocationFailureV1 as forgeCiInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
+import { projectTriageSourceReadFailureV1, projectTriageSourceInvocationFailureV1 as forgeCiInvocationFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
-    ForgeCiActionInputSchemasV1, ForgeCiActionResultSchemasV1,
+    ForgeCiActionInputSchemasV1, ForgeCiActionResultSchemasV1, ForgeCiMutationResultV1Schema,
     type ForgeCiActionInputByOperationV1, type ForgeCiActionResultByOperationV1,
     type ForgeCiMutationResultV1, type ForgeCiOperationIdV1, type ForgeCiRunRefV1,
 } from '@happier-dev/triage-protocol/ci/v1';
@@ -96,6 +97,25 @@ function failedInvocation(
     };
 }
 
+/** The CI result boundary shared by raw automation and the original host-control settlement. */
+export function projectForgeCiMutationExecutionV1(
+    input: ForgeCiActionInputByOperationV1[ForgeCiOperationIdV1],
+    execution: PluginActionExecution,
+): ForgeCiMutationResultV1 | null {
+    if (execution.status === 'idle' || execution.status === 'pending') return null;
+    if (execution.status === 'success') {
+        const parsed = ForgeCiMutationResultV1Schema.safeParse(execution.result);
+        return parsed.success ? parsed.data : unknownMutation(input);
+    }
+    const { class: failureClass, code, requestId } = projectTriageSourceReadFailureV1(
+        execution, 'ci_invocation_failed', 'ci_invocation_failed',
+    );
+    const failure = { class: failureClass, code, ...(requestId === undefined ? {} : { requestId }) };
+    return execution.status === 'outcomeUnknown'
+        ? { ...unknownMutation(input), failure }
+        : { kind: 'rejected', failure };
+}
+
 /** Bind ordinary Actions; the host keeps admission, transport and approvals. */
 export function createForgeCiAdapterV1(options: ForgeCiAdapterOptionsV1): ForgeCiAdapterV1 {
     const methods = Object.fromEntries(
@@ -117,6 +137,7 @@ export function createForgeCiAdapterV1(options: ForgeCiAdapterOptionsV1): ForgeC
                     // A lost host response cannot prove the provider did not act.
                     return schema.parse(failedInvocation(family, input, false, error));
                 }
+                if (family === 'mutation') return projectForgeCiMutationExecutionV1(input, { status: 'success', result });
                 try {
                     // This is the single admission of the external unknown value.
                     return schema.parse(result);

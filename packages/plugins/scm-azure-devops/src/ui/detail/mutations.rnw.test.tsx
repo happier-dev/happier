@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiPageNavigationV1 } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -38,6 +38,7 @@ const ROUTING_TOKEN = FIXTURE.detailInput.observation.locator.routingToken ?? ''
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+type MountedFixture = PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> };
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
 let nextActionError: unknown | null = null;
@@ -183,7 +184,13 @@ const REVIEW_INPUT = {
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
   navigation?: Array<PluginUiPageNavigationV1 | null>,
-): Promise<PluginUiTestkit> {
+): Promise<MountedFixture> {
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    recorded.push({ action, input });
+    if (nextActionError !== null) return { ok: false, errorCode: nextActionError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextActionError.code, error: nextActionError.message,
+      ...(nextActionError.details === undefined ? {} : { details: nextActionError.details }) };
+    return { ok: true, result: nextResult };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -203,8 +210,12 @@ async function mountDetail(
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
+        actionControl: controls.handler,
         ...(navigation === undefined ? {} : { setPageNavigation: ({ navigation: descriptor }: { navigation: PluginUiPageNavigationV1 | null }) => { navigation.push(descriptor); } }),
         executeAction: async ({ action, input }) => {
+          if (typeof action !== 'string' && Object.values(AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
+            throw new Error('A press write must execute through the host Action control.');
+          }
           if (action === 'shell.column.set') {
             const descriptor = navigation?.at(-1);
             if (!descriptor) throw new Error('Expected the published page navigation');
@@ -226,7 +237,7 @@ async function mountDetail(
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 /** Only the writes; the root's own iteration read is not what these cases are about. */
@@ -291,7 +302,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+    await act(async () => detail.controls.press('Abandon'));
 
     expect(completedMutations).toBe(1);
   });
@@ -303,7 +314,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
       message: 'The Action timed out after dispatch.',
     });
 
-    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+    await act(async () => detail.controls.press('Abandon'));
 
     expect(completedMutations).toBe(1);
     expect(recordedWrites()).toHaveLength(1);
@@ -313,7 +324,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+    await act(async () => detail.controls.press('Abandon'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -331,7 +342,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     await detail.press(await detail.getByRole('switch', {
       name: 'Delete the source branch after completing',
     }));
-    await detail.press(await detail.getByRole('button', { name: 'Complete' }));
+    await act(async () => detail.controls.press('Complete'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -362,7 +373,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     await expect(detail.getByRole('switch', {
       name: 'Delete the source branch after completing',
     })).resolves.toMatchObject({ state: { checked: false } });
-    await detail.press(await detail.getByRole('button', { name: 'Complete' }));
+    await act(async () => detail.controls.press('Complete'));
 
     const writes = recordedWrites();
     expect(writes).toHaveLength(1);
@@ -377,7 +388,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+    await act(async () => detail.controls.press('Abandon'));
 
     await expect(detail.queryByText(
       'Nothing was written: this pull request is no longer active.',
@@ -389,8 +400,8 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     const { nativeRevision: _omitted, ...observation } = FIXTURE.detailInput.observation;
     const detail = await mountDetail({ ...FIXTURE.detailInput, observation } as unknown as JsonValue);
 
-    await expect(detail.getByRole('button', { name: 'Complete' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Complete'))).resolves.toMatchObject({
+      disabled: true,
     });
     await expect(detail.queryByText(
       'Azure DevOps did not report the merge source commit of this pull request, so it cannot be completed from here.',
@@ -439,7 +450,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     nextResult = result as unknown as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
+    await act(async () => detail.controls.press('Abandon'));
 
     expect(document.body.textContent).toContain(sentence as string);
     expect(document.body.textContent).not.toContain('azure-unreachable');
@@ -453,7 +464,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
     } as unknown as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Complete' }));
+    await act(async () => detail.controls.press('Complete'));
 
     await expect(detail.queryByText(
       'Auto-complete is on, so Azure DevOps completes this pull request when its policies pass.',
@@ -470,11 +481,11 @@ describe('the mounted Azure DevOps pull-request writes', () => {
       },
     } as unknown as JsonValue);
 
-    await expect(detail.queryByRole('button', { name: 'Complete' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Abandon' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Complete'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Abandon'))).resolves.toBeUndefined();
     // A completed pull request is `resolved`, and reactivating it would be offering to undo a
     // merge that already landed. Only the abandoned label offers Reactivate.
-    await expect(detail.queryByRole('button', { name: 'Reactivate' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Reactivate'))).resolves.toBeUndefined();
   });
 });
 
@@ -483,7 +494,7 @@ describe('the mounted Azure DevOps reactivation', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail(ABANDONED_INPUT);
 
-    await detail.press(await detail.getByRole('button', { name: 'Reactivate' }));
+    await act(async () => detail.controls.press('Reactivate'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -501,9 +512,9 @@ describe('the mounted Azure DevOps reactivation', () => {
 
     // Completion, abandonment and review requests all require an ACTIVE pull request, so offering
     // any of them here would be offering a control Azure could only refuse.
-    await expect(detail.queryByRole('button', { name: 'Complete' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Abandon' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Request review' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Complete'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Abandon'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Request review'))).resolves.toBeUndefined();
   });
 
   it('says a reactivation refusal wrote nothing, in the words of the gate that refused', async () => {
@@ -514,7 +525,7 @@ describe('the mounted Azure DevOps reactivation', () => {
     } as JsonValue;
     const detail = await mountDetail(ABANDONED_INPUT);
 
-    await detail.press(await detail.getByRole('button', { name: 'Reactivate' }));
+    await act(async () => detail.controls.press('Reactivate'));
 
     // NOT "no longer active": that sentence would name the very state the reader pressed
     // Reactivate about.
@@ -537,8 +548,8 @@ describe('the mounted Azure DevOps review request', () => {
     // The semantic UI harness can press, and only press — it cannot type — so what the wire
     // carries for a named reviewer is proven at the Action in `triage/mutationActions.test.ts`
     // and by `readReviewerIds` below. What this case owns is that an unnamed request never leaves.
-    await expect(detail.getByRole('button', { name: 'Request review' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Request review'))).resolves.toMatchObject({
+      disabled: true,
     });
     expect(recordedWrites()).toHaveLength(0);
   });
@@ -562,7 +573,7 @@ describe('the mounted Azure DevOps review publication', () => {
 
     await expect(detail.getByRole('checkbox', { name: 'Please keep this branch explicit.' }))
       .resolves.toMatchObject({ state: { checked: true } });
-    await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
+    await act(async () => detail.controls.press('Publish as new thread'));
 
     const revision = FIXTURE.detailInput.observation.snapshot.reviewRevision;
     const binding = FIXTURE.detailInput.instance.binding;
@@ -608,7 +619,7 @@ describe('the mounted Azure DevOps review publication', () => {
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Reply to thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Please keep this branch explicit.' }));
-    await detail.press(await detail.getByRole('button', { name: 'Publish reply' }));
+    await act(async () => detail.controls.press('Publish reply'));
 
     expect(recordedWrites().at(-1)).toMatchObject({
       action: {
@@ -647,7 +658,7 @@ describe('the mounted Azure DevOps review publication', () => {
     } as unknown as JsonValue;
     const detail = await mountDetail(REVIEW_INPUT);
 
-    await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+    await act(async () => detail.controls.press('Submit review'));
 
     await expect(detail.queryByText(
       '1/1 comments published; 0 unconfirmed; 0 failed; 0 not attempted. Verdict: uncertain.',
@@ -678,7 +689,7 @@ describe('the mounted Azure DevOps review publication', () => {
     } as unknown as JsonValue;
     const detail = await mountDetail(REVIEW_INPUT);
 
-    await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+    await act(async () => detail.controls.press('Submit review'));
 
     await expect(detail.queryByText(
       '1/1 comments published; 0 unconfirmed; 0 failed; 0 not attempted. Verdict: failed. The review summary was published.',
@@ -690,13 +701,13 @@ describe('the mounted Azure DevOps review publication', () => {
     nextResult = { kind: 'unexpected-publication-result' } as unknown as JsonValue;
     const detail = await mountDetail(REVIEW_INPUT);
 
-    await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
+    await act(async () => detail.controls.press('Publish as new thread'));
 
     await expect(detail.queryByText(
       'This build could not read what Azure DevOps answered.',
     )).resolves.toBeDefined();
-    await expect(detail.getByRole('button', { name: 'Publish as new thread' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Publish as new thread'))).resolves.toMatchObject({
+      disabled: true,
     });
     expect(completedMutations).toBe(1);
   });
@@ -711,7 +722,7 @@ describe('the mounted Azure DevOps thread status', () => {
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Set the status of thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Fixed' }));
-    await detail.press(await detail.getByRole('button', { name: 'Set status' }));
+    await act(async () => detail.controls.press('Set status'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -742,8 +753,8 @@ describe('the mounted Azure DevOps thread status', () => {
 
     // Azure's six requestable statuses are all real intents and none of them is a safe guess, so
     // the control arrives unselected rather than pre-armed with one.
-    await expect(detail.getByRole('button', { name: 'Set status' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Set status'))).resolves.toMatchObject({
+      disabled: true,
     });
     expect(recordedWrites()).toHaveLength(0);
   });
@@ -756,7 +767,7 @@ describe('the mounted Azure DevOps thread status', () => {
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
     await detail.press(await detail.getByRole('button', { name: 'Set the status of thread 7' }));
     await detail.press(await detail.getByRole('radio', { name: 'Fixed' }));
-    await detail.press(await detail.getByRole('button', { name: 'Set status' }));
+    await act(async () => detail.controls.press('Set status'));
 
     // A `200` whose confirming read disagrees is a silently ignored property, and it is reported
     // rather than presented as done.

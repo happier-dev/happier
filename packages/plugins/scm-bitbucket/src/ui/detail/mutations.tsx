@@ -1,16 +1,17 @@
 import * as React from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type {
   ReviewCommentPublicationPlanV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
-  Button,
   Divider,
   Form,
   Row,
   Stack,
   Text,
-  useExecutePluginAction,
+  Action,
+  projectPluginActionControlExecutionV1,
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
   type PluginActionExecution,
@@ -409,8 +410,8 @@ function BitbucketReviewPublicationControls({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const { instance, localRef } = useTriageDetailRequest(input);
-  const submit = useExecutePluginAction(SUBMIT_REVIEW_ACTION);
-  const create = useExecutePluginAction(CREATE_REVIEW_COMMENT_ACTION);
+  const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const { proposals, status } = useReviewCommentProposalsForEntry({
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
@@ -489,11 +490,33 @@ function BitbucketReviewPublicationControls({
       />
       <Form.TextField label={text('plugins.bitbucket.ui.mutations.review.summary', 'Review summary')} value={summary} onChange={setSummary} />
       <Row gap="small">
-        <Button title={text('plugins.bitbucket.ui.mutations.review.submit', 'Submit review')} disabled={plan === null} busy={submit.execution.status === 'pending'} onPress={() => { if (plan !== null) void submit.execute({ v: 1, instance, localRef, lastKnownLocator: input.observation.locator, publicationPlan: plan }).then(complete); }} />
-        <Button title={text('plugins.bitbucket.ui.mutations.reviewComment.publish', 'Publish comment')} variant="secondary" disabled={single === null} busy={create.execution.status === 'pending'} onPress={() => { if (single !== null) void create.execute({ v: 1, instance, localRef, lastKnownLocator: input.observation.locator, publicationPlan: single }).then(complete); }} />
+        <Action.Control title={text('plugins.bitbucket.ui.mutations.review.submit', 'Submit review')} disabled={plan === null} action={SUBMIT_REVIEW_ACTION} controller={{
+            prepare() {
+              if (plan === null) return null;
+              setSubmitExecution({ status: 'pending' });
+              return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, publicationPlan: plan } };
+            },
+            onSettled(execution) {
+              const settled = projectPluginActionControlExecutionV1(execution, text);
+              setSubmitExecution(settled);
+              void complete(settled);
+            },
+          }} />
+        <Action.Control title={text('plugins.bitbucket.ui.mutations.reviewComment.publish', 'Publish comment')} variant="secondary" disabled={single === null} action={CREATE_REVIEW_COMMENT_ACTION} controller={{
+            prepare() {
+              if (single === null) return null;
+              setCreateExecution({ status: 'pending' });
+              return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, publicationPlan: single } };
+            },
+            onSettled(execution) {
+              const settled = projectPluginActionControlExecutionV1(execution, text);
+              setCreateExecution(settled);
+              void complete(settled);
+            },
+          }} />
       </Row>
-      <SettledMutationBanner settled={reviewPublicationBanner(submit.execution, text)} />
-      <SettledMutationBanner settled={reviewPublicationBanner(create.execution, text)} />
+      <SettledMutationBanner settled={reviewPublicationBanner(submitExecution, text)} />
+      <SettledMutationBanner settled={reviewPublicationBanner(createExecution, text)} />
     </Stack>
   );
 }
@@ -509,7 +532,7 @@ export function BitbucketReviewCommentReplyControls({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const { instance, localRef } = useTriageDetailRequest(input);
-  const reply = useExecutePluginAction(REPLY_REVIEW_COMMENT_ACTION);
+  const [replyExecution, setReplyExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const { proposals, status } = useReviewCommentProposalsForEntry({
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
@@ -573,28 +596,25 @@ export function BitbucketReviewCommentReplyControls({
         {...(parentCommentId === null ? {} : { value: parentCommentId })}
         onChange={(value) => { if (typeof value === 'string') setParentCommentId(value); }}
       />
-      <Button
+      <Action.Control
         title={text('plugins.bitbucket.ui.mutations.reviewReply.publish', 'Post reply')}
         variant="secondary"
         disabled={plan === null}
-        busy={reply.execution.status === 'pending'}
-        onPress={() => {
-          if (plan === null || parentCommentId === null) return;
-          void reply.execute({
-            v: 1,
-            instance,
-            localRef,
-            lastKnownLocator: input.observation.locator,
-            parentCommentId,
-            publicationPlan: plan,
-          }).then((execution) => completeTriagePostMutationIfNeeded(
-            completeMutation,
-            execution,
-            bitbucketReviewPublicationMayHaveChangedProviderStateV1,
-          ));
+        action={REPLY_REVIEW_COMMENT_ACTION}
+        controller={{
+          prepare() {
+            if (plan === null || parentCommentId === null) return null;
+            setReplyExecution({ status: 'pending' });
+            return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, parentCommentId, publicationPlan: plan } };
+          },
+          onSettled(execution) {
+            const settled = projectPluginActionControlExecutionV1(execution, text);
+            setReplyExecution(settled);
+            void completeTriagePostMutationIfNeeded(completeMutation, settled, bitbucketReviewPublicationMayHaveChangedProviderStateV1);
+          },
         }}
       />
-      <SettledMutationBanner settled={reviewPublicationBanner(reply.execution, text)} />
+      <SettledMutationBanner settled={reviewPublicationBanner(replyExecution, text)} />
     </Stack>
   );
 }
@@ -616,8 +636,8 @@ export function BitbucketMutationControls({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const { instance, localRef } = useTriageDetailRequest(input);
-  const merge = useExecutePluginAction(MERGE_ACTION);
-  const decline = useExecutePluginAction(DECLINE_ACTION);
+  const [mergeExecution, setMergeExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [declineExecution, setDeclineExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [strategy, setStrategy] = React.useState<BitbucketMergeStrategyV1 | null>(null);
   const [closeSourceBranch, setCloseSourceBranch] = React.useState(false);
   const [message, setMessage] = React.useState('');
@@ -626,55 +646,37 @@ export function BitbucketMutationControls({
   const trimmedMessage = message.trim();
   const mergeable = strategy !== null && observedHeadCommit !== undefined;
 
-  const runMerge = React.useCallback(() => {
-    if (strategy === null || observedHeadCommit === undefined) return;
-    void merge.execute({
-      v: 1,
-      instance,
-      localRef,
-      lastKnownLocator: input.observation.locator,
-      observedHeadCommit,
-      closeSourceBranch,
-      mergeStrategy: strategy,
-      ...(trimmedMessage === '' ? {} : { message: trimmedMessage }),
-    }).then((execution) => completeTriagePostMutationIfNeeded(
-      completeMutation,
-      execution,
-      bitbucketEntryWriteMayHaveChangedProviderStateV1,
-    ));
-  }, [
-    closeSourceBranch,
-    completeMutation,
-    instance,
-    input.observation.locator,
-    localRef,
-    merge,
-    observedHeadCommit,
-    strategy,
-    trimmedMessage,
-  ]);
-
-  const runDecline = React.useCallback(() => {
-    void decline.execute({
-      v: 1,
-      instance,
-      localRef,
-      lastKnownLocator: input.observation.locator,
-    })
-      .then((execution) => completeTriagePostMutationIfNeeded(
-        completeMutation,
-        execution,
-        bitbucketEntryWriteMayHaveChangedProviderStateV1,
-      ));
-  }, [completeMutation, decline, instance, input.observation.locator, localRef]);
+  const runMerge: PluginUiActionControlController = {
+    prepare() {
+      if (strategy === null || observedHeadCommit === undefined) return null;
+      setMergeExecution({ status: 'pending' });
+      return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, observedHeadCommit, closeSourceBranch, mergeStrategy: strategy, ...(trimmedMessage === '' ? {} : { message: trimmedMessage }) } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setMergeExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, bitbucketEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
+  const runDecline: PluginUiActionControlController = {
+    prepare() {
+      setDeclineExecution({ status: 'pending' });
+      return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setDeclineExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, bitbucketEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
   const affordances = projectBitbucketPullRequestAffordancesV1(
     overview.state.presentation === 'active' ? 'OPEN' : null,
   );
   if (!affordances.merge && !affordances.decline) return null;
 
-  const mergeSettled = projectSettledMutation('merge', merge.execution, text);
-  const declineSettled = projectSettledMutation('decline', decline.execution, text);
+  const mergeSettled = projectSettledMutation('merge', mergeExecution, text);
+  const declineSettled = projectSettledMutation('decline', declineExecution, text);
 
   return (
     <Stack gap="large">
@@ -747,13 +749,13 @@ export function BitbucketMutationControls({
           />
         )}
         <Row gap="small">
-          <Button
+          <Action.Control
             title={text('plugins.bitbucket.ui.mutations.merge.button', 'Merge')}
             titleKey="plugins.bitbucket.ui.mutations.merge.button"
             variant="primary"
             disabled={!mergeable}
-            busy={merge.execution.status === 'pending'}
-            onPress={runMerge}
+            action={MERGE_ACTION}
+            controller={runMerge}
           />
         </Row>
         <SettledMutationBanner settled={mergeSettled} />
@@ -766,12 +768,12 @@ export function BitbucketMutationControls({
           fallback="Bitbucket cannot reopen a declined pull request."
         />
         <Row gap="small">
-          <Button
+          <Action.Control
             title={text('plugins.bitbucket.ui.mutations.decline.button', 'Decline')}
             titleKey="plugins.bitbucket.ui.mutations.decline.button"
             variant="secondary"
-            busy={decline.execution.status === 'pending'}
-            onPress={runDecline}
+            action={DECLINE_ACTION}
+            controller={runDecline}
           />
         </Row>
         <SettledMutationBanner settled={declineSettled} />
@@ -884,38 +886,31 @@ export function BitbucketCommentResolutionControls({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const { instance, localRef } = useTriageDetailRequest(input);
-  const resolve = useExecutePluginAction(RESOLVE_COMMENT_ACTION);
-  const reopen = useExecutePluginAction(UNRESOLVE_COMMENT_ACTION);
+  const [resolveExecution, setResolveExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [reopenExecution, setReopenExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
 
-  const runResolve = React.useCallback(() => {
-    void resolve.execute({
-      v: 1,
-      instance,
-      localRef,
-      lastKnownLocator: input.observation.locator,
-      commentId: comment.id,
-    })
-      .then((execution) => completeTriagePostMutationIfNeeded(
-        completeMutation,
-        execution,
-        bitbucketCommentWriteMayHaveChangedProviderStateV1,
-      ));
-  }, [comment.id, completeMutation, instance, input.observation.locator, localRef, resolve]);
-
-  const runReopen = React.useCallback(() => {
-    void reopen.execute({
-      v: 1,
-      instance,
-      localRef,
-      lastKnownLocator: input.observation.locator,
-      commentId: comment.id,
-    })
-      .then((execution) => completeTriagePostMutationIfNeeded(
-        completeMutation,
-        execution,
-        bitbucketCommentWriteMayHaveChangedProviderStateV1,
-      ));
-  }, [comment.id, completeMutation, instance, input.observation.locator, localRef, reopen]);
+  const runResolve: PluginUiActionControlController = {
+    prepare() {
+      setResolveExecution({ status: 'pending' });
+      return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, commentId: comment.id } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setResolveExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, bitbucketCommentWriteMayHaveChangedProviderStateV1);
+    },
+  };
+  const runReopen: PluginUiActionControlController = {
+    prepare() {
+      setReopenExecution({ status: 'pending' });
+      return { input: { v: 1, instance, localRef, lastKnownLocator: input.observation.locator, commentId: comment.id } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setReopenExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, bitbucketCommentWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
   // A deleted comment has no thread left to resolve, and Bitbucket keeps the row only as a
   // tombstone. Offering a write against it would be offering something that can only fail.
@@ -936,34 +931,24 @@ export function BitbucketCommentResolutionControls({
       )}
       <Row gap="small">
         {!offersResolve ? null : (
-          <Button
+          <Action.Control
             title={text('plugins.bitbucket.ui.mutations.comment.resolve', 'Resolve')}
             variant="secondary"
-            accessibilityLabel={text(
-              'plugins.bitbucket.ui.mutations.comment.resolveLabel',
-              'Resolve comment {comment}',
-              { comment: comment.id },
-            )}
-            busy={resolve.execution.status === 'pending'}
-            onPress={runResolve}
+            action={RESOLVE_COMMENT_ACTION}
+            controller={runResolve}
           />
         )}
         {!offersReopen ? null : (
-          <Button
+          <Action.Control
             title={text('plugins.bitbucket.ui.mutations.comment.reopen', 'Reopen')}
             variant="secondary"
-            accessibilityLabel={text(
-              'plugins.bitbucket.ui.mutations.comment.reopenLabel',
-              'Reopen comment {comment}',
-              { comment: comment.id },
-            )}
-            busy={reopen.execution.status === 'pending'}
-            onPress={runReopen}
+            action={UNRESOLVE_COMMENT_ACTION}
+            controller={runReopen}
           />
         )}
       </Row>
-      <SettledMutationBanner settled={projectSettledCommentResolution('resolve', resolve.execution, text)} />
-      <SettledMutationBanner settled={projectSettledCommentResolution('reopen', reopen.execution, text)} />
+      <SettledMutationBanner settled={projectSettledCommentResolution('resolve', resolveExecution, text)} />
+      <SettledMutationBanner settled={projectSettledCommentResolution('reopen', reopenExecution, text)} />
     </Stack>
   );
 }

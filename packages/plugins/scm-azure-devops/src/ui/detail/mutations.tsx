@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import {
   Banner,
   Button,
@@ -7,7 +8,8 @@ import {
   Row,
   Stack,
   Text,
-  useExecutePluginAction,
+  Action,
+  projectPluginActionControlExecutionV1,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -410,67 +412,65 @@ export function AzureMutationControls({
   const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
   const routingToken = input.observation.locator.routingToken ?? '';
-  const complete = useExecutePluginAction(COMPLETE_ACTION);
-  const abandon = useExecutePluginAction(ABANDON_ACTION);
-  const reactivate = useExecutePluginAction(REACTIVATE_ACTION);
-  const requestReview = useExecutePluginAction(REQUEST_REVIEW_ACTION);
+  const [completeExecution, setCompleteExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [abandonExecution, setAbandonExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [reactivateExecution, setReactivateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [requestReviewExecution, setRequestReviewExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [deleteSourceBranch, setDeleteSourceBranch] = React.useState(false);
   const [reviewerIdsValue, setReviewerIdsValue] = React.useState('');
 
   const observedSourceCommitId = overview.nativeRevision;
   const reviewerIds = React.useMemo(() => readReviewerIds(reviewerIdsValue), [reviewerIdsValue]);
 
-  const runComplete = React.useCallback(() => {
-    if (observedSourceCommitId === null) return;
-    void complete.execute({
-      v: 1,
-      instance: input.instance,
-      localRef,
-      routingToken,
-      observedSourceCommitId,
-      deleteSourceBranch,
-    }).then((execution) => completeTriagePostMutationIfNeeded(
-      completeMutation,
-      execution,
-      azureEntryWriteMayHaveChangedProviderStateV1,
-    ));
-  }, [complete, completeMutation, deleteSourceBranch, input.instance, localRef, observedSourceCommitId, routingToken]);
+  const runComplete: PluginUiActionControlController = {
+    prepare() {
+      if (observedSourceCommitId === null) return null;
+      setCompleteExecution({ status: 'pending' });
+      return { input: { v: 1, instance: input.instance, localRef, routingToken, observedSourceCommitId, deleteSourceBranch } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setCompleteExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, azureEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
-  const runAbandon = React.useCallback(() => {
-    void abandon.execute({ v: 1, instance: input.instance, localRef, routingToken })
-      .then((execution) => completeTriagePostMutationIfNeeded(
-        completeMutation,
-        execution,
-        azureEntryWriteMayHaveChangedProviderStateV1,
-      ));
-  }, [abandon, completeMutation, input.instance, localRef, routingToken]);
+  const runAbandon: PluginUiActionControlController = {
+    prepare() {
+      setAbandonExecution({ status: 'pending' });
+      return { input: { v: 1, instance: input.instance, localRef, routingToken } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setAbandonExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, azureEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
-  const runReactivate = React.useCallback(() => {
-    void reactivate.execute({ v: 1, instance: input.instance, localRef, routingToken })
-      .then((execution) => completeTriagePostMutationIfNeeded(
-        completeMutation,
-        execution,
-        azureEntryWriteMayHaveChangedProviderStateV1,
-      ));
-  }, [completeMutation, input.instance, localRef, reactivate, routingToken]);
+  const runReactivate: PluginUiActionControlController = {
+    prepare() {
+      setReactivateExecution({ status: 'pending' });
+      return { input: { v: 1, instance: input.instance, localRef, routingToken } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setReactivateExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, azureEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
-  const runRequestReview = React.useCallback(() => {
-    const ids = readReviewerIds(reviewerIdsValue);
-    if (observedSourceCommitId === null) return;
-    if (ids.length === 0) return;
-    void requestReview.execute({
-      v: 1,
-      instance: input.instance,
-      localRef,
-      routingToken,
-      observedSourceCommitId,
-      reviewerIds: ids,
-    }).then((execution) => completeTriagePostMutationIfNeeded(
-      completeMutation,
-      execution,
-      azureEntryWriteMayHaveChangedProviderStateV1,
-    ));
-  }, [completeMutation, input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue, routingToken]);
+  const runRequestReview: PluginUiActionControlController = {
+    prepare() {
+      if (observedSourceCommitId === null || readReviewerIds(reviewerIdsValue).length === 0) return null;
+      setRequestReviewExecution({ status: 'pending' });
+      return { input: { v: 1, instance: input.instance, localRef, routingToken, observedSourceCommitId, reviewerIds: readReviewerIds(reviewerIdsValue) } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setRequestReviewExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, azureEntryWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
   if (overview.state.presentation !== 'active') {
     // Azure's reopen, and the only transition a non-active pull request has. A completed pull
@@ -494,27 +494,27 @@ export function AzureMutationControls({
             fallback="This pull request is abandoned. Reactivating makes it active again and asks its reviewers again."
           />
           <Row gap="small">
-            <Button
+            <Action.Control
               title={text('plugins.azureDevops.ui.mutations.reactivate.button', 'Reactivate')}
               titleKey="plugins.azureDevops.ui.mutations.reactivate.button"
               variant="primary"
-              busy={reactivate.execution.status === 'pending'}
-              onPress={runReactivate}
+              action={REACTIVATE_ACTION}
+              controller={runReactivate}
             />
           </Row>
           <SettledMutationBanner
-            settled={projectSettledMutation('reactivate', reactivate.execution, text)}
+            settled={projectSettledMutation('reactivate', reactivateExecution, text)}
           />
         </Stack>
       </Stack>
     );
   }
 
-  const completeSettled = projectSettledMutation('complete', complete.execution, text);
-  const abandonSettled = projectSettledMutation('abandon', abandon.execution, text);
+  const completeSettled = projectSettledMutation('complete', completeExecution, text);
+  const abandonSettled = projectSettledMutation('abandon', abandonExecution, text);
   const requestReviewSettled = projectSettledMutation(
     'requestReview',
-    requestReview.execution,
+    requestReviewExecution,
     text,
   );
 
@@ -550,13 +550,13 @@ export function AzureMutationControls({
           />
         )}
         <Row gap="small">
-          <Button
+          <Action.Control
             title={text('plugins.azureDevops.ui.mutations.complete.button', 'Complete')}
             titleKey="plugins.azureDevops.ui.mutations.complete.button"
             variant="primary"
             disabled={observedSourceCommitId === null}
-            busy={complete.execution.status === 'pending'}
-            onPress={runComplete}
+            action={COMPLETE_ACTION}
+            controller={runComplete}
           />
         </Row>
         <SettledMutationBanner settled={completeSettled} />
@@ -583,15 +583,15 @@ export function AzureMutationControls({
           fallback="Everyone you name is added as a reviewer. Nobody currently reviewing is removed, and no existing vote is changed."
         />
         <Row gap="small">
-          <Button
+          <Action.Control
             title={text('plugins.azureDevops.ui.mutations.requestReview.button', 'Request review')}
             titleKey="plugins.azureDevops.ui.mutations.requestReview.button"
             variant="secondary"
             disabled={
               reviewerIds.length === 0 || observedSourceCommitId === null
             }
-            busy={requestReview.execution.status === 'pending'}
-            onPress={runRequestReview}
+            action={REQUEST_REVIEW_ACTION}
+            controller={runRequestReview}
           />
         </Row>
         <SettledMutationBanner settled={requestReviewSettled} />
@@ -604,12 +604,12 @@ export function AzureMutationControls({
           fallback="Azure DevOps can reactivate an abandoned pull request later."
         />
         <Row gap="small">
-          <Button
+          <Action.Control
             title={text('plugins.azureDevops.ui.mutations.abandon.button', 'Abandon')}
             titleKey="plugins.azureDevops.ui.mutations.abandon.button"
             variant="secondary"
-            busy={abandon.execution.status === 'pending'}
-            onPress={runAbandon}
+            action={ABANDON_ACTION}
+            controller={runAbandon}
           />
         </Row>
         <SettledMutationBanner settled={abandonSettled} />
@@ -737,24 +737,21 @@ export function AzureThreadStatusControl({
   const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
   const routingToken = input.observation.locator.routingToken ?? '';
-  const threadStatus = useExecutePluginAction(THREAD_STATUS_ACTION);
+  const [threadStatusExecution, setThreadStatusExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [status, setStatus] = React.useState<AzureRequestableThreadStatusV1 | null>(null);
 
-  const run = React.useCallback(() => {
-    if (status === null) return;
-    void threadStatus.execute({
-      v: 1,
-      instance: input.instance,
-      localRef,
-      routingToken,
-      threadId: thread.id,
-      status,
-    }).then((execution) => completeTriagePostMutationIfNeeded(
-      completeMutation,
-      execution,
-      azureThreadWriteMayHaveChangedProviderStateV1,
-    ));
-  }, [completeMutation, input.instance, localRef, routingToken, status, thread.id, threadStatus]);
+  const run: PluginUiActionControlController = {
+    prepare() {
+      if (status === null) return null;
+      setThreadStatusExecution({ status: 'pending' });
+      return { input: { v: 1, instance: input.instance, localRef, routingToken, threadId: thread.id, status } };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setThreadStatusExecution(settled);
+      void completeTriagePostMutationIfNeeded(completeMutation, settled, azureThreadWriteMayHaveChangedProviderStateV1);
+    },
+  };
 
   return (
     <Stack gap="small">
@@ -782,13 +779,13 @@ export function AzureThreadStatusControl({
         }}
       />
       <Row gap="small">
-        <Button
+        <Action.Control
           title={text('plugins.azureDevops.ui.mutations.threadStatus.button', 'Set status')}
           titleKey="plugins.azureDevops.ui.mutations.threadStatus.button"
           variant="primary"
           disabled={status === null}
-          busy={threadStatus.execution.status === 'pending'}
-          onPress={run}
+          action={THREAD_STATUS_ACTION}
+          controller={run}
         />
         <Button
           title={text('plugins.azureDevops.ui.mutations.threadStatus.close', 'Close')}
@@ -797,7 +794,7 @@ export function AzureThreadStatusControl({
           onPress={onClose}
         />
       </Row>
-      <SettledMutationBanner settled={projectSettledThreadStatus(threadStatus.execution, text)} />
+      <SettledMutationBanner settled={projectSettledThreadStatus(threadStatusExecution, text)} />
     </Stack>
   );
 }

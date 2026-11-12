@@ -4,7 +4,7 @@ import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';
@@ -83,6 +83,13 @@ describe('deployment notice to the existing review page', () => {
     const run = { ...vector.run, ref, currentAttempt: { run: ref, attemptId: '5', number: 5 }, attemptCount: 5,
       state: { phase: 'waiting', outcome: null, outcomeBucket: 'pending', nativeLabel: 'waiting' } as const };
     const calls: { id: string; input: unknown }[] = [];
+    let decline = true;
+    const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+      if (decline) { decline = false; return { ok: false, errorCode: 'approval_rejected', error: 'Declined' }; }
+      if (typeof action !== 'object') throw new Error('Expected qualified review');
+      calls.push({ id: action.localId, input });
+      return { ok: true, result: projectNativeJsonValueForTransport({ kind: 'outcome_unknown', affected: { repository, run: ref, environmentIds: ['43'] } }) };
+    });
     function RunSummaryReview() {
       const binding = useGithubCiBindingV1(repository);
       return <GithubRunDeploymentReview reads={binding.reads} repository={repository} run={run} />;
@@ -97,7 +104,7 @@ describe('deployment notice to the existing review page', () => {
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
         // Only the public host transport is replaced: the run-summary component,
         // shared binding/read owner, eligibility hook and form all remain real.
-        handlers: { watchResource: async () => ({}), executeAction: async ({ action, input }) => {
+        handlers: { actionControl: controls.handler, watchResource: async () => ({}), executeAction: async ({ action, input }) => {
           if (typeof action !== 'object') throw new Error('Expected qualified provider Action');
           calls.push({ id: action.localId, input });
           if (action.localId === GITHUB_CI_ACTION_IDS_V1.readRun) return projectNativeJsonValueForTransport({ kind: 'value', value: run });
@@ -123,12 +130,14 @@ describe('deployment notice to the existing review page', () => {
     if (!textarea) throw new Error('Expected the same deployment comment field');
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
     await act(async () => { setValue.call(textarea, 'Reviewing this attempt only.'); textarea.dispatchEvent(new Event('input', { bubbles: true })); });
-    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Approve and deploy' })); });
+    await act(async () => { await controls.press('Approve and deploy'); });
+    expect(controls.presentation('Approve and deploy')?.disabled).not.toBe(true);
+    await act(async () => { await controls.press('Approve and deploy'); });
     expect(calls.filter(call => call.id === GITHUB_CI_ACTION_IDS_V1.approveDeployment)).toEqual([{
       id: GITHUB_CI_ACTION_IDS_V1.approveDeployment,
       input: { repository, runId: '93', attempt: '5', environmentIds: ['43'], comment: 'Reviewing this attempt only.' },
     }]);
-    expect((await fixture.getByRole('button', { name: 'Approve and deploy' })).state?.disabled).toBe(true);
+    expect(controls.presentation('Approve and deploy')?.disabled).toBe(true);
   });
 
   it.each(['approve', 'reject'] as const)('opens the real declared destination and sends one exact %s with a comment, never replaying an uncertain answer', async decision => {
@@ -153,6 +162,11 @@ describe('deployment notice to the existing review page', () => {
       state: { phase: 'waiting', outcome: null, outcomeBucket: 'pending', nativeLabel: 'waiting' } };
     const calls: { id: string; input: unknown }[] = [];
     const reviews: { id: string; input: unknown }[] = [];
+    const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+      if (typeof action !== 'object') throw new Error('Expected qualified review');
+      reviews.push({ id: action.localId, input });
+      return { ok: true, result: projectNativeJsonValueForTransport({ kind: 'outcome_unknown', affected: { repository, run: { v: 1, repository, runId: '81' }, environmentIds: ['42'] } }) };
+    });
     let fixture!: PluginUiTestkit;
     await act(async () => {
       fixture = await createPluginUiTestkit({
@@ -167,7 +181,7 @@ describe('deployment notice to the existing review page', () => {
           destination: { pluginId: GITHUB_PLUGIN_ID, localId: page.pageId }, container: 'appPage' }, target: { kind: 'app' } }),
         subPath: page.subPath,
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-        handlers: { watchResource: async () => ({}), executeAction: async ({ action, input }) => {
+        handlers: { actionControl: controls.handler, watchResource: async () => ({}), executeAction: async ({ action, input }) => {
           if (typeof action !== 'object') throw new Error('Expected qualified provider Action');
           calls.push({ id: action.localId, input });
           if (action.localId === GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID) return projectNativeJsonValueForTransport({ kind: 'ready', repository, location });
@@ -185,7 +199,8 @@ describe('deployment notice to the existing review page', () => {
       });
     });
     mounted.push(fixture);
-    await fixture.findByRole('button', { name: 'Approve and deploy' });
+    await fixture.findByRole('checkbox', { name: 'production', state: { checked: true } });
+    expect(controls.presentation('Approve and deploy')).toBeDefined();
     // The only environment is a live choice, not a locked one: unchecking it is how the person holds the answer.
     expect((await fixture.getByRole('checkbox', { name: 'production' })).state?.disabled).not.toBe(true);
     expect(calls.map(call => call.id).sort()).toEqual([GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID,
@@ -196,10 +211,10 @@ describe('deployment notice to the existing review page', () => {
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
     await act(async () => { setValue.call(textarea, 'Reviewed the exact environment.'); textarea.dispatchEvent(new Event('input', { bubbles: true })); });
     const label = decision === 'approve' ? 'Approve and deploy' : 'Reject';
-    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: label })); });
+    await act(async () => { await controls.press(label); });
     expect(reviews).toEqual([{ id: GITHUB_CI_ACTION_IDS_V1[decision === 'approve' ? 'approveDeployment' : 'rejectDeployment'],
       input: { repository, runId: '81', attempt: '2', environmentIds: ['42'], comment: 'Reviewed the exact environment.' } }]);
-    expect((await fixture.getByRole('button', { name: label })).state?.disabled).toBe(true);
+    expect(controls.presentation(label)?.disabled).toBe(true);
     expect(reviews).toHaveLength(1);
   });
 });

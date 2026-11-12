@@ -1,14 +1,15 @@
 import * as React from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import {
   Banner,
-  Button,
   Form,
   MarkdownEditor,
   Row,
   Stack,
   Status,
   Text,
-  useExecutePluginAction,
+  Action,
+  projectPluginActionControlExecutionV1,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -365,14 +366,8 @@ export function GitlabMergeRequestPublicationControls({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const completePostMutation = useTriagePostMutationCompletion();
-  const submit = useExecutePluginAction({
-    pluginId: GITLAB_PLUGIN_ID,
-    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
-  });
-  const create = useExecutePluginAction({
-    pluginId: GITLAB_PLUGIN_ID,
-    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
-  });
+  const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
   const [verdict, setVerdict] = React.useState<GitlabVerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
@@ -415,32 +410,36 @@ export function GitlabMergeRequestPublicationControls({
     ? buildGitlabMergeRequestReviewCommentCreateInputV1(input, selected[0]!)
     : null;
 
-  const runSubmit = React.useCallback((payload: NonNullable<typeof submitPayload>) => {
-    void submit.execute(payload).then(async (settled) => {
+  const submitControl = (payload: NonNullable<typeof submitPayload>): PluginUiActionControlController => ({
+    prepare() {
+      setSubmitExecution({ status: 'pending' });
+      return { input: payload };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setSubmitExecution(settled);
       if (settled.status === 'success') {
         const parsed = GitlabReviewPublicationResultV1Schema.safeParse(settled.result);
         if (parsed.success && parsed.data.kind === 'rejected'
-          && parsed.data.reason === 'preexisting_drafts'
-          && parsed.data.preexistingDraftIds !== undefined
-        ) setAcknowledgement(parsed.data.preexistingDraftIds);
-        else setAcknowledgement(null);
+          && parsed.data.reason === 'preexisting_drafts' && parsed.data.preexistingDraftIds !== undefined) {
+          setAcknowledgement(parsed.data.preexistingDraftIds);
+        } else setAcknowledgement(null);
       }
-      await completeTriagePostMutationIfNeeded(
-        completePostMutation,
-        settled,
-        publicationMayHaveChanged,
-      );
-    });
-  }, [completePostMutation, submit]);
-
-  const runCreate = React.useCallback(() => {
-    if (createPayload === null) return;
-    void create.execute(createPayload).then((settled) => completeTriagePostMutationIfNeeded(
-      completePostMutation,
-      settled,
-      publicationMayHaveChanged,
-    ));
-  }, [completePostMutation, create, createPayload]);
+      void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
+    },
+  });
+  const createControl: PluginUiActionControlController = {
+    prepare() {
+      if (createPayload === null) return null;
+      setCreateExecution({ status: 'pending' });
+      return { input: createPayload };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setCreateExecution(settled);
+      void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
+    },
+  };
 
   return (
     <Stack gap="medium">
@@ -502,36 +501,43 @@ export function GitlabMergeRequestPublicationControls({
         />
       ) : null}
       <Row gap="small">
-        <Button
+        <Action.Control
           title={text('plugins.gitlab.ui.publication.submit', 'Submit review')}
           variant="primary"
           disabled={submitPayload === null || verdictNeedsBody || acknowledgement !== null}
-          busy={submit.execution.status === 'pending'}
-          onPress={() => {
-            if (submitPayload !== null) runSubmit(submitPayload);
+          action={{
+            pluginId: GITLAB_PLUGIN_ID,
+            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
           }}
+          controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
         />
-        <Button
+        <Action.Control
           title={text('plugins.gitlab.ui.publication.createComment', 'Publish selected comment')}
           variant="secondary"
           disabled={createPayload === null}
-          busy={create.execution.status === 'pending'}
-          onPress={runCreate}
+          action={{
+            pluginId: GITLAB_PLUGIN_ID,
+            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
+          }}
+          controller={createControl}
         />
       </Row>
-      <PublicationOutcome execution={submit.execution} />
+      <PublicationOutcome execution={submitExecution} />
       {acknowledgedPayload === null ? null : (
-        <Button
+        <Action.Control
           title={text(
             'plugins.gitlab.ui.publication.continueWithoutDrafts',
             'Continue without publishing existing drafts',
           )}
           variant="secondary"
-          busy={submit.execution.status === 'pending'}
-          onPress={() => runSubmit(acknowledgedPayload)}
+          action={{
+            pluginId: GITLAB_PLUGIN_ID,
+            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
+          }}
+          controller={submitControl(acknowledgedPayload)}
         />
       )}
-      <PublicationOutcome execution={create.execution} />
+      <PublicationOutcome execution={createExecution} />
     </Stack>
   );
 }
@@ -547,10 +553,7 @@ export function GitlabThreadReplyPublicationControl({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const completePostMutation = useTriagePostMutationCompletion();
-  const reply = useExecutePluginAction({
-    pluginId: GITLAB_PLUGIN_ID,
-    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply,
-  });
+  const [replyExecution, setReplyExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = proposals.proposals.find((proposal) => proposal.id === selectedId) ?? null;
   const payload = selected === null
@@ -570,21 +573,28 @@ export function GitlabThreadReplyPublicationControl({
           onChange={(value) => setSelectedId(typeof value === 'string' ? value : null)}
         />
       )}
-      <Button
+      <Action.Control
         title={text('plugins.gitlab.ui.publication.reply.publish', 'Publish reply')}
         variant="secondary"
         disabled={payload === null}
-        busy={reply.execution.status === 'pending'}
-        onPress={() => {
-          if (payload === null) return;
-          void reply.execute(payload).then((settled) => completeTriagePostMutationIfNeeded(
-            completePostMutation,
-            settled,
-            publicationMayHaveChanged,
-          ));
+        action={{
+          pluginId: GITLAB_PLUGIN_ID,
+          localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply,
+        }}
+        controller={{
+          prepare() {
+            if (payload === null) return null;
+            setReplyExecution({ status: 'pending' });
+            return { input: payload };
+          },
+          onSettled(execution) {
+            const settled = projectPluginActionControlExecutionV1(execution, text);
+            setReplyExecution(settled);
+            void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
+          },
         }}
       />
-      <PublicationOutcome execution={reply.execution} />
+      <PublicationOutcome execution={replyExecution} />
     </Stack>
   );
 }
@@ -598,10 +608,7 @@ export function GitlabIssueCommentPublicationControl({
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const completePostMutation = useTriagePostMutationCompletion();
-  const comment = useExecutePluginAction({
-    pluginId: GITLAB_PLUGIN_ID,
-    localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment,
-  });
+  const [commentExecution, setCommentExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = proposals.proposals.find((proposal) => proposal.id === selectedId) ?? null;
   const payload = selected === null
@@ -622,21 +629,28 @@ export function GitlabIssueCommentPublicationControl({
           onChange={(value) => setSelectedId(typeof value === 'string' ? value : null)}
         />
       )}
-      <Button
+      <Action.Control
         title={text('plugins.gitlab.ui.publication.issue.publish', 'Publish comment')}
         variant="primary"
         disabled={payload === null}
-        busy={comment.execution.status === 'pending'}
-        onPress={() => {
-          if (payload === null) return;
-          void comment.execute(payload).then((settled) => completeTriagePostMutationIfNeeded(
-            completePostMutation,
-            settled,
-            publicationMayHaveChanged,
-          ));
+        action={{
+          pluginId: GITLAB_PLUGIN_ID,
+          localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment,
+        }}
+        controller={{
+          prepare() {
+            if (payload === null) return null;
+            setCommentExecution({ status: 'pending' });
+            return { input: payload };
+          },
+          onSettled(execution) {
+            const settled = projectPluginActionControlExecutionV1(execution, text);
+            setCommentExecution(settled);
+            void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
+          },
         }}
       />
-      <PublicationOutcome execution={comment.execution} />
+      <PublicationOutcome execution={commentExecution} />
     </Stack>
   );
 }

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  Action,
   Banner,
   Button,
   Card,
@@ -482,6 +483,8 @@ function RunControls({
   const canWrite = ci.adapter !== null;
   const size = compact ? ('small' as const) : ('normal' as const);
   const pending = mutation.state.pending;
+  const cancelControl = mutation.control('cancelRun', target);
+  const rerunControl = mutation.control(anyFailed ? 'rerunFailed' : 'rerunAll', target);
 
   const menu: MenuItem[] = [
     ...(!running && canWrite
@@ -535,34 +538,28 @@ function RunControls({
             onPress={() => ci.fix?.({ selection })}
           />
         ) : null}
-        {running && canWrite ? (
-          <Button
+        {running && canWrite && cancelControl ? (
+          <Action.Control
+            {...cancelControl}
             title={
               cancelRequested
                 ? t('forgeCi.run.cancelling', 'Cancelling…')
                 : t('forgeCi.run.cancel', 'Cancel run')
             }
             variant="secondary"
-            size={size}
-            busy={pending === 'cancelRun'}
-            disabled={cancelRequested}
-            onPress={() => mutation.run('cancelRun', target)}
+            disabled={cancelRequested || pending !== null}
           />
         ) : null}
-        {!running && canWrite ? (
-          <Button
-            icon={<Icon name="refresh" size="small" />}
+        {!running && canWrite && rerunControl ? (
+          <Action.Control
+            {...rerunControl}
             title={
               anyFailed
                 ? t('forgeCi.run.rerunFailed', 'Re-run failed jobs')
                 : t('forgeCi.run.rerun', 'Re-run')
             }
             variant="secondary"
-            size={size}
-            busy={pending === 'rerunFailed' || pending === 'rerunAll'}
-            onPress={() =>
-              mutation.run(anyFailed ? 'rerunFailed' : 'rerunAll', target)
-            }
+            disabled={pending !== null}
           />
         ) : null}
         {menu.length > 0 ? (
@@ -609,7 +606,11 @@ function ForceCancelNotice({ ci, run, selection, acceptedAtMs, mutation }: Reado
   const { locale } = useSurfaceContext();
   // This notice is its own small leaf; its clock re-renders only it.
   const nowMs = useForgeCiNowMsV1(true);
-  if (ci.adapter === null) return null;
+  const forceControl = mutation.control('forceCancelRun', {
+    repository: run.ref.repository, runId: run.ref.runId,
+    ...(selection.kind === 'attempt' ? { attempt: selection.attempt.attemptId } : {}),
+  });
+  if (ci.adapter === null || forceControl === null) return null;
   const since = formatForgeCiDurationV1(Math.max(0, nowMs - acceptedAtMs), locale);
   return (
     <Banner
@@ -617,12 +618,8 @@ function ForceCancelNotice({ ci, run, selection, acceptedAtMs, mutation }: Reado
       title={t('forgeCi.run.stillRunning', 'Still running {duration} after Cancel', { duration: since })}
       description={t('forgeCi.run.stillRunning.body', '{forge} accepted the cancel, but the run hasn’t stopped. It may be finishing a long step. Force-cancel stops it now and skips its cleanup.', { forge: ci.about.forgeName })}
       action={(
-        <Button title={t('forgeCi.run.forceCancel', 'Force-cancel…')} variant="destructive" size="small"
-          busy={mutation.state.pending === 'forceCancelRun'}
-          onPress={() => mutation.run('forceCancelRun', {
-            repository: run.ref.repository, runId: run.ref.runId,
-            ...(selection.kind === 'attempt' ? { attempt: selection.attempt.attemptId } : {}),
-          })} />
+        <Action.Control {...forceControl} title={t('forgeCi.run.forceCancel', 'Force-cancel…')} variant="destructive"
+          disabled={mutation.state.pending !== null} />
       )}
       testID="forge-ci-force-cancel"
     />
@@ -673,6 +670,7 @@ function ForkApproval({
     contributor: who,
     sourceRepository: run.forkApproval.sourceRepository,
   } : null;
+  const approveControl = mutation.control('approveForkRun', approval);
   return (
     <Card padding="medium" testID="forge-ci-fork-approval">
       <Row gap="medium" align="center" wrap>
@@ -703,14 +701,11 @@ function ForkApproval({
               .join(' · ')}
           />
         </Stack>
-        <Button
+        {approveControl ? <Action.Control {...approveControl}
           title={t('forgeCi.fork.approve', 'Approve fork run')}
           variant="primary"
-          size="small"
-          busy={mutation.state.pending === 'approveForkRun'}
-          disabled={approval === null}
-          onPress={() => approval === null ? undefined : mutation.run('approveForkRun', approval)}
-        />
+          disabled={approval === null || mutation.state.pending !== null}
+        /> : null}
       </Row>
     </Card>
   );

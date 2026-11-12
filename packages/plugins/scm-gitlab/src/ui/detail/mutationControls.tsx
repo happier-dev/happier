@@ -29,16 +29,18 @@
  */
 
 import * as React from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
   Banner,
-  Button,
   Row,
   Stack,
   Text,
   TextField,
-  useExecutePluginAction,
+  Action,
+  projectPluginActionControlExecutionV1,
   usePluginTranslation,
+  type PluginActionExecution,
   type PluginTranslate,
   type TextTone,
 } from '@happier-dev/plugin-ui';
@@ -419,38 +421,37 @@ function GitlabWriteControl({
   variant: 'primary' | 'secondary';
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const controller = useExecutePluginAction(ACTION_BY_WRITE[write]);
+  const [controllerExecution, setControllerExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const completePostMutation = useTriagePostMutationCompletion();
-  const run = React.useCallback(() => {
-    if (input === null) return;
-    void (async () => {
-      const execution = await controller.execute(input);
-      await completeTriagePostMutationIfNeeded(
-        completePostMutation,
-        execution,
-        (settled) => gitlabWriteMayHaveChangedProviderStateV1(
-          projectGitlabWriteOutcomeV1(write, settled),
-        ),
-      );
-    })();
-  }, [completePostMutation, controller, input, write]);
+  const run: PluginUiActionControlController = {
+    prepare() {
+      if (input === null) return null;
+      setControllerExecution({ status: 'pending' });
+      return { input };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setControllerExecution(settled);
+      void completeTriagePostMutationIfNeeded(completePostMutation, settled, (execution) => gitlabWriteMayHaveChangedProviderStateV1(projectGitlabWriteOutcomeV1(write, execution)));
+    },
+  };
 
   const settled = projectSettledWrite(
     write,
-    projectGitlabWriteOutcomeV1(write, controller.execution),
+    projectGitlabWriteOutcomeV1(write, controllerExecution),
     text,
   );
 
   return (
     <Stack gap="small">
       <Row gap="small">
-        <Button
+        <Action.Control
           title={label}
           {...(labelKey === undefined ? {} : { titleKey: labelKey })}
           variant={variant}
-          busy={controller.execution.status === 'pending'}
           disabled={input === null}
-          onPress={run}
+          action={ACTION_BY_WRITE[write]}
+          controller={run}
         />
       </Row>
       <SettledWriteBanner settled={settled} />

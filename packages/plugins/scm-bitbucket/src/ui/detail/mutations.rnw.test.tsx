@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -30,6 +30,7 @@ const FIXTURE = createTriageSourceV1Fixture();
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+type MountedFixture = PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> };
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
 let nextActionError: unknown | null = null;
@@ -70,7 +71,13 @@ const LOCAL_REF = {
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
   translations: Readonly<Record<string, string>> = {},
-): Promise<PluginUiTestkit> {
+): Promise<MountedFixture> {
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    recorded.push({ action, input });
+    if (nextActionError !== null) return { ok: false, errorCode: nextActionError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextActionError.code, error: nextActionError.message,
+      ...(nextActionError.details === undefined ? {} : { details: nextActionError.details }) };
+    return { ok: true, result: nextResult };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -87,7 +94,11 @@ async function mountDetail(
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
+        actionControl: controls.handler,
         executeAction: async ({ action, input }) => {
+          if (typeof action !== 'string' && Object.values(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
+            throw new Error('A press write must execute through the host Action control.');
+          }
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
           if (action === 'reviews.comments.list') {
@@ -119,7 +130,7 @@ async function mountDetail(
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 afterEach(async () => {
@@ -150,9 +161,9 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       linkedSessions: [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
     } as unknown as JsonValue);
 
-    await expect(detail.getByRole('button', { name: 'Submit review' })).resolves.toBeDefined();
-    await expect(detail.getByRole('button', { name: 'Publish comment' })).resolves.toBeDefined();
-    await detail.press(await detail.getByRole('button', { name: 'Publish comment' }));
+    await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Publish comment'))).resolves.toBeDefined();
+    await act(async () => detail.controls.press('Publish comment'));
     expect(recordedWrites()).toHaveLength(1);
     expect(recordedWrites()[0]).toMatchObject({
       action: {
@@ -169,8 +180,8 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       },
     });
     await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
-    await expect(detail.getByRole('button', { name: 'Post reply' })).resolves.toBeDefined();
-    await detail.press(await detail.getByRole('button', { name: 'Post reply' }));
+    await expect(Promise.resolve(detail.controls.presentation('Post reply'))).resolves.toBeDefined();
+    await act(async () => detail.controls.press('Post reply'));
     expect(recordedWrites().at(-1)).toMatchObject({
       action: {
         pluginId: BITBUCKET_PLUGIN_ID,
@@ -206,7 +217,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       'plugins.bitbucket.ui.mutations.review.outcomeCounts': '{published} publié · {uncertain} incertain · {failed} non publié',
     });
 
-    await detail.press(await detail.getByRole('button', { name: 'Publish comment' }));
+    await act(async () => detail.controls.press('Publish comment'));
 
     await expect(detail.queryByText('1 publié · 0 incertain · 0 non publié')).resolves.toBeDefined();
     await expect(detail.queryByText('1 published')).resolves.toBeUndefined();
@@ -216,7 +227,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+    await act(async () => detail.controls.press('Decline'));
     expect(completedMutations).toBe(1);
   });
 
@@ -230,7 +241,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       message: 'The Action timed out after dispatch.',
     });
 
-    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+    await act(async () => detail.controls.press('Decline'));
 
     expect(completedMutations).toBe(1);
     expect(recordedWrites()).toHaveLength(1);
@@ -240,8 +251,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
-    const decline = await detail.getByRole('button', { name: 'Decline' });
-    await detail.press(decline);
+    await act(async () => detail.controls.press('Decline'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -265,8 +275,8 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
-    await expect(detail.getByRole('button', { name: 'Merge' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toMatchObject({
+      disabled: true,
     });
 
     await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
@@ -279,7 +289,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       value: '',
       placeholder: "Leave empty to keep Bitbucket's own message",
     });
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -321,7 +331,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     const detail = await mountDetail();
 
     await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     expect(recordedWrites()).toHaveLength(1);
     expect(recordedWrites()[0]?.input).toMatchObject({ observedHeadCommit: displayedHead });
@@ -346,8 +356,8 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
 
     await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
 
-    await expect(detail.getByRole('button', { name: 'Merge' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toMatchObject({
+      disabled: true,
     });
     expect(recordedWrites()).toEqual([]);
   });
@@ -366,7 +376,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     await expect(detail.getByRole('switch', {
       name: 'Delete the source branch after merging',
     })).resolves.toMatchObject({ state: { checked: false } });
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     const writes = recordedWrites();
     expect(writes).toHaveLength(1);
@@ -381,7 +391,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+    await act(async () => detail.controls.press('Decline'));
 
     await expect(detail.queryByText(
       'Nothing was written: new commits arrived after the ones you looked at.',
@@ -399,8 +409,8 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     // missing pin as the reason the control stays unpressable.
     await detail.press(await detail.getByRole('radio', { name: 'Squash' }));
 
-    await expect(detail.getByRole('button', { name: 'Merge' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toMatchObject({
+      disabled: true,
     });
     await expect(detail.queryByText(
       'Bitbucket did not report the source commit of this pull request, so it cannot be merged from here.',
@@ -442,7 +452,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     nextResult = result as unknown as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Decline' }));
+    await act(async () => detail.controls.press('Decline'));
 
     expect(document.body.textContent).toContain(sentence as string);
     expect(document.body.textContent).not.toContain('bitbucket-unreachable');
@@ -458,8 +468,8 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       },
     } as unknown as JsonValue);
 
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Decline' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Decline'))).resolves.toBeUndefined();
   });
 });
 
@@ -480,7 +490,7 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
     nextResult = { kind: 'applied', resolution: 'resolved' } as unknown as JsonValue;
     const detail = await openComments([{ id: '9001', resolution: 'unresolved' }]);
 
-    await detail.press(await detail.getByRole('button', { name: 'Resolve comment 9001' }));
+    await act(async () => detail.controls.press('Resolve'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -505,9 +515,9 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
     const detail = await openComments([{ id: '9002', resolution: 'resolved' }]);
 
     // Offering Resolve here would offer a write the Action can only refuse.
-    await expect(detail.queryByRole('button', { name: 'Resolve comment 9002' }))
+    await expect(Promise.resolve(detail.controls.presentation('Resolve')))
       .resolves.toBeUndefined();
-    await detail.press(await detail.getByRole('button', { name: 'Reopen comment 9002' }));
+    await act(async () => detail.controls.press('Reopen'));
 
     expect(recordedWrites()).toEqual([{
       action: {
@@ -529,8 +539,8 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
 
     // `unknown` is silence, not "open". Picking one direction on the reader's behalf is exactly
     // what the tri-state exists to prevent, so both are offered and the silence is said out loud.
-    await expect(detail.getByRole('button', { name: 'Resolve comment 9003' })).resolves.toBeDefined();
-    await expect(detail.getByRole('button', { name: 'Reopen comment 9003' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Resolve'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Reopen'))).resolves.toBeDefined();
     await expect(detail.queryByText(
       'Bitbucket did not report whether this thread is resolved.',
     )).resolves.toBeDefined();
@@ -539,9 +549,9 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
   it('offers no resolution write on a deleted comment', async () => {
     const detail = await openComments([{ id: '9004', resolution: 'unresolved', deleted: true }]);
 
-    await expect(detail.queryByRole('button', { name: 'Resolve comment 9004' }))
+    await expect(Promise.resolve(detail.controls.presentation('Resolve')))
       .resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Reopen comment 9004' }))
+    await expect(Promise.resolve(detail.controls.presentation('Reopen')))
       .resolves.toBeUndefined();
   });
 
@@ -558,8 +568,8 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
     // Merge and decline are transitions of an OPEN pull request and are correctly gone here.
     // Resolving a stale review thread on a merged pull request is not a transition of anything,
     // and Bitbucket allows it — so taking the control away would remove a real capability.
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();
-    await expect(detail.getByRole('button', { name: 'Resolve comment 9005' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Resolve'))).resolves.toBeDefined();
   });
 
   it('never calls an unconfirmed resolution done', async () => {
@@ -570,7 +580,7 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
     } as unknown as JsonValue;
     const detail = await openComments([{ id: '9006', resolution: 'unresolved' }]);
 
-    await detail.press(await detail.getByRole('button', { name: 'Resolve comment 9006' }));
+    await act(async () => detail.controls.press('Resolve'));
 
     await expect(detail.queryByText(
       'Bitbucket accepted this but the comment does not show it. Re-read the comments.',
@@ -585,7 +595,7 @@ describe('the mounted Bitbucket comment-resolution writes', () => {
     } as unknown as JsonValue;
     const detail = await openComments([{ id: '9007', resolution: 'unresolved' }]);
 
-    await detail.press(await detail.getByRole('button', { name: 'Resolve comment 9007' }));
+    await act(async () => detail.controls.press('Resolve'));
 
     await expect(detail.queryByText('Nothing was written: this thread already reads that way.'))
       .resolves.toBeDefined();

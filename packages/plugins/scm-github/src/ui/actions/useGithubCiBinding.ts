@@ -17,9 +17,9 @@ const GITHUB_FORGE_NAME = 'GitHub';
 
 /**
  * The one GitHub CI binding for a mounted surface (Actions page, PR Checks drill-down, rail, Overview): the single
- * L02 adapter over this plugin's CI Actions, invoked through the ordinary host Action path as the present person,
+ * L02 adapter over this plugin's CI Actions, invoked through the ordinary plugin/automation Action path,
  * and the shared read owner leased from the host's ephemeral scope. Every shared CI view takes this object; no
- * surface constructs a second adapter or read owner.
+ * surface constructs a second adapter or read owner. User writes bind their exact Action at the physical control.
  */
 export function useGithubCiBindingV1(
   /** Exact operands for the host's declared-purpose read-authority admission. */

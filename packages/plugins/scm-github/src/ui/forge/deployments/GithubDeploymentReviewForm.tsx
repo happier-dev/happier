@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { projectForgeCiMutationExecutionV1 } from '@happier-dev/forge-ci/runtime';
 import {
   ForgeCiStateNotice,
   readForgeOperationStateV1,
 } from '@happier-dev/forge-ci/ui';
 import {
   Banner,
-  Button,
+  Action,
   Card,
   CheckStatusGlyph,
   Icon,
@@ -15,10 +16,11 @@ import {
   Stack,
   Text,
   TextField,
-  usePluginHostApi,
   usePluginTranslation,
+  projectPluginActionControlExecutionV1,
+  isPluginActionConfirmationDeclined,
 } from '@happier-dev/plugin-ui';
-import { ForgeCiMutationResultV1Schema, type ForgeCiMutationResultV1 } from '@happier-dev/triage-protocol/ci/v1';
+import { type ForgeCiMutationResultV1 } from '@happier-dev/triage-protocol/ci/v1';
 import type { useGithubDeploymentReviewV1 } from '../../actions/useGithubDeploymentReview.js';
 
 type Review = ReturnType<typeof useGithubDeploymentReviewV1>;
@@ -47,7 +49,6 @@ export function GithubDeploymentReviewForm({
   onClose?: () => void;
 }>): React.ReactElement | null {
   const t = usePluginTranslation();
-  const host = usePluginHostApi();
   const eligible = React.useMemo(
     () => (review.pending?.rows ?? []).filter((row) => row.eligible),
     [review.pending],
@@ -61,33 +62,32 @@ export function GithubDeploymentReviewForm({
   const [outcome, setOutcome] = React.useState<Outcome>(null);
   if (eligible.length === 0 && outcome === null) return null;
 
-  const submit = async (decision: 'approve' | 'reject') => {
-    if (busy !== null || outcome?.result.kind === 'outcome_unknown') return;
+  const control = (decision: 'approve' | 'reject') => {
     const descriptor = review.reviewAction(decision, environmentIds, comment);
-    if (descriptor === null) return;
-    setBusy(decision);
-    const unknown = (): ForgeCiMutationResultV1 => ({
-      kind: 'outcome_unknown',
-      affected: {
-        repository: descriptor.input.repository,
-        run: { v: 1, repository: descriptor.input.repository, runId: descriptor.input.runId },
-        environmentIds: descriptor.input.environmentIds,
-      },
-    });
-    try {
-      const parsed = ForgeCiMutationResultV1Schema.safeParse(await host.executeAction(descriptor.action, descriptor.input));
-      // An unreadable answer cannot prove GitHub did not record the review.
-      const result = parsed.success ? parsed.data : unknown();
-      setOutcome({ decision, result });
-      if (result.kind === 'confirmed' || result.kind === 'accepted') {
-        await Promise.all([review.runStatus.refresh(), review.pendingStatus.refresh()]);
-      }
-    } catch {
-      // A lost host answer cannot prove GitHub did not record the review.
-      setOutcome({ decision, result: unknown() });
-    } finally {
-      setBusy(null);
-    }
+    if (descriptor === null) return null;
+    return <Action.Control action={descriptor.action}
+      title={decision === 'approve' ? t('plugins.github.deploymentReview.approve', 'Approve and deploy')
+        : t('plugins.github.deploymentReview.reject', 'Reject')}
+      variant={decision === 'approve' ? 'primary' : 'secondary'}
+      disabled={!ready}
+      controller={{
+        prepare() {
+          if (!ready) return null;
+          setBusy(decision);
+          return { input: descriptor.input };
+        },
+        async onSettled(execution) {
+          const projected = projectPluginActionControlExecutionV1(execution, t);
+          setBusy(null);
+          if (isPluginActionConfirmationDeclined(projected)) return;
+          const result = projectForgeCiMutationExecutionV1(descriptor.input, projected);
+          if (result === null) return;
+          setOutcome({ decision, result });
+          if (result.kind === 'confirmed' || result.kind === 'accepted') {
+            await Promise.all([review.runStatus.refresh(), review.pendingStatus.refresh()]);
+          }
+        },
+      }} />;
   };
 
   if (
@@ -201,7 +201,6 @@ export function GithubDeploymentReviewForm({
                 'this deployment',
               ),
             }}
-            onRetry={() => submit(outcome.decision)}
           />
         ) : null}
         {outcome?.result.kind === 'outcome_unknown' ? (
@@ -236,23 +235,8 @@ export function GithubDeploymentReviewForm({
             )}
           />
           <Row gap="small" align="center">
-            <Button
-              variant="secondary"
-              title={t('plugins.github.deploymentReview.reject', 'Reject')}
-              disabled={!ready}
-              busy={busy === 'reject'}
-              onPress={() => submit('reject')}
-            />
-            <Button
-              variant="primary"
-              title={t(
-                'plugins.github.deploymentReview.approve',
-                'Approve and deploy',
-              )}
-              disabled={!ready}
-              busy={busy === 'approve'}
-              onPress={() => submit('approve')}
-            />
+            {control('reject')}
+            {control('approve')}
           </Row>
         </Row>
       </Stack>

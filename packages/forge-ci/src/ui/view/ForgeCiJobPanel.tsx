@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   AnsiText,
+  Action,
   Button,
   CheckStatusGlyph,
   HappierChevron,
@@ -34,6 +35,7 @@ import type {
   ForgeCiMountedIntentOperationV1,
   ForgeCiStepV1,
 } from '@happier-dev/triage-protocol/ci/v1';
+import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
 import { useOptionalHappierUiPalette } from '@happier-dev/plugin-ui/environment';
 import type {
   ForgeCiLogIndexV1,
@@ -339,6 +341,10 @@ function JobHeader({
       ? job.ref.selection.attempt.run
       : job.ref.selection.run;
   const count = job.annotationsCount;
+  const rerunControl = mutation.control('rerunJob', {
+    repository: run.repository, runId: run.runId, jobId: job.ref.jobId,
+    ...(attempt ? { attempt } : {}),
+  });
   return (
     <Stack gap="small" testID="forge-ci-job-header">
       {back ? (
@@ -365,20 +371,12 @@ function JobHeader({
             <Text variant="heading" value={job.name} numberOfLines={1} />
           </Stack>
         </Row>
-        {!running && ci.adapter ? (
-          <Button
+        {!running && ci.adapter && rerunControl ? (
+          <Action.Control
+            {...rerunControl}
             title={t('forgeCi.job.rerun', 'Re-run this job')}
             variant="secondary"
-            size="small"
-            busy={mutation.state.pending === 'rerunJob'}
-            onPress={() =>
-              mutation.run('rerunJob', {
-                repository: run.repository,
-                runId: run.runId,
-                jobId: job.ref.jobId,
-                ...(attempt ? { attempt } : {}),
-              })
-            }
+            disabled={mutation.state.pending !== null}
           />
         ) : null}
         {jobAction}
@@ -665,12 +663,15 @@ function JobBody(
       compact={props.presentation === 'pane'}
     />
   );
-  const header = props.lead ? (
+  const header = (
     <Stack gap="xlarge">
       {props.lead}
       {jobHeader}
+      {job.steps.kind === 'unavailable'
+        ? <TriageSourceReadFailureDetails failures={[job.steps.failure]} />
+        : null}
     </Stack>
-  ) : jobHeader;
+  );
 
   const log = model.log;
   if (running || log?.kind === 'pending') {

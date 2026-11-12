@@ -1,7 +1,9 @@
+import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isPluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type {
   PluginUiActionExecutionOptions,
+  PluginUiActionControlExecution,
   PluginUiActionInputFor,
   PluginUiActionReference,
   PluginUiActionResultFor,
@@ -33,7 +35,7 @@ export type {
 export type PluginActionExecution<Result = unknown> =
   | Readonly<{ status: 'idle' }>
   | Readonly<{ status: 'pending' }>
-  | Readonly<{ status: 'success'; result: Result }>
+  | Readonly<{ status: 'success'; result: Result; requestId?: string }>
   | Readonly<{ status: 'error'; code: string; message: string; retryable: boolean; diagnostics?: readonly PluginDiagnosticData[]; requestId?: string }>
   | Readonly<{ status: 'outcomeUnknown'; code: string; message: string; requestId?: string }>;
 
@@ -115,7 +117,7 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   const diagnostics = (error as { diagnostics?: unknown } | null)?.diagnostics;
   // The host binds this diagnostic to a declined confirmation. A generic
   // permission denial remains an error rather than being treated as consent.
-  const confirmationDeclined = code === 'denied' && Array.isArray(diagnostics)
+  const confirmationDeclined = isActionApprovalDeclinedErrorCode(code) || code === 'denied' && Array.isArray(diagnostics)
     && diagnostics.some(diagnostic => typeof diagnostic === 'string'
       ? diagnostic === CONFIRMATION_DECLINED_CODE
       : diagnostic !== null && typeof diagnostic === 'object'
@@ -126,7 +128,8 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
   const receiptLost = details !== null && typeof details === 'object' && !Array.isArray(details)
     && Reflect.get(details, 'layer') === 'transport'
     && Reflect.get(details, 'phase') === 'settlement';
-  if (OUTCOME_UNKNOWN_ERROR_CODES.has(code) || receiptLost) {
+  if (OUTCOME_UNKNOWN_ERROR_CODES.has(code) || isActionOutcomeUnknownErrorCodeV1(code)
+    || (error as { effectAttempted?: unknown } | null)?.effectAttempted === true || receiptLost) {
     return { status: 'outcomeUnknown', code, message, ...(requestId === undefined ? {} : { requestId }) };
   }
   return {
@@ -137,6 +140,14 @@ export function projectPluginActionRejectionV1<Result>(error: unknown, translate
     ...(requestId === undefined ? {} : { requestId }),
     ...(isPluginError(error) && error.diagnostics !== undefined ? { diagnostics: error.diagnostics } : {}),
   };
+}
+
+/** Presents the original host settlement through the same owner as raw Action rejections. */
+export function projectPluginActionControlExecutionV1(execution: PluginUiActionControlExecution, translate: Translate): PluginActionExecution {
+  if (execution.ok) return { status: 'success', result: execution.result };
+  const projected = projectPluginActionRejectionV1({ ...execution, code: execution.errorCode, message: execution.error }, translate);
+  if (execution.requestId === undefined || (projected.status !== 'error' && projected.status !== 'outcomeUnknown')) return projected;
+  return { ...projected, requestId: execution.requestId };
 }
 
 function settledFromResult<Result>(result: Result): PluginActionExecution<Result> {
@@ -239,12 +250,15 @@ export function useExecutePluginAction(
       // intentionally absent.
       const actionInput = overrideInput === undefined ? input : overrideInput;
       const executeAction = hostApi.executeAction as PluginUiActionExecutionWithOptionalInput;
-      const result = options === undefined
-        ? actionInput === undefined
-          ? await executeAction(action)
-          : await executeAction(action, actionInput)
-        : await executeAction(action, actionInput, options);
-      settled = settledFromResult(result);
+      let requestId: string | undefined;
+      const result = await executeAction(action, actionInput, {
+        ...options,
+        onIssued: (issuedRequestId) => {
+          requestId = issuedRequestId;
+          options?.onIssued?.(issuedRequestId);
+        },
+      });
+      settled = { ...settledFromResult(result), ...(requestId === undefined ? {} : { requestId }) };
     } catch (error) {
       settled = projectPluginActionRejectionV1<JsonValue>(error, translateRef.current);
     }

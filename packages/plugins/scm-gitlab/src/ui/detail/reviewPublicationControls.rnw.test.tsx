@@ -6,7 +6,7 @@ import {
   createReviewCommentLinkedIssueIdV1,
   type ReviewCommentV1,
 } from '@happier-dev/plugin-sdk/reviews';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
@@ -125,6 +125,7 @@ const SETTLED = {
 } as unknown as JsonValue;
 
 const mounted: PluginUiTestkit[] = [];
+type MountedFixture = PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> };
 const recorded: Array<{ action: unknown; input: unknown }> = [];
 let nextResult: JsonValue = SETTLED;
 let nextError: PluginError | null = null;
@@ -132,7 +133,7 @@ let completed = 0;
 
 type MountedControl = 'merge-request' | 'thread-reply' | 'issue-comment';
 
-async function mountControl(kind: MountedControl): Promise<PluginUiTestkit> {
+async function mountControl(kind: MountedControl): Promise<MountedFixture> {
   const { reviewRevision: _reviewRevision, ...issueSnapshot } = INPUT.observation.snapshot;
   const issueInput = kind === 'issue-comment'
     ? ({
@@ -144,6 +145,12 @@ async function mountControl(kind: MountedControl): Promise<PluginUiTestkit> {
       },
     } as TriageDetailSurfaceInputV1)
     : INPUT;
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    recorded.push({ action, input });
+    if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
+      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+    return { ok: true, result: nextResult };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -161,7 +168,11 @@ async function mountControl(kind: MountedControl): Promise<PluginUiTestkit> {
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        actionControl: controls.handler,
         executeAction: async ({ action, input }) => {
+          if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
+            throw new Error('A press write must execute through the host Action control.');
+          }
           recorded.push({ action, input });
           if (nextError !== null) throw nextError;
           return nextResult;
@@ -170,10 +181,16 @@ async function mountControl(kind: MountedControl): Promise<PluginUiTestkit> {
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
-async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<PluginUiTestkit> {
+async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<MountedFixture> {
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    recorded.push({ action, input });
+    if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
+      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+    return { ok: true, result: nextResult };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -188,7 +205,11 @@ async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<P
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: input as unknown as JsonValue,
       handlers: {
+        actionControl: controls.handler,
         executeAction: async ({ action, input: dispatched }) => {
+          if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
+            throw new Error('A press write must execute through the host Action control.');
+          }
           recorded.push({ action, input: dispatched });
           if (nextError !== null) throw nextError;
           if (action === 'reviews.comments.list') {
@@ -245,7 +266,7 @@ async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<P
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 afterEach(async () => {
@@ -268,7 +289,7 @@ describe('mounted GitLab Review publication controls', () => {
       state: { checked: true },
     });
     for (const name of ['Submit review', 'Publish selected comment', 'Publish reply']) {
-      await expect(mergeRequest.getByRole('button', { name })).resolves.toBeDefined();
+      await expect(Promise.resolve(mergeRequest.controls.presentation(name))).resolves.toBeDefined();
     }
 
     const { reviewRevision: _reviewRevision, ...issueSnapshot } = INPUT.observation.snapshot;
@@ -287,18 +308,18 @@ describe('mounted GitLab Review publication controls', () => {
     const issue = await mountRenderedDetail(issueInput);
     await act(async () => issue.press(await issue.getByRole('tab', { name: 'Comments' })));
     await expect(issue.findByRole('radio', { name: PROPOSAL.body })).resolves.toBeDefined();
-    await expect(issue.getByRole('button', { name: 'Publish comment' })).resolves.toBeDefined();
+    await expect(Promise.resolve(issue.controls.presentation('Publish comment'))).resolves.toBeDefined();
   });
 
   it('mounts and dispatches submit-review plus standalone review-comment-create', async () => {
     const detail = await mountControl('merge-request');
-    await expect(detail.getByRole('button', { name: 'Submit review' })).resolves.toBeDefined();
-    await expect(detail.getByRole('button', { name: 'Publish selected comment' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Publish selected comment'))).resolves.toBeDefined();
     await expect(detail.getByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
 
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Submit review' })));
+    await act(async () => detail.controls.press('Submit review'));
     expect(recorded.at(-1)).toMatchObject({
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
       input: {
@@ -312,7 +333,7 @@ describe('mounted GitLab Review publication controls', () => {
       },
     });
 
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Publish selected comment' })));
+    await act(async () => detail.controls.press('Publish selected comment'));
     expect(recorded.at(-1)).toMatchObject({
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate),
       input: { publicationPlan: { entries: [{ happierCommentId: PROPOSAL.id }], verdict: null } },
@@ -324,8 +345,8 @@ describe('mounted GitLab Review publication controls', () => {
     const detail = await mountControl('merge-request');
     await expect(detail.queryByRole('radio', { name: 'Request changes' })).resolves.toBeUndefined();
     await act(async () => detail.press(await detail.getByRole('radio', { name: 'Approve' })));
-    await expect(detail.getByRole('button', { name: 'Submit review' })).resolves.toMatchObject({
-      state: { disabled: true },
+    await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toMatchObject({
+      disabled: true,
     });
     await expect(detail.getByText('Add a summary before publishing this verdict.')).resolves.toBeDefined();
   });
@@ -336,7 +357,7 @@ describe('mounted GitLab Review publication controls', () => {
       message: 'The current confirmation intent was declined.',
     });
     const detail = await mountControl('merge-request');
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Submit review' })));
+    await act(async () => detail.controls.press('Submit review'));
     await expect(detail.getByText('Publication canceled')).resolves.toBeDefined();
     await expect(detail.getByText('Nothing was sent to GitLab.')).resolves.toBeDefined();
     expect(completed).toBe(0);
@@ -348,7 +369,7 @@ describe('mounted GitLab Review publication controls', () => {
       message: 'The handler did not return a publication result.',
     });
     const detail = await mountControl('merge-request');
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Submit review' })));
+    await act(async () => detail.controls.press('Submit review'));
     await expect(detail.getByText('Publication did not settle')).resolves.toBeDefined();
     expect(completed).toBe(1);
   });
@@ -361,7 +382,7 @@ describe('mounted GitLab Review publication controls', () => {
       preexistingDraftIds: ['draft-9', 'draft-10'],
     } as JsonValue;
     const detail = await mountControl('merge-request');
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Submit review' })));
+    await act(async () => detail.controls.press('Submit review'));
 
     expect(recorded).toHaveLength(1);
     await expect(detail.getByText(
@@ -369,9 +390,7 @@ describe('mounted GitLab Review publication controls', () => {
     )).resolves.toBeDefined();
 
     nextResult = SETTLED;
-    await act(async () => detail.press(await detail.getByRole('button', {
-      name: 'Continue without publishing existing drafts',
-    })));
+    await act(async () => detail.controls.press('Continue without publishing existing drafts'));
     expect(recorded).toHaveLength(2);
     expect(recorded.at(-1)).toMatchObject({
       input: { acknowledgedPreexistingDraftIds: ['draft-9', 'draft-10'] },
@@ -381,7 +400,7 @@ describe('mounted GitLab Review publication controls', () => {
   it('binds a reply to the exact review-thread subtarget before dispatch', async () => {
     const detail = await mountControl('thread-reply');
     await act(async () => detail.press(await detail.getByRole('radio', { name: PROPOSAL.body })));
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Publish reply' })));
+    await act(async () => detail.controls.press('Publish reply'));
     expect(recorded).toEqual([{
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply),
       input: expect.objectContaining({
@@ -400,7 +419,7 @@ describe('mounted GitLab Review publication controls', () => {
   it('mounts issue/comment as an unversioned top-level publication', async () => {
     const detail = await mountControl('issue-comment');
     await act(async () => detail.press(await detail.getByRole('radio', { name: PROPOSAL.body })));
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Publish comment' })));
+    await act(async () => detail.controls.press('Publish comment'));
     expect(recorded).toEqual([{
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment),
       input: expect.objectContaining({
@@ -428,7 +447,7 @@ describe('mounted GitLab Review publication controls', () => {
       preexistingDraftCount: 0,
     } as JsonValue;
     const detail = await mountControl('merge-request');
-    await act(async () => detail.press(await detail.getByRole('button', { name: 'Submit review' })));
+    await act(async () => detail.controls.press('Submit review'));
     await expect(detail.getByText('Publication outcome unknown')).resolves.toBeDefined();
     await expect(detail.getByText(
       '0/1 comments published; 1 unconfirmed; 0 failed; 0 not attempted. Verdict: notRequested.',

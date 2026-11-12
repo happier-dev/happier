@@ -87,6 +87,7 @@ export {
   useExecutePluginAction,
   isPluginActionConfirmationDeclined,
   projectPluginActionRejectionV1,
+  projectPluginActionControlExecutionV1,
   type PluginActionExecution,
   type PluginActionExecutionController,
   type PluginActionInput,

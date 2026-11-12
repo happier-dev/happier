@@ -1,4 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { projectPluginActionControlExecutionV1, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { projectForgeCiMutationExecutionV1 } from '../../runtime/adapter.js';
 import type {
   ForgeCiActionInputByOperationV1,
   ForgeCiMutationResultV1,
@@ -32,6 +36,7 @@ export function useForgeCiMutationV1(
   ci: ForgeCiBindingV1,
   onSettled?: (result: ForgeCiMutationResultV1, operation: ForgeCiMutationOperationV1) => void,
 ) {
+  const text = usePluginTranslation();
   const [state, setState] = useState<ForgeCiMutationStateV1>({
     pending: null,
     last: null,
@@ -62,9 +67,37 @@ export function useForgeCiMutationV1(
     },
     [ci.adapter, ci.reads],
   );
+  const control = <K extends ForgeCiMutationOperationV1>(
+    operation: K,
+    input: ForgeCiActionInputByOperationV1[K] | null,
+  ) => {
+    const action = ci.actionRefs[operation];
+    if (action === null) return null;
+    const controller: PluginUiActionControlController = {
+      prepare: () => {
+        if (input === null || inFlight.current) return null;
+        inFlight.current = true;
+        setState(previous => ({ pending: operation, last: previous.last }));
+        return { input: projectNativeJsonValueForTransport(input) };
+      },
+      onSettled: execution => {
+        void (async () => {
+          try {
+            if (input === null) return;
+            const result = projectForgeCiMutationExecutionV1(input, projectPluginActionControlExecutionV1(execution, text));
+            if (result === null) { setState(previous => ({ ...previous, pending: null })); return; }
+            await ci.reads?.completeMutation(operation, result);
+            setState({ pending: null, last: { operation, result } });
+            settled.current?.(result, operation);
+          } finally { inFlight.current = false; }
+        })();
+      },
+    };
+    return { action, controller };
+  };
   const dismiss = useCallback(
     () => setState((previous) => ({ pending: previous.pending, last: null })),
     [],
   );
-  return { state, run, dismiss };
+  return { state, run, control, dismiss };
 }

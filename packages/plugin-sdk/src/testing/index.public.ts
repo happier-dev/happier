@@ -90,3 +90,5 @@ export { createPluginTestkit } from './host.js';
 export { createPluginUiTestkit } from './uiHost.js';
 export { readPluginUiTestkitTargetedSurfaceAdmission } from './uiHost.js';
 export { createSurfaceContextFixture, SURFACE_CONTEXT_THEME_FIXTURE } from '../ui/surfaceContext.fixture.js';
+
+export { createPluginUiActionControlTestHost } from './actionControlHost.js';

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
@@ -108,12 +108,19 @@ const STATE_ROW = Object.freeze({
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+type MountedFixture = PluginUiTestkit & { controls: ReturnType<typeof createPluginUiActionControlTestHost> };
 
 let nextResult: JsonValue = { kind: 'unavailable', failure: { class: 'transient', code: 'unset' } };
 let nextError: PluginError | null = null;
 let completedMutations = 0;
 
-async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTestkit> {
+async function mountDetail(input: JsonValue = launchInput()): Promise<MountedFixture> {
+  const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
+    recorded.push({ action, input });
+    if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
+      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+    return { ok: true, result: nextResult };
+  });
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -130,7 +137,11 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTe
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: input,
       handlers: {
+        actionControl: controls.handler,
         executeAction: async ({ action, input: dispatched }) => {
+          if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
+            throw new Error('A press write must execute through the host Action control.');
+          }
           recorded.push({ action, input: dispatched });
           if (nextError !== null) throw nextError;
           return nextResult;
@@ -139,7 +150,7 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<PluginUiTe
     });
   });
   mounted.push(fixture);
-  return fixture;
+  return { ...fixture, controls };
 }
 
 function actionRef(localId: string) {
@@ -170,7 +181,7 @@ describe('the mounted GitLab merge-request writes', () => {
     nextError = new PluginError({ code: 'denied',
       diagnostics: [{ code: 'plugin_action_current_intent_rejected', severity: 'error' }] });
     const detail = await mountDetail();
-    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Merge' })); });
+    await act(async () => { await act(async () => detail.controls.press('Merge')); });
     await expect(detail.getByText('You declined the confirmation, so nothing was written.')).resolves.toBeDefined();
     expect(completedMutations).toBe(0);
   });
@@ -178,27 +189,27 @@ describe('the mounted GitLab merge-request writes', () => {
   it('offers all three writes on an open merge request', async () => {
     const detail = await mountDetail();
 
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeDefined();
-    await expect(detail.queryByRole('button', { name: 'Mark ready for review' }))
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Mark ready for review')))
       .resolves.toBeDefined();
-    await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Close'))).resolves.toBeDefined();
     await expect(detail.queryByRole('textbox', { label: 'Reviewer username' })).resolves.toBeDefined();
-    await expect(detail.queryByRole('button', { name: 'Add reviewers' })).resolves.toBeDefined();
-    await expect(detail.queryByRole('button', { name: 'Remove reviewers' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Add reviewers'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Remove reviewers'))).resolves.toBeDefined();
   });
 
   it('offers the registered merge-request reopen on a closed merge request', async () => {
     const detail = await mountDetail(launchInput({ state: { presentation: 'closed', nativeLabel: 'Closed' } }));
-    await expect(detail.queryByRole('button', { name: 'Reopen' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Reopen'))).resolves.toBeDefined();
   });
 
   it('offers issue state, assignee, and label controls without deleting their input paths', async () => {
     const detail = await mountDetail(launchInput({ kindId: 'issue', nativeRevision: '2026-08-12T09:00:00.000Z' }));
-    await expect(detail.queryByRole('button', { name: 'Close issue' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Close issue'))).resolves.toBeDefined();
     await expect(detail.queryByRole('textbox', { label: 'Assignee username' })).resolves.toBeDefined();
     await expect(detail.queryByRole('textbox', { label: 'Label name' })).resolves.toBeDefined();
     for (const name of ['Add assignees', 'Remove assignees', 'Add labels', 'Remove labels']) {
-      await expect(detail.queryByRole('button', { name })).resolves.toBeDefined();
+      await expect(Promise.resolve(detail.controls.presentation(name))).resolves.toBeDefined();
     }
   });
 
@@ -230,7 +241,7 @@ describe('the mounted GitLab merge-request writes', () => {
     nextResult = { kind: 'merged', item: { ...STATE_ROW, state: 'merged' } } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     // The whole payload, not a subset: an extra member here would be a decision
     // about the repository's history that the reader never made.
@@ -252,7 +263,7 @@ describe('the mounted GitLab merge-request writes', () => {
     nextResult = { kind: 'ready', item: STATE_ROW } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Mark ready for review' }));
+    await act(async () => detail.controls.press('Mark ready for review'));
 
     expect(recordedCallsFor(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady)).toEqual([{
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMarkReady),
@@ -274,7 +285,7 @@ describe('the mounted GitLab merge-request writes', () => {
     nextResult = { kind: 'closed', item: { ...STATE_ROW, state: 'closed' } } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Close' }));
+    await act(async () => detail.controls.press('Close'));
 
     expect(recordedCallsFor(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose)).toEqual([{
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose),
@@ -289,7 +300,7 @@ describe('the mounted GitLab merge-request writes', () => {
     nextResult = { kind: 'closed', item: { ...STATE_ROW, state: 'closed' } } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Close' }));
+    await act(async () => detail.controls.press('Close'));
 
     expect(recordedCallsFor(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestClose)).toHaveLength(1);
     await expect(detail.queryByRole('button', { name: 'Confirm' })).resolves.toBeUndefined();
@@ -304,7 +315,7 @@ describe('the mounted GitLab merge-request writes', () => {
     } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     await expect(detail.queryByText(
       'GitLab accepted this and will merge it later — it is queued, not merged.',
@@ -320,7 +331,7 @@ describe('the mounted GitLab merge-request writes', () => {
     } as JsonValue;
     const detail = await mountDetail();
 
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     expect(document.body.textContent).toContain(
       'GitLab received this and could not confirm the result. Reload before trying again — it may already have taken effect.',
@@ -333,7 +344,7 @@ describe('the mounted GitLab merge-request writes', () => {
       failure: { class: 'permission', code: 'forbidden', detail: 'GitLab Request ID: gitlab-denied-1' },
     };
     const detail = await mountDetail();
-    await detail.press(await detail.getByRole('button', { name: 'Close' }));
+    await act(async () => detail.controls.press('Close'));
     expect(document.body.textContent).toContain('GitLab rejected this change');
     expect(document.body.textContent).toContain('Code: forbidden');
     expect(document.body.textContent).toContain('GitLab Request ID: gitlab-denied-1');
@@ -345,7 +356,7 @@ describe('the mounted GitLab merge-request writes', () => {
       messages: ['Only project maintainers may change reviewers'],
     };
     const detail = await mountDetail();
-    await detail.press(await detail.getByRole('button', { name: 'Mark ready for review' }));
+    await act(async () => detail.controls.press('Mark ready for review'));
     expect(document.body.textContent).toContain('Only project maintainers may change reviewers');
     expect(document.body.textContent).not.toContain('Nothing was attempted');
   });
@@ -354,13 +365,13 @@ describe('the mounted GitLab merge-request writes', () => {
     const detail = await mountDetail();
 
     nextResult = { kind: 'merged', item: { ...STATE_ROW, state: 'merged' } } as JsonValue;
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     nextResult = {
       kind: 'unconfirmed',
       failure: { class: 'transient', code: 'transport-failed' },
     } as JsonValue;
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     expect(completedMutations).toBe(2);
   });
@@ -372,7 +383,7 @@ describe('the mounted GitLab merge-request writes', () => {
       observed: { ...STATE_ROW, headSha: 'f'.repeat(40) },
     } as JsonValue;
 
-    await detail.press(await detail.getByRole('button', { name: 'Merge' }));
+    await act(async () => detail.controls.press('Merge'));
 
     // The currentness preflight refused before the provider write. The mounted
     // source must not spend the target-owned exact-get trigger on an outcome
@@ -386,10 +397,10 @@ describe('the mounted GitLab merge-request writes', () => {
     // close needs no pin, so removing it would delete a capability that works.
     const detail = await mountDetail(launchInput({ nativeRevision: undefined }));
 
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Mark ready for review' }))
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Mark ready for review')))
       .resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Close'))).resolves.toBeDefined();
     await expect(detail.queryByText(
       'GitLab has not reported this merge request’s latest commit, so it cannot be merged or marked ready from here yet.',
     )).resolves.toBeDefined();
@@ -400,14 +411,14 @@ describe('the mounted GitLab merge-request writes', () => {
       state: { presentation: 'resolved', nativeLabel: 'Merged' },
     }));
 
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Close'))).resolves.toBeUndefined();
   });
 
   it('does not offer merge-request writes on an issue', async () => {
     const detail = await mountDetail(launchInput({ kindId: 'issue' }));
 
-    await expect(detail.queryByRole('button', { name: 'Merge' })).resolves.toBeUndefined();
-    await expect(detail.queryByRole('button', { name: 'Close' })).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Merge'))).resolves.toBeUndefined();
+    await expect(Promise.resolve(detail.controls.presentation('Close'))).resolves.toBeUndefined();
   });
 });

@@ -1,16 +1,17 @@
 import * as React from 'react';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type {
   ReviewCommentPublicationVerdictV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
-  Button,
   Form,
   Row,
   Stack,
   Status,
   Text,
-  useExecutePluginAction,
+  Action,
+  projectPluginActionControlExecutionV1,
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
   type PluginActionExecution,
@@ -271,8 +272,8 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
   const completion = useTriagePostMutationCompletion();
-  const submit = useExecutePluginAction({ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.submitReview });
-  const create = useExecutePluginAction({ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadCommentCreate });
+  const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
+  const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
   const [verdict, setVerdict] = React.useState<VerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
@@ -295,16 +296,30 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
   const createPayload = selected.length === 1
     ? buildAzureThreadCommentCreateInputV1(input, selected[0]!)
     : null;
-  const execute = React.useCallback((kind: 'submit' | 'create') => {
-    const action = kind === 'submit' ? submit : create;
-    const payload = kind === 'submit' ? submitPayload : createPayload;
-    if (payload === null) return;
-    void action.execute(payload).then((settled) => completeTriagePostMutationIfNeeded(
-      completion,
-      settled,
-      publicationMayHaveChanged,
-    ));
-  }, [completion, create, createPayload, submit, submitPayload]);
+  const submitControl: PluginUiActionControlController = {
+    prepare() {
+      if (submitPayload === null) return null;
+      setSubmitExecution({ status: 'pending' });
+      return { input: submitPayload };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setSubmitExecution(settled);
+      void completeTriagePostMutationIfNeeded(completion, settled, publicationMayHaveChanged);
+    },
+  };
+  const createControl: PluginUiActionControlController = {
+    prepare() {
+      if (createPayload === null) return null;
+      setCreateExecution({ status: 'pending' });
+      return { input: createPayload };
+    },
+    onSettled(execution) {
+      const settled = projectPluginActionControlExecutionV1(execution, text);
+      setCreateExecution(settled);
+      void completeTriagePostMutationIfNeeded(completion, settled, publicationMayHaveChanged);
+    },
+  };
   const verdictNeedsBody = verdict !== 'none' && body === '';
   return (
     <Stack gap="small">
@@ -349,11 +364,11 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
         />
       ) : null}
       <Row gap="small">
-        <Button title={text('plugins.azureDevops.ui.publication.submit', 'Submit review')} variant="primary" disabled={submitPayload === null || verdictNeedsBody || (selectedRequiresVerdict && verdict === 'none') || publicationRequiresReload(submit.execution)} busy={submit.execution.status === 'pending'} onPress={() => execute('submit')} />
-        <Button title={text('plugins.azureDevops.ui.publication.createThread', 'Publish as new thread')} variant="secondary" disabled={createPayload === null || publicationRequiresReload(create.execution)} busy={create.execution.status === 'pending'} onPress={() => execute('create')} />
+        <Action.Control title={text('plugins.azureDevops.ui.publication.submit', 'Submit review')} variant="primary" disabled={submitPayload === null || verdictNeedsBody || (selectedRequiresVerdict && verdict === 'none') || publicationRequiresReload(submitExecution)} action={{ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.submitReview }} controller={submitControl} />
+        <Action.Control title={text('plugins.azureDevops.ui.publication.createThread', 'Publish as new thread')} variant="secondary" disabled={createPayload === null || publicationRequiresReload(createExecution)} action={{ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadCommentCreate }} controller={createControl} />
       </Row>
-      <PublicationOutcome execution={submit.execution} />
-      <PublicationOutcome execution={create.execution} />
+      <PublicationOutcome execution={submitExecution} />
+      <PublicationOutcome execution={createExecution} />
     </Stack>
   );
 }
@@ -368,7 +383,7 @@ export function AzureThreadReplyPublicationControl({ input, thread }: Readonly<{
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
   const completion = useTriagePostMutationCompletion();
-  const reply = useExecutePluginAction({ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadReply });
+  const [replyExecution, setReplyExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const selected = proposals.proposals.find((proposal) => proposal.id === selectedId) ?? null;
   const parent = thread.comments.at(-1);
@@ -388,21 +403,25 @@ export function AzureThreadReplyPublicationControl({ input, thread }: Readonly<{
           onChange={(value) => setSelectedId(typeof value === 'string' ? value : null)}
         />
       ) : null}
-      <Button
+      <Action.Control
         title={text('plugins.azureDevops.ui.publication.reply.publish', 'Publish reply')}
         variant="secondary"
-        disabled={payload === null || publicationRequiresReload(reply.execution)}
-        busy={reply.execution.status === 'pending'}
-        onPress={() => {
-          if (payload === null) return;
-          void reply.execute(payload).then((settled) => completeTriagePostMutationIfNeeded(
-            completion,
-            settled,
-            publicationMayHaveChanged,
-          ));
+        disabled={payload === null || publicationRequiresReload(replyExecution)}
+        action={{ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadReply }}
+        controller={{
+          prepare() {
+            if (payload === null) return null;
+            setReplyExecution({ status: 'pending' });
+            return { input: payload };
+          },
+          onSettled(execution) {
+            const settled = projectPluginActionControlExecutionV1(execution, text);
+            setReplyExecution(settled);
+            void completeTriagePostMutationIfNeeded(completion, settled, publicationMayHaveChanged);
+          },
         }}
       />
-      <PublicationOutcome execution={reply.execution} />
+      <PublicationOutcome execution={replyExecution} />
     </Stack>
   );
 }
