@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
-import { DeploymentDomainCapturedPlacementsV1Schema, DeploymentTeardownProofV1Schema,
-    type DeploymentDomainAddPreparedInputV1 } from '@happier-dev/protocol';
+import { DeploymentDomainCapturedPlacementsV1Schema } from '@happier-dev/protocol';
+import type { DeploymentDomainAddPreparedInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentMembershipActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -54,21 +54,4 @@ export async function haveDeploymentMembershipRoutesInTx(tx: Tx, input: Readonly
             && input.members.every(member => parsed.data.some(capture => capture.placement.targetLinkId === input.targetLinkId
                 && capture.placement.machineId === member.machineId && capture.placement.installationId === member.installationId));
     });
-}
-
-/** Only the canonical native settlement can supply a complete removal proof. */
-export async function hasDeploymentMemberDrainInTx(tx: Tx, input: Readonly<{
-    environmentId: string; targetLinkId: string; targetLinkRevision: number; deploymentId?: string; members: readonly Member[];
-}>) {
-    if (!input.deploymentId) return false;
-    const receipt = await tx.deployment.findFirst({ where: { id: input.deploymentId, environmentId: input.environmentId,
-        targetLinkId: input.targetLinkId, operation: 'teardown', state: 'succeeded' }, select: { id: true, requestedAt: true, teardownProof: true } });
-    if (!receipt || await tx.deployment.findFirst({ where: { targetLinkId: input.targetLinkId, id: { not: receipt.id },
-        OR: [{ requestedAt: { gt: receipt.requestedAt } }, { requestedAt: receipt.requestedAt, id: { gt: receipt.id } }] },
-        select: { id: true } })) return false;
-    const proof = DeploymentTeardownProofV1Schema.safeParse(receipt?.teardownProof);
-    return proof.success && proof.data.targetLinkRevision === input.targetLinkRevision
-        && proof.data.machines.length === input.members.length && input.members.every(member => proof.data.machines.some(removed =>
-            member.machineId === removed.machineId && member.installationId === removed.installationId))
-        && await haveDeploymentMembershipRoutesInTx(tx, { ...input, mode: 'drain' });
 }

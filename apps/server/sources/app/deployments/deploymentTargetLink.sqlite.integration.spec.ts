@@ -85,9 +85,32 @@ describe('current runtime membership replacement', () => {
             const attempted = await send({ ...replacement, expectedRevision: changed.json().revision,
                 replacesLinkId: changed.json().targetLinkId, expectedTargetLinkRevision: changed.json().targetLinkRevision,
                 requestKey: crypto.randomUUID(), machines: [{ machineId: machines[0]!.id, installationId: machines[0]!.installationId }] });
-            expect(attempted.statusCode, attempted.body).toBe(409);
+            expect(attempted.statusCode, attempted.body).toBe(200);
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId)
-                .toBe(changed.json().targetLinkId);
+                .toBe(attempted.json().targetLinkId);
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: changed.json().targetLinkId } }))
+                .toMatchObject({ deletedAt: null, detachedAt: null });
+
+            // Selecting a Move destination retains the exact serving source as
+            // its predecessor; only teardown/unlink may release that custody.
+            const serving = await db.deployment.create({ data: { environmentId: environment.id,
+                targetLinkId: attempted.json().targetLinkId, operation: 'deploy', state: 'succeeded',
+                requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
+                actionOperationId: crypto.randomUUID(), ...await content('deployment-receipt.v1') } });
+            await db.deploymentTargetLink.update({ where: { id: attempted.json().targetLinkId },
+                data: { activeDeploymentId: serving.id, state: 'deployed' } });
+            const move = { ...replacement, expectedRevision: attempted.json().revision,
+                replacesLinkId: attempted.json().targetLinkId, expectedTargetLinkRevision: attempted.json().targetLinkRevision,
+                requestKey: crypto.randomUUID(), machines: [{ machineId: machines[1]!.id, installationId: machines[1]!.installationId }] };
+            const preparedMove = await send(move);
+            expect(preparedMove.statusCode, preparedMove.body).toBe(200);
+            expect((await send(move)).json()).toEqual(preparedMove.json());
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: attempted.json().targetLinkId },
+                include: { machines: true } })).toMatchObject({ deletedAt: null, detachedAt: null,
+                activeDeploymentId: serving.id, machines: [{ machineId: machines[0]!.id }] });
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, preparedMove.json().targetLinkId)))
+                .toMatchObject({ predecessorTargetLinkId: attempted.json().targetLinkId, machines: [machines[1]!.id] });
+            expect(await db.deployment.count({ where: { environmentId: environment.id, operation: 'teardown' } })).toBe(0);
         });
     });
 
@@ -142,7 +165,7 @@ describe('current runtime membership replacement', () => {
         });
     });
 
-    it('stores plugin runtime and multiple data links with exact scalar custody and retains runtime predecessors', async () => {
+    it('stores provisioned plugin runtime beside unchanged Neon data custody and retains runtime predecessors', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const foreign = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: crypto.randomUUID(), name: 'Platform links' }));
@@ -171,8 +194,8 @@ describe('current runtime membership replacement', () => {
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const url = `/v1/deployments/environments/${environment.id}/targets`;
             const base = { serverId, environmentId: environment.id, expectedRevision: 1, machines: [],
-                source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } },
-                targetId: 'example.deploy/platform', targetKind: 'platform', role: 'data',
+                source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'neon' } },
+                targetId: 'happier.deploy.neon/neon', targetKind: 'database', role: 'data',
                 requestKey: crypto.randomUUID(), ...targetContent };
             const send = (payload: typeof base | Record<string, unknown>) => app.inject({ method: 'POST', url,
                 headers: { 'x-test-user-id': owner.id }, payload });
@@ -187,7 +210,7 @@ describe('current runtime membership replacement', () => {
             const saved = DeploymentTargetLinkResultV1Schema.parse(first.json());
             if (!saved.ok) throw new Error(saved.error);
             expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, saved.targetLinkId))).toMatchObject({
-                role: 'data', source: base.source, targetKind: 'platform', machines: [], members: [],
+                role: 'data', source: base.source, targetKind: 'database', state: 'configured', ...targetContent, machines: [], members: [],
                 machineId: machine.id, installationId: machine.installationId! });
             const dataOnly = await app.inject({ method: 'GET', url: `/v1/deployments/environments/${environment.id}?serverId=${serverId}`,
                 headers: { 'x-test-user-id': owner.id } });
@@ -212,10 +235,20 @@ describe('current runtime membership replacement', () => {
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBeNull();
             const second = await send({ ...base, expectedRevision: saved.revision, requestKey: crypto.randomUUID() });
             expect(second.statusCode, second.body).toBe(200);
-            const runtimeInput = { ...base, role: 'runtime', expectedRevision: second.json().revision, requestKey: crypto.randomUUID(),
+            const neonLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: saved.targetLinkId } });
+            const neonArtifact = await db.artifact.findUniqueOrThrow({ where: { id: targetContent.contentArtifactId } });
+            const runtimeInput = { ...base, role: 'runtime', provisioned: true,
+                source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'platform' } },
+                targetId: 'example.deploy/platform', targetKind: 'platform',
+                expectedRevision: second.json().revision, requestKey: crypto.randomUUID(),
                 machineId: machine.id, installationId: machine.installationId! };
             const runtime = await send(runtimeInput);
             expect(runtime.statusCode, runtime.body).toBe(200);
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, runtime.json().targetLinkId)))
+                .toMatchObject({ role: 'runtime', source: runtimeInput.source, state: 'provisioned', ...targetContent });
+            expect((await send(runtimeInput)).json()).toEqual(runtime.json());
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: saved.targetLinkId } })).toEqual(neonLink);
+            expect(await db.artifact.findUniqueOrThrow({ where: { id: targetContent.contentArtifactId } })).toEqual(neonArtifact);
             expect(await inTx(tx => readDeploymentMachineReferencesInTx(tx, owner.id, { homeId: serverId, machineId: machine.id })))
                 .toMatchObject({ coverage: 'complete', references: [{ id: environment.id,
                     deploymentRoles: expect.arrayContaining(['runtime', 'data']) }] });
@@ -231,12 +264,14 @@ describe('current runtime membership replacement', () => {
             expect(stalePlacement.statusCode, stalePlacement.body).toBe(503);
             expect(stalePlacement.json()).toMatchObject({ error: 'machine_unavailable', role: 'target', machineIds: [machine.id] });
             expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(0);
-            const replacement = await send({ ...runtimeInput, expectedRevision: runtime.json().revision, requestKey: crypto.randomUUID(),
+            const replacement = await send({ ...runtimeInput, provisioned: undefined, expectedRevision: runtime.json().revision, requestKey: crypto.randomUUID(),
                 installationId: currentInstallationId, replacesLinkId: runtime.json().targetLinkId,
                 expectedTargetLinkRevision: runtime.json().targetLinkRevision });
             expect(replacement.statusCode, replacement.body).toBe(200);
             expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, replacement.json().targetLinkId)))
-                .toMatchObject({ predecessorTargetLinkId: runtime.json().targetLinkId });
+                .toMatchObject({ predecessorTargetLinkId: runtime.json().targetLinkId, state: 'configured' });
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, runtime.json().targetLinkId)))
+                .toMatchObject({ state: 'provisioned' });
             expect(await db.deploymentTargetLink.count({ where: { environmentId: environment.id } })).toBe(4);
             const read = await app.inject({ method: 'GET', url: `/v1/deployments/environments/${environment.id}?serverId=${serverId}`,
                 headers: { 'x-test-user-id': owner.id } });
@@ -804,15 +839,6 @@ describe('current runtime membership replacement', () => {
             const replay = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: input });
             expect(replay.statusCode, replay.body).toBe(200);
             expect(replay.json()).toEqual(selected);
-            const removal = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: {
-                ...input, expectedRevision: selected.revision, requestKey: crypto.randomUUID(), replacesLinkId: selected.targetLinkId,
-                expectedTargetLinkRevision: selected.targetLinkRevision, machines: [memberInputs[0], memberInputs[2]],
-            } });
-            expect(removal.statusCode, 'missing/unknown drain cannot discard workload or peer custody').toBe(409);
-            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(selected.targetLinkId);
-            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, selected.targetLinkId)))
-                .toMatchObject({ machines: memberInputs.map(member => member.machineId) });
-            expect(await db.deploymentTargetLink.findUnique({ where: { id: previous.id } })).not.toBeNull();
             const read = await app.inject({ method: 'GET', url: `/v1/deployments/environments/${environment.id}?serverId=${serverId}`,
                 headers: { 'x-test-user-id': owner.id } });
             expect(read.statusCode, read.body).toBe(200);
@@ -828,46 +854,33 @@ describe('current runtime membership replacement', () => {
                 rollbackOfDeploymentId: uniform.id, targetLinkId: selected.targetLinkId, predecessorDeploymentId: uniform.id,
             });
             await db.deployment.update({ where: { id: rollback.json().deploymentId }, data: { state: 'failed' } });
-            const proof = { targetLinkRevision: selected.targetLinkRevision, machines: [memberInputs[1]!],
-                workloadAbsent: true, retainedProviderResource: false,
-                steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] };
-            const drained = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
-                requestedByAccountId: owner.id, operation: 'teardown', state: 'succeeded', requestKey: crypto.randomUUID(),
-                actionOperationId: crypto.randomUUID(), ...await artifact('deployment-receipt.v1'), teardownProof: proof } });
-            const drainInput = { ...input, expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision, requestKey: crypto.randomUUID(),
-                replacesLinkId: selected.targetLinkId, expectedTargetLinkRevision: selected.targetLinkRevision,
-                machines: [memberInputs[0]!, memberInputs[2]!], drainedDeploymentId: drained.id };
-            for (const invalid of [
-                { ...proof, targetLinkRevision: selected.targetLinkRevision + 1 },
-                { ...proof, machines: [{ ...memberInputs[1]!, installationId: 'replaced-installation' }] },
-                { ...proof, machines: [memberInputs[0]!] },
-            ]) {
-                await db.deployment.update({ where: { id: drained.id }, data: { teardownProof: invalid } });
-                const rejected = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: drainInput });
-                expect(rejected.statusCode, rejected.body).toBe(409);
-                expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(selected.targetLinkId);
-            }
-            await db.deployment.update({ where: { id: drained.id }, data: { teardownProof: proof } });
-            await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
-                requestedByAccountId: owner.id, operation: 'deploy', state: 'failed', requestKey: crypto.randomUUID(),
-                actionOperationId: crypto.randomUUID(), requestedAt: new Date(drained.requestedAt.getTime() + 1000),
-                ...await artifact('deployment-receipt.v1', { onFailure: 'keepPartial' }) } });
-            const staleDrain = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: drainInput });
-            expect(staleDrain.statusCode, staleDrain.body).toBe(409);
-            expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).runtimeTargetLinkId).toBe(selected.targetLinkId);
-            const redrained = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: selected.targetLinkId,
-                requestedByAccountId: owner.id, operation: 'teardown', state: 'succeeded', requestKey: crypto.randomUUID(),
-                actionOperationId: crypto.randomUUID(), requestedAt: new Date(drained.requestedAt.getTime() + 2000),
-                ...await artifact('deployment-receipt.v1'), teardownProof: proof } });
-            const removed = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id },
-                payload: { ...drainInput, drainedDeploymentId: redrained.id } });
-            expect(removed.statusCode, removed.body).toBe(200);
-            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, removed.json().targetLinkId))).toMatchObject({
-                predecessorTargetLinkId: selected.targetLinkId, machines: drainInput.machines.map(member => member.machineId),
+            const survivors = [memberInputs[0]!, memberInputs[2]!];
+            const moved = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: {
+                ...input, expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision,
+                requestKey: crypto.randomUUID(), replacesLinkId: selected.targetLinkId,
+                expectedTargetLinkRevision: selected.targetLinkRevision, machines: survivors,
+            } });
+            expect(moved.statusCode, moved.body).toBe(200);
+            expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, moved.json().targetLinkId))).toMatchObject({
+                predecessorTargetLinkId: selected.targetLinkId, machines: survivors.map(member => member.machineId),
                 activeDeploymentId: uniform.id,
+                members: survivors.map((member, index) => ({ ...member, state: index === 0 ? 'active' : 'joining' })),
             });
             expect(await inTx(tx => readDeploymentTargetInTx(tx, environment.id, selected.targetLinkId)))
-                .toMatchObject({ machines: memberInputs.map(member => member.machineId) });
+                .toMatchObject({ machines: memberInputs.map(member => member.machineId), activeDeploymentId: uniform.id });
+            // Selection transfers common members; it never releases the omitted
+            // installation. Only the physical disposition owner can do that.
+            const unlink = await app.inject({ method: 'POST',
+                url: `${url}/${selected.targetLinkId}/unlink`, headers: { 'x-test-user-id': owner.id }, payload: {
+                    serverId, environmentId: environment.id, targetLinkId: selected.targetLinkId,
+                    expectedRevision: moved.json().revision, expectedTargetLinkRevision: selected.targetLinkRevision,
+                    requestKey: crypto.randomUUID(),
+                } });
+            expect(unlink.statusCode, unlink.body).toBe(409);
+            expect(unlink.json()).toMatchObject({ ok: false, error: 'deployment_teardown_required' });
+            expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: selected.targetLinkId } }))
+                .toMatchObject({ deletedAt: null, detachedAt: null });
+
         });
     });
 });

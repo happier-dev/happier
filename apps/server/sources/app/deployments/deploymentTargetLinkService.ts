@@ -2,6 +2,7 @@ import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } 
 import type { Prisma } from '@prisma/client';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
@@ -10,8 +11,6 @@ import { admitDeploymentStoredContentInTx, deploymentContentReference } from './
 import { deploymentIntentDigest, loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
-import { hasDeploymentMemberDrainInTx } from './deploymentMembershipService';
-import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 
 /** Plugin daemon roles use the selected scalar installation; native workloads use their member rows. */
 export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
@@ -23,6 +22,25 @@ export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
     return row.sourceKind === 'plugin'
         ? row.machineId && row.installationId ? [{ machineId: row.machineId, installationId: row.installationId }] : []
         : row.machines;
+}
+
+/** One current relation owner validates every managed data-role link consumer. */
+export async function readCurrentManagedDataTargetLinksInTx(tx: Tx, input: Readonly<{
+    environmentId: string;
+    targetLinkIds: readonly string[];
+}>): Promise<readonly Readonly<{ id: string; revision: number; pluginId: string }>[] | null> {
+    const requested = [...input.targetLinkIds];
+    if (new Set(requested).size !== requested.length) return null;
+    const links = new Map<string, Readonly<{ id: string; revision: number; pluginId: string }>>();
+    for (const ids of portableQueryChunks({ values: requested, bindingsPerValue: 1, fixedBindings: 5 })) {
+        const rows = await tx.deploymentTargetLink.findMany({ where: { id: { in: [...ids] }, environmentId: input.environmentId,
+            role: 'data', sourceKind: 'plugin', deletedAt: null, detachedAt: null }, select: { id: true, revision: true, pluginId: true } });
+        for (const row of rows) {
+            if (!row.pluginId) return null;
+            links.set(row.id, { id: row.id, revision: row.revision, pluginId: row.pluginId });
+        }
+    }
+    return links.size === requested.length ? requested.map(id => links.get(id)!) : null;
 }
 
 export function projectDeploymentTargetHeader(row: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>) {
@@ -114,18 +132,10 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
                 || (previous.machineId ?? undefined) !== input.machineId
                 || (previous.installationId ?? undefined) !== input.installationId) return deploymentFailure('deployment_conflict');
         } else if (input.role !== 'runtime' || loaded.row.runtimeTargetLinkId !== previous.id) return deploymentFailure('deployment_conflict');
-        // Dropping a relation is not evidence that its serving workload drained.
-        // Keep every old installation discoverable until its native owner proves removal.
-        if (!plugin && previous.sourceKind === 'host') {
-            const removed = previous.machines.filter(member => !input.machines.some(next => next.machineId === member.machineId
-                && next.installationId === member.installationId));
-            if (previous.hostTargetId !== input.targetId || removed.length > 0
-                && !await hasCompleteTeardownInTx(tx, previous, [], loaded.row.runtimeTargetLinkId)
-                && !await hasDeploymentMemberDrainInTx(tx, {
-                environmentId: input.environmentId, targetLinkId: previous.id, targetLinkRevision: previous.revision,
-                deploymentId: input.drainedDeploymentId, members: removed,
-            })) return deploymentFailure('deployment_conflict');
-        }
+        // Selection retains the complete predecessor and its native custody.
+        // Teardown/unlink prove physical removal after Move has verified its destination.
+        if (!plugin && previous.sourceKind === 'host' && previous.hostTargetId !== input.targetId)
+            return deploymentFailure('deployment_conflict');
         const busy = await tx.deployment.findFirst({ where: { environmentId: input.environmentId,
             state: { in: deploymentInProgressStates() } }, select: { id: true } });
         if (busy) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
