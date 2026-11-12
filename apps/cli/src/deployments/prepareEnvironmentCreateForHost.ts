@@ -27,6 +27,7 @@ import { preparePreviewCompanionTemplateCreationForHost, preparePreviewTemplateC
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 export { resolveEnvironmentCreateCopyForHost, type EnvironmentCreateCopyResolution,
     type EnvironmentCreateCopyHost } from './resolveEnvironmentCreateCopyForHost';
 
@@ -213,8 +214,9 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
             const createContent = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
                 body: unknown) => {
                 const binding = context.externalActionExecutionAuthorization?.binding;
-                const artifactId = kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1
-                    && binding?.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+                // Every Environment-creating root (Create, adoption) publishes its one create-only candidate id.
+                const artifactId = kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 && binding
+                    && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
                     ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
                     : undefined;
                 const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({

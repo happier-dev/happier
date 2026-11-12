@@ -8,7 +8,8 @@ import {
   encodePlainArtifactStoredContent,
   ArtifactJsonCreateHttpInputV1Schema,
 } from '@happier-dev/protocol';
-import { projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createDeploymentEnvironmentContentArtifactIdV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
   computeExternalActionRequestEnvelopeDigestV1,
   encodeExternalActionResolvedTargetV1,
@@ -264,6 +265,15 @@ describe('adopt create preparation admission', () => {
           content,
         );
         expect.soft(created.statusCode, created.body).toBe(200);
+        // Create preparation publishes its one create-only candidate and reads it back (J52, #130).
+        const candidate = { ...content, id: createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding,
+          actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 }) };
+        const published = await send('machines.services.adopt', 'POST', '/v1/artifacts', candidate);
+        expect(published.statusCode, published.body).toBe(200);
+        const readBack = await send('machines.services.adopt', 'GET', `/v1/artifacts/${candidate.id}`);
+        expect(readBack.statusCode, readBack.body).toBe(200);
+        // No other Artifact rides on that admission, even one this root published.
+        expect((await send('machines.services.adopt', 'GET', `/v1/artifacts/${content.id}`)).statusCode).toBe(401);
 
         // The admission is the destination owner's inventory, not another readable scope.
         const strangerScope = await send(

@@ -2526,6 +2526,40 @@ describe('installed deployment storage and target composition', () => {
         } finally { try { await rm(root, { recursive: true, force: true }); } finally { await mounted.dispose(); } }
     });
 
+    it('returns a typed refusal when a Home read inside a defaults preview is refused, not an unknown outcome', async () => {
+        const serverHttpBaseUrl = 'https://backup-preview-refusal.test';
+        const settings = await persistence.readSettings();
+        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
+            id: 'home', name: 'Home', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
+            createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+            homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_backup_home',
+                canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] }),
+        } } });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const credentials: StoredCredentials = { token, encryption: null };
+        const detail = createDeploymentEnvironmentDetailV1();
+        // The preview is read-only: a refused preparation read proves no effect ran (J29, #130).
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            if (path === `/v1/deployments/environments/${detail.environment.id}`) return { status: 200,
+                data: { ok: true, environment: detail.environment, secretScope: detail.secretScope, targetLinks: [] } };
+            return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            return { status: 401, data: { error: 'invalid_token', authorizationRefusal: 'verification_purpose' } };
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
+            machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity });
+        const result = await deps.deploymentAction('deployments.environments.update', { serverId: 'home',
+            environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+            contentArtifactId: detail.environment.contentArtifactId, contentHeaderVersion: detail.environment.contentHeaderVersion,
+            contentBodyVersion: detail.environment.contentBodyVersion, mode: 'preview', defaultsFor: 'backups' }, ownerContext);
+        expect(result).toMatchObject({ ok: false });
+        expect(result).not.toMatchObject({ errorCode: 'action_outcome_unknown' });
+    });
+
     it.each(['compact', 'prepared'] as const)('refuses unresolved template secret readiness before %s Deploy native effects', async entry => {
         const environment = createDeploymentEnvironmentDetailV1();
         environment.environment.buildMachineId = 'machine-a';

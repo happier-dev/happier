@@ -882,6 +882,17 @@ async function readConfigurationDefaultsEnvironmentInTx(tx: Tx, binding: Externa
     return environment && !environment.deletedAt && environment.controllerMachineId === binding.machineId ? environment : null;
 }
 
+/**
+ * Backup, restore and backup setup read the definition's workspace references.
+ * Workspace references use requester-local profile aliases; the row reader owns Account isolation.
+ */
+export function isBackupWorkspaceRefListHttpPurpose(proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>): boolean {
+    if (proof.method.toUpperCase() !== 'POST' || proof.path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return false;
+    const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
+    return selection.success && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
+        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
+}
+
 /** Signed authoring publishes one private candidate and retains its reviewed patch and CAS. */
 export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
@@ -903,6 +914,9 @@ export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx:
     }
     if (binding.actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
         && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) && native.defaultsFor !== undefined) {
+        // Backup choices read the stored definition's workspace, as a backup itself does (J29, #130).
+        if (native.defaultsFor === 'backups' && effectActionId === binding.actionId
+            && isBackupWorkspaceRefListHttpPurpose(proof)) return true;
         // This read-only variant never borrows update's general Artifact publication purpose.
         if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
         const environment = await readConfigurationDefaultsEnvironmentInTx(tx, binding);
@@ -1206,7 +1220,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (method === 'GET' && proof.body === undefined && (match[2] === undefined || match[2] === 'recipients' || match[2] === 'grants')
         && matches({ id: artifactId })) {
         if (!childEffect && (artifactId === admission.candidate?.contentArtifactId
-            || binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+            // Every Environment-creating root (Create, adoption) owns one create-only candidate id.
+            || deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
                 && admission.catalogApp === undefined
                 && artifactId === createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
                     actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })

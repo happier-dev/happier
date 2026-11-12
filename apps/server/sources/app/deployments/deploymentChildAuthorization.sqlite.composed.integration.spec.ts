@@ -2863,6 +2863,7 @@ describe('deployment children retain their controller Action authority', () => {
             artifactsRoutes(app);
             projectSourceRoutes(app);
             registerDeploymentRoutes(app);
+            registerProjectAccountRowRoutes(app);
         }, async app => {
             // DeploymentBackupSetup prepares defaults before any destination
             // mutation or native source review. These are its real Home reads.
@@ -2887,6 +2888,19 @@ describe('deployment children retain their controller Action authority', () => {
             const unrelatedContent = `/v1/artifacts/${unrelated.contentArtifactId}`;
             expect((await app.inject({ method: 'GET', url: unrelatedContent, headers: headers(unrelatedContent, actionId) })).statusCode)
                 .toBe(401);
+            // Backup source choices read the definition's workspace (J29, #130): only the requester's own
+            // workspace references, keyed by its local profile alias; the row owner keeps Account isolation.
+            const rowsPath = '/v1/account/project-rows/list';
+            const list = (body: unknown) => app.inject({ method: 'POST', url: rowsPath, payload: body as object,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId, target,
+                    installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey,
+                    method: 'POST', path: rowsPath, body }) });
+            const workspaces = await list({ kinds: ['workspace-ref'], serverId: 'requester-local-home-profile' });
+            expect(workspaces.statusCode, workspaces.body).toBe(200);
+            expect(workspaces.json()).toMatchObject({ status: 'listed', rows: [] });
+            for (const body of [{ kinds: ['relationship-graph'] }, { kinds: ['workspace-ref', 'relationship-graph'] }, {}]) {
+                expect((await list(body)).statusCode, JSON.stringify(body)).toBe(401);
+            }
         }, { authentication: 'real' });
     });
 

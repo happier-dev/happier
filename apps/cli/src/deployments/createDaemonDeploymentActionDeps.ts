@@ -1747,39 +1747,42 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     kind: 'preview', input: prepared.input, review: prepared.preview });
             }
             if (actionId === 'deployments.environments.update' && 'mode' in input && input.mode === 'preview') {
-                const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-                if (!selected.success) return failure('invalid_parameters');
-                const request = selected.data;
-                const detail = await readEnvironmentMetadata({ environmentId: request.environmentId, context });
-                if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
-                if (request.patch?.previewTemplate) {
-                    const runtime = detail.targetLinks.find(link => link.id === request.patch!.previewTemplate!.runtimeTargetLinkId);
-                    const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.serverId,
-                        protection: detail.environment.protection,
-                        buildMachineId: request.patch.buildMachineId ?? detail.environment.buildMachineId, runtime },
-                        input => storage('deployments.environments.list', input, context));
-                    return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, forkEligibility };
-                }
-                const runtime = detail.targetLinks.find(link => link.id === detail.environment.runtimeTargetLinkId);
-                const target = runtime?.source.kind === 'plugin'
-                    ? { kind: 'platform' as const, creatingMachineId: detail.environment.controllerMachineId }
-                    : { kind: 'ownServer' as const, machines: runtime?.machines ?? [] };
-                const defaultsHost = atHome(() => creationDefaultsHost(context));
-                const defaults = await atHome(() => prepareDeploymentCreationDefaultsForHost({
-                    projectSourceId: detail.environment.projectSourceId, actionId, context,
-                    explicit: request.creationDefaults, target,
-                }, defaultsHost));
-                const backupSourceChoices = request.defaultsFor === 'backups' ? await atHome(async () => {
-                    if (!host.runtime.prepareBackupSourceChoices) throw new PluginError({ code: 'unsupported_action',
-                        message: 'Backup source preparation is unavailable on this host' });
-                    const environment = await readDeploymentEnvironmentForHost({ environmentId: request.environmentId, context }, {
-                        readMetadata: async () => detail, open, assertCurrent,
-                    });
-                    return host.runtime.prepareBackupSourceChoices({ environment, context });
-                }) : undefined;
-                return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
-                    creationDefaults: { values: defaults.values, sources: defaults.sources },
-                    ...(backupSourceChoices ? { backupSourceChoices } : {}) };
+                // A preview writes nothing, so a refused or failed read is a typed refusal, never an unknown outcome.
+                try {
+                    const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+                    if (!selected.success) return failure('invalid_parameters');
+                    const request = selected.data;
+                    const detail = await readEnvironmentMetadata({ environmentId: request.environmentId, context });
+                    if (detail.environment.revision !== request.expectedRevision) return failure('deployment_conflict');
+                    if (request.patch?.previewTemplate) {
+                        const runtime = detail.targetLinks.find(link => link.id === request.patch!.previewTemplate!.runtimeTargetLinkId);
+                        const forkEligibility = await preparePreviewForkEligibilityForHost({ serverId: request.serverId,
+                            protection: detail.environment.protection,
+                            buildMachineId: request.patch.buildMachineId ?? detail.environment.buildMachineId, runtime },
+                            input => storage('deployments.environments.list', input, context));
+                        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision, forkEligibility };
+                    }
+                    const runtime = detail.targetLinks.find(link => link.id === detail.environment.runtimeTargetLinkId);
+                    const target = runtime?.source.kind === 'plugin'
+                        ? { kind: 'platform' as const, creatingMachineId: detail.environment.controllerMachineId }
+                        : { kind: 'ownServer' as const, machines: runtime?.machines ?? [] };
+                    const defaultsHost = atHome(() => creationDefaultsHost(context));
+                    const defaults = await atHome(() => prepareDeploymentCreationDefaultsForHost({
+                        projectSourceId: detail.environment.projectSourceId, actionId, context,
+                        explicit: request.creationDefaults, target,
+                    }, defaultsHost));
+                    const backupSourceChoices = request.defaultsFor === 'backups' ? await atHome(async () => {
+                        if (!host.runtime.prepareBackupSourceChoices) throw new PluginError({ code: 'unsupported_action',
+                            message: 'Backup source preparation is unavailable on this host' });
+                        const environment = await readDeploymentEnvironmentForHost({ environmentId: request.environmentId, context }, {
+                            readMetadata: async () => detail, open, assertCurrent,
+                        });
+                        return host.runtime.prepareBackupSourceChoices({ environment, context });
+                    }) : undefined;
+                    return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision,
+                        creationDefaults: { values: defaults.values, sources: defaults.sources },
+                        ...(backupSourceChoices ? { backupSourceChoices } : {}) };
+                } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (actionId === 'deployments.environments.create') {
                 const prepared = DeploymentEnvironmentCreateInputV1Schema.safeParse(input);

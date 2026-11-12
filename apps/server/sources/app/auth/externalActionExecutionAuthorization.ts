@@ -21,7 +21,7 @@ import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvir
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
+import { isBackupWorkspaceRefListHttpPurpose, isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, isDeploymentPreviewPreparationReadEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
@@ -2575,12 +2575,7 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
             select: { id: true, contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, actionOperationId: true } });
         if (verified.effectActionId !== verified.binding.actionId) continue;
         if (proof.method.toUpperCase() === 'POST') {
-            if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
-                const selection = ProjectAccountRowListRequestV1Schema.safeParse(proof.body);
-                // Workspace references use requester-local profile aliases; the row reader owns Account isolation.
-                return selection.success && selection.data.kinds?.length === 1 && selection.data.kinds[0] === 'workspace-ref'
-                    && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, selection.data)) ? {} : false;
-            }
+            if (proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return isBackupWorkspaceRefListHttpPurpose(proof) ? {} : false;
             const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
             if (!secret.success || secret.data.materialization.kind !== scope.secretKind) continue;
             const body = secret.data, materialization = secret.data.materialization;
