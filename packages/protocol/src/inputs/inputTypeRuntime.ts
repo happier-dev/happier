@@ -67,6 +67,12 @@ export type ResolvedInputTypeV1 = Readonly<{
 
 /** A consuming field narrows the type's values; it owns any explicitly declared source. */
 export function readInputFieldOptionsSourceId(field: Pick<InputFieldHint, 'inputType' | 'optionsSourceId'>): string | undefined {
+  // These host pickers produce a schema-validated value without an inventory.
+  // Explicit field constraints still take precedence over the type's default.
+  const type = field.inputType;
+  if (!field.optionsSourceId && type && 'hostType' in type
+    && (type.hostType === 'agentParticipant' || type.hostType === 'savedSecretReference'
+      || type.hostType === 'usageQuery' && type.field === undefined)) return undefined;
   return field.optionsSourceId ?? (field.inputType ? inputTypeOptionsSourceId(field.inputType) : undefined);
 }
 

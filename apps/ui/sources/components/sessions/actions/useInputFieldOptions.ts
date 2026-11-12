@@ -3,6 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { useShallow } from 'zustand/react/shallow';
 import type { InputFieldHint  as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
 import { inputTypeOptionsSourceId, projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
+import { readInputFieldOptionsSourceId } from '@happier-dev/protocol/inputs/runtime';
 
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveMachineTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -27,6 +28,10 @@ const NO_READS: readonly InputOptionsRead[] = Object.freeze([]);
 function hasLocalStaticOptions(field: InputFieldOptionsRequest['field']): boolean {
     // Contributed types may also restrict choices through their serving Resource.
     return field.options !== undefined && (!field.inputType || 'hostType' in field.inputType);
+}
+
+function needsOptionsRead(field: InputFieldOptionsRequest['field']): boolean {
+    return !hasLocalStaticOptions(field) && (readInputFieldOptionsSourceId(field) !== undefined || !!field.connectedAccountOptions);
 }
 
 function fieldKey(field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'inputType'> & { path?: string }, context?: InputFieldOptionsContext): string {
@@ -128,7 +133,7 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(serverId ? { serverId } : {}),
                 ...(!params.machineId && !sessionMachines[index] ? { unavailable: true } : {}),
             };
-            if ((!request.field.optionsSourceId && !request.field.inputType && !request.field.connectedAccountOptions) || hasLocalStaticOptions(request.field)) continue;
+            if (!needsOptionsRead(request.field)) continue;
             const producer = producerRoutes[index];
             const requestMachineId = params.machineId ?? producer?.machineId;
             const optionsSourceId = request.field.optionsSourceId ?? (!requestMachineId && request.field.inputType
@@ -174,7 +179,7 @@ export function useInputFieldOptions(params: Readonly<{
         return activeReads.map(read => states.get(read.key) ?? INPUT_OPTIONS_LOADING);
     }, [activeReads, accountReads.reads, accountReads.snapshot, machineReads.reads, machineReads.snapshot]);
     const state = React.useCallback((field: InputFieldOptionsRequest['field'], context?: InputFieldOptionsContext): InputFieldOptionsState => {
-        if (hasLocalStaticOptions(field) || (!field.optionsSourceId && !field.inputType && !field.connectedAccountOptions)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
+        if (!needsOptionsRead(field)) return { options: field.options ?? EMPTY_INPUT_OPTIONS, status: 'ready' };
         const effectiveContext = context ?? defaultContexts.get(JSON.stringify([field.path, field.optionsSourceId, field.inputType]));
         const key = keys.get(fieldKey(field, effectiveContext));
         const index = activeReads.findIndex((read) => read.key === key);

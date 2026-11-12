@@ -22,6 +22,7 @@ import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/co
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { InputOptionSchema } from '@happier-dev/protocol/inputs';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { workflowInputToFieldHint } from '@happier-dev/protocol/workflows/workflowV1';
 
 // Hoist the physical transport before cross-package imports can capture Socket.IO.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -70,6 +71,16 @@ afterEach(async () => {
 });
 const field = { path: 'repository', inputType: repositoryInputTypeRef };
 const periodField = { path: 'period', inputType: { hostType: 'usageQuery', field: 'period' } } as const;
+
+const participantField = workflowInputToFieldHint({ name: 'participant_1', valueType: 'json', required: true,
+    inputType: { hostType: 'agentParticipant' } });
+function DraftParticipantOptionsProbe(props: Readonly<{ serverId: string; machineId: string | null }>) {
+    const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+    const options = useInputFieldOptions({ serverId: props.serverId, machineId: props.machineId,
+        enabled: !!binding, accountLifetime: binding, requests: [{ field: participantField, draftInput: {} }] });
+    const state = options.state(participantField);
+    return <View testID="draft-participant.options" accessibilityLabel={state.status} accessibilityHint={state.errorCode} />;
+}
 
 function MixedOptionsProbe(props: Readonly<{ serverId: string; workflow: string; observePeriod(state: InputFieldOptionsState): void }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
@@ -186,6 +197,15 @@ function reply(label: string) {
 }
 
 describe('qualified input field options scope', () => {
+    it.each([null, 'controller-a'])('resolves an unsaved capture participant without a saved consumer on Machine %s', async machineId => {
+        const serverId = await harness.addHome({ name: 'Draft capture', serverUrl: 'https://draft-capture.example',
+            serverIdentityId: 'srv_draft_capture', accountId: 'viewer', currentAccount: true });
+        const screen = await renderScreen(<DraftParticipantOptionsProbe serverId={serverId} machineId={machineId} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('draft-participant.options')?.props.accessibilityLabel).not.toBe('loading'));
+        expect({ status: screen.findByTestId('draft-participant.options')?.props.accessibilityLabel,
+            code: screen.findByTestId('draft-participant.options')?.props.accessibilityHint }).toEqual({ status: 'ready', code: undefined });
+        await screen.unmount();
+    });
     it('carries the partial platform draft and paging through the UI Account HTTP executor', async () => {
         const origin = 'https://platform-options.example';
         const serverIdentityId = 'srv_platform_options';

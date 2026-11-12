@@ -4,7 +4,7 @@ import { WorkflowInputDefinitionSchema, workflowInputToFieldHint } from '../work
 import { resolveEffectiveInputFields } from './inputFieldRuntime.js';
 import { inputTypeOptionsSourceId, parseInputTypeOptionsSourceId } from './inputTypes.js';
 import { InputFieldHintSchema, normalizeInputHintsText } from './inputFields.js';
-import { readInputTypeOptions, resolveInputTypeOptions, validateHostInputTypeValue, validateInputTypeValue, validateInputFieldValue, type ResolvedInputTypeV1 } from './inputTypeRuntime.js';
+import { readInputFieldOptionsSourceId, readInputTypeOptions, resolveInputTypeOptions, validateHostInputTypeValue, validateInputTypeValue, validateInputFieldValue, type ResolvedInputTypeV1 } from './inputTypeRuntime.js';
 
 const identity = { pluginId: 'com.acme.inputs', localId: 'repository' };
 const type: ResolvedInputTypeV1 = { identity, occurrenceId: 'serving-1', definition:
@@ -13,6 +13,16 @@ const type: ResolvedInputTypeV1 = { identity, occurrenceId: 'serving-1', definit
       required: ['repositoryId'], additionalProperties: false }, options: { resource: 'repositories' }, picker: 'repository-picker' }) };
 
 describe('typed inputs across consumer domains', () => {
+  it('does not invent inventories for schema-only host pickers, preserving declared constraints and host inventories', () => {
+    for (const inputType of [{ hostType: 'agentParticipant' }, { hostType: 'savedSecretReference' }, { hostType: 'usageQuery' }] as const) {
+      expect(readInputFieldOptionsSourceId({ inputType })).toBeUndefined();
+      expect(readInputFieldOptionsSourceId({ inputType, optionsSourceId: 'declared.choices' })).toBe('declared.choices');
+    }
+    for (const inputType of [{ hostType: 'machine' }, { hostType: 'workspace' }, { hostType: 'session' },
+      { hostType: 'usageQuery', field: 'period' }, { hostType: 'usageQuery', field: 'session' }, identity] as const) {
+      expect(readInputFieldOptionsSourceId({ inputType })).toBe(inputTypeOptionsSourceId(inputType));
+    }
+  });
   it('admits a new string alongside suggested choices only when custom values are declared', () => {
     const descriptor = { path: 'profileId', title: 'Profile', widget: 'select' as const,
       optionsSourceId: 'browser.profiles.available', allowCustomValue: true };
