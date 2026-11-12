@@ -3151,6 +3151,14 @@ rate limits and the subject's actual viewer origin, returning the typed recovery
 state after expiry, viewing-limit exhaustion or revocation. Credential and
 configured-host refusals remain at static delivery.
 
+The landing HTML remains `no-store` and references
+`GET /s/_viewer/<sha256>.js`, whose digest identifies the exact static script
+bytes. Matching assets use `Cache-Control: public, max-age=31536000, immutable`;
+an incorrect digest returns 404 with `no-store`. The legacy
+`GET /s/:lookupId/viewer.js` remains available with `no-store`. All three routes
+share the configured-host and credential admission rules, and the static script
+contains no share-specific content.
+
 The Session share's `networkOff` setting defaults to false and does not rewrite
 its visual records. The shared Action transport omits the default false field;
 a requested true policy must be acknowledged as true before either trusted host

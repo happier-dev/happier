@@ -61,6 +61,7 @@ export type TelegramIncomingMessage = Readonly<{
   chatType: 'private' | 'group' | 'supergroup' | 'channel';
   messageThreadId: string | null;
   isTopicMessage: boolean;
+  topicLabel?: string;
   senderId: string | null;
   senderIsBot: boolean;
   senderLabel?: string;
@@ -350,6 +351,18 @@ function parseIncomingMessage(value: unknown): TelegramIncomingMessage | null {
   const messageThreadId = readSafeInteger(value.message_thread_id);
   const reply = isRecord(value.reply_to_message) ? value.reply_to_message : null;
   const replyToMessageId = reply ? readSafeInteger(reply.message_id) : null;
+  // Telegram attaches the creation service message as the implicit reply to
+  // ordinary supergroup topic messages. An explicit reply may hide that root.
+  const replyChat = reply && isRecord(reply.chat) ? reply.chat : null;
+  const topicCreated = reply && isRecord(reply.forum_topic_created) ? reply.forum_topic_created : null;
+  const topicLabel = value.is_topic_message === true
+    && messageThreadId !== null
+    && replyToMessageId === messageThreadId
+    && replyChat !== null
+    && readSafeInteger(replyChat.id) === chatId
+    && topicCreated !== null
+    ? readString(topicCreated.name)
+    : null;
   const replySender = reply !== null && !Object.hasOwn(reply, 'sender_chat')
     ? parseTelegramUser(reply.from)
     : null;
@@ -366,6 +379,7 @@ function parseIncomingMessage(value: unknown): TelegramIncomingMessage | null {
     chatType,
     messageThreadId: messageThreadId === null ? null : String(messageThreadId),
     isTopicMessage: value.is_topic_message === true,
+    ...(topicLabel ? { topicLabel } : {}),
     senderId: senderId === null ? null : String(senderId),
     senderIsBot: sender?.isBot === true,
     ...(sender?.label === undefined ? {} : { senderLabel: sender.label }),

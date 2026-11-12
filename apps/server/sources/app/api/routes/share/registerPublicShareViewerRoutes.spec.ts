@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDbMocks, createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from '../../testkit/dbMocks';
 import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeConfigSnapshot.testkit';
@@ -5,7 +6,7 @@ import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeCon
 // Only the database transport is replaced; shell admission and HTTP routing stay real.
 const mocks = createDbMocks({ artifact: ['findFirst'], publicSessionShare: ['findUnique'], homeSettings: ['findUnique'], homeGovernancePolicy: ['findUnique'] } as const);
 const transactions = createDbTransactionMock(() => ({ ...mocks.db, ...inTxPostgresControlStatementMock, ...homeConfigSnapshotPostgresQueryMock }));
-installDbModuleMock(() => ({ db: transactions.wrapDb(mocks.db) }));
+installDbModuleMock(() => ({ db: transactions.wrapDb({ ...mocks.db, ...homeConfigSnapshotPostgresQueryMock }) }));
 // Home configuration now reads through the SQLite snapshot transport as well.
 vi.doMock('@/storage/prisma', async importOriginal => ({
     ...await importOriginal<typeof import('@/storage/prisma')>(),
@@ -35,45 +36,27 @@ describe('public share landing recovery through the HTTP owner', () => {
     });
     afterEach(() => vi.unstubAllEnvs());
 
-    it.each(['share', 'profile'] as const)('warms the %s viewer only after listen and reuses its settled promise on first demand', async kind => {
+    it.each(['share', 'profile'] as const)('prepares the %s viewer only on first demand and reuses its settled promise', async kind => {
         let listenJobs = 0;
         await withAuthenticatedTestApp(app => {
-            // Fastify is the network/lifecycle boundary; the real hook and imports run.
+            // Fastify is the network/lifecycle boundary; the real hooks and imports run.
             const hooks = vi.spyOn(app, 'addHook');
             if (kind === 'share') registerPublicShareViewerRoutes(createServerFeatureGatedRouteApp(app, 'sharing.public'));
             else profileViewerOwner.registerPublicProfileReadRoutes(app);
             listenJobs = hooks.mock.calls.filter(call => call[0] === 'onListen').length;
         }, async app => {
-            expect(listenJobs).toBe(1);
-            // A settled import alone leaves React/RNW's first render on the visitor.
-            // Observe real rendering; do not replace the renderer with a mock result.
-            const render = kind === 'profile'
-                ? vi.spyOn(await import('@/app/account/profile/render/publicProfileHtml'), 'renderPublicProfileHtml')
-                : undefined;
-            const preparationEvents = vi.spyOn(app.log, 'info');
-            expect(render?.mock.calls.length ?? 0).toBe(0);
+            // A Home that never serves a public viewer keeps no viewer bundle resident.
+            expect(listenJobs).toBe(0);
             await app.listen({ port: 0, host: '127.0.0.1' });
-            await vi.dynamicImportSettled();
             const load = kind === 'share' ? shareViewerOwner.loadPublicShareViewerScript : profileViewerOwner.loadPublicProfileHtml;
             const first = load();
             expect(load()).toBe(first);
-            let alreadyPrepared = false;
-            void first.then(() => { alreadyPrepared = true; });
-            await Promise.resolve();
-            expect(alreadyPrepared).toBe(true);
             if (kind === 'share') expect(await first).toBe(PUBLIC_SHARE_VIEWER_SCRIPT);
             else {
-                expect(render).toHaveBeenCalledExactlyOnceWith({ kind: 'unavailable' });
-                expect(preparationEvents).toHaveBeenCalledWith({ viewer: 'profile', elapsedMs: expect.any(Number) },
-                    'Post-listen public viewer prepared');
                 const html = (await profileViewerOwner.loadPublicProfileHtml()).renderPublicProfileHtml({ kind: 'unavailable' });
                 expect(html).toContain('Profile unavailable');
-                expect(html).toContain('<style>');
                 expect(html).not.toContain('<script');
-                expect(render).toHaveBeenCalledTimes(2);
-                render?.mockRestore();
             }
-            preparationEvents.mockRestore();
         });
     });
 
@@ -108,6 +91,61 @@ describe('public share landing recovery through the HTTP owner', () => {
                 expect(asset.statusCode).toBe(200);
                 expect(asset.headers['content-type']).toContain('application/javascript');
                 expect(asset.body).toBe(PUBLIC_SHARE_VIEWER_SCRIPT);
+            }
+            expect(mocks.db.publicSessionShare.findUnique).not.toHaveBeenCalled();
+            expect(mocks.db.artifact.findFirst).not.toHaveBeenCalled();
+        });
+    });
+
+    it.each(['isolated-origin', 'main-origin'] as const)('serves one content-addressed viewer on %s with immutable caching and unchanged admission', async mode => {
+        if (mode === 'main-origin') {
+            vi.stubEnv('HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN', '');
+            vi.stubEnv('HAPPIER_PUBLIC_SHARES_ALLOW_SUBPATH', '1');
+        }
+        const origin = resolveStoredContentPublicShareSubjectOrigin(share);
+        if (!origin) throw new Error('Missing test origin');
+        const headers = { host: new URL(origin).host };
+        const digest = createHash('sha256').update(PUBLIC_SHARE_VIEWER_SCRIPT).digest('hex');
+        const assetUrl = '/s/_viewer/' + digest + '.js';
+        await withAuthenticatedTestApp(registerPublicShareViewerRoutes, async app => {
+            for (const id of [lookupId, 'another-share']) {
+                const landing = await app.inject({ method: 'GET', url: '/s/' + id, headers });
+                expect(landing.statusCode).toBe(200);
+                expect(landing.headers['cache-control']).toBe('no-store');
+                expect(landing.body).toContain('<script src="' + assetUrl + '" defer>');
+                expect(landing.body).not.toContain(id);
+                expect(landing.body).not.toContain(PUBLIC_SHARE_VIEWER_SCRIPT);
+            }
+            const asset = await app.inject({ method: 'GET', url: assetUrl, headers });
+            expect(asset.statusCode).toBe(200);
+            expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+            expect(asset.headers['content-type']).toContain('application/javascript');
+            expect(asset.headers['cross-origin-resource-policy']).toBe('same-origin');
+            expect(asset.headers['x-content-type-options']).toBe('nosniff');
+            expect(asset.headers['set-cookie']).toBeUndefined();
+            expect(createHash('sha256').update(asset.body).digest('hex')).toBe(digest);
+            expect(asset.body).toBe(PUBLIC_SHARE_VIEWER_SCRIPT);
+            const legacy = await app.inject({ method: 'GET', url: '/s/' + lookupId + '/viewer.js', headers });
+            expect(legacy.statusCode).toBe(200);
+            expect(legacy.headers['cache-control']).toBe('no-store');
+            expect(legacy.body).toBe(asset.body);
+            const wrongDigest = await app.inject({ method: 'GET', url: '/s/_viewer/' + '0'.repeat(64) + '.js', headers });
+            expect(wrongDigest.statusCode).toBe(404);
+            expect(wrongDigest.headers['cache-control']).toBe('no-store');
+            expect(wrongDigest.json()).toEqual({ error: 'public_share_unavailable' });
+            for (const deniedHeaders of [
+                { ...headers, authorization: 'Bearer secret' },
+                { host: 'unconfigured.example.test' },
+                ...(mode === 'isolated-origin' ? [{ ...headers, cookie: 'account=secret' }] : []),
+            ]) {
+                const refused = await app.inject({ method: 'GET', url: assetUrl, headers: deniedHeaders });
+                expect(refused.statusCode).toBe(404);
+                expect(refused.headers['cache-control']).toBe('no-store');
+            }
+            if (mode === 'main-origin') {
+                const withCookie = await app.inject({ method: 'GET', url: assetUrl, headers: { ...headers, cookie: 'account=secret' } });
+                expect(withCookie.statusCode).toBe(200);
+                expect(withCookie.body).toBe(asset.body);
             }
             expect(mocks.db.publicSessionShare.findUnique).not.toHaveBeenCalled();
             expect(mocks.db.artifact.findFirst).not.toHaveBeenCalled();

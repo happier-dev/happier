@@ -15,7 +15,7 @@ import {
   resolveTelegramEndpoint,
   testTelegramConnection,
 } from './channelActions.js';
-import { TELEGRAM_BOT_CREDENTIAL_PURPOSE } from './constants.js';
+import { TELEGRAM_BOT_CREDENTIAL_PURPOSE, TELEGRAM_CHANNEL_ACTION_IDS } from './constants.js';
 
 const telegramAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
@@ -107,6 +107,72 @@ function botIdentity() {
 }
 
 describe('Telegram Channel provider actions', () => {
+  it('reuses bot identity across idle polls in one activation and renews it after credentials fail or change', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    let token = '123:first-token';
+    let rejectUpdates = false;
+    let otherBot = false;
+    let updates: unknown[] = [];
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+      if (input.url.endsWith('/getMe')) {
+        const identity = botIdentity();
+        return response({ ...identity, result: { ...identity.result, id: otherBot ? 456 : 123 } });
+      }
+      if (input.url.endsWith('/getWebhookInfo')) return response({ ok: true, result: { url: '', pending_update_count: 0 } });
+      if (input.url.endsWith('/getUpdates')) return response(rejectUpdates
+        ? { ok: false, error_code: 401, description: 'Unauthorized' }
+        : { ok: true, result: updates });
+      throw new Error('Unexpected Telegram poll request');
+    }) };
+    const materialize = vi.fn(async () => ({ kind: 'environment' as const, env: { TELEGRAM_BOT_TOKEN: token } }));
+    const context = coreContext(http, { materialize });
+    const request = { ...connection, checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() }, limit: 10, waitMs: 0 };
+    try {
+      const poll = kit.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll);
+      if (!poll) throw new Error('Missing Telegram poll registration');
+      for (let index = 0; index < 10; index += 1) {
+        await expect(poll(request, context)).resolves.toMatchObject({ kind: 'checkpointOnly' });
+      }
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(1);
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'))).toHaveLength(10);
+      // Every poll still acquires the host's current selected credential.
+      expect(materialize).toHaveBeenCalledTimes(10);
+      const probe = kit.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.connectionTest);
+      if (!probe) throw new Error('Missing Telegram connection probe');
+      await expect(probe({ ...connection, selectedTransport: 'checkpointedPull' }, context)).resolves.toMatchObject({ kind: 'ready' });
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(2);
+      updates = [{ update_id: 42, message: { message_id: 8, date: 1_700_000_000,
+        chat: { id: 456, type: 'private' }, from: { id: 789, is_bot: false }, text: 'hello' } }];
+      await expect(poll(request, context)).resolves.toMatchObject({ kind: 'batch', observations: [{
+        observation: { kind: 'fullText', observation: { occurrenceId: 'telegram:update:42' } },
+      }] });
+      updates = [];
+      rejectUpdates = true;
+      await expect(poll(request, context)).resolves.toMatchObject({ kind: 'notReady', reason: 'credentialInvalid' });
+      rejectUpdates = false;
+      await expect(poll(request, context)).resolves.toMatchObject({ kind: 'checkpointOnly' });
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(4);
+      token = '456:replacement-token';
+      otherBot = true;
+      await expect(poll(request, context)).resolves.toMatchObject({ kind: 'notReady', reason: 'invalidConfiguration' });
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(5);
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getUpdates'))).toHaveLength(13);
+    } finally {
+      await kit.dispose();
+    }
+    const reopened = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const poll = reopened.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll);
+      if (!poll) throw new Error('Missing Telegram poll registration');
+      otherBot = false;
+      token = '123:first-token';
+      await expect(poll(request, context)).resolves.toMatchObject({ kind: 'checkpointOnly' });
+      expect(http.request.mock.calls.filter(([input]) => input.url.endsWith('/getMe'))).toHaveLength(6);
+    } finally {
+      await reopened.dispose();
+    }
+  });
+
   it('delivers a registered host notification through the saved connection without a Channels Action caller', async () => {
     const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
@@ -731,6 +797,43 @@ describe('Telegram Channel provider actions', () => {
     const sent = http.request.mock.calls.find(([input]) => input.url.endsWith('/sendMessage'))?.[0];
     expect(JSON.parse(new TextDecoder().decode(sent?.body))).toEqual({
       chat_id: String(chatId), text: 'answer', reply_parameters: { message_id: 8 }, link_preview_options: { is_disabled: true },
+    });
+  });
+
+  it.each([
+    { name: 'implicit topic root', rootChatId: -100456, rootId: 17, service: { forum_topic_created: { name: 'Release planning — exact topic' } }, label: 'Release planning — exact topic' },
+    { name: 'icon-only topic edit', rootChatId: -100456, rootId: 17, service: { forum_topic_edited: { icon_custom_emoji_id: '123' } }, label: undefined },
+    { name: 'another chat root', rootChatId: -100999, rootId: 17, service: { forum_topic_created: { name: 'Another chat' } }, label: undefined },
+    { name: 'another topic root', rootChatId: -100456, rootId: 18, service: { forum_topic_created: { name: 'Another topic' } }, label: undefined },
+    { name: 'ordinary explicit reply', rootChatId: -100456, rootId: 19, service: { text: 'Ordinary message' }, label: undefined },
+    { name: 'inaccessible root', rootChatId: null, rootId: 17, service: {}, label: undefined },
+  ])('projects the native topic name from $name without guessing', async ({ rootChatId, rootId, service, label }) => {
+    const http = { request: vi.fn(async (input: TelegramHttpRequestInput) => {
+      if (input.url.endsWith('/getMe')) return response(botIdentity());
+      if (input.url.endsWith('/getUpdates')) return response({ ok: true, result: [{
+        update_id: 42,
+        message: {
+          message_id: 20, message_thread_id: 17, is_topic_message: true,
+          date: 1_700_000_000, chat: { id: -100456, type: 'supergroup', is_forum: true },
+          from: { id: 789, is_bot: false }, text: '/pair 12345678',
+          ...(rootChatId === null ? {} : { reply_to_message: {
+            message_id: rootId, date: 1_699_999_999,
+            chat: { id: rootChatId, type: 'supergroup', is_forum: true }, ...service,
+          } }),
+        },
+      }] });
+      throw new Error(`Unexpected Telegram request: ${input.url}`);
+    }) };
+    const result = await pollTelegramObservations({
+      ...connection, checkpoint: { v: 1, offset: '42', caughtUpAtMs: Date.now() }, limit: 2, waitMs: 0,
+    }, coreContext(http));
+    expect(result.kind).toBe('batch');
+    if (result.kind !== 'batch') throw new Error('Expected a topic observation.');
+    const ingress = result.observations[0]?.observation;
+    if (ingress?.kind !== 'fullText') throw new Error('Expected the pairing message.');
+    expect(ingress.observation.endpoint).toEqual({
+      kind: 'thread', audience: 'shared', id: '-100456:17', parentId: '-100456',
+      ...(label === undefined ? {} : { label }),
     });
   });
 

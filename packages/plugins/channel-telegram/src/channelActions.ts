@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
 import {
   ConversationNotificationDestinationV1Schema, ConversationNotificationDestinationSetupInputV1Schema,
@@ -244,9 +245,12 @@ async function finalizeTelegramPollResult(
   return result;
 }
 
+type TelegramPollIdentityCache = Map<string, Readonly<{ fingerprint: string; identity: TelegramBotIdentity }>>;
+
 async function createExactTelegramBotApi(
   context: PluginInvocationContext,
   credentialRef: ConnectedAccountRef,
+  identities?: TelegramPollIdentityCache,
 ): Promise<TelegramBotApi | ConversationProviderFailureV1> {
   try {
     const materialized = await context.services.connectedAccounts.materialize(
@@ -263,7 +267,29 @@ async function createExactTelegramBotApi(
     if (!token) {
       return { kind: 'notReady', reason: 'credentialInvalid', diagnostic: 'The Telegram bot token is unavailable.' };
     }
-    return createTelegramBotApi({ token, http: context.services.http });
+    const api = createTelegramBotApi({ token, http: context.services.http });
+    if (identities === undefined) return api;
+    // The activation retains public bot identity only. Each poll still asks the
+    // host for its current credential; a changed token cannot reuse old identity.
+    const key = credentialRef.accountId;
+    const fingerprint = createHash('sha256').update(token).digest('hex');
+    return {
+      ...api,
+      async getMe(options) {
+        const cached = identities.get(key);
+        if (cached?.fingerprint === fingerprint) return cached.identity;
+        const identity = await api.getMe(options);
+        if (!('kind' in identity)) identities.set(key, { fingerprint, identity });
+        return identity;
+      },
+      async getUpdates(input, options) {
+        const result = await api.getUpdates(input, options);
+        // Keep the provider's failure visible; the next ordinary poll probes
+        // identity again, without a second attempt inside this operation.
+        if (result.kind === 'notReady' && result.reason === 'credentialInvalid') identities.delete(key);
+        return result;
+      },
+    };
   } catch (error) {
     return classifyConversationProviderMaterializationFailureV1(error, context.signal,
       'The selected Telegram bot account could not be materialized.');
@@ -273,10 +299,11 @@ async function createExactTelegramBotApi(
 async function connectionApi(
   context: PluginInvocationContext,
   input: ConversationProviderConnectionInputV1,
+  identities?: TelegramPollIdentityCache,
 ): Promise<TelegramBotApi | ConversationProviderFailureV1> {
   const invalid = readConnectionConfig(input);
   if (invalid) return invalid;
-  return await createExactTelegramBotApi(context, input.credentialRef!);
+  return await createExactTelegramBotApi(context, input.credentialRef!, identities);
 }
 
 async function readConnectionIdentity(
@@ -297,8 +324,9 @@ async function readConnectionIdentity(
 async function readyConnection(
   context: PluginInvocationContext,
   input: ConversationProviderConnectionInputV1,
+  identities?: TelegramPollIdentityCache,
 ): Promise<ReadyTelegramConnection | ConversationProviderFailureV1> {
-  const api = await connectionApi(context, input);
+  const api = await connectionApi(context, input, identities);
   if ('kind' in api) return api;
   const identity = await readConnectionIdentity(api, input, context.signal);
   if ('kind' in identity) return identity;
@@ -323,7 +351,7 @@ async function inspectTelegramPollingPrerequisite(
 }
 
 function endpointFromChat(
-  message: Pick<TelegramIncomingMessage, 'chatId' | 'chatType' | 'messageThreadId' | 'isTopicMessage'>,
+  message: Pick<TelegramIncomingMessage, 'chatId' | 'chatType' | 'messageThreadId' | 'isTopicMessage' | 'topicLabel'>,
   label?: string | null,
 ): ConversationResolvedEndpointV1 | null {
   if (
@@ -336,6 +364,7 @@ function endpointFromChat(
       audience: message.chatType === 'private' ? 'direct' : 'shared',
       id: `${message.chatId}:${message.messageThreadId}`,
       parentId: message.chatId,
+      ...(message.topicLabel === undefined ? {} : { label: message.topicLabel }),
       ...(label ? { parentLabel: label } : {}),
     };
   }
@@ -841,7 +870,31 @@ export async function setupTelegramChatEventSource(
   });
 }
 
-export async function pollTelegramObservations(input: unknown, context: PluginInvocationContext): Promise<ConversationPollResultV1> {
+/** The activated plugin owns identity reuse; credential acquisition stays invocation-scoped. */
+export function createTelegramObservationPoller() {
+  const identities: TelegramPollIdentityCache = new Map();
+  return {
+    poll: (input: unknown, context: PluginInvocationContext) => pollTelegramObservations(input, context, identities),
+    async setup(input: unknown, context: PluginInvocationContext) {
+      const result = await setupTelegramChannels(input, context);
+      identities.clear();
+      return result;
+    },
+    async testConnection(input: unknown, context: PluginInvocationContext) {
+      // Explicit probes keep their fresh bot configuration and privacy read.
+      const result = await testTelegramConnection(input, context);
+      identities.clear();
+      return result;
+    },
+    dispose() { identities.clear(); },
+  };
+}
+
+export async function pollTelegramObservations(
+  input: unknown,
+  context: PluginInvocationContext,
+  identities?: TelegramPollIdentityCache,
+): Promise<ConversationPollResultV1> {
   assertTelegramChannelsCoreCaller(context);
   const request = ConversationPollInputV1Schema.parse(input);
   context.signal.throwIfAborted();
@@ -850,7 +903,7 @@ export async function pollTelegramObservations(input: unknown, context: PluginIn
   const checkpoint = readTelegramCheckpoint(request.checkpoint);
   if (checkpoint !== null && 'kind' in checkpoint) return finalizeTelegramPollResult(request, checkpoint, context);
   const nowMs = Date.now();
-  const ready = await readyConnection(context, request);
+  const ready = await readyConnection(context, request, identities);
   if ('kind' in ready) return finalizeTelegramPollResult(request, ready, context);
   // A successful empty read cannot prove the update sequence stayed the same.
   // Once continuity is uncertain, offset zero inspects without acknowledging

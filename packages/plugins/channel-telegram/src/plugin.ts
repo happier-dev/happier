@@ -3,7 +3,7 @@ import {
   ConversationProvidersContributionProtocolV1,
   CONVERSATION_CORE_PLUGIN_ID_V1,
 } from '@happier-dev/channels-protocol/v1';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, type PluginApi } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
@@ -31,12 +31,10 @@ import {
 import {
   deliverTelegramMessage,
   fetchTelegramAttachments,
-  pollTelegramObservations,
+  createTelegramObservationPoller,
   setupTelegramChatEventSource,
   remediateTelegramWebhook,
   resolveTelegramEndpoint,
-  setupTelegramChannels,
-  testTelegramConnection,
   TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA,
   TELEGRAM_SETUP_GUIDANCE,
 } from './channelActions.js';
@@ -54,7 +52,10 @@ const providers = ConversationProvidersContributionProtocolV1;
 const TELEGRAM_CREDENTIAL_REF_INPUT_SCHEMA: PluginJsonSchema =
   TELEGRAM_SETUP_INPUT_PROTOCOL_SCHEMA.jsonSchema;
 
-export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
+function createTelegramPluginDefinition() {
+  const poller = createTelegramObservationPoller();
+  return definePlugin({
+  setup: () => () => poller.dispose(),
   id: TELEGRAM_CHANNEL_PLUGIN_ID,
   version: '0.0.0',
   displayName: 'Telegram Channels',
@@ -202,7 +203,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           },
         ],
       },
-      run: setupTelegramChannels,
+      run: poller.setup,
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation]: {
       title: 'Remove Telegram webhook',
@@ -256,7 +257,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         purpose: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
       }],
       dangerLevel: providers.operations.connectionTest.declaration.dangerLevel,
-      run: testTelegramConnection,
+      run: poller.testConnection,
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve]: {
       title: 'Resolve Telegram chat destination',
@@ -284,7 +285,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         purpose: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
       }],
       dangerLevel: providers.operations.observationsPoll.declaration.dangerLevel,
-      run: pollTelegramObservations,
+      run: poller.poll,
     },
     [TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver a Telegram Channel message',
@@ -383,3 +384,10 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     },
   },
 });
+}
+
+export const PLUGIN_MANIFEST = createTelegramPluginDefinition().manifest;
+
+export function activate(api: PluginApi) {
+  return createTelegramPluginDefinition().activate(api);
+}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod/mini";
 import type { Fastify } from "../../types";
 import { resolveStoredContentPublicShareDelivery } from '@/app/share/storedContentPublicShareOrigin';
@@ -10,25 +11,31 @@ const style = "/* The public reader: Happier's calm reading column (704px), its 
 const csp = `${ARTIFACT_HTML_SHELL_CSP_V1}; frame-ancestors 'none'`;
 
 let publicShareViewerScript: Promise<string> | undefined;
+let publicShareViewerDigest: Promise<string> | undefined;
 
-/** One static payload promise for post-listen preparation and both JS routes. */
+/** One static payload promise, loaded on first demand, for both JS routes. */
 export function loadPublicShareViewerScript(): Promise<string> {
     return publicShareViewerScript ??= import('./publicShareViewerBundle.generated')
         .then(module => module.PUBLIC_SHARE_VIEWER_SCRIPT);
 }
 
+/** The digest belongs to the exact static bytes and is computed once on demand. */
+function loadPublicShareViewerDigest(): Promise<string> {
+    return publicShareViewerDigest ??= loadPublicShareViewerScript()
+        .then(script => createHash('sha256').update(script).digest('hex'));
+}
+
 /** Static delivery uses configured origins; every content request admits its own share. */
 export function registerPublicShareViewerRoutes(app: Fastify): void {
-    const schema = { params: z.strictObject({ lookupId: z.string().check(z.minLength(1)) }) };
-    // Fastify runs onListen after publishing the listening socket; do not return
-    // this promise or make startup await the generated client's evaluation.
-    app.addHook('onListen', () => {
-        void loadPublicShareViewerScript().catch(error => {
-            app.log.error({ err: error, viewer: 'share' }, 'Post-listen public viewer preparation failed');
-        });
-    });
-    for (const asset of [false, true]) {
-        app.get(asset ? "/s/:lookupId/viewer.js" : "/s/:lookupId", { schema }, async (request, reply) => {
+    const schema = { params: z.strictObject({ id: z.string().check(z.minLength(1)) }) };
+    // The generated client (about 4 MiB of source plus its string) is loaded on the
+    // first viewer request, as the public profile renderer is; most Homes never serve one.
+    for (const [path, asset] of [
+        ["/s/:id", "landing"],
+        ["/s/:id/viewer.js", "legacy"],
+        ["/s/_viewer/:id.js", "hashed"],
+    ] as const) {
+        app.get(path, { schema }, async (request, reply) => {
             reply.header("Cache-Control", "no-store");
             reply.header("Referrer-Policy", "no-referrer");
             reply.header("X-Content-Type-Options", "nosniff");
@@ -46,15 +53,22 @@ export function registerPublicShareViewerRoutes(app: Fastify): void {
             // after revocation so the same viewer can render its unavailable state.
             // Isolated static delivery remains share-independent; main-origin cookie
             // admission uses only the configured HTTPS hostname, never an Account.
-            if (asset) {
+            if (asset !== 'landing') {
+                if (asset === 'hashed') {
+                    if (request.params.id !== await loadPublicShareViewerDigest()) {
+                        return reply.code(404).send({ error: 'public_share_unavailable' });
+                    }
+                    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+                }
                 return reply.type("application/javascript; charset=utf-8").send(await loadPublicShareViewerScript());
             }
             reply.header("Content-Security-Policy", csp);
             reply.header("Cross-Origin-Opener-Policy", "same-origin");
             reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
-            // Only the encoded lookup enters the asset URL. The fragment has no
-            // server representation and no plaintext content is embedded.
-            const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shared content · Happier</title><style>${style}</style></head><body><main id="public-share-viewer" data-public-share-delivery="${delivery?.mode ?? ''}" aria-live="polite"><h1>Shared content</h1><p>Opening shared content…</p></main><script src="/s/${encodeURIComponent(request.params.lookupId)}/viewer.js" defer></script></body></html>`;
+            // Only the static script digest enters the asset URL. Neither the share
+            // lookup nor the fragment or plaintext content is embedded.
+            const digest = await loadPublicShareViewerDigest();
+            const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Shared content · Happier</title><style>${style}</style></head><body><main id="public-share-viewer" data-public-share-delivery="${delivery?.mode ?? ''}" aria-live="polite"><h1>Shared content</h1><p>Opening shared content…</p></main><script src="/s/_viewer/${digest}.js" defer></script></body></html>`;
             return reply.type("text/html; charset=utf-8").send(html);
         });
     }
