@@ -148,7 +148,7 @@ describe('projection union retained memory', () => {
         const candidates = measureOriginWork(() => candidateOwner.publish(projection, fleet, ids));
         expect(candidates.value.size).toBe(85);
         expect(candidates.value.get('acme.heap-0')?.sourceCandidates).toHaveLength(60);
-        expect(candidates.value.get('acme.heap-0')?.machineRejections).toHaveLength(60);
+        expect(candidates.value.get('acme.heap-0')?.machineRejections).toHaveLength(0);
         // Two distinct supply paths (declaration and package) per source. Work
         // must follow supplies, rather than each supply × earlier Machines.
         expect.soft(candidates.counts.duplicateComparisons).toBeLessThanOrEqual(2 * 5032);

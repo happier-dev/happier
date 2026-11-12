@@ -93,9 +93,8 @@ it('retains the identity of every unchanged candidate fact when only establishin
     });
     const members = [{ machineId: 'machine-a', serverId: 'home-a', serverIdentityId: 'srv_fact_identity',
         phase: 'current' as const, interactionEnabled: true, projection: base }];
-    const establishing = { ...base, establishingExecutionTargetsByPluginId: {
-        [pluginId]: [{ serverIdentityId: 'srv_fact_identity', machineId: 'machine-a' }] } };
-    const first = readPluginUiExecutionOriginCandidates({ projection: establishing, pluginId, members });
+    const establishingTargets = [{ serverIdentityId: 'srv_fact_identity', machineId: 'machine-a' }];
+    const first = readPluginUiExecutionOriginCandidates({ projection: base, pluginId, members, establishingTargets });
     expect(first.sourceCandidates).toHaveLength(1);
     expect(first.establishingTargets).toHaveLength(1);
     const settled = readPluginUiExecutionOriginCandidates({ projection: base, pluginId, members, previous: first });

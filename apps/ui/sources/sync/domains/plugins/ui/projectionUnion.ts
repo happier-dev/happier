@@ -358,6 +358,12 @@ export type PluginUiProjectionUnion = Readonly<{
      */
     machineId: string | null;
     serverId: string | null;
+    /**
+     * Pending Machines per plugin: trusted installations whose first projection read has not answered.
+     * A union fact, not declaration content: a Machine entering or leaving this set must not
+     * republish the declaration model every catalog consumer reads (P03-RECONNECT-RETURN).
+     */
+    establishingExecutionTargetsByPluginId?: EstablishingTargetsByPluginId;
 }>;
 
 export const EMPTY_PLUGIN_UI_PROJECTION_UNION: PluginUiProjectionUnion = Object.freeze({
@@ -1121,20 +1127,12 @@ function publishPluginUnionChanges(snapshot: PluginUiProjectionUnion, members: r
     let pluginUiProjection = snapshot.pluginUiProjection;
     if (admitted.length === 0) {
         pluginUiProjection = emptyProjection;
-    } else {
-        const pending = retainEstablishingTargets(pluginUiProjection?.establishingExecutionTargetsByPluginId,
-            establishingFacts.establishingExecutionTargetsByPluginId);
-        if (modelChanged || (pluginUiProjection?.generation == null) !== (generation === null)
-            || pending !== pluginUiProjection?.establishingExecutionTargetsByPluginId) {
-            const base = pluginUiProjection ?? [...changedModels.values()].find(model => model !== null) ?? EMPTY_PLUGIN_UI_PROJECTION;
-            const { establishingExecutionTargetsByPluginId: _previousPending, ...withoutPending } = base;
-            pluginUiProjection = Object.freeze({ ...withoutPending, ...maps, generation,
-                ...(pending ? { establishingExecutionTargetsByPluginId: pending } : {}),
-            }) as PluginUiProjectionModel;
-        }
-        if (generation === null && UNION_MAP_KEYS.filter(key => key !== 'installedPackagesById')
-            .every(key => Object.keys(pluginUiProjection?.[key] ?? {}).length === 0)) pluginUiProjection = emptyProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
+    } else if (modelChanged || (pluginUiProjection?.generation == null) !== (generation === null)) {
+        const base = pluginUiProjection ?? [...changedModels.values()].find(model => model !== null) ?? EMPTY_PLUGIN_UI_PROJECTION;
+        pluginUiProjection = Object.freeze({ ...base, ...maps, generation }) as PluginUiProjectionModel;
     }
+    if (admitted.length > 0 && generation === null && UNION_MAP_KEYS.filter(key => key !== 'installedPackagesById')
+        .every(key => Object.keys(pluginUiProjection?.[key] ?? {}).length === 0)) pluginUiProjection = emptyProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
     if (pluginUiProjection && snapshot.pluginUiProjection && admitted.length === 0) pluginUiProjection =
         retainPluginUiProjectionValue(snapshot.pluginUiProjection, pluginUiProjection) as PluginUiProjectionModel;
     if (pluginUiProjection && pluginUiProjection !== snapshot.pluginUiProjection) {
@@ -1142,12 +1140,17 @@ function publishPluginUnionChanges(snapshot: PluginUiProjectionUnion, members: r
         pluginUiProjection = publishProjectionPluginIndex(pluginUiProjection, previousIndex
             ? replacePublishedPluginSlices(previousIndex, changedModels) : prepareProjectionPluginIndex(pluginUiProjection));
     }
+    // Pending targets are a union fact; their churn never replaces the declaration model above.
+    const establishing = retainEstablishingTargets(snapshot.establishingExecutionTargetsByPluginId,
+        establishingFacts.establishingExecutionTargetsByPluginId);
     return pluginUiProjection === snapshot.pluginUiProjection && interactionEnabled === snapshot.interactionEnabled
+        && establishing === snapshot.establishingExecutionTargetsByPluginId
         && phase === snapshot.phase && hasEstablishingMembers === snapshot.hasEstablishingMembers
         && soleMember?.unavailableReasonCode === snapshot.unavailableReasonCode
         && (soleMember?.machineId ?? null) === snapshot.machineId && (soleMember?.serverId ?? null) === snapshot.serverId
         ? snapshot : Object.freeze({ pluginUiProjection, phase, hasEstablishingMembers, interactionEnabled,
-            unavailableReasonCode: soleMember?.unavailableReasonCode, machineId: soleMember?.machineId ?? null, serverId: soleMember?.serverId ?? null });
+            unavailableReasonCode: soleMember?.unavailableReasonCode, machineId: soleMember?.machineId ?? null, serverId: soleMember?.serverId ?? null,
+            ...(establishing ? { establishingExecutionTargetsByPluginId: establishing } : {}) });
 }
 
 /** Runtime identity and health are not portable declaration content. */
@@ -1404,6 +1407,8 @@ export function readPluginUiExecutionOriginCandidates(params: Readonly<{
     members?: readonly PluginUiProjectionUnionMember[];
     /** This consumer's last projection, retained only when every selection fact is unchanged. */
     previous?: PluginUiExecutionOriginCandidateFacts;
+    /** The union's pending Machines for this plugin (`PluginUiProjectionUnion.establishingExecutionTargetsByPluginId`). */
+    establishingTargets?: readonly MachineAdministrationTargetV1[];
 }>): PluginUiExecutionOriginCandidateFacts {
     const entries = params.entry ? [params.entry] : params.projection
         ? declarationMaps(params.projection).flatMap(map => Object.values(map).filter(entry => asRecord(entry)?.pluginId === params.pluginId)) : [];
@@ -1481,6 +1486,7 @@ function readInstalledPackageIds(packages: PluginUiProjectionModel['installedPac
 /** Group declaration families once for all demanded plugins at source publication. */
 export function createPluginUiExecutionOriginCandidatePublication() {
     let projection: PluginUiProjectionModel | null = null;
+    let establishing: EstablishingTargetsByPluginId | undefined;
     let members: readonly PluginUiProjectionUnionMember[] = [];
     let pluginIds: readonly string[] = [];
     let publishedMembers: readonly PluginUiProjectionUnionMember[] | null = null;
@@ -1493,10 +1499,12 @@ export function createPluginUiExecutionOriginCandidatePublication() {
     return {
         getSnapshot: (): ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> => snapshot,
         publish(nextProjection: PluginUiProjectionModel | null, nextMembers: readonly PluginUiProjectionUnionMember[],
-            nextPluginIds: readonly string[]): ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> {
-            if (projection === nextProjection && publishedMembers === nextMembers && publishedPluginIds === nextPluginIds) return snapshot;
+            nextPluginIds: readonly string[], nextEstablishing?: EstablishingTargetsByPluginId): ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> {
+            if (projection === nextProjection && establishing === nextEstablishing
+                && publishedMembers === nextMembers && publishedPluginIds === nextPluginIds) return snapshot;
             const requested = [...new Set(nextPluginIds)];
-            if (projection === nextProjection && arePluginUiProjectionUnionMembersEquivalentForPlugins(members, nextMembers, true)
+            if (projection === nextProjection && establishing === nextEstablishing
+                && arePluginUiProjectionUnionMembersEquivalentForPlugins(members, nextMembers, true)
                 && pluginIds.length === requested.length && pluginIds.every((id, index) => id === requested[index])) {
                 publishedMembers = nextMembers;
                 publishedPluginIds = nextPluginIds;
@@ -1526,7 +1534,7 @@ export function createPluginUiExecutionOriginCandidatePublication() {
                 const input: CandidatePublicationInput = {
                     entries: projectionIndex?.slices[id]?.entries ?? noEntries,
                     installed: nextProjection?.installedPackagesById[id],
-                    establishing: nextProjection?.establishingExecutionTargetsByPluginId?.[id],
+                    establishing: nextEstablishing?.[id],
                     members: membersByPluginId.get(id) ?? [],
                 };
                 const previous = inputs.get(id);
@@ -1534,7 +1542,7 @@ export function createPluginUiExecutionOriginCandidatePublication() {
                     && previous.establishing === input.establishing && sameCandidateMembers(previous.members, input.members, id)
                     ? snapshot.get(id)!
                     : derivePluginUiExecutionOriginCandidates({ projection: nextProjection, pluginId: id, members: input.members,
-                        previous: snapshot.get(id) }, input.entries);
+                        previous: snapshot.get(id), establishingTargets: input.establishing }, input.entries);
                 nextInputs.set(id, input);
                 nextSnapshot.set(id, facts);
             }
@@ -1542,6 +1550,7 @@ export function createPluginUiExecutionOriginCandidatePublication() {
                 snapshot = nextSnapshot;
             }
             projection = nextProjection;
+            establishing = nextEstablishing;
             members = [...nextMembers];
             pluginIds = requested;
             inputs = nextInputs;
@@ -1591,8 +1600,7 @@ function resolveMemberContributionOrigin(
     if (!pluginId) return null;
     const observedInstallation = member.materializationsByPluginId?.[pluginId];
     const activationRefused = memberHasActivationRefusal(member, pluginId);
-    const unavailableReasonCode = member.unavailableReasonCode ?? (activationRefused ? 'plugin_activation_failed'
-        : member.phase === 'establishing' ? 'plugin_source_not_ready' : undefined);
+    const unavailableReasonCode = member.unavailableReasonCode ?? (activationRefused ? 'plugin_activation_failed' : undefined);
     return Object.freeze({ machineId: member.machineId, serverId: member.serverId,
         ...(member.serverIdentityId ? { serverIdentityId: member.serverIdentityId } : {}),
         ...(unavailableReasonCode ? { unavailableReasonCode } : {}),
@@ -1655,7 +1663,7 @@ export function unionPluginUiProjections(
     return derivePluginUiProjectionUnion(members, selectedOriginsByPluginId, createDeclarationComparisons());
 }
 
-type EstablishingTargetsByPluginId = NonNullable<PluginUiProjectionModel['establishingExecutionTargetsByPluginId']>;
+type EstablishingTargetsByPluginId = Readonly<Record<string, readonly MachineAdministrationTargetV1[]>>;
 /**
  * Targets are equal by their two identity fields. A Machine leaving the pending
  * set shifts every later target; compare those fields instead of deep-walking
@@ -1711,10 +1719,12 @@ function readUnionPublicationFacts(
         }
     }
     for (const targets of Object.values(establishingExecutionTargetsByPluginId)) Object.freeze(targets);
-    const establishingFacts = Object.keys(establishingExecutionTargetsByPluginId).length > 0
-        ? { establishingExecutionTargetsByPluginId: Object.freeze(establishingExecutionTargetsByPluginId) } : {};
-    const emptyProjection = 'establishingExecutionTargetsByPluginId' in establishingFacts
-        ? Object.freeze({ ...EMPTY_PLUGIN_UI_PROJECTION, ...establishingFacts }) : null;
+    const establishingFacts: Readonly<{ establishingExecutionTargetsByPluginId?: EstablishingTargetsByPluginId }> =
+        Object.keys(establishingExecutionTargetsByPluginId).length > 0
+            ? { establishingExecutionTargetsByPluginId: Object.freeze(establishingExecutionTargetsByPluginId) } : {};
+    // A known installation can precede its first runtime projection: publish the shared empty model
+    // (not null) while targets are pending. The pending targets themselves live on the union.
+    const emptyProjection = establishingFacts.establishingExecutionTargetsByPluginId ? EMPTY_PLUGIN_UI_PROJECTION : null;
     const soleMember = eligible.length === 1 ? eligible[0] : undefined;
     const contributing = [...eligible]
         .filter((member): member is PluginUiProjectionUnionMember & Readonly<{ projection: PluginUiProjectionModel }> => (
@@ -1751,6 +1761,7 @@ function derivePluginUiProjectionUnion(
             interactionEnabled: false,
             machineId: soleMember?.machineId ?? null,
             serverId: soleMember?.serverId ?? null,
+            ...establishingFacts,
         });
     }
 
@@ -1796,6 +1807,7 @@ function derivePluginUiProjectionUnion(
             interactionEnabled: false,
             machineId: soleMember?.machineId ?? null,
             serverId: soleMember?.serverId ?? null,
+            ...establishingFacts,
         });
     }
 
@@ -2110,11 +2122,11 @@ function derivePluginUiProjectionUnion(
             interactionEnabled,
             machineId: soleMember?.machineId ?? null,
             serverId: soleMember?.serverId ?? null,
+            ...establishingFacts,
         });
     }
 
     const pluginUiProjection: PluginUiProjectionModel = Object.freeze({
-        ...establishingFacts,
         generation,
         installedPackagesById: Object.freeze(installedPackagesById),
         // Account-owned composers consume the same admitted declarations and
@@ -2169,5 +2181,6 @@ function derivePluginUiProjectionUnion(
         interactionEnabled,
         machineId: soleMember?.machineId ?? null,
         serverId: soleMember?.serverId ?? null,
+        ...establishingFacts,
     });
 }

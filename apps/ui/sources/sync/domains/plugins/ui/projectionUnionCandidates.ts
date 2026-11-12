@@ -19,14 +19,15 @@ const sourceCandidatesBySupply = new WeakMap<PluginUiContributionSupplyV1, Plugi
 
 /** Accumulators belong to one derivation; only the resulting immutable facts survive. */
 export function derivePluginUiExecutionOriginCandidateFacts(
-    params: Readonly<{ projection: PluginUiProjectionModel | null; pluginId: string; previous?: PluginUiExecutionOriginCandidateFacts }>,
+    params: Readonly<{ projection: PluginUiProjectionModel | null; pluginId: string; previous?: PluginUiExecutionOriginCandidateFacts;
+        establishingTargets?: readonly MachineAdministrationTargetV1[] }>,
     entries: readonly unknown[],
     packageSupplies: readonly PluginUiContributionSupplyV1[],
 ): PluginUiExecutionOriginCandidateFacts {
     const sourceCandidates: PluginMachineSourceExecutionOriginCandidateV1[] = [];
     const declaredDefaultOrigins: PluginMachineExecutionOriginV1[] = [];
     const machineRejections: PluginMachineExecutionOriginRejectionV1[] = [];
-    const establishingTargets: MachineAdministrationTargetV1[] = [...(params.projection?.establishingExecutionTargetsByPluginId?.[params.pluginId] ?? [])];
+    const establishingTargets: MachineAdministrationTargetV1[] = [...(params.establishingTargets ?? [])];
     const establishingKeys = new Map<string, Set<string>>();
     for (const target of establishingTargets) addTarget(establishingKeys, target.serverIdentityId, target.machineId);
     const rejectionKeys = new Map<string, Set<string>>();
