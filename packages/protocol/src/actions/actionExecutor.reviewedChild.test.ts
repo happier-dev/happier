@@ -21,6 +21,7 @@ import {
 } from '../machines/managed/actionsV1.js';
 import { SessionSpawnNewActionInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '../providers/brokerRouteGrantV1.js';
 
 const parent = { actionId: 'machines.setup.apply', input: { homeId: 'home', machineId: 'machine' } };
 const child = { action: { pluginId: 'acme.fixture', localId: 'inspect' }, role: 'inspect',
@@ -605,6 +606,40 @@ describe('generic reviewed host children', () => {
     expect(entered).toBe(1);
   });
 
+  it('keeps preparation reads on their own admitted purpose when a core continuation invokes its writer', async () => {
+    const root = { actionId: 'deployments.environments.moveToRepository', input: { serverId: 'home', environmentId: 'environment' } };
+    const update = { action: 'deployments.environments.update' as const, role: 'move.definition',
+      input: { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+        contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root-token', binding: {
+      serverIdentityId: 'home', accountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', actionId: root.actionId, requestId: 'root-request',
+      requestEnvelopeDigest: 'A'.repeat(43), target: context.externalActionTarget,
+      authentication: { kind: 'account', tokenEpoch: 1 },
+    } });
+    const requests: unknown[] = [];
+    Object.defineProperty(authorization, 'requesterHttpProjection', { value: {
+      accountId: 'owner', serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+      isCurrent: async () => true,
+      createRequestHeaders: async (request: unknown) => { requests.push(request); return {}; },
+    } });
+    const read = { effectActionId: 'deployments.environments.get', method: 'GET', path: '/v1/deployments/environments/environment' };
+    const artifactRead = { effectActionId: update.action, method: 'GET', path: '/v1/artifacts/candidate' };
+    const write = { effectActionId: update.action, method: 'PATCH', path: read.path, body: update.input };
+    await invokeHostReviewedChildV1({ parent: root, context: { ...context, externalActionExecutionAuthorization: authorization },
+      child: update, admittedReview: { action: update.action, role: update.role, surface: 'cli' },
+      execute: async (_input, childContext) => {
+        const http = childContext.externalActionExecutionAuthorization!.requesterHttpProjection!;
+        await http.createRequestHeaders(read);
+        await http.createRequestHeaders(artifactRead);
+        await http.createRequestHeaders(write);
+        return { ok: true, result: null };
+      } });
+    expect(requests).toEqual([read, { ...artifactRead, effectActionId: root.actionId }, { ...write, reviewedChild: {
+      actionId: update.action, role: update.role, inputDigest: computeActionInputApprovalDigestV1(update.action, update.input),
+    } }]);
+  });
+
   it('projects only admitted live children onto the root HTTP port and keeps private root facets', async () => {
     const root = { actionId: 'machines.reboot', input: { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' } };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root-token', binding: {
@@ -651,6 +686,26 @@ describe('generic reviewed host children', () => {
         // Host admission reads keep the root purpose; the plugin child proof
         // describes the plugin's own calls, not the host's deployment reads.
         expect(networkRequests.pop()).toEqual(parentRequest);
+        const consumer = { kind: 'action_operation', operationId: authorization.binding.requestId,
+          actionId: 'acme.fixture/actions/inspect', pluginVersion: '1.0.0',
+          purpose: { consumer: child.action, purpose: 'cloud-api' } };
+        const reviewedChild = { actionId: consumer.actionId, role: child.role,
+          inputDigest: computeActionInputApprovalDigestV1('acme.fixture/actions/inspect', child.input) };
+        const credentialRequests = [
+          { effectActionId: root.actionId, method: 'POST', path: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
+            body: { v: 3, resourceId: 'resource', initiatorMachineId: 'machine', consumer, inputDigest: reviewedChild.inputDigest } },
+          { effectActionId: root.actionId, method: 'POST', path: '/v2/teams/team/credential-resources/resource/direct-material',
+            body: { resourceId: 'resource', consumer, slot: { kind: 'connected_service_purpose', purpose: consumer.purpose },
+              disclosedMember: { service: { pluginId: 'acme.fixture', localId: 'cloud' }, accountId: 'provider' } } },
+        ];
+        for (const credentialRequest of credentialRequests) {
+          await carried.requesterHttpProjection!.createRequestHeaders(credentialRequest);
+          expect(networkRequests.pop()).toEqual({ ...credentialRequest, reviewedChild });
+          const changed = { ...credentialRequest, body: { ...credentialRequest.body,
+            consumer: { ...consumer, operationId: 'unrelated-operation' } } };
+          await carried.requesterHttpProjection!.createRequestHeaders({ ...changed, reviewedChild });
+          expect(networkRequests.pop()).toEqual(changed);
+        }
       }
       return { ok: true as const, result: {} };
     };

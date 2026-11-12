@@ -1,3 +1,4 @@
+import { ActionExecuteResultSchema } from '../actions/actionExecutionResult.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
@@ -9,6 +10,9 @@ import { IrohEndpointDescriptorV1Schema, IrohEndpointIdV1Schema } from '../conne
 import { DirectRouteGrantSignatureV2Schema } from '../machines/peer/mediation/directRouteGrantV2.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { TeamCredentialActionOperationConsumerV1Schema } from '../teams/credentials/actionOperationV1.js';
+import { PluginUiArtifactDigestV1Schema } from '../plugins/ui/artifactIntegrity.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
 import { TeamCredentialUsageLimitDenialV1Schema } from '../teams/credentials/usageV1.js';
 import { ProviderWireProtocolSchema } from './capabilities/v1.js';
@@ -41,10 +45,16 @@ const BROKER_AUTHORITY_HEADER_OVERHEAD_BYTES =
 export const PROVIDER_BROKER_AUTHORITY_MAX_ENCODED_BYTES = 16 * 1024 - BROKER_AUTHORITY_HEADER_OVERHEAD_BYTES;
 
 const IdentitySchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
+const runtimeConsumerVariants = [
+  lazyZodSchema(() => z.strictObject({ kind: z.literal('session'), sessionId: IdentitySchema })),
+  lazyZodSchema(() => z.strictObject({ kind: z.literal('execution_run'), executionRunId: IdentitySchema })),
+] as const;
+/** The canonical consumer vocabulary; model-only contracts use its runtime subset. */
 export const ProviderBrokerConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('session'), sessionId: IdentitySchema }),
-  z.strictObject({ kind: z.literal('execution_run'), executionRunId: IdentitySchema }),
+  ...runtimeConsumerVariants, TeamCredentialActionOperationConsumerV1Schema,
 ]));
+export const ProviderBrokerRuntimeConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', runtimeConsumerVariants));
+export type ProviderBrokerRuntimeConsumerV1 = z.infer<typeof ProviderBrokerRuntimeConsumerV1Schema>;
 
 /**
  * Exact executable Provider source application. External clients need no
@@ -94,7 +104,7 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   initiatorTokenEpoch: z.number().check(z.int(), z.nonnegative()),
   initiator: z.strictObject({ accountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
   target: z.strictObject({ custodianAccountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
-  consumer: ProviderBrokerConsumerV1Schema,
+  consumer: ProviderBrokerRuntimeConsumerV1Schema,
   executionRunOccurrenceId: z.optional(IdentitySchema),
   application: ProviderBrokerApplicationBindingV1Schema,
   /** Immutable provenance: the authentication evidence of the exact credential
@@ -148,7 +158,7 @@ export const ProviderBrokerOpenRequestV1Schema = lazyZodSchema(() => z.strictObj
   modelId: z.string().check(z.trim(), z.minLength(1)),
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   initiatorMachineId: IdentitySchema,
-  consumer: ProviderBrokerConsumerV1Schema,
+  consumer: ProviderBrokerRuntimeConsumerV1Schema,
   application: ProviderBrokerApplicationBindingV1Schema,
   /** A previously Home-signed open may be presented only to reauthorize its
    * exact target for another carrier handshake. The Home verifies and
@@ -236,11 +246,7 @@ export const ProviderBrokerRefusalV1Schema = lazyZodSchema(() => z.strictObject(
 }));
 export type ProviderBrokerRefusalV1 = z.infer<typeof ProviderBrokerRefusalV1Schema>;
 
-export const ProviderBrokerOpenResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
-  z.strictObject({
-    ok: z.literal(true),
-    authority: SignedProviderBrokerRouteGrantV1Schema,
-    target: z.strictObject({
+export const ProviderBrokerOpenTargetV1Schema = lazyZodSchema(() => z.strictObject({
       custodianAccountId: IdentitySchema,
       brokerMachineId: IdentitySchema,
       endpointId: IrohEndpointIdV1Schema,
@@ -250,7 +256,13 @@ export const ProviderBrokerOpenResponseV1Schema = lazyZodSchema(() => z.discrimi
       if (target.endpoint.endpointId !== target.endpointId) {
         context.addIssue({ code: 'custom', path: ['endpoint', 'endpointId'], message: 'Descriptor identity must match the broker target endpoint' });
       }
-    })),
+    })));
+
+export const ProviderBrokerOpenResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({
+    ok: z.literal(true),
+    authority: SignedProviderBrokerRouteGrantV1Schema,
+    target: ProviderBrokerOpenTargetV1Schema,
   }),
   ProviderBrokerAdmissionFailureV1Schema,
 ]));
@@ -261,10 +273,7 @@ export const ProviderBrokerRequestAdmissionResponseV1Schema = lazyZodSchema(() =
     resourceId: IdentitySchema,
     brokerMachineId: IdentitySchema,
     source: TeamCredentialSourceBindingV1Schema,
-    operation: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('session'), sessionId: IdentitySchema }),
-      z.strictObject({ kind: z.literal('execution_run'), executionRunId: IdentitySchema }),
-    ]),
+    operation: ProviderBrokerConsumerV1Schema,
     usageEventId: z.nullable(IdentitySchema),
   }),
   ProviderBrokerAdmissionFailureV1Schema,
@@ -337,7 +346,7 @@ export const ProviderBrokerRouteGrantPayloadV2Schema = lazyZodSchema(() => z.str
   initiatorTokenEpoch: z.number().check(z.int(), z.nonnegative()),
   initiator: z.strictObject({ accountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
   target: z.strictObject({ custodianAccountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
-  consumer: ProviderBrokerConsumerV1Schema,
+  consumer: ProviderBrokerRuntimeConsumerV1Schema,
   executionRunOccurrenceId: z.optional(IdentitySchema),
   application: ProviderBrokerApplicationBindingV1Schema,
 }).check(z.superRefine((payload, context) => {
@@ -368,12 +377,12 @@ export const IrohProviderBrokerHandshakeV2Schema = lazyZodSchema(() => z.strictO
   intent: z.optional(z.literal('release')),
 }));
 export const IrohProviderBrokerHandshakeSchema = lazyZodSchema(() => z.union([
-  IrohProviderBrokerHandshakeV1Schema, IrohProviderBrokerHandshakeV2Schema,
+  IrohProviderBrokerHandshakeV1Schema, IrohProviderBrokerHandshakeV2Schema, IrohProviderBrokerActionHandshakeV3Schema,
 ]));
 export const ProviderBrokerAccountOpenRequestV2Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), source: ProviderBrokerAccountSourceV2Schema,
   initiatorMachineId: IdentitySchema, targetMachineId: IdentitySchema,
-  consumer: ProviderBrokerConsumerV1Schema, application: ProviderBrokerApplicationBindingV1Schema,
+  consumer: ProviderBrokerRuntimeConsumerV1Schema, application: ProviderBrokerApplicationBindingV1Schema,
   refreshAuthority: z.optional(SignedProviderBrokerRouteGrantV2Schema),
 }).check(z.superRefine((request, context) => {
   if (request.initiatorMachineId === request.targetMachineId) {
@@ -412,4 +421,67 @@ export function createProviderBrokerRouteGrantSigningInputV2(payload: ProviderBr
 }
 export function encodeProviderBrokerAuthorityV2(authority: SignedProviderBrokerRouteGrantV2): string {
   return encodeBase64(new TextEncoder().encode(createCanonicalJsonSigningInput(SignedProviderBrokerRouteGrantV2Schema.parse(authority))), 'base64url');
+}
+
+/** Finite declared Actions use their own closed authority epoch, with no model
+ * application or credential disclosure. Existing inference epochs retain their
+ * exact shapes. The source is the Home-admitted snapshot for this finite job. */
+export const PROVIDER_BROKER_ACTION_ROUTE_AUDIENCE_V3 = 'happier-provider-broker-action-v3' as const;
+export const PROVIDER_BROKER_ACTION_EXECUTE_PATH_V3 = '/v1/_happier/provider-broker/action' as const;
+export const ProviderBrokerActionOpenRequestV3Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(3),
+  resourceId: IdentitySchema,
+  initiatorMachineId: IdentitySchema,
+  consumer: TeamCredentialActionOperationConsumerV1Schema,
+  inputDigest: IdentitySchema,
+}));
+export const ProviderBrokerActionRouteGrantPayloadV3Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(3), grantId: IdentitySchema, aud: z.literal(PROVIDER_BROKER_ACTION_ROUTE_AUDIENCE_V3),
+  issuedAt: z.number().check(z.int(), z.nonnegative()), expiresAt: z.number().check(z.int(), z.positive()),
+  teamId: IdentitySchema, resourceId: IdentitySchema, source: TeamCredentialSourceBindingV1Schema,
+  consumer: TeamCredentialActionOperationConsumerV1Schema,
+  inputDigest: IdentitySchema,
+  declaration: z.strictObject({ version: z.string().check(z.trim(), z.minLength(1)), manifestDigestSha256: PluginUiArtifactDigestV1Schema }),
+  initiator: z.strictObject({ accountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
+  target: z.strictObject({ custodianAccountId: IdentitySchema, machineId: IdentitySchema, endpointId: IrohEndpointIdV1Schema }),
+}).check(z.superRefine((payload, context) => {
+  if (payload.expiresAt <= payload.issuedAt) context.addIssue({ code: 'custom', path: ['expiresAt'], message: 'Expiry must follow issue time' });
+  if (payload.initiator.accountId === payload.target.custodianAccountId) context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Accounts must be distinct' });
+  if ((payload.initiator.machineId === payload.target.machineId) !== (payload.initiator.endpointId === payload.target.endpointId)) {
+    context.addIssue({ code: 'custom', path: ['target'], message: 'Broker Machine and endpoint identities must agree' });
+  }
+})));
+export const SignedProviderBrokerActionRouteGrantV3Schema = lazyZodSchema(() => z.strictObject({
+  payload: ProviderBrokerActionRouteGrantPayloadV3Schema, signature: DirectRouteGrantSignatureV2Schema,
+}).check(z.superRefine((authority, context) => {
+  const bytes = new TextEncoder().encode(createCanonicalJsonSigningInput(authority));
+  if (Math.ceil(bytes.byteLength * 8 / 6) > PROVIDER_BROKER_AUTHORITY_MAX_ENCODED_BYTES) {
+    context.addIssue({ code: 'custom', message: 'Encoded broker authority exceeds the native HTTP header budget' });
+  }
+})));
+export const IrohProviderBrokerActionHandshakeV3Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(3), kind: z.literal('provider_broker'), authority: SignedProviderBrokerActionRouteGrantV3Schema,
+}));
+export const ProviderBrokerActionOpenResponseV3Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), authority: SignedProviderBrokerActionRouteGrantV3Schema,
+    target: ProviderBrokerOpenTargetV1Schema }),
+  ProviderBrokerAdmissionFailureV1Schema,
+]));
+export const ProviderBrokerActionAdmissionV3Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(3), authority: SignedProviderBrokerActionRouteGrantV3Schema,
+}));
+export const ProviderBrokerActionAdmissionResponseV3Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true) }), ProviderBrokerAdmissionFailureV1Schema,
+]));
+export const ProviderBrokerActionExecuteRequestV3Schema = lazyZodSchema(() => z.strictObject({ input: StrictJsonValueSchema }));
+export const ProviderBrokerActionExecuteResponseV3Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), execution: ActionExecuteResultSchema }), ProviderBrokerAdmissionFailureV1Schema,
+]));
+export type ProviderBrokerActionOpenRequestV3 = z.infer<typeof ProviderBrokerActionOpenRequestV3Schema>;
+export type SignedProviderBrokerActionRouteGrantV3 = z.infer<typeof SignedProviderBrokerActionRouteGrantV3Schema>;
+export type ProviderBrokerActionOpenResponseV3 = z.infer<typeof ProviderBrokerActionOpenResponseV3Schema>;
+export type ProviderBrokerActionExecuteResponseV3 = z.infer<typeof ProviderBrokerActionExecuteResponseV3Schema>;
+export type ProviderBrokerActionAdmissionResponseV3 = z.infer<typeof ProviderBrokerActionAdmissionResponseV3Schema>;
+export function createProviderBrokerActionRouteGrantSigningInputV3(payload: SignedProviderBrokerActionRouteGrantV3['payload']): string {
+  return createCanonicalJsonSigningInput(ProviderBrokerActionRouteGrantPayloadV3Schema.parse(payload));
 }

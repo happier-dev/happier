@@ -1,4 +1,5 @@
 import tweetnacl from 'tweetnacl';
+import { readTeamCredentialActionHttpPurposeV1 } from './actionHttpPurposeV1.js';
 import { describe, expect, it } from 'vitest';
 import { encodeBase64 } from '../../crypto/base64.js';
 import { sealBoxBundle } from '../../crypto/boxBundle.js';
@@ -145,6 +146,24 @@ describe('Team credential direct material v1', () => {
         accountId: 'account-1',
       },
     } as const;
+    const actionConsumer = { kind: 'action_operation' as const, operationId: 'action-request-1',
+      actionId: 'happier.agent/actions/search', pluginVersion: '1.0.0', purpose: common.slot.purpose };
+    const body = { ...common, consumer: actionConsumer };
+    expect(TeamCredentialDirectMaterialOpenRequestV1Schema.parse(body).consumer).toEqual(actionConsumer);
+    const request = { method: 'POST', path: '/v2/teams/team-1/credential-resources/resource-1/direct-material', body };
+    expect(readTeamCredentialActionHttpPurposeV1(request)).toMatchObject({ kind: 'direct_material',
+      teamId: 'team-1', resourceId: 'resource-1', consumer: actionConsumer });
+    expect(readTeamCredentialActionHttpPurposeV1({ ...request, method: 'GET' })).toBeNull();
+    expect(readTeamCredentialActionHttpPurposeV1({ ...request, path: request.path + '?extra=true' })).toBeNull();
+    expect(readTeamCredentialActionHttpPurposeV1({ ...request,
+      path: request.path.replace('resource-1', '%72esource-1') })).toBeNull();
+    expect(readTeamCredentialActionHttpPurposeV1({ ...request, body: { ...body, resourceId: 'other' } })).toBeNull();
+    expect(readTeamCredentialActionHttpPurposeV1({ ...request,
+      body: { ...body, consumer: { kind: 'session', sessionId: 'session-1' } } })).toBeNull();
+    expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse({ ...common,
+      consumer: { ...actionConsumer, purpose: { ...actionConsumer.purpose, purpose: 'undeclared' } } }).success).toBe(false);
+    expect(TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse({ resourceId: common.resourceId,
+      slot: { kind: 'provider_model' }, sourceMemberKey: 'provider-member', consumer: actionConsumer }).success).toBe(false);
     expect(TeamCredentialDirectMaterialOpenRequestV1Schema.parse({
       ...common,
       consumer: { kind: 'session', sessionId: 'session-1' },

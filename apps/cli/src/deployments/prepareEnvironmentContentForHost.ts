@@ -63,9 +63,10 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 const wire = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
                     input: { serverId: request.context.externalActionExecutionAuthorization?.binding.serverIdentityId
                         ?? request.input.serverId, environmentId } });
-                // Template preparation admits the selected Environment's read Action.
-                // Native authoring retains its original create/update purpose.
-                const metadataActionId = request.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.templates.instantiate'
+                // Composed preparation uses the selected Environment's read Action.
+                // A root writer retains its original create/update purpose.
+                const admittedRoot = request.context.externalActionExecutionAuthorization?.binding.actionId;
+                const metadataActionId = admittedRoot !== undefined && admittedRoot !== request.actionId
                     ? 'deployments.environments.get' : request.actionId;
                 const headers = await host.resolveRequestHeaders(request.context, metadataActionId, wire);
                 if (!headers) throw Object.assign(new Error('action_forbidden'), { code: 'action_forbidden' });

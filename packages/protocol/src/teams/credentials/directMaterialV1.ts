@@ -25,6 +25,7 @@ import { ProviderWireProtocolSchema } from '../../providers/capabilities/v1.js';
 import { ACCOUNT_SETTINGS_MAX_SAVED_SECRETS_BYTES } from '../../account/settings/catalog/accountSettingBounds.js';
 import { TeamCredentialSourceBindingV1Schema } from './sourceBindingV1.js';
 import { TeamCredentialDirectMaterialIdentityV1Schema } from './directMaterialCensusV1.js';
+import { TeamCredentialActionOperationConsumerV1Schema } from './actionOperationV1.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '../../connect/pluginConnectedAccountAuthenticationV2.js';
 import { MachineInstallationProofV1Schema } from '../../machines/identity/installationIdentity.js';
 import { SessionTeamCredentialNativeDeliveryV1Schema } from './sessionBindingIntentV1.js';
@@ -228,6 +229,7 @@ export const TeamCredentialDirectMaterialReadQueryV1Schema = lazyZodSchema(() =>
 ]));
 
 export const TeamCredentialDirectMaterialConsumerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  TeamCredentialActionOperationConsumerV1Schema,
   z.strictObject({ kind: z.literal('platform_operation'), deploymentId: BoundedIdentitySchema,
     environmentId: BoundedIdentitySchema, operationId: BoundedIdentitySchema }),
   z.strictObject({ kind: z.literal('session'), sessionId: BoundedIdentitySchema }),
@@ -248,7 +250,12 @@ export const TeamCredentialDirectMaterialOpenRequestV1Schema = lazyZodSchema(() 
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(TeamCredentialConnectedServiceDirectMaterialUseV1Schema, {
     consumer: TeamCredentialDirectMaterialConsumerV1Schema,
   })),
-]));
+]).check(z.refine(value => value.consumer.kind !== 'action_operation'
+  || value.slot.kind === 'connected_service_purpose'
+    && value.slot.purpose.consumer.pluginId === value.consumer.purpose.consumer.pluginId
+    && value.slot.purpose.consumer.localId === value.consumer.purpose.consumer.localId
+    && value.slot.purpose.purpose === value.consumer.purpose.purpose,
+  { message: 'Finite Action material must name its exact Connected Account purpose' })));
 export type TeamCredentialDirectMaterialOpenRequestV1 = z.infer<
   typeof TeamCredentialDirectMaterialOpenRequestV1Schema
 >;

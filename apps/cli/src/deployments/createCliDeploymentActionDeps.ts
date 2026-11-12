@@ -410,9 +410,13 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   }
   return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => {
     const metadataRoot = isDeploymentApprovalMetadataPreparationActionIdV1(args.actionId) ? args.actionId : undefined;
+    const admittedRoot = args.context.externalActionExecutionAuthorization?.binding.actionId;
+    // A root writer admits its own scope read. A composed child keeps the
+    // read's purpose under its parent rather than claiming a child mutation.
+    const writerIsRoot = admittedRoot === undefined || admittedRoot === args.actionId;
     return createDeploymentApprovalScopeResolverV1((actionId, input, context) =>
       request(actionId, input, { ...context, onTransportIssued: undefined },
-        args.actionId === 'deployments.environments.update' || args.actionId === 'deployments.bindings.set'
+        writerIsRoot && (args.actionId === 'deployments.environments.update' || args.actionId === 'deployments.bindings.set')
           ? args.actionId : actionId), metadataRoot
         ? ({ serverId, environmentId, context }) => request('deployments.environments.get', { serverId, environmentId },
           { ...context, onTransportIssued: undefined }, metadataRoot, undefined, true) : undefined)(args);

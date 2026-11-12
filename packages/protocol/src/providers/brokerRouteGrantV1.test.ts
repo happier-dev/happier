@@ -38,6 +38,17 @@ const payload = {
 const authority = { payload, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } };
 
 describe('Provider broker authority V1', () => {
+  it('carries finite Action identity through the canonical consumer and admitted-operation response', async () => {
+    const { ProviderBrokerConsumerV1Schema } = await import('./brokerRouteGrantV1.js');
+    const operation = { kind: 'action_operation', operationId: 'request-1', actionId: 'example.cloud/actions/options', pluginVersion: '1.0.0',
+      purpose: { consumer: { pluginId: 'example.cloud', localId: 'options' }, purpose: 'cloud-api' } };
+    expect(ProviderBrokerConsumerV1Schema.safeParse(operation).success).toBe(true);
+    expect(ProviderBrokerRequestAdmissionResponseV1Schema.parse({ ok: true, resourceId: 'resource',
+      brokerMachineId: 'broker', source: { v: 1, kind: 'connected_account', target: { kind: 'account', account: {
+        service: { pluginId: 'example.cloud', localId: 'cloud' }, accountId: 'owner-account' } },
+        credentialIncarnation: 'source-1' }, operation, usageEventId: null }).operation).toEqual(operation);
+  });
+
   it('carries same-Machine Team authority through encoding and the exact carrier handshake', () => {
     const localAuthority = { ...authority, payload: { ...payload,
       target: { ...payload.target, machineId: payload.initiator.machineId, endpointId: payload.initiator.endpointId },

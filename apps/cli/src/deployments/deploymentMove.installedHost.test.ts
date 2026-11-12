@@ -1,4 +1,8 @@
 import axios from 'axios';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import {
@@ -106,7 +110,8 @@ async function createInstalledMoveHost(
   };
   const artifactReads: string[] = [];
   const artifactWrites: string[] = [];
-  vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+  const createdArtifacts = new Map<string, object>();
+  vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/encryption/currentness')
       return {
@@ -116,6 +121,9 @@ async function createInstalledMoveHost(
     if (path === '/v1/account/encryption')
       return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     artifactReads.push(path);
+    const created = createdArtifacts.get(path);
+    if (created && config?.headers?.['x-fixture-effect'] === 'deployments.environments.moveToRepository')
+      return { status: 200, data: created };
     if (path !== `/v1/artifacts/${environment.contentArtifactId}`)
       return {
         status: 403,
@@ -170,6 +178,9 @@ async function createInstalledMoveHost(
       typeof body.id === 'string'
     ) {
       artifactWrites.push(body.id);
+      createdArtifacts.set(`/v1/artifacts/${encodeURIComponent(body.id)}`, { ...body,
+        ownerAccountId: 'account', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
       return {
         status: 200,
         data: { id: body.id, headerVersion: 1, bodyVersion: 1 },
@@ -392,7 +403,7 @@ it('previews the file changes by reading the reviewed checkout on the placed Mac
   }
 });
 
-it('previews, opens the pull request and switches after merge inside the reviewed checkout', async () => {
+it.each([false, true])('previews, opens the pull request and switches after merge inside the reviewed checkout (signed=%s)', async signed => {
   const git = createLocalScmRepositoryFixture({
     executable: 'git',
     repoMode: '.git',
@@ -513,10 +524,59 @@ it('previews, opens the pull request and switches after merge inside the reviewe
       headSha: continuation.headCommit,
       mergeCommitSha: continuation.headCommit,
     });
-    const switched = await deps.deploymentMoveToRepository!(
-      { ...input, mode: 'apply', continuation },
-      context,
-      home.execute,
+    let switched;
+    if (signed) {
+      const signedRequests: { effectActionId: string; method: string; path: string }[] = [];
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-root', binding: {
+        serverIdentityId: 'home', accountId: 'account', custodianAccountId: 'account', machineId: 'controller',
+        installationId: 'installation', actionId: 'deployments.environments.moveToRepository', requestId: 'continue-request',
+        requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'controller' },
+        environmentId: environment.id, accountEncryptionMode: 'plain', admittedMachineRole: 'manage',
+        authentication: { kind: 'account', tokenEpoch: 1 },
+      } });
+      // The Home HTTP boundary rejects a metadata GET signed as an update.
+      // Keep the installed host, child issuer and continuation execution real.
+      Object.defineProperties(authorization, {
+        requesterAccountProjection: { value: { accountId: 'account', serverId: 'home',
+          accountEncryptionMode: 'plain', isCurrent: async () => true } },
+        requesterHttpProjection: { value: {
+          accountId: 'account', serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://move.test',
+          accountEncryptionMode: 'plain', isCurrent: async () => true,
+          createRequestHeaders: async (request: { effectActionId: string; method: string; path: string }) => {
+            signedRequests.push({ effectActionId: request.effectActionId, method: request.method, path: request.path });
+            // The verified host signer carries its admitted Account mode locally.
+            return { 'x-fixture-effect': request.effectActionId, [requesterAccountEncryptionMode]: 'plain' as const };
+          },
+        } },
+      });
+      const originalRequest = vi.mocked(axios.request).getMockImplementation()!;
+      vi.mocked(axios.request).mockImplementation(async request => {
+        const path = new URL(request.url!).pathname;
+        if (path === '/v1/deployments/environments/' + environment.id) {
+          const effect = request.headers?.['x-fixture-effect'];
+          if (request.method === 'GET' && effect !== 'deployments.environments.get') return {
+            status: 403, data: { error: 'action_forbidden', authorizationRefusal: 'verification_purpose' },
+          };
+          if (request.method === 'PATCH') return { status: 200, data: {
+            ok: true, environmentId: environment.id, revision: environment.revision + 1,
+          } };
+        }
+        return originalRequest(request);
+      });
+      const executor = createActionExecutor(deps);
+      const result = await executor.execute('deployments.environments.moveToRepository',
+        { ...input, mode: 'apply', continuation }, { ...context, actionCaller: { kind: 'host' },
+          externalActionExecutionAuthorization: authorization, externalActionTarget: { kind: 'machine', machineId: 'controller' },
+          actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+            'deployments.environments.moveToRepository': ['cli'],
+            'deployments.environments.update': ['cli'],
+          } }),
+        });
+      expect(result, JSON.stringify({ result, signedRequests })).toMatchObject({ ok: true, result: { kind: 'switched' } });
+      if (!result.ok) throw new Error(result.errorCode);
+      switched = result.result;
+    } else switched = await deps.deploymentMoveToRepository!(
+      { ...input, mode: 'apply', continuation }, context, home.execute,
     );
     expect(switched, JSON.stringify(switched)).toEqual({
       kind: 'switched',
@@ -525,7 +585,7 @@ it('previews, opens the pull request and switches after merge inside the reviewe
       commitSha: continuation.headCommit,
     });
     expect(artifactWrites).toHaveLength(1);
-    expect(home.transported).toEqual(['deployments.environments.update']);
+    expect(home.transported).toEqual(signed ? [] : ['deployments.environments.update']);
   } finally {
     await hostGit.cleanup();
     await rm(git.rootPath, { recursive: true, force: true });
