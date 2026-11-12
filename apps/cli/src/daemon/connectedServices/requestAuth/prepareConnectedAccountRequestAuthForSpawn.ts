@@ -21,7 +21,7 @@ import type {
 } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
 
 import { resolveAgentSpawnPurposeDeclarations } from './agentPurposeDeclarations';
-import type { AgentSpawnPurposeContributions, AgentSpawnPurposeCatalogEntry, AgentSpawnQualifiedFileEnvironmentUse, AgentSpawnQualifiedEnvironmentUse } from './agentPurposeDeclarations';
+import type { AgentSpawnPurposeAuthorizationScope, AgentSpawnPurposeContributions, AgentSpawnPurposeCatalogEntry, AgentSpawnQualifiedFileEnvironmentUse, AgentSpawnQualifiedEnvironmentUse } from './agentPurposeDeclarations';
 export { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from './agentPurposeDeclarations';
 export type { AgentSpawnPurposeContributions, AgentSpawnQualifiedPurposeDeclarationSnapshot, AgentSpawnQualifiedFileEnvironmentUse, AgentSpawnQualifiedEnvironmentUse } from './agentPurposeDeclarations';
 
@@ -29,7 +29,7 @@ export type AgentSpawnQualifiedPurposeBindingSnapshot = Readonly<{
     purposes: readonly QualifiedConnectedAccountPurposeV1[];
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
     directMaterialOrigins?: readonly QualifiedPurposeTeamDirectMaterialOrigin[];
-    authorizedPurposes?: readonly ConnectedAccountPurposeAuthorizationScope[];
+    authorizedPurposes?: readonly AgentSpawnPurposeAuthorizationScope[];
     fileMaterializationPurposes?: readonly ConnectedAccountPurposeAuthorizationScope[];
     requestAuthUses?: readonly QualifiedConnectedAccountRequestAuthUseV1[];
     fileEnvironmentUses?: readonly AgentSpawnQualifiedFileEnvironmentUse[];

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -13,6 +14,24 @@ import {
 import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
 describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
+  it.each(['credential_unavailable', 'provider_incompatible_with_agent'] as const)(
+    'preserves typed Connected Account launch refusal %s without private provider text', (code) => {
+      const failureCause = { code, phase: 'authentication',
+        failureReason: code === 'credential_unavailable' ? 'authentication_required' : 'permission_denied',
+        retryable: false } as const;
+      const result = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'pi',
+        error: new PluginError({ code, message: 'private provider text', retryable: false,
+          details: { failureCause, privateCredential: 'must-not-leak' } }),
+      });
+      expect(result).toMatchObject({ type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorDetail: { kind: 'launch_error', code, message: expect.any(String), failureCause },
+      });
+      expect(JSON.stringify(result)).not.toContain('private provider text');
+      expect(JSON.stringify(result)).not.toContain('must-not-leak');
+    },
+  );
+
   it('normalizes historical materialization failures to generic reconnect diagnostics on spawn failure', () => {
     const result = buildConnectedServiceMaterializationSpawnErrorResult({
       agentId: 'claude',

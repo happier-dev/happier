@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertQualifiedPurposeAuthorityForSelections,
+  assertQualifiedPurposeCredentialCompatibility,
   ConnectedServiceQualifiedPurposeAuthorityError,
 } from './qualifiedPurposeAuthority';
 
@@ -74,5 +75,36 @@ describe('assertQualifiedPurposeAuthorityForSelections', () => {
         bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'another-member' } } }],
       },
     })).toThrow(ConnectedServiceQualifiedPurposeAuthorityError);
+  });
+});
+
+
+describe('qualified purpose credential admission', () => {
+  const service = { pluginId: 'plugin.acme', localId: 'subscription' };
+  const purpose = { consumer: { pluginId: 'plugin.agent', localId: 'agent' }, purpose: 'inference' };
+
+  it.each([
+    { kind: 'token', kinds: [['token']] },
+    { kind: null, kinds: [['token']] },
+    { kind: 'oauth', kinds: [['token'], ['oauth']] },
+    { kind: 'oauth', kinds: [['token'], undefined] },
+  ] as const)('admits supported or unknown kind $kind with purpose restrictions $kinds', ({ kind, kinds }) => {
+    expect(() => assertQualifiedPurposeCredentialCompatibility({
+      profile: { ref: { service, accountId: 'selected' }, kind },
+      snapshot: { purposes: [purpose], bindings: [],
+        authorizedPurposes: kinds.map(credentialKinds => ({ purpose, serviceRefs: [service],
+          ...(credentialKinds ? { credentialKinds: [...credentialKinds] } : {}) })),
+      },
+    })).not.toThrow();
+  });
+
+  it('does not borrow another service’s OAuth permission', () => {
+    expect(() => assertQualifiedPurposeCredentialCompatibility({
+      profile: { ref: { service, accountId: 'selected' }, kind: 'oauth' },
+      snapshot: { purposes: [purpose], bindings: [], authorizedPurposes: [
+        { purpose, serviceRefs: [service], credentialKinds: ['token'] },
+        { purpose, serviceRefs: [{ ...service, localId: 'different' }], credentialKinds: ['oauth'] },
+      ] },
+    })).toThrow(expect.objectContaining({ code: 'provider_incompatible_with_agent', retryable: false }));
   });
 });

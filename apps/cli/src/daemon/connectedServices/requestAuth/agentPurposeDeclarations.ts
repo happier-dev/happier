@@ -60,9 +60,12 @@ export type AgentSpawnPurposeContributions = Readonly<{
  * shape; callers admit that compatibility ingress only when the current catalog projects
  * a matching declared legacy Connected Service.
  */
+export type AgentSpawnPurposeAuthorizationScope = ConnectedAccountPurposeAuthorizationScope
+    & Pick<ConnectedAccountPurposeDeclarationV1, 'credentialKinds'>;
+
 export type AgentSpawnQualifiedPurposeDeclarationSnapshot = Readonly<{
     purposes: readonly QualifiedConnectedAccountPurposeV1[];
-    authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
+    authorizedPurposes: readonly AgentSpawnPurposeAuthorizationScope[];
     fileMaterializationPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
     requestAuthUses?: readonly QualifiedConnectedAccountRequestAuthUseV1[];
     fileEnvironmentUses?: readonly AgentSpawnQualifiedFileEnvironmentUse[];
@@ -223,6 +226,7 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
             return Object.freeze({
                 purpose,
                 serviceRefs: Object.freeze([service]),
+                ...(declaration.credentialKinds ? { credentialKinds: declaration.credentialKinds } : {}),
             });
         }),
     );

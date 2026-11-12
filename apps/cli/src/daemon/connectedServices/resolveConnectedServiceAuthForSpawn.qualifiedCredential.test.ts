@@ -22,6 +22,7 @@ import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { buildQualifiedConnectedAccountAuthGroupSwitchState } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
 import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
 import { resolveAgentSpawnPurposeDeclarations } from './requestAuth/agentPurposeDeclarations';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
@@ -45,6 +46,7 @@ import { scopeConnectedAccountSessionPurposeBindingLease } from './purposeBindin
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { assertOpenCodeManagedPrompt } from './requestAuth/openCodeManagedPrompt.test-support';
 import { logger } from '@/ui/logger';
+import { preparePiQualifiedConnectedAccounts } from '../../../../../packages/plugins/pi/src/agent/runtime/qualifiedConnectedAccounts';
 import { createProviderAccountUsageStore } from './accountUsage/store';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 
@@ -122,6 +124,57 @@ afterAll(async () => {
 });
 
 describe('qualified first-party spawn credential authority', () => {
+  it.each([
+    { agentId: 'pi', selection: 'profile' },
+    { agentId: 'opencode', selection: 'profile' },
+    { agentId: 'fx', selection: 'profile' },
+    { agentId: 'droid', selection: 'profile' },
+    { agentId: 'pi', selection: 'group' },
+  ] as const)('refuses an incompatible selected subscription for $agentId $selection before acquiring its credential', async ({ agentId, selection }) => {
+    const service = GROK_CONNECTED_ACCOUNT_SERVICE;
+    const account = { service, accountId: `${agentId}-${selection}-subscription` };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1, ref: { service, groupId: 'subscription-pool' }, incarnation: 'subscription-pool-1',
+      displayName: 'Subscription pool', policy: { v: 2, autoSwitch: false, preTurnProbeMode: 'when_stale' },
+      activeConnectedAccountId: account.accountId, generation: 1, runtimeStateRevision: 0,
+      state: {}, createdAt: 1, updatedAt: 1,
+      members: [{ v: 1, connectedAccountId: account.accountId, priority: 1, enabled: true,
+        state: {}, createdAt: 1, updatedAt: 1 }],
+    });
+    const listing = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [{
+      ref: account, authenticationModeId: 'device', revisionSemantics: 'revisioned',
+      credentialRevision: revision, configurationReady: false, configurationRevision: null,
+      status: 'connected', kind: 'oauth', scopes: [],
+    }] });
+    const catalogEntry = await lease.registry.acquireAgentCatalogEntry!(agentId);
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected credential acquisition'));
+    const outcome: { result: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> } = { result: null };
+    try {
+      await expect(resolveConnectedServiceAuthForSpawn({ agentId,
+        connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+          [service.pluginId + '/' + service.localId]: selection === 'group'
+            ? { source: 'connected', selection, groupId: group.ref.groupId }
+            : { source: 'connected', selection, profileId: account.accountId },
+        } },
+        materializationKey: account.accountId, activeServerDir: directory, baseDir: directory,
+        processEnv: { HOME: directory }, credentials,
+        api: { getAccountEncryptionMode: async () => 'e2ee' } as ApiClient,
+        connectedAccountsOwner: purposeOwner,
+        qualifiedConnectedAccountApi: { listAccounts: async () => listing, readGroup: async () => group },
+        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId, bindings, contributions: lease.registry.contributes, catalogEntry }),
+        activateQualifiedPurposeBindings: binding => purposeOwner.activateSessionPurposeBindings({
+          sessionId: account.accountId, purposes: binding.purposes, bindings: binding.bindings }),
+      }).then(value => { outcome.result = value; return value; })).rejects.toMatchObject({
+        code: 'provider_incompatible_with_agent', retryable: false,
+      });
+      expect(http).not.toHaveBeenCalled();
+    } finally {
+      await outcome.result?.cleanupOnExit?.();
+      http.mockRestore();
+    }
+  });
+
   it('reports a missing requester-selected profile without acquiring another Account credential', async () => {
     const listing = QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [] });
     const http = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
@@ -161,7 +214,8 @@ describe('qualified first-party spawn credential authority', () => {
     { agentId: 'codex', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
     { agentId: 'ohMyPi', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
     { agentId: 'ohMyPi', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, authenticationModeId: 'oauth' } as const,
-  ].flatMap(provider => (provider.agentId === 'ohMyPi' ? ['healthy'] as const
+    { agentId: 'pi', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
+  ].flatMap(provider => (provider.agentId === 'ohMyPi' || provider.agentId === 'pi' ? ['healthy'] as const
     : ['healthy', 'expired', 'rejected', 'stored_rejected', 'stored_rejected_refresh_window'] as const).map(state => ({ ...provider, state }))))('handles $state $agentId credentials through real spawn preflight', async ({ agentId, service, authenticationModeId, state }) => {
     if (agentId === 'ohMyPi' && process.platform === 'win32') return;
     const account = { service, accountId: agentId === 'ohMyPi' ? `${state}-${agentId}-${service.localId}` : `${state}-${agentId}` };
@@ -249,7 +303,37 @@ describe('qualified first-party spawn credential authority', () => {
         result = await admission;
         expect(result?.sessionConnectedAccounts).toBeDefined();
         expect(JSON.parse(result!.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON!)[0].credentialRevision).toBe(snapshot.credentialRevision);
+        if (agentId === 'pi') {
+          const declarations = resolveAgentSpawnPurposeDeclarations({ agentId, contributions: lease.registry.contributes })!;
+          const controller = new AbortController();
+          const host = createStablePluginConnectedAccountsHost(purposeOwner.owner);
+          const connectedAccounts = host.bind({
+            plugin: { id: 'happier.agent.pi', version: '1.0.0' },
+            contribution: { id: 'pi', qualifiedId: 'happier.agent.pi/agents/pi' },
+            occurrenceId: account.accountId, correlationId: account.accountId, surface: 'agent', session: { id: account.accountId },
+            signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
+          }, declarations.snapshot.authorizedPurposes.map(scope => ({
+            purpose: scope.purpose.purpose, serviceRefs: scope.serviceRefs, operations: ['use'],
+            materializationKinds: declarations.declarations.find(row => row.purpose === scope.purpose.purpose)?.materializationKinds,
+          })));
+          try {
+            const request: AgentSessionOpenRequest = { kind: 'create', sessionId: account.accountId, cwd: directory,
+              configuration: { mode: { value: null, updatedAtMs: 0 },
+                model: { value: 'openai-codex/gpt-6-luna', updatedAtMs: 1, selectionSource: 'explicit' },
+                permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {} },
+            };
+            const prepared = await preparePiQualifiedConnectedAccounts({ request,
+              launchEnvironment: resolveNativeAgentLaunchEnvironment({ processEnv: {}, environmentVariables: result!.env }),
+              context: { signal: controller.signal, services: { connectedAccounts } },
+            });
+            try {
+              expect(JSON.parse(await readFile(join(prepared.launchEnvironment.values.PI_CODING_AGENT_DIR!, 'auth.json'), 'utf8'))).toEqual({});
+            } finally { await prepared.dispose(); }
+          } finally { controller.abort(); host.retire(); }
+        }
         if (agentId === 'ohMyPi') {
+          expect(result!.env.PI_CODING_AGENT_DIR).toEqual(expect.any(String));
+          await expect(access(result!.env.PI_CODING_AGENT_DIR!)).resolves.toBeUndefined();
           // The native process boundary reproduces r1109c: unprepared qualified
           // credentials produce an empty chat catalog, despite successful install.
           const key = service.pluginId === 'happier.agent.codex'
@@ -598,7 +682,7 @@ fi
       expect(prepared.isInvalidated()).toBe(false);
       const requestAuth = await connectedAccounts.materialize(purpose, {
         kind: 'httpHeaders',
-        origins: [provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://chatgpt.com'],
+        origin: provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://chatgpt.com',
         headerNames: provider === 'anthropic' ? ['authorization'] : ['authorization', 'chatgpt-account-id'],
       }, { expectedAccount: account });
       expect(requestAuth.kind).toBe('httpHeaders');

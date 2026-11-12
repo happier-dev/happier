@@ -131,6 +131,7 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   controller_unavailable: 'The control machine is unavailable. Check its connection before retrying.',
   controller_retired: 'The control machine or its installation is no longer active. Review the selected machine before retrying.',
   credential_unavailable: 'The selected credential is unavailable. Review its configuration and access before retrying.',
+  provider_incompatible_with_agent: 'The selected Connected Account credential kind is not supported by this Agent. Select a compatible account.',
   provider_unavailable: 'The selected provider is unavailable. Review its configuration before retrying.',
   request_conflict: 'The request conflicts with the saved operation. Check its current status before retrying.',
   intent_changed: 'The requested operation is no longer current. Review the machine state before retrying.',

@@ -93,11 +93,12 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
-  if (isPluginError(input.error) && input.error.code === 'credential_unavailable') {
+  if (isPluginError(input.error) && (input.error.code === 'credential_unavailable'
+    || input.error.code === 'provider_incompatible_with_agent')) {
     const details = readRecord(input.error.details);
     const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(details?.failureCause);
-    if (failureCause.success) {
-      const message = readSessionStartupFailurePreview(input.error.code)!;
+    const message = readSessionStartupFailurePreview(input.error.code);
+    if (failureCause.success && message) {
       return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: input.error.code,
         errorDetail: { kind: 'launch_error', code: input.error.code, message, failureCause: {

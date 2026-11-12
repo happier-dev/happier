@@ -19,7 +19,7 @@ describe('admitted Agent connected-account purpose declarations', () => {
     const purposes = ['managed', 'native'] as const;
     const contributions = { agentDefinitionsById: new Map([['agent', { identity,
       richDefinition: { definition: { connectedAccounts: purposes.map(purpose => ({ purpose, service,
-        materializationKinds: ['environment', 'files', 'httpHeaders'],
+        materializationKinds: ['environment', 'files', 'httpHeaders'], credentialKinds: ['token'],
         ...(purpose === 'managed' ? { managedProviderEndpoint: { provider: { pluginId: 'acme.provider', localId: 'gateway' }, purpose: 'upstream' } } : {}),
       })) } },
       catalogEntry: {
@@ -31,6 +31,7 @@ describe('admitted Agent connected-account purpose declarations', () => {
     }]]) };
     const result = resolveAgentSpawnPurposeDeclarations({ agentId: 'agent', contributions });
     expect(result).not.toBeNull();
+    expect(result?.snapshot.authorizedPurposes.every(scope => scope.credentialKinds?.[0] === 'token')).toBe(true);
     expect(result?.snapshot.authorizedPurposes.map(scope => scope.purpose.purpose)).toEqual(purposes);
     for (const uses of [result?.snapshot.requestAuthUses, result?.snapshot.fileEnvironmentUses,
       result?.snapshot.environmentUses, result?.snapshot.fileMaterializationPurposes]) {

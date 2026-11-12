@@ -89,6 +89,7 @@ import {
 } from './requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import {
   assertQualifiedPurposeAuthorityForSelections,
+  assertQualifiedPurposeCredentialCompatibility,
   ConnectedServiceQualifiedPurposeAuthorityError,
 } from './requestAuth/qualifiedPurposeAuthority';
 
@@ -634,6 +635,7 @@ async function resolveCredentialBindings(params: Readonly<{
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
   qualifiedConnectedAccountApi?: ConnectedServiceQualifiedAuthGroupApi;
   nowMs: number;
+  qualifiedPurposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   predictiveSwitchGuard?: ConnectedServicePredictiveSwitchGuard | null;
@@ -676,6 +678,7 @@ async function resolveCredentialBindings(params: Readonly<{
       const profile = await readQualifiedSpawnProfile({
         serviceId: selection.serviceId, profileId: selection.profileId, api: qualifiedAccountApi,
       });
+      assertQualifiedPurposeCredentialCompatibility({ snapshot: params.qualifiedPurposeBindingSnapshot, profile });
       if (!isQualifiedConnectedAccountProfileActiveV4(profile, params.nowMs)) {
         throw new ConnectedServiceSpawnAuthGroupAuthorityError({
           kind: 'resolution_failed',
@@ -759,6 +762,7 @@ async function resolveCredentialBindings(params: Readonly<{
         candidate.signal?.throwIfAborted();
         const profile = listedAccounts.accounts.find(profile => profile.ref.accountId === candidate.profileId)
           ?? await readQualifiedSpawnProfile({ serviceId: selection.serviceId, profileId: candidate.profileId, api: qualifiedAccountApi });
+        assertQualifiedPurposeCredentialCompatibility({ snapshot: params.qualifiedPurposeBindingSnapshot, profile });
         const result = await credentialRefreshService.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile });
         if (result.status !== 'ready') return { status: 'ineligible' as const, memberState: {
           credentialHealthStatus: result.status === 'reconnect_required' ? 'needs_reauth' as const : 'refresh_failed_retryable' as const,
@@ -796,6 +800,9 @@ async function resolveCredentialBindings(params: Readonly<{
     }
     if (selectedGroup.credentialRevision === activeProfile.credentialRevision) {
       // The canonical active-profile predicate above proves revisioned semantics.
+      if (!preparedCandidates.has(activeProfileId)) {
+        assertQualifiedPurposeCredentialCompatibility({ snapshot: params.qualifiedPurposeBindingSnapshot, profile: activeProfile });
+      }
       admittedProfiles.set(selection.serviceId, activeProfile as Awaited<ReturnType<typeof readQualifiedSpawnProfile>>);
     }
     const preparedProfile = preparedCandidates.get(activeProfileId);
@@ -1325,6 +1332,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   const nowMs = (params.nowMs ?? (() => Date.now()))();
   const resolvedBindings = await observeConnectedServiceMaterializationPhase(params, 'credential_binding_resolution', () => resolveCredentialBindings({
     agentId: params.agentId,
+    qualifiedPurposeBindingSnapshot,
     ...(params.modelId ? { modelId: params.modelId } : {}),
     api: params.api,
     credentials: params.credentials,
@@ -1368,9 +1376,13 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         // Refresh returns the resulting profile from its own settlement.
         // A changed credential or recovery attempt requires its own observation.
         const preparedProfile = attempt === 0 ? resolvedBindings.preparedProfiles.get(binding.serviceId) : undefined;
-        const profile = preparedProfile ?? (attempt === 0 ? resolvedBindings.admittedProfiles.get(binding.serviceId) : undefined)
+        const admittedProfile = attempt === 0 ? resolvedBindings.admittedProfiles.get(binding.serviceId) : undefined;
+        const profile = preparedProfile ?? admittedProfile
           ?? await observeConnectedServiceMaterializationPhase(phaseContext, 'credential_read',
             () => readQualifiedSpawnProfile({ ...binding, api: resolvedBindings.qualifiedAccountApi }));
+        if (!preparedProfile && !admittedProfile) {
+          assertQualifiedPurposeCredentialCompatibility({ snapshot: qualifiedPurposeBindingSnapshot, profile });
+        }
         let current = profile;
         const credentialRefreshService = params.credentialRefreshService;
         if (credentialRefreshService && !preparedProfile) {
