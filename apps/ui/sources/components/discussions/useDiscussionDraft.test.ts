@@ -38,6 +38,18 @@ afterEach(() => {
 });
 
 describe('useDiscussionDraft', () => {
+    it('carries edits made during creation into the confirmed discussion draft', async () => {
+        const hook = await renderHook(() => useDiscussionDraft({ scope, address: newAddress }));
+        act(() => { hook.getCurrent().setTitle('First conversation'); hook.getCurrent().setText('First question'); });
+        const submitted = hook.getCurrent().captureSubmittedCurrentness();
+        act(() => { hook.getCurrent().setText(`Next ${ana}`); hook.getCurrent().setMentions([mention('happier.account', 'account:ana', 'Ana', 5)]); });
+        await act(async () => { await hook.getCurrent().clearAfterObservedSuccess(submitted, existingAddress.discussionId); });
+        expect(getSessionComposerDraftSnapshot(scope, existingAddress)?.composer).toMatchObject({
+            text: { value: `Next ${ana}` }, mentions: { value: [mention('happier.account', 'account:ana', 'Ana', 5)] },
+        });
+        expect(hook.getCurrent().text).toBe('');
+        await hook.unmount();
+    });
     it('preserves reply and passage context authored after a retained question opened for review', async () => {
         const passage = { ref: { kind: 'doc' as const, artifactId: 'next-source', serverId: scope.serverId },
             revision: { headerVersion: 1, bodyVersion: 1 }, range: { start: 0, end: 6 }, quote: 'source' };

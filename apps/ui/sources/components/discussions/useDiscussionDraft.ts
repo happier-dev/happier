@@ -78,7 +78,7 @@ export type DiscussionDraft = Readonly<{
     captureSubmittedCurrentness(attempt?: SessionDiscussionDraftMutationAttemptInput,
         submitted?: Readonly<{ content: DiscussionMessageContentV1; title?: string;
             retainedCurrentness?: DiscussionDraftSubmission['currentness'] }>): DiscussionDraftSubmission;
-    clearAfterObservedSuccess(submission: DiscussionDraftSubmission): Promise<boolean>;
+    clearAfterObservedSuccess(submission: DiscussionDraftSubmission, createdDiscussionId?: string): Promise<boolean>;
     /**
      * Forgets a refused retry identity without touching the drafted fields, so
      * a remount adopts nothing and the retained text is sent as a fresh attempt.
@@ -377,11 +377,21 @@ export function useDiscussionDraft(params: Readonly<{
 
     const clearAfterObservedSuccess = React.useCallback(async (
         submission: DiscussionDraftSubmission,
+        createdDiscussionId?: string,
     ): Promise<boolean> => {
         if (!sameScope(submission.scope, scope) || !sameAddress(submission.address, address)) return false;
         const current = captureSessionDraftCurrentness({ scope, address, fieldIds: COMPOSER_FIELD_IDS });
         const composerIsCurrent = COMPOSER_FIELD_IDS.every(field => submission.currentness.mutationIds[field] !== undefined
             && submission.currentness.mutationIds[field] === current.mutationIds[field]);
+        // The same editor may already contain the next question. Move that value to
+        // its confirmed address before the surface starts reading the thread draft.
+        if (address.kind === 'newDiscussion' && createdDiscussionId && !composerIsCurrent) {
+            const next = readDiscussionDraftFields(scope, address);
+            if (seedDiscussionDraft({ scope, address: { kind: 'discussion', discussionId: createdDiscussionId },
+                text: next.text, mentions: next.mentions })) {
+                clearSessionDraftCurrentnessLocal({ scope, address, currentness: current, fieldIds: COMPOSER_FIELD_IDS });
+            }
+        }
         // The repository checks each field against the submitted document. Passage,
         // Reply and invitees clear independently of edits to the next question;
         // newer values remain, just as Session attachments do after acceptance.
@@ -392,8 +402,8 @@ export function useDiscussionDraft(params: Readonly<{
         // the server already accepted, so once every captured field has moved
         // on there is nothing to clear and the identity must still go — keeping
         // it would let a remount adopt an accepted create/post and repeat it.
-        // Local recovery custody must complete before navigation; a remote
-        // draft acknowledgement cannot hold an already committed Discussion open.
+        // Local persistence and remote draft acknowledgement cannot hold an
+        // already committed Discussion open.
         const cleared = clearSessionDraftCurrentnessLocal({
             scope,
             address,

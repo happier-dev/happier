@@ -110,7 +110,7 @@ afterEach(async () => {
     vi.useRealTimers();
 });
 
-async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void, options?: Readonly<{
+async function prepareDiscussionHome(configureSocket?: (socket: Socket) => void, options?: Readonly<{
     losePost?: boolean;
     projectRows?: Parameters<typeof createPlainProjectAccountRowListFixture>[0];
 }>) {
@@ -162,6 +162,13 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void,
     await prepareSessionDraftPersistenceStorage();
     const scope = { serverId, accountId: 'alice' };
     const client = createDiscussionClient({ scope, availability: 'available' });
+    return { serverId, serverUrl, scope, fixture, client, roster,
+        setRoster: (value: typeof roster) => { roster = value; } };
+}
+
+async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void, options?: Parameters<typeof prepareDiscussionHome>[1]) {
+    const home = await prepareDiscussionHome(configureSocket, options);
+    const { serverId, serverUrl, scope, fixture, client, roster } = home;
     const created = await client.create({ creationLocalId: 'cost-thread', messageLocalId: 'cost-root', title: 'Long discussion',
         content: { v: 1, parts: [{ t: 'text', text: '**Root** question' }] } });
     if (created.kind !== 'succeeded') throw new Error(JSON.stringify(created));
@@ -218,11 +225,54 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void,
     } });
     const binding = await renderHook(() => useServerCredentialAccountScopeBindings([serverId]));
     const repository = getDiscussionRepository({ scope, address: { serverId }, client, accountLifetime: binding.getCurrent().get(serverId)! });
-    return { serverId, serverUrl, fixture, newMessage, repository, workflowRows, accountLifetime: binding.getCurrent().get(serverId)!,
-        roster, setRoster: (value: typeof roster) => { roster = value; },
+    return { ...home, repository, accountLifetime: binding.getCurrent().get(serverId)!, newMessage, workflowRows,
         setParticipantAccounts: (value: typeof participantAccounts) => { participantAccounts = value; },
         setArchived: (value: boolean) => { archived = value; } };
 }
+
+it('keeps the focused composer mounted when the first draft message becomes a thread', async () => {
+    const { serverId, serverUrl } = await prepareDiscussionHome();
+    const pendingCreate = createDeferred<void>();
+    const answer = homes.findByServerUrl(serverUrl)!.answers.get('POST /v1/discussions')!;
+    homes.answer(serverId, 'POST /v1/discussions', { select: async (input, request) => ({
+        ...await answer.select!(input, request), respondAfter: pendingCreate.promise,
+    }) });
+    const { readComposerPresentationSnapshot } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+    function DraftConversation() {
+        const [target, setTarget] = React.useState<React.ComponentProps<typeof DiscussionDetailsView>['target']>({
+            kind: 'new', address: { serverId }, draftId: '00000000-0000-4000-8000-000000001111',
+        });
+        return <DiscussionDetailsView target={target} active onCreated={discussion => setTarget({
+            kind: 'discussion', address: { serverId }, discussionId: discussion.id,
+        })} />;
+    }
+    const screen = await renderScreen(<AppPaneProvider><DraftConversation /></AppPaneProvider>);
+    await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+    await vi.waitFor(() => expect(screen.root.findByType(AgentInput).props.disabled).toBe(false));
+    const composer = screen.root.findByType(AgentInput);
+    await act(async () => {
+        screen.changeTextByTestId('session-discussion-title', 'First message continuity');
+        composer.props.onChangeText!('The first message stays here');
+        composer.props.onComposerFocusChange!(true);
+    });
+    await act(async () => { await screen.root.findByType(AgentInput).props.onSend!(); });
+    await vi.waitFor(() => expect(screen.findByTestId('session-discussion-new-empty')).toBeNull());
+    try {
+        expect(screen.root.findByType(AgentInput) === composer, 'the optimistic opener must retain the editor instance').toBe(true);
+        expect(composer.props.disabled, 'sending must keep the focused editor editable').toBe(false);
+        await act(async () => { composer.props.onChangeText!('The next question'); });
+    } finally {
+        pendingCreate.resolve();
+    }
+    await vi.waitFor(() => expect(screen.findByTestId('session-discussion-details'), screen.getTextContent()).not.toBeNull());
+    expect(screen.getTextContent()).toContain('The first message stays here');
+    expect(screen.root.findAllByType(AgentInput)).toHaveLength(1);
+    expect(screen.root.findByType(AgentInput) === composer, 'the first Send must retain the editor instance').toBe(true);
+    expect(composer.props.value, 'confirmation must preserve edits made while the first Send was pending').toBe('The next question');
+    expect(readComposerPresentationSnapshot({ kind: 'discussion', discussionId: 'committed-thread' },
+        { serverId, accountId: 'alice' })?.state.focused).toBe(true);
+    await screen.unmount();
+});
 
 it('names a busy Discussion read and retries the same conversation', async () => {
     const { serverId, fixture, repository } = await prepareLongDiscussion();
@@ -557,8 +607,8 @@ it('gives a bare New route a fresh document while preserving the abandoned singl
     expect(getSessionDraftSnapshot(scope, { kind: 'newDiscussion' })?.document).toMatchObject({ composer: { text: { value: 'An older abandoned draft' } } });
 });
 
-it.each([false, true])('clears only after canonical creation and reports a device persistence failure (%s)', async failClear => {
-    const { serverId } = await prepareLongDiscussion();
+it.each([false, true])('opens the confirmed thread once and reports a device persistence failure (%s)', async failClear => {
+    const { serverId } = await prepareDiscussionHome();
     const fixture = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
     const scope = { serverId, accountId: 'alice' };
     const address = { kind: 'newDiscussion' as const, draftId: '00000000-0000-5000-8000-000000000008' };
@@ -587,10 +637,11 @@ it.each([false, true])('clears only after canonical creation and reports a devic
         if (failClear) {
             await vi.waitFor(() => expect(refused).toBe(true));
             await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
-            expect(onCreated).not.toHaveBeenCalled();
+            expect(onCreated).toHaveBeenCalledOnce();
+            expect(screen.findByTestId('session-discussion-details')).not.toBeNull();
         } else {
             await vi.waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
-            expect(getSessionDraftSnapshot(scope, address)).toBeNull();
+            await vi.waitFor(() => expect(getSessionDraftSnapshot(scope, address)).toBeNull());
         }
     } finally {
         put.mockRestore();

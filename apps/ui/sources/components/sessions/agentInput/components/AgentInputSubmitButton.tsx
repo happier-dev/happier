@@ -310,6 +310,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             active={!disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
             loading={props.isSending || dictationStarting || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
             disabled={disabled}
+            preserveFocusOnPress={hasSendIntent}
             accessibilityLabel={
                 dictationTranscribing
                     ? t('voiceAssistant.transcribing')

@@ -70,7 +70,7 @@ export type DiscussionModelParticipantViewModel = Readonly<{
 /** The demanded roster remains bound to the same captured Account as its Discussion repository. */
 export function useDiscussionParticipantManagement(input: Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null;
-    discussionId: string;
+    discussionId: string | null;
     repository: DiscussionRepository;
     enabled: boolean;
     summary: DiscussionOpenedSummaryV1 | null;
@@ -97,7 +97,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
         && input.enabled && live ? projection.roster : null;
     const latestRead = React.useRef<ReturnType<DiscussionRepository['participants']> | null>(null);
     const refresh = React.useCallback(async (signal?: AbortSignal) => {
-        if (!isCurrent() || !accountLifetime || signal?.aborted) return;
+        if (discussionId === null || !isCurrent() || !accountLifetime || signal?.aborted) return;
         setLoad(previous => previous?.accountLifetime === accountLifetime && previous.discussionId === discussionId
             && previous.errorCode === null ? previous : { accountLifetime, discussionId, status: 'loading', errorCode: null });
         const read = repository.participants(discussionId, signal);
@@ -125,7 +125,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
         } finally { if (latestRead.current === read) latestRead.current = null; }
     }, [accountLifetime, discussionId, isCurrent, repository]);
     React.useEffect(() => {
-        if (!input.enabled || !accountLifetime?.isCurrent()) return;
+        if (discussionId === null || !input.enabled || !accountLifetime?.isCurrent()) return;
         const abort = new AbortController();
         const retirement = accountLifetime.onRetire(() => abort.abort());
         // AccountChange coalesces by resource, not mutation subtype. The exact
@@ -157,10 +157,10 @@ export function useDiscussionParticipantManagement(input: Readonly<{
     }, [accountLifetime, discussionId, input.enabled]);
     const [leaveResolution, setLeaveResolution] = React.useState<Readonly<{ accountLifetime: ServerAccountScopeLifetime | null; discussionId: string }> | null>(null);
     const publish = React.useCallback((next: DiscussionParticipantManagementOperation, modelAttempt?: ModelAttempt) => {
-        if (isCurrent()) setResult({ accountLifetime, discussionId, operation: next, ...(modelAttempt ? { modelAttempt } : {}) });
+        if (discussionId !== null && isCurrent()) setResult({ accountLifetime, discussionId, operation: next, ...(modelAttempt ? { modelAttempt } : {}) });
     }, [accountLifetime, discussionId, isCurrent]);
     const run = React.useCallback(async (intent: Intent): Promise<Outcome | undefined> => {
-        if (!isCurrent() || !accountLifetime || busy.current?.accountLifetime === accountLifetime && busy.current.discussionId === discussionId) return;
+        if (discussionId === null || !isCurrent() || !accountLifetime || busy.current?.accountLifetime === accountLifetime && busy.current.discussionId === discussionId) return;
         const attempt = { accountLifetime, discussionId, abort: new AbortController() };
         const signal = attempt.abort.signal;
         const retirement = accountLifetime.onRetire(() => attempt.abort.abort());
@@ -226,7 +226,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
         }
     }, [accountLifetime, discussionId, isCurrent, publish, refresh, repository]);
     const requestLeave = React.useCallback(async () => {
-        if (!isCurrent() || !roster) return;
+        if (discussionId === null || !isCurrent() || !roster) return;
         if (roster.ownerAccountId === accountLifetime?.scope.accountId) setLeaveResolution({ accountLifetime, discussionId });
         else return run({ kind: 'leave' });
     }, [accountLifetime, discussionId, isCurrent, roster, run]);
@@ -243,7 +243,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
             canCancel: !unresolvedOwnerEffect,
         } : { kind: 'closed' as const }, [accountLifetime, discussionId, input.summary?.capabilities.archive, leaveResolution, live, roster, unresolvedOwnerEffect]);
     const inviteExecutable = React.useCallback((selection: ExecutableParticipantSelectionV1,
-        options?: Readonly<{ participantSlotId?: string; answerPolicy?: DiscussionAnswerPolicyV1 }>) => run({ kind: 'invite', input: {
+        options?: Readonly<{ participantSlotId?: string; answerPolicy?: DiscussionAnswerPolicyV1 }>) => discussionId === null ? Promise.resolve(undefined) : run({ kind: 'invite', input: {
             discussionId, selection, ...(selection.kind === 'model' ? { participantSlotId: options?.participantSlotId ?? randomUUID() } : {}),
             ...(options?.answerPolicy ? { answerPolicy: options.answerPolicy } : {}),
         } }), [discussionId, run]);

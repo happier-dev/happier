@@ -80,7 +80,7 @@ export function useDiscussionRepository(
 /**
  * Creating a Discussion from its `newDiscussion` draft: the one create path for the new-Discussion page and
  * a Doc's inline comment. The first message and title go out as one create with stable local ids; a retry
- * reuses them, a refusal mints fresh ones, and success clears the draft before `onCreated` is told.
+ * reuses them, a refusal mints fresh ones, and confirmation activates the thread before local draft cleanup.
  */
 export function useNewDiscussionCreate(
   params: Readonly<{
@@ -124,6 +124,7 @@ export function useNewDiscussionCreate(
     typeof draft.captureSubmittedCurrentness
   > | null>(null);
   const completed = React.useRef(false);
+  const createdNotified = React.useRef(false);
   const [titleRequired, setTitleRequired] = React.useState(false);
   const draftKey = canonicalSessionDraftAddressV2(draftAddress);
   const recoveredMutation =
@@ -160,8 +161,8 @@ export function useNewDiscussionCreate(
     snapshot.lists.active.status === 'offline' ||
     snapshot.lists.active.status === 'locked' ||
     snapshot.lists.active.status === 'error';
-  const createDisabled =
-    composerBlocked || draftUnavailable || repositoryUnavailable;
+  const composerDisabled = draftUnavailable || repositoryUnavailable;
+  const createDisabled = composerBlocked || composerDisabled;
   const createUnavailableLabel =
     draft.status === 'offline' || snapshot.lists.active.status === 'offline'
       ? t('session.collaboration.discussion.offline')
@@ -182,8 +183,20 @@ export function useNewDiscussionCreate(
       const submitted =
         repository.getSnapshot().mutations[activeCreationLocalId]
           ?.draftSubmission ?? capture.current;
+      const root = repository
+        .getSnapshot()
+        .threads[discussion.id]?.messages.find(
+          (message) => message.replyTarget?.kind === 'doc_passage',
+        );
+      // Route replacement follows confirmed creation; local draft cleanup is persistence work.
+      repository.acknowledgeObservedSuccess(activeCreationLocalId);
+      const cleanup = submitted ? draft.clearAfterObservedSuccess(submitted, discussion.id) : undefined;
+      if (!createdNotified.current) {
+        createdNotified.current = true;
+        onCreated?.(discussion, root?.messageRef);
+      }
       try {
-        if (submitted) await draft.clearAfterObservedSuccess(submitted);
+        await cleanup;
       } catch {
         // The create is committed. Retry only its local clear, never the create,
         // and keep observation effects from repeatedly retrying a failed device write.
@@ -198,13 +211,6 @@ export function useNewDiscussionCreate(
         ]);
         return;
       }
-      repository.acknowledgeObservedSuccess(activeCreationLocalId);
-      const root = repository
-        .getSnapshot()
-        .threads[discussion.id]?.messages.find(
-          (message) => message.replyTarget?.kind === 'doc_passage',
-        );
-      onCreated?.(discussion, root?.messageRef);
     },
     [activeCreationLocalId, draft, onCreated, repository],
   );
@@ -260,6 +266,7 @@ export function useNewDiscussionCreate(
     if (mutation?.status !== 'failed') return;
     draft.releaseSubmittedAttempt();
     repository.dismissFailure(mutation.localId);
+    createdNotified.current = false;
     // A refused identity is never reused: the retained draft goes out as a fresh attempt.
     ids.current = {
       creationLocalId: randomUUID(),
@@ -352,6 +359,7 @@ export function useNewDiscussionCreate(
     accessRevoked,
     sourceRefused,
     createDisabled,
+    composerDisabled,
     createUnavailableLabel,
     titleRequired,
     setTitleRequired,

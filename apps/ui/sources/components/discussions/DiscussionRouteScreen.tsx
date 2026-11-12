@@ -52,7 +52,7 @@ function readParam(value: string | string[] | undefined): string | null {
 }
 
 export function DiscussionRouteScreen(props: Readonly<{
-    kind: 'list' | 'new' | 'discussion';
+    kind: 'list' | 'new' | 'discussion' | 'conversation';
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -83,10 +83,11 @@ export function DiscussionRouteScreen(props: Readonly<{
     const serverId = binding?.scope.serverId ?? requestedServerId;
     const address = React.useMemo(() => serverId ? { serverId } : null, [serverId]);
     const discussionId = readParam(params.discussionId);
+    const kind = props.kind === 'conversation' ? discussionId ? 'discussion' : 'new' : props.kind;
     const messageId = readParam(params.messageId);
     const routeDraftId = readDiscussionRouteDraftId(params.draftId);
     const [entryDraftId] = React.useState(randomUUID);
-    const draftId = props.kind === 'new' && routeDraftId === undefined ? entryDraftId : routeDraftId;
+    const draftId = kind === 'new' && routeDraftId === undefined ? entryDraftId : routeDraftId;
     const anchorSessionId = readParam(params.anchorSessionId);
     const anchorMessageId = readParam(params.anchorMessageId);
     const anchorParam = readParam(params.anchor);
@@ -103,18 +104,18 @@ export function DiscussionRouteScreen(props: Readonly<{
     const fallbackHref = returnArtifactId ? artifactViewRoute(returnArtifactId)
         : serverId ? buildDiscussionsRouteHref({ serverId }) : '/';
     React.useEffect(() => {
-        if (explicitServerId && (props.kind !== 'new' || params.draftId !== undefined)
-            || !address || anchor === null || props.kind === 'new' && draftId === null) return;
-        const href = props.kind === 'list'
+        if (explicitServerId && (kind !== 'new' || params.draftId !== undefined)
+            || !address || anchor === null || kind === 'new' && draftId === null) return;
+        const href = kind === 'list'
             ? buildDiscussionsRouteHref(address)
-            : props.kind === 'new'
+            : kind === 'new'
                 ? buildDiscussionRouteHref({ target: { kind: 'new', address, ...(draftId ? { draftId } : {}), ...(anchor ? { anchor } : {}) }, sourceSurface,
                     ...(returnArtifactId ? { returnArtifactId } : {}) })
                 : discussionId
-                    ? buildDiscussionRouteHref({ target: { kind: 'discussion', address, discussionId, ...(messageId ? { messageId } : {}) }, sourceSurface })
+                    ? buildDiscussionRouteHref({ target: { kind: 'discussion', address, discussionId, ...(messageId ? { messageId } : {}) }, sourceSurface, ...(returnArtifactId ? { returnArtifactId } : {}) })
                     : null;
         if (href) router.replace(href as Href);
-    }, [address, anchor, discussionId, draftId, messageId, explicitServerId, params.draftId, props.kind, returnArtifactId, router, sourceSurface]);
+    }, [address, anchor, discussionId, draftId, messageId, explicitServerId, params.draftId, kind, returnArtifactId, router, sourceSurface]);
     const onBack = React.useCallback(() => safeRouterBack({
         router,
         navigation,
@@ -137,8 +138,8 @@ export function DiscussionRouteScreen(props: Readonly<{
             ) : null}
         </HappierPressable>
     ), [onBack, returnLabel, theme.colors.chrome.header.foreground]);
-    // Beside the column the page carries its own header band. On a phone a Discussion folds its header into
-    // its own navigation band (lab T2-Ap), so only the new page keeps the navigation bar.
+    // Valid draft and thread surfaces own the same navigation band. Invalid draft
+    // parameters still need the route's way back because no conversation can mount.
     const columnVisible = useAppShellColumn().columnVisible;
     // The mounted Discussion lends this presentation to both phone chrome presenters.
     const deviceType = useDeviceType();
@@ -146,59 +147,43 @@ export function DiscussionRouteScreen(props: Readonly<{
     const phoneSurfaces = !columnVisible && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience });
     const mobileSurface = normalizeDiscussionMobileSurface(readParam(params.mobileSurface)) ?? 'chat';
     const screenOptions = React.useMemo(() => ({
-        headerShown: !columnVisible && props.kind === 'new',
+        headerShown: !columnVisible && kind === 'new' && (!address || anchor === null || draftId === null),
         // The labelled Back already says where this thread lives; a second title would repeat it.
-        headerTitle: returnLabel ? '' : props.kind === 'new'
+        headerTitle: returnLabel ? '' : kind === 'new'
             ? t('session.collaboration.discussion.newDiscussion')
             : t('session.collaboration.discussion.title'),
         headerLeft,
-    }), [columnVisible, headerLeft, props.kind, returnLabel]);
+    }), [address, anchor, columnVisible, draftId, headerLeft, kind, returnLabel]);
 
     return (
         <View style={styles.root}>
             <Stack.Screen options={screenOptions} />
             <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : 'page'}>
-            {!address || (props.kind === 'new' && (anchor === null || draftId === null)) || (props.kind === 'discussion' && !discussionId) ? (
+            {!address || (kind === 'new' && (anchor === null || draftId === null)) || (kind === 'discussion' && !discussionId) ? (
                 <SurfaceStateCard kind="unavailable" title={t('common.unavailable')} />
-            ) : props.kind === 'list' ? (
+            ) : kind === 'list' ? (
                 !columnVisible
                     ? <DiscussionsColumn surface="page" />
                     : binding
                         ? <DiscussionsIndexPage address={address} binding={binding} />
                         : <SurfaceStateCard kind="unavailable" title={t('sessionConversation.discussion.unavailableTitle')} />
-            ) : props.kind === 'discussion' ? (
-                // One retained host owns the Discussion across responsive presentation changes. Beside the
-                // column it exposes the page rail/pane; a cockpit phone presents those tabs as surfaces.
-                <DiscussionPaneHost discussionId={discussionId!} scope={binding?.scope ?? null}
-                    paneEnabled={deviceType !== 'phone'} phoneSurface={phoneSurfaces ? mobileSurface : null}
+            ) : (
+                <DiscussionPaneHost discussionId={kind === 'discussion' ? discussionId! : undefined} scope={binding?.scope ?? null}
+                    paneEnabled={deviceType !== 'phone' && kind === 'discussion'}
+                    phoneSurface={phoneSurfaces && kind === 'discussion' ? mobileSurface : null}
                     onSurfaceChange={surface => router.setParams({ mobileSurface: surface === 'chat' ? undefined : surface })}
                     onBackToThread={() => router.setParams({ mobileSurface: undefined })}
                     main={<DiscussionDetailsView
-                        target={{ kind: 'discussion', address, discussionId: discussionId!, ...(messageId ? { messageId } : {}) }}
-                        active={routeFocused}
-                        standaloneSurface
-                        onClose={onBack}
+                        target={kind === 'new'
+                            ? { kind: 'new', address, ...(draftId ? { draftId } : {}), ...(anchor ? { anchor } : {}) }
+                            : { kind: 'discussion', address, discussionId: discussionId!, ...(messageId ? { messageId } : {}) }}
+                        active={routeFocused} standaloneSurface onClose={onBack}
+                        onCreated={(discussion, passageRoot) => router.replace(buildDiscussionRouteHref({
+                            target: { kind: 'discussion', address, discussionId: discussion.id,
+                                ...(passageRoot ? { messageId: passageRoot.messageId } : {}) },
+                            sourceSurface, ...(returnArtifactId ? { returnArtifactId } : {}),
+                        }) as Href)}
                     />} />
-            ) : (
-                <DiscussionDetailsView
-                    target={props.kind === 'new'
-                        ? { kind: 'new', address, ...(draftId ? { draftId } : {}), ...(anchor ? { anchor } : {}) }
-                        : { kind: 'discussion', address, discussionId: discussionId!, ...(messageId ? { messageId } : {}) }}
-                    active={routeFocused}
-                    standaloneSurface
-                    onClose={onBack}
-                    onCreated={(discussion, passageRoot) => {
-                        router.replace(buildDiscussionRouteHref({
-                            target: {
-                                kind: 'discussion',
-                                address,
-                                discussionId: discussion.id,
-                                ...(passageRoot ? { messageId: passageRoot.messageId } : {}),
-                            },
-                            sourceSurface,
-                        }) as Href);
-                    }}
-                />
             )}
             </SurfaceStateSizeProvider>
         </View>

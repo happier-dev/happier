@@ -49,13 +49,14 @@ const APP_TARGET = Object.freeze({ kind: 'app' as const });
 const GLOBAL_RESOURCE_CONTEXT = Object.freeze({ kind: 'global' as const });
 
 /** One Account declaration union; each plugin borrows its existing Administration-selected producer. */
-export function DiscussionComposerPluginContributions(props: SharedProps & Readonly<{
+export function DiscussionComposerPluginContributions(props: Omit<SharedProps, 'composer'> & Readonly<{
+    composer: DiscussionComposer | null;
     children(slots: Slots): React.ReactElement;
 }>): React.ReactElement {
     const shell = useAppShellPluginUiProjection();
     const active = useLayoutPresentationActive();
     const projection = shell.pluginUiProjection;
-    const presented = props.enabled && active && props.lifetime.isCurrent();
+    const presented = props.composer !== null && props.enabled && active && props.lifetime.isCurrent();
     const availability = usePluginAccountAvailabilityReader(props.lifetime.scope, undefined, { enabled: presented });
     const installed = availability?.readInstalledPlugins() ?? null;
     const declarationTargets = React.useMemo(() => presented
@@ -75,7 +76,7 @@ export function DiscussionComposerPluginContributions(props: SharedProps & Reado
     }, []);
     const contributors = React.useMemo(() => {
         const byPlugin = new Map<string, Contributor>();
-        if (projection && props.enabled && active) {
+        if (projection && presented) {
             for (const entry of [...Object.values(projection.composerControlsById), ...Object.values(projection.composerRegionsById),
                 ...Object.values(projection.composerReferencesById)]) {
                 if ('scopes' in entry.definition && entry.definition.scopes && !entry.definition.scopes.includes('discussion')) continue;
@@ -84,8 +85,8 @@ export function DiscussionComposerPluginContributions(props: SharedProps & Reado
             }
         }
         return [...byPlugin.values()].sort((left, right) => left.pluginId.localeCompare(right.pluginId));
-    }, [active, projection, props.enabled]);
-    const composerKey = composerRefV1Key(props.composer);
+    }, [presented, projection]);
+    const composerKey = props.composer ? composerRefV1Key(props.composer) : null;
     const admittedSlots = React.useMemo(() => contributors.flatMap(contributor => {
         const value = slots.get(contributor.pluginId);
         return value && value.contributor.id === contributor.id && value.composerKey === composerKey
@@ -120,8 +121,8 @@ export function DiscussionComposerPluginContributions(props: SharedProps & Reado
     return <>
         {declarationTargets.map(target => <DiscussionComposerDeclarationDemand key={JSON.stringify([target.serverIdentityId, target.machineId])}
             target={target} lifetime={props.lifetime} />)}
-        {projection ? contributors.map(contributor => <ContributorSlots key={contributor.pluginId}
-            composer={props.composer} lifetime={props.lifetime} enabled={props.enabled && active}
+        {projection && props.composer ? contributors.map(contributor => <ContributorSlots key={contributor.pluginId}
+            composer={props.composer!} lifetime={props.lifetime} enabled={presented}
             projection={projection} contributor={contributor} onPresentation={publish} />) : null}
         {render()}
     </>;

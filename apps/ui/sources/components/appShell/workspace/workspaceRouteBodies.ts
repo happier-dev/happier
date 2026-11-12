@@ -19,6 +19,7 @@ async function loadRouteBody(contextKey: string): Promise<{ default: React.Compo
     return { default: body as React.ComponentType };
 }
 
+const discussionConversationBody = () => loadRouteBody(workspaceRouteFiles['discussions/[discussionId]']!);
 const workflowEditorBody = () => loadRouteBody(workspaceRouteFiles['workflows/[id]']!);
 // Every Project page route exports the same Project body. One loader (one lazy type) keeps the
 // Project host, its chrome and panes mounted when only its page changes (Overview -> Code, plugin pages).
@@ -27,6 +28,7 @@ const projectPageBody = () => loadRouteBody(workspaceRouteFiles['projects/[works
 const machinePageBodies = new Map<string, () => Promise<{ default: React.ComponentType }>>();
 export const workspaceRouteBodies: Readonly<Record<string, () => Promise<{ default: React.ComponentType }>>> =
     Object.fromEntries(Object.entries(workspaceRouteFiles).map(([key, contextKey]) => {
+        if (key === 'discussions/new' || key === 'discussions/[discussionId]') return [key, discussionConversationBody];
         if (key === 'projects/[workspaceRefId]' || key.startsWith('projects/[workspaceRefId]/')) return [key, projectPageBody];
         const machineKey = workspaceMachinePageRouteKey(key);
         if (machineKey) {

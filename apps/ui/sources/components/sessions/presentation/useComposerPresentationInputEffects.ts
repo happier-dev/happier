@@ -94,10 +94,10 @@ function inputLockForRuntime(runtime: ComposerPresentationInputRuntime): Compose
  * persistence and becomes inert when its exact scope is replaced or retired.
  */
 export function useComposerPresentationInputEffects(input: Readonly<{
-    ref: ComposerRefV1;
+    ref: ComposerRefV1 | null;
 }>): ComposerPresentationInputEffects {
     const runtimeRef = React.useRef<ComposerPresentationInputRuntime | null>(null);
-    const targetKey = composerRefV1Key(input.ref);
+    const targetKey = input.ref ? composerRefV1Key(input.ref) : null;
     const [, forceRender] = React.useReducer((version: number) => version + 1, 0);
 
     if (runtimeRef.current?.targetKey !== targetKey) {
@@ -107,7 +107,7 @@ export function useComposerPresentationInputEffects(input: Readonly<{
             runtimeRef.current.decorations.clear();
             runtimeRef.current.locks.clear();
         }
-        runtimeRef.current = {
+        runtimeRef.current = input.ref && targetKey !== null ? {
             ref: input.ref,
             targetKey,
             retired: false,
@@ -115,7 +115,7 @@ export function useComposerPresentationInputEffects(input: Readonly<{
             decorations: new Map(),
             decorationsProjection: null,
             locks: new Map(),
-        };
+        } : null;
     }
 
     const isRuntimeLive = React.useCallback((runtime: ComposerPresentationInputRuntime): boolean => {

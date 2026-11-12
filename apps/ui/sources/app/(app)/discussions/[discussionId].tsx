@@ -2,7 +2,7 @@ import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorks
 import { DiscussionRouteScreen } from '@/components/discussions/DiscussionRouteScreen';
 
 export function DiscussionRoute() {
-    return <DiscussionRouteScreen kind="discussion" />;
+    return <DiscussionRouteScreen kind="conversation" />;
 }
 
 export { DiscussionRoute as WorkspaceRouteBody };

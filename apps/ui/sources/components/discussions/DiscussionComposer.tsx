@@ -128,6 +128,7 @@ export function DiscussionComposer(props: Readonly<{
     value: DiscussionComposerValue;
     onChange: (value: DiscussionComposerValue) => void;
     disabled: boolean;
+    isSendDisabled?: boolean;
     /** The repository is still settling this submission; AgentInput owns its pending affordance. */
     isSending?: boolean;
     onSend: (content: ReturnType<typeof buildDiscussionContent>, attachments?: DiscussionAttachmentSendSubmission) => void;
@@ -150,6 +151,7 @@ export function DiscussionComposer(props: Readonly<{
     focusOnOpen?: boolean;
 }>): React.ReactElement {
     const { scope, availability, disabled, accountLifetime } = props;
+    const controlsDisabled = disabled || props.isSendDisabled === true;
     const recordingVisibility = useSessionRecordingVisibility(availability === 'available' && !disabled);
     const currentContext = React.useRef({ accountLifetime, discussionId: props.discussionId, disabled, availability, roster: props.roster, invited: props.invited });
     currentContext.current = { accountLifetime, discussionId: props.discussionId, disabled, availability, roster: props.roster, invited: props.invited };
@@ -458,17 +460,17 @@ export function DiscussionComposer(props: Readonly<{
         onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
         onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
         onPasteImage: pasteClipboardImage,
-        disabled: disabled || availability !== 'available',
-    }), [availability, disabled, filePickerRef, pasteClipboardImage]);
+        disabled: controlsDisabled || availability !== 'available',
+    }), [availability, controlsDisabled, filePickerRef, pasteClipboardImage]);
     const mentionChips = React.useMemo(() => {
-        const recipientChip = recipients ? createRecipientMultiSelectActionChip({ isReadOnly: disabled, model: recipients }) : undefined;
+        const recipientChip = recipients ? createRecipientMultiSelectActionChip({ isReadOnly: controlsDisabled, model: recipients }) : undefined;
         // The Session order: Send to, then the paperclip, then the page's own controls.
         return [...(recipientChip ? [recipientChip] : []), attachChip, createMentionActionChip({
             label: t('session.collaboration.discussion.composer.mention'),
-            disabled,
+            disabled: controlsDisabled,
             onMention: insertMention,
         }), ...(pageChips ?? [])];
-    }, [attachChip, disabled, insertMention, pageChips, recipients]);
+    }, [attachChip, controlsDisabled, insertMention, pageChips, recipients]);
     const attachmentRowItems = React.useMemo(() => projectAgentInputAttachmentRowItems({
         items: props.contextItems, transferAttachments: attachments.agentInputAttachments }), [attachments.agentInputAttachments, props.contextItems]);
     const phone = useSurfaceStateSize() === 'phone';
@@ -487,7 +489,7 @@ export function DiscussionComposer(props: Readonly<{
                 extraActionChips={binding.extraActionChips ?? mentionChips}
                 trailingAccessory={addressingHint}
                 attachmentRowItems={attachmentRowItems}
-                onAttachmentsAdded={availability === 'available' && !disabled ? attachments.addWebFiles : undefined}
+                onAttachmentsAdded={availability === 'available' && !controlsDisabled ? attachments.addWebFiles : undefined}
                 hasSendableAttachments={attachments.hasSendableAttachments}
                 value={props.value.text}
                 placeholder={placeholder}
@@ -499,6 +501,7 @@ export function DiscussionComposer(props: Readonly<{
                 onComposerFocusChange={(focused) => { onFocusChange(focused); focusChanged?.(focused); }}
                 onSend={send}
                 disabled={disabled}
+                isSendDisabled={props.isSendDisabled}
                 isSending={props.isSending}
                 autocompleteKinds={DISCUSSION_COMPOSER_SUGGESTION_KINDS}
                 autocompleteSuggestions={binding.autocompleteSuggestions ?? suggestParticipants}
@@ -514,8 +517,7 @@ export function DiscussionComposer(props: Readonly<{
     return (
         <View testID="session-discussion-composer-root" style={styles.root}
             onLayout={(event) => { const width = Math.round(event.nativeEvent.layout.width); setComposerWidth(current => current === width ? current : width); }}>
-            {composer ? <DiscussionComposerMount
-                key={JSON.stringify([scope.serverId, scope.accountId, composer.discussionId])}
+            <DiscussionComposerMount
                 composer={composer} scope={scope} lifetime={accountLifetime}
                 available={availability === 'available'} disabled={disabled}
                 readDocument={readDocument} writeDocument={write}
@@ -529,7 +531,7 @@ export function DiscussionComposer(props: Readonly<{
                     statusRegions: slots.statusRegions,
                     extraActionChips: [...mentionChips, ...slots.extraActionChips] }, focusChanged)}
                 {React.Children.count(slots.afterComposer) > 0 ? <ComposerAuxiliaryFrame>{slots.afterComposer}</ComposerAuxiliaryFrame> : null}
-            </>} />}</DiscussionComposerPluginContributions>}</DiscussionComposerMount> : renderInput()}
+            </>} />}</DiscussionComposerPluginContributions>}</DiscussionComposerMount>
             <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={attachments.addPickedAttachments} multiple />
         </View>
     );

@@ -16,11 +16,11 @@ export type DiscussionWorkflowCaptureState = Readonly<{
 
 /** Data/custody only. The capture-review composition consumes this hook without constructing a graph. */
 export function useDiscussionWorkflowCapture(params: Readonly<{
-    discussion: DiscussionAddressV1; accountLifetime: ServerAccountScopeLifetime;
+    discussion: DiscussionAddressV1 | null; accountLifetime: ServerAccountScopeLifetime;
 }>) {
     const router = useRouter();
     const [state, setState] = React.useState<DiscussionWorkflowCaptureState>({ status: 'closed', request: null, draft: null, error: null });
-    const matchesDiscussion = state.request === null || state.request.discussion.discussionId === params.discussion.discussionId
+    const matchesDiscussion = state.request === null || params.discussion !== null && state.request.discussion.discussionId === params.discussion.discussionId
         && areServerProfileIdentifiersEquivalent(state.request.discussion.serverId, params.discussion.serverId);
     const displayed = matchesDiscussion && params.accountLifetime.isCurrent() ? state
         : { status: 'closed' as const, request: null, draft: null, error: null };
@@ -34,12 +34,13 @@ export function useDiscussionWorkflowCapture(params: Readonly<{
             reviewedRequest.current = null;
             setState({ status: 'closed', request: null, draft: null, error: null });
         });
-        setState(previous => previous.request && (previous.request.discussion.discussionId !== params.discussion.discussionId
+        setState(previous => previous.request && (!params.discussion || previous.request.discussion.discussionId !== params.discussion.discussionId
             || !areServerProfileIdentifiersEquivalent(previous.request.discussion.serverId, params.discussion.serverId))
             ? { status: 'closed', request: null, draft: null, error: null } : previous);
         return () => { retire.dispose(); pending.current?.abort(); };
-    }, [params.accountLifetime, params.discussion.discussionId, params.discussion.serverId]);
+    }, [params.accountLifetime, params.discussion?.discussionId, params.discussion?.serverId]);
     const review = React.useCallback(async (changes: Partial<Omit<WorkflowDefinitionCaptureRequestV1, 'discussion'>> = {}) => {
+        if (!params.discussion) return;
         pending.current?.abort();
         const request = { messageIds: [], ...current.current.request, ...changes, discussion: params.discussion };
         const retained = current.current.draft;
@@ -63,6 +64,7 @@ export function useDiscussionWorkflowCapture(params: Readonly<{
         }
     }, [params.accountLifetime, params.discussion]);
     const open = React.useCallback(async (messageIds?: readonly string[]) => {
+        if (!params.discussion) return;
         if (messageIds?.length) return review({ messageIds: [...messageIds], choices: undefined });
         const previous = current.current;
         setState({ ...previous, request: previous.request ?? { discussion: params.discussion, messageIds: [] },

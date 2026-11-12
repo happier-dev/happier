@@ -285,18 +285,18 @@ function isCommittableComposerPresentationTarget(
  * that must not unregister the target and retire its own ephemeral effects.
  */
 export function useStableComposerPresentationTarget(
-    ref: ComposerRefV1,
+    ref: ComposerRefV1 | null,
     target: ComposerPresentationTarget,
 ): ComposerPresentationTarget {
     const latestTargetRef = React.useRef(target);
     latestTargetRef.current = target;
-    const targetKey = composerRefV1Key(ref);
+    const targetKey = ref ? composerRefV1Key(ref) : null;
     const stableTargetRef = React.useRef<Readonly<{
-        targetKey: string;
+        targetKey: string | null;
         target: ComposerPresentationTarget;
     }> | null>(null);
     const publishedScopeRef = React.useRef<Readonly<{
-        targetKey: string;
+        targetKey: string | null;
         scope: ServerAccountScope | null;
     }> | null>(null);
 
@@ -312,7 +312,7 @@ export function useStableComposerPresentationTarget(
         publishedScopeRef.current = { targetKey, scope: scope ? { ...scope } : null };
         // Registration publishes the initial document. Later scope hydration
         // changes admission without editing it or replacing its stable adapter.
-        if (previous?.targetKey === targetKey) emit(ref);
+        if (ref && previous?.targetKey === targetKey) emit(ref);
     });
 
     if (stableTargetRef.current?.targetKey !== targetKey) {

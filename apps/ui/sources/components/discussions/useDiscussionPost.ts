@@ -12,7 +12,7 @@ import type { DiscussionRecipientSelection } from './useDiscussionRecipientSelec
 /** The existing-thread post lifecycle, shared by the Discussion and the selected Doc margin card. */
 export function useDiscussionPost(input: Readonly<{
     scope: ServerAccountScope;
-    discussionId: string;
+    discussionId: string | null;
     repository: DiscussionRepository;
     mutations: DiscussionRepositorySnapshot['mutations'];
     messages: readonly DiscussionOpenedMessageV1[];
@@ -31,7 +31,7 @@ export function useDiscussionPost(input: Readonly<{
     const mutation = activePostLocalId ? mutations[activePostLocalId] ?? null : null;
     const composerBlocked = discussionMutationBlocksComposer(mutation);
     React.useEffect(() => {
-        if (!restoredPostAttempt || mutations[restoredPostAttempt.localId]) return;
+        if (!restoredPostAttempt || discussionId === null || mutations[restoredPostAttempt.localId]) return;
         if (draft.submitted?.attemptLocalId !== restoredPostAttempt.localId) return;
         const content = draft.submitted.content;
         repository.adoptPendingIntent({ kind: 'post', discussionId, localId: restoredPostAttempt.localId, content,
@@ -64,7 +64,7 @@ export function useDiscussionPost(input: Readonly<{
     }, [draft, mutation, repository]);
     const trackAttachments = useDiscussionAttachmentSettlement(mutations);
     const send = React.useCallback(async (textContent: DiscussionMessageContentV1, attachments?: DiscussionAttachmentSendSubmission) => {
-        if (!canPost || composerBlocked) { attachments?.settle('failed', 'canceled'); return; }
+        if (discussionId === null || !canPost || composerBlocked) { attachments?.settle('failed', 'canceled'); return; }
         const replyTarget = draft.replyTarget ?? undefined;
         const content = recipientSelection.prepareContent(textContent, { replyTarget });
         if (!content) { attachments?.settle('failed', 'canceled'); return; }

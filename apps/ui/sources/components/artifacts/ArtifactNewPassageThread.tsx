@@ -151,7 +151,8 @@ function NewPassageThreadComposer(
           accountLifetime={binding}
           address={address}
           availability="available"
-          disabled={create.createDisabled}
+          disabled={create.composerDisabled}
+          isSendDisabled={create.createDisabled}
           isSending={mutation?.status === 'sending' || mutation?.status === 'checking'}
           value={value}
           onChange={setComposer}

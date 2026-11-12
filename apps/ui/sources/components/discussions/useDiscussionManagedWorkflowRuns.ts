@@ -9,31 +9,31 @@ import { discussionWorkflowRunListFilterId, workflowRunListWindowStoreKey } from
 
 /** Demand-mounted timeline data, including Runs that have not published their first reply yet. */
 export function useDiscussionManagedWorkflowRuns(params: Readonly<{
-    discussion: DiscussionAddressV1;
+    discussion: DiscussionAddressV1 | null;
     accountLifetime: ServerAccountScopeLifetime;
     enabled?: boolean;
 }>) {
     const { accountLifetime, discussion } = params;
-    const state = useContextManagedWorkflowRuns({ resource: { kind: 'discussion', id: discussion.discussionId },
-        serverId: discussion.serverId, accountLifetime,
-        enabled: params.enabled !== false && areServerProfileIdentifiersEquivalent(accountLifetime.scope.serverId, discussion.serverId) });
+    const state = useContextManagedWorkflowRuns({ resource: discussion ? { kind: 'discussion', id: discussion.discussionId } : null,
+        serverId: discussion?.serverId ?? accountLifetime.scope.serverId, accountLifetime,
+        enabled: discussion !== null && params.enabled !== false && areServerProfileIdentifiersEquivalent(accountLifetime.scope.serverId, discussion.serverId) });
     const onStarted = useDiscussionWorkflowRunStarted(params);
     return { ...state, onStarted };
 }
 
 /** Acknowledged Starts join the same relation window that reloads read from storage. */
 export function useDiscussionWorkflowRunStarted(params: Readonly<{
-    discussion: DiscussionAddressV1;
+    discussion: DiscussionAddressV1 | null;
     accountLifetime: ServerAccountScopeLifetime;
 }>) {
     const { accountLifetime, discussion } = params;
-    const windowId = workflowRunListWindowStoreKey(discussionWorkflowRunListFilterId(discussion.discussionId), accountLifetime.scope);
+    const windowId = discussion ? workflowRunListWindowStoreKey(discussionWorkflowRunListFilterId(discussion.discussionId), accountLifetime.scope) : null;
     return React.useCallback((result: WorkflowRunStartResultV1) => {
-        if (!accountLifetime.isCurrent()) return;
+        if (!discussion || !windowId || !accountLifetime.isCurrent()) return;
         const origin = result.run.origin.kind === 'direct' ? result.run.origin.discussion : undefined;
         if (!origin || origin.discussion.discussionId !== discussion.discussionId
             || !areServerProfileIdentifiersEquivalent(origin.discussion.serverId, discussion.serverId)) return;
         getStorage().getState().applyWorkflowRunListPage({ scope: accountLifetime.scope, windowId,
             runs: [result.run], nextCursor: null, mode: 'append' });
-    }, [accountLifetime, discussion.discussionId, discussion.serverId, windowId]);
+    }, [accountLifetime, discussion?.discussionId, discussion?.serverId, windowId]);
 }

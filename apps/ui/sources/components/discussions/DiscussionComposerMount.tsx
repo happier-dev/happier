@@ -22,7 +22,7 @@ type InputBinding = Pick<React.ComponentProps<typeof AgentInput>,
 
 /** A mounted adapter over the existing controlled Discussion draft, never another draft store. */
 export function DiscussionComposerMount(props: Readonly<{
-    composer: Extract<ComposerRefV1, { kind: 'discussion' }>;
+    composer: Extract<ComposerRefV1, { kind: 'discussion' }> | null;
     scope: ServerAccountScope;
     lifetime: ServerAccountScopeLifetime;
     available: boolean;
@@ -36,13 +36,13 @@ export function DiscussionComposerMount(props: Readonly<{
     const focusRequest = React.useRef<(() => void) | null>(null);
     const layout = React.useRef<ComposerSnapshotV1['layout']>('wrap');
     const effects = useComposerPresentationInputEffects({ ref: props.composer });
-    const current = React.useCallback(() => mounted.current && props.available && props.lifetime.isCurrent()
-        && areServerAccountScopesEqual(props.scope, props.lifetime.scope), [props.available, props.lifetime, props.scope]);
+    const current = React.useCallback(() => props.composer !== null && mounted.current && props.available && props.lifetime.isCurrent()
+        && areServerAccountScopesEqual(props.scope, props.lifetime.scope), [props.composer, props.available, props.lifetime, props.scope]);
     const readSnapshot = (): ComposerSnapshotV1 => {
         const document = props.readDocument();
         const lock = effects.readComposerInputLock();
         return {
-            revision: document.revision, ref: props.composer, text: document.text,
+            revision: document.revision, ref: props.composer!, text: document.text,
             references: [...composerReferencesFromStructuredMentions({ text: document.text, mentions: document.mentions })],
             attachments: [], layout: layout.current,
             // This bit admits structured plugin attachment transactions. The ordinary file
@@ -90,26 +90,26 @@ export function DiscussionComposerMount(props: Readonly<{
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
-    React.useEffect(() => registerComposerPresentationTarget(props.composer, target), [props.composer, target]);
+    React.useEffect(() => props.composer ? registerComposerPresentationTarget(props.composer, target) : undefined, [props.composer, target]);
     React.useEffect(() => {
         const registration = props.lifetime.onRetire(() => {
             effects.retire();
-            notifyComposerPresentationTargetChanged(props.composer);
+            if (props.composer) notifyComposerPresentationTargetChanged(props.composer);
         });
         return () => registration.dispose();
     }, [effects.retire, props.composer, props.lifetime]);
     const revision = props.readDocument().revision;
-    React.useEffect(() => notifyComposerPresentationTargetChanged(props.composer), [props.composer, props.disabled, props.available, revision]);
+    React.useEffect(() => { if (props.composer) notifyComposerPresentationTargetChanged(props.composer); }, [props.composer, props.disabled, props.available, revision]);
     const onFocusChange = React.useCallback((value: boolean) => {
         focused.current = value;
-        notifyComposerPresentationTargetChanged(props.composer);
+        if (props.composer) notifyComposerPresentationTargetChanged(props.composer);
     }, [props.composer]);
     const onFocusRequestChange = React.useCallback((request: (() => void) | null) => { focusRequest.current = request; }, []);
     const onLayoutChange = React.useCallback((value: ComposerSnapshotV1['layout']) => {
         layout.current = value;
-        notifyComposerPresentationTargetChanged(props.composer);
+        if (props.composer) notifyComposerPresentationTargetChanged(props.composer);
     }, [props.composer]);
-    return props.children({ composerRef: props.composer, composerDecorations: effects.composerDecorations,
+    return props.children({ composerRef: props.composer ?? undefined, composerDecorations: effects.composerDecorations,
         composerInputLock: effects.composerInputLock, onComposerFocusRequestChange: onFocusRequestChange,
         onComposerActionBarLayoutChange: onLayoutChange }, onFocusChange);
 }

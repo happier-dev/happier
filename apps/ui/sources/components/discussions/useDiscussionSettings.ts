@@ -7,7 +7,7 @@ import type { DiscussionRepository } from '@/sync/ops/discussions/discussionRepo
 
 type Outcome = DiscussionClientOutcome<DiscussionSettingsResponseV1>;
 type Status = 'idle' | 'loading' | 'ready' | 'unavailable';
-type Key = Readonly<{ repository: DiscussionRepository; discussionId: string; accountLifetime: ServerAccountScopeLifetime | null }>;
+type Key = Readonly<{ repository: DiscussionRepository; discussionId: string | null; accountLifetime: ServerAccountScopeLifetime | null }>;
 type Projection = Readonly<{ key: Key; status: Status; settings: DiscussionSettingsV1 | null; operation: Outcome | null; saving: boolean }>;
 type Pending = Readonly<{ key: Key; abort: AbortController; promise: Promise<Outcome | undefined> }>;
 
@@ -21,7 +21,7 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
     const read = React.useRef<Pending | null>(null);
     const write = React.useRef<Pending | null>(null);
     const [projection, setProjection] = React.useState<Projection | null>(null);
-    const isCurrent = React.useCallback(() => mounted.current && current.current.repository === repository
+    const isCurrent = React.useCallback(() => discussionId !== null && mounted.current && current.current.repository === repository
         && current.current.discussionId === discussionId && current.current.accountLifetime === accountLifetime
         && current.current.enabled && accountLifetime?.isCurrent() === true
         && areServerAccountScopesEqual(accountLifetime.scope, repository.scope)
@@ -33,13 +33,13 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
         return () => { retirement?.dispose(); unsubscribe(); };
     }, [accountLifetime, repository, enabled]);
     const readAccess = React.useCallback(() => {
-        if (!enabled || !accountLifetime?.isCurrent() || !areServerAccountScopesEqual(accountLifetime.scope, repository.scope)) return 'unavailable';
+        if (discussionId === null || !enabled || !accountLifetime?.isCurrent() || !areServerAccountScopesEqual(accountLifetime.scope, repository.scope)) return 'unavailable';
         const thread = repository.getSnapshot().threads[discussionId];
         return thread?.status === 'revoked' ? 'unavailable' : thread?.summary?.capabilities.manageAccess ? 'manage' : 'read';
     }, [accountLifetime, discussionId, enabled, repository]);
     const access = React.useSyncExternalStore(subscribe, readAccess, readAccess);
     const refresh = React.useCallback((signal?: AbortSignal): Promise<Outcome | undefined> => {
-        if (!isCurrent() || signal?.aborted) return Promise.resolve(undefined);
+        if (discussionId === null || !isCurrent() || signal?.aborted) return Promise.resolve(undefined);
         if (write.current?.key === key) return write.current.promise;
         if (read.current?.key === key && !read.current.abort.signal.aborted) return read.current.promise;
         const abort = new AbortController();
@@ -69,7 +69,7 @@ export function useDiscussionSettings(input: Key & Readonly<{ enabled: boolean }
         return promise;
     }, [accountLifetime, discussionId, isCurrent, key, repository]);
     const setOverride = React.useCallback((afterTurns: number | null | undefined): Promise<Outcome | undefined> => {
-        if (!isCurrent() || access !== 'manage' || write.current?.key === key) return Promise.resolve(undefined);
+        if (discussionId === null || !isCurrent() || access !== 'manage' || write.current?.key === key) return Promise.resolve(undefined);
         read.current?.abort.abort();
         const abort = new AbortController();
         const retirement = accountLifetime?.onRetire(() => abort.abort());

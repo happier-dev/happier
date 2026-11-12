@@ -54,6 +54,7 @@ export const PrimaryCircleIconButton = React.memo(
       /** How far the hit area may reach past the circle on each side (half the gap to a neighbour). */
       hitReach?: HappierPressableProps['hitReach'];
       onPress?: () => void;
+      preserveFocusOnPress?: HappierPressableProps['preserveFocusOnPress'];
       overlay?: HappierPressableProps['overlay'];
       onLongPress?: () => void;
       accessibilityActions?: HappierPressableProps['accessibilityActions'];
@@ -100,6 +101,7 @@ export const PrimaryCircleIconButton = React.memo(
           checked={typeof props.accessibilityState?.checked === 'boolean' ? props.accessibilityState.checked : undefined}
           hitReach={props.hitReach}
           disabled={computedDisabled}
+          preserveFocusOnPress={props.preserveFocusOnPress}
           onPress={() => { props.onPress?.(); }}
           overlay={props.overlay}
           onLongPress={props.onLongPress}

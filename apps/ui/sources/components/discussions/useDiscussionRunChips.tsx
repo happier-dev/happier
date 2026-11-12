@@ -10,7 +10,7 @@ import { useDiscussionWorkflowRun } from './useDiscussionWorkflowRun';
  */
 export function useDiscussionRunChips(
   params: Readonly<{
-    discussion: DiscussionAddressV1;
+    discussion: DiscussionAddressV1 | null;
     accountLifetime: ServerAccountScopeLifetime;
     paneScopeId: string;
     disabled: boolean;

@@ -11,16 +11,16 @@ import { useDiscussionWorkflowCapture } from './useDiscussionWorkflowCapture';
 
 /** Data binding only. The Discussion composition owner places this shared chip. */
 export function useDiscussionWorkflowRun(params: Readonly<{
-    discussion: DiscussionAddressV1;
+    discussion: DiscussionAddressV1 | null;
     accountLifetime: ServerAccountScopeLifetime;
     paneScopeId: string;
     disabled?: boolean;
 }>) {
     const saveAsPattern = useDiscussionWorkflowCapture(params);
     const pane = useAppPaneScope(params.paneScopeId);
-    const scoped = areServerProfileIdentifiersEquivalent(params.accountLifetime.scope.serverId, params.discussion.serverId);
+    const scoped = params.discussion !== null && areServerProfileIdentifiersEquivalent(params.accountLifetime.scope.serverId, params.discussion.serverId);
     const select = React.useCallback((selection: WorkflowStartReference, placement?: WorkflowStartPlacement) => {
-        if (!params.accountLifetime.isCurrent() || !scoped || params.disabled) return;
+        if (!params.discussion || !params.accountLifetime.isCurrent() || !scoped || params.disabled) return;
         pane.openDetailsTab(createWorkflowStartDetailsTab(selection.source, selection.name,
             { kind: 'discussion', discussion: params.discussion }), { intent: 'pinned', start: true, ...placement });
     }, [pane, params.accountLifetime, params.disabled, params.discussion, scoped]);
