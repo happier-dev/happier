@@ -46,6 +46,25 @@ it('unions compact accounting subjects with current Machine discovery candidates
     })).toEqual(['current', 'shared', 'historical']);
 });
 
+it.each(['coach', 'overview', 'work', 'action'] as const)(
+    'excludes failed empty archived Sessions while retaining real archived usage for %s', surface => {
+        const sessions = ['failed-empty', 'real-archived'].map(id => ({ id, archived: true, seq: 0,
+            sessionTurns: { v: 1 as const, sessionId: id, updatedAt: 300, turns: [] } }));
+        const contributions = [contribution('real-archived', 'completed-turn')];
+        const query = normalizeUsageQuery({ includeCoach: surface === 'coach', includeWorkEvidence: surface === 'work' });
+        for (const evidence of [
+            { contributions },
+            { sessionMembership: { sessionIds: ['real-archived'], turns: [] } },
+        ]) {
+            expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions, ...evidence })).toEqual(['real-archived']);
+            expect(selectUsageQueryWorkEvidenceSessionIds({ query: normalizeUsageQuery({ ...query, session: 'failed-empty' }),
+                sessions, ...evidence })).toEqual([]);
+        }
+        expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions, contributions: [] })).toEqual([]);
+        expect(selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [...sessions, { ...session, seq: 0 }], contributions: [] }))
+            .toEqual(['parent']);
+    });
+
 it('retains compact null-turn Session membership without inventing admitted turns', () => {
     const query = normalizeUsageQuery({ projects: ['historical-project'] });
     const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1,

@@ -483,14 +483,26 @@ export function hasSameUsageQueryWorkEvidenceMembership(input: Readonly<{
 }
 
 export function selectUsageQueryWorkEvidenceSessionIds(input: Readonly<{
-    query: UsageQuery; sessions: readonly Pick<OpenedUsageSession, 'id'>[]; contributions?: readonly UsageAnalyticsContribution[];
+    query: UsageQuery; sessions: readonly (Pick<OpenedUsageSession, 'id'> & Partial<OpenedUsageSession>)[];
+    contributions?: readonly UsageAnalyticsContribution[];
     admittedTurns?: readonly AdmittedUsageTurn[];
     sessionMembership?: AccountingSessionMembership;
+    /** Finalize an already-discovered population using its opened lifecycle facts. */
+    selectedSessionIds?: readonly string[];
 }>): readonly string[] {
+    // Discovery is provisional until opened lifecycle facts prove whether work
+    // ever started. Archive state does not decide Usage membership.
+    const unstarted = input.sessions.filter(session => session.seq === 0 && session.sessionTurns?.turns.length === 0
+        && !session.stateEvidence?.permissions.length && !session.stateEvidence?.waits.length
+        && !Object.keys(session.agentState?.requests ?? {}).length
+        && !Object.keys(session.agentState?.completedRequests ?? {}).length);
+    if (input.selectedSessionIds && !unstarted.length) return input.selectedSessionIds;
     const membership = resolveAccountingWorkMembership(input.query, input.contributions, input.admittedTurns, input.sessionMembership);
+    const empty = new Set(unstarted.filter(session => !membership.accountingSessions.has(session.id)).map(session => session.id));
+    if (input.selectedSessionIds) return input.selectedSessionIds.filter(id => !empty.has(id));
     if (membership.needsAccountingMembership) return [...membership.accountingSessions];
-    if (membership.selected) return [...membership.selected];
-    return [...new Set([...input.sessions.map(session => session.id),
+    if (membership.selected) return [...membership.selected].filter(id => !empty.has(id));
+    return [...new Set([...input.sessions.filter(session => !empty.has(session.id)).map(session => session.id),
         ...membership.matching.flatMap(row => row.sessionId === null ? [] : [row.sessionId]), ...membership.accountingSessions])];
 }
 

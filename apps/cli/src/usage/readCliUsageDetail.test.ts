@@ -29,6 +29,30 @@ function batchResponse(body: unknown, status = 200, request?: unknown) {
 }
 
 describe('CLI Usage Session evidence demand', () => {
+    it('keeps failed empty discovery records out of the accounting population consumed by Actions', async () => {
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeTranscriptEvidence: false,
+            includeWorkEvidence: false, includeCoach: true, includeQuota: false });
+        const records = ['failed-empty', 'real-archived'].map(id => createSessionRecordFixture({ id,
+            encryptionMode: 'plain', share: null, metadata: JSON.stringify({ path: '/repo', agent: 'claude' }) }));
+        vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => {
+            const demand = UsageSessionEvidenceRequestSchema.parse(request);
+            const ids = new Set(demand.requests.flatMap(row => row.sessionIds ?? records.map(row => row.id)));
+            return batchResponse({ results: records.filter(row => ids.has(row.id)).map(session => ({
+                sessionId: session.id, detail: { status: 200, body: { session } }, turns: { status: 200,
+                    body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [] } },
+            })) }, 200, request);
+        });
+        const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, sessionIds: ['real-archived'],
+            sessionMembership: { turns: [] }, totals: { eventCount: 1,
+                tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
+        const result = await readCliUsageDetail({ queries: [query], accounting: [{ query, value, status: 'available' }],
+            credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
+            accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
+            resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
+        expect(result.sessions.map(row => row.id)).toEqual(['real-archived']);
+    });
+
     it('reads split UTF-8 NDJSON over real HTTP without joining the aggregate response', async () => {
         const app = fastify();
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeTranscriptEvidence: false,
@@ -193,7 +217,8 @@ describe('CLI Usage Session evidence demand', () => {
             reason: 'access_projection_version_unsupported' };
         const parts: SessionReadBatchResultV1[] = sessions.map(session => ({ sessionId: session.id,
             detail: { status: 200, body: { session } }, turns: { status: 200,
-                body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [] } },
+                body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [{ turnId: 'turn', agentId: 'claude',
+                    status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] } },
             messages: { status: 200, body: { messages: [], hasMore: false } },
         }));
         parts[0]![part] = { status: 426, body: updateRequired };
@@ -438,7 +463,7 @@ describe('CLI Usage Session evidence demand', () => {
 
     it.each([true, false])('opens opaque E2EE evidence locally and refuses server-supplied plaintext facts (key available: %s)', async available => {
         const secret = new Uint8Array(32).fill(17);
-        const session = createSessionRecordFixture({ id: 'encrypted-evidence', encryptionMode: 'e2ee', share: null,
+        const session = createSessionRecordFixture({ id: 'encrypted-evidence', seq: 1, encryptionMode: 'e2ee', share: null,
             metadata: encodeBase64(encrypt(secret, 'legacy', { path: '/repo', agent: 'claude' })) });
         const content = encodeBase64(encrypt(secret, 'legacy', { role: 'agent', content: { type: 'output', data: {
             type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'actual-read', name: 'Read',

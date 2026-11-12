@@ -15,7 +15,7 @@ import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScoped
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { readUsageHistoryFailure } from './usageHistoryReadState';
 import { getUsageSessionEvidenceDemandKey } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { hasSameUsageQueryWorkEvidenceMembership, usageQueryNeedsSessionCandidates } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { hasSameUsageQueryWorkEvidenceMembership, selectUsageQueryWorkEvidenceSessionIds } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectUsageQueryWorkEvidence } from '@/sync/domains/usage/usageWorkEvidence';
 
 export type SessionInputEvidence = Readonly<{
@@ -150,12 +150,17 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                 return id === value.selectedIds[index] && retained?.session === current?.session
                     && retained?.detail === current?.detail;
             })
-            && (usageQueryNeedsSessionCandidates(value.query) || hasSameUsageQueryWorkEvidenceMembership({
+            && (value.contributions === previous.input.contributions
+                && value.admittedTurns === previous.input.admittedTurns
+                && value.sessionMembership === previous.input.sessionMembership || hasSameUsageQueryWorkEvidenceMembership({
                 query: value.query, contributions: value.contributions, previousContributions: previous.input.contributions,
                 admittedTurns: value.admittedTurns, previousAdmittedTurns: previous.input.admittedTurns,
                 sessionMembership: value.sessionMembership, previousSessionMembership: previous.input.sessionMembership,
             }))) return previous.value;
-        const sessions = value.selectedIds.flatMap(id => value.selected.get(id)?.session ? [value.selected.get(id)!.session] : []);
+        const candidates = value.selectedIds.flatMap(id => value.selected.get(id)?.session ? [value.selected.get(id)!.session] : []);
+        const eligible = new Set(selectUsageQueryWorkEvidenceSessionIds({ ...value, sessions: candidates,
+            selectedSessionIds: candidates.map(session => session.id) }));
+        const sessions = candidates.filter(session => eligible.has(session.id));
         const selected = new Map(value.selectedIds.map(id => [id, value.selected.get(id) ?? null] as const));
         const sessionEvidence = new Map([...selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
         const result = { sessions, detail: projectUsageQueryWorkEvidence({ ...value, sessions, sessionEvidence }) };

@@ -11,6 +11,29 @@ import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScoped
 
 afterEach(() => vi.restoreAllMocks());
 
+it('uses opened eligibility for Coach coverage and refreshes it when accounting admits an archived Session', () => {
+    const scope = { serverId: 'usage-empty-population.test', accountId: 'account' };
+    const controller = new AbortController();
+    const owner = createUsageQuerySessionInputs({ lifetime: { scope, isCurrent: () => true,
+        onRetire: () => ({ dispose() {} }) }, signal: controller.signal, assertCurrent() {} });
+    const phase = new UsageQueryEvidencePhase(2, false);
+    const ids = ['failed-empty', 'real-archived'];
+    for (const id of ids) {
+        const session = projectUsageSessionInput(createSessionFixture({ id, seq: 0, encryptionMode: 'plain',
+            archivedAt: 300, sessionTurns: { v: 1, sessionId: id, updatedAt: 300, turns: [] } }));
+        phase.select(id, { session, detail: projectSessionUsageWorkEvidence(session), callerDataKeyEnvelope: null,
+            completeMessageCoverage: true }, true);
+    }
+    const query = normalizeUsageQuery({ includeCoach: true });
+    const project = (sessionIds: string[]) => owner.projectSelection({ query, nowMs: 1_000, admitted: true,
+        selected: phase.selected, selectedIds: ids, scope, currentScope: scope, isCurrent: true,
+        sessionMembership: { sessionIds, turns: [] } });
+    try {
+        expect(project(['real-archived']).sessions.map(row => row.id)).toEqual(['real-archived']);
+        expect(project(ids).sessions.map(row => row.id)).toEqual(ids);
+    } finally { owner.dispose(); controller.abort(); }
+});
+
 it('reuses admitted Coach inputs for work-only demand while acquiring missing Coach inputs', async () => {
     const scope = { serverId: 'usage-fact-scope-retention.test', accountId: 'account' };
     const previous = storage.getState();

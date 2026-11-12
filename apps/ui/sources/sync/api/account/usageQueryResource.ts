@@ -1075,7 +1075,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         const sessionCoverage = { selected: (idsByQuery.get(getUsageQueryKey(query)) ?? []).length,
             admitted: sessions.filter(session => session.access?.capabilities.readTranscript !== false
                 && isSessionContentReadable(readSessionContentAvailability(session))).length,
-            notRead: [...selected.values()].filter(value => value && (!value.completeMessageCoverage || value.workFactsPersisted === false)).length };
+            notRead: sessions.filter(session => {
+                const value = selected.get(session.id);
+                return value && (!value.completeMessageCoverage || value.workFactsPersisted === false);
+            }).length };
         history?.coverage(selectedIdSet,
             [...selected.values()].filter(value => value && canReadUnconvertedSessionHistory(value)).length);
         return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail,

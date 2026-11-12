@@ -225,7 +225,7 @@ export async function readCliUsageDetail(input: Readonly<{
             const access = rawSession.effectiveAccess ?? (role === 'owner' ? { capabilities: { submitAgentInput: true } } : undefined);
             const machineId = typeof ownerMetadata?.machineId === 'string' ? ownerMetadata.machineId : null;
             const cwd = typeof ownerMetadata?.path === 'string' ? ownerMetadata.path : null;
-            const session: OpenedUsageSession = { id: sessionId, createdAt: rawSession.createdAt, origin: rawSession.origin,
+            const session: OpenedUsageSession = { id: sessionId, seq: rawSession.seq, createdAt: rawSession.createdAt, origin: rawSession.origin,
                 manager: rawSession.manager, metadata, agentState: agentState.success ? agentState.data : null, sessionTurns,
                 stateEvidence: crypto.mode === 'plain' ? part.stateEvidence : undefined };
             sessions.set(sessionId, { session,
@@ -237,6 +237,18 @@ export async function readCliUsageDetail(input: Readonly<{
         } catch { await input.assertCurrent(); }
     }
     await input.assertCurrent();
+    const eligibleIds = new Set<string>();
+    for (const query of input.queries) {
+        const key = getUsageQueryKey(query);
+        const candidates = query.includeSessionEvidence ? idsByQuery.get(key) ?? [] : [...sessions.keys()];
+        const ids = selectUsageQueryWorkEvidenceSessionIds({ query,
+            selectedSessionIds: candidates,
+            sessions: candidates.flatMap(id => sessions.has(id) ? [sessions.get(id)!.session] : [{ id }]),
+            contributions: accounting.get(key), sessionMembership: membership.get(key) });
+        if (query.includeSessionEvidence) idsByQuery.set(key, [...ids]);
+        for (const id of ids) eligibleIds.add(id);
+    }
+    for (const id of sessions.keys()) if (!eligibleIds.has(id)) sessions.delete(id);
     const work = await collectUsageWorkSources({ queries: workQueries, accounting: input.accounting, assertCurrent: input.assertCurrent,
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
