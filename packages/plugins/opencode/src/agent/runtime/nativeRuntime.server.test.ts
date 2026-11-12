@@ -15,7 +15,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildOpenCodeRequestAuthMarker } from '../auth/services/requestAuth/source.js';
-import { OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS } from '../auth/services/purposes.js';
+import { OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS } from '../auth/services/purposes.js';
 
 const { openOpenCodeServerSession } = vi.hoisted(() => ({
   openOpenCodeServerSession: vi.fn(),
@@ -61,7 +61,7 @@ function explicitNativeConfiguration(modelId = 'openai/gpt-5'): AgentSessionConf
     permissionIntent: { value: null, updatedAtMs: 0 }, options: {} };
 }
 
-const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = OPEN_CODE_CONNECTED_ACCOUNT_PURPOSE_IDS;
+const OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES = OPEN_CODE_NATIVE_CONNECTED_ACCOUNT_PURPOSE_IDS;
 
 type OpenCodePurpose = typeof OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES[number];
 
@@ -429,7 +429,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
               openai: { type: 'api', key: '  sk-openai-public\n' },
             }),
             HAPPIER_OPENCODE_PROVIDER_API_KEY: 'provider-secret',
-            OPENCODE_CONFIG_CONTENT: '{"provider":"gateway"}',
+            OPENCODE_CONFIG_CONTENT: JSON.stringify({ provider: 'gateway', enabled_providers: ['openai'] }),
             OPENAI_API_KEY: '',
             ANTHROPIC_API_KEY: '',
           }),
