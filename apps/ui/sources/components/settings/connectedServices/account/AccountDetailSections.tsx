@@ -172,9 +172,7 @@ export const AccountDetailUsageSectionView = React.memo(function AccountDetailUs
                     testID={`${testID}:none`}
                     size="line"
                     kind="empty"
-                    title={facts.usageState === 'not_loaded'
-                        ? t('connectedServicesSettings.usageAppearsAfterSession')
-                        : t('common.unavailable')}
+                    title={t('common.unavailable')}
                 />
             )}
             {failure ? (

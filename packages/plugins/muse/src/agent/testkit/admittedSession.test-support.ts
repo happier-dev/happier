@@ -1,3 +1,4 @@
+import type { LoggerService } from '@happier-dev/plugin-sdk';
 import type { AgentSessionOpenRequest, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { FeaturesResponseSchema, QualifiedProviderAccountUsageWriteV4Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
   type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol';
@@ -72,6 +73,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
   const auditPath = join(scratch, 'native-audit.json');
   const native = await createMuseMspProcessFixture({ ...options.native, auditPath, cwd });
   let launched = 0;
+  const warnings: Parameters<LoggerService['warn']>[] = [];
   const exec = createStablePluginExecService({ ...native, environment: options.environment, signal, isOccurrenceCurrent: () => true,
     async resolveExecutable() {
       launched++;
@@ -296,7 +298,9 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       subagents: readPluginSessionsSubagentObservation(services.sessions),
     });
     const context = composeNativeAgentSessionRuntimeContext({ identity, contributionId: agentId, sessionId,
-      invokedAtMs: Date.now(), signal, services: { ...services, exec }, sessionServices,
+      invokedAtMs: Date.now(), signal, services: { ...services, exec, logger: { ...services.logger,
+        warn(...args: Parameters<LoggerService['warn']>) { warnings.push(args); services.logger.warn(...args); },
+      } }, sessionServices,
       ui: createPluginInvocationPresentation({ currentSession: currentSessionUi, signal, isOccurrenceCurrent: lease.isCurrent,
         presentationOwner: { pluginId, contributionId: agentId, generationId: lease.occurrenceId, invocationId: 'muse-admitted-open' } }),
       protocols: createPublicAcpRuntimeProtocols({ pluginId, agentId, signal, isCurrent: lease.isCurrent,
@@ -312,7 +316,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     const untouchedRegistry = untouched;
     const boundPublications = publications;
     return {
-      runtime, context, host, permissionHandler, custodyMutations, storedWrites, usageWrites, boundaryRequests, connectionStates,
+      runtime, context, host, permissionHandler, custodyMutations, storedWrites, usageWrites, boundaryRequests, connectionStates, warnings,
       publications: boundPublications,
       admission: { untouchedHasMuse, untouchedLaunchCount, selectedFactoryLaunchCount },
       get launchCount() { return launched; },

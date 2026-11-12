@@ -29,8 +29,9 @@ export async function createClaudeForegroundConnectedAccountFixture(accountIds: 
   return await createForegroundConnectedAccountFixture(accountIds, 'claude');
 }
 
-export async function createMuseForegroundConnectedAccountFixture(accountIds: readonly string[] = ['work']) {
-  return await createForegroundConnectedAccountFixture(accountIds, 'muse');
+export async function createMuseForegroundConnectedAccountFixture(accountIds: readonly string[] = ['work'],
+  credentialValues?: Readonly<Record<string, string>>) {
+  return await createForegroundConnectedAccountFixture(accountIds, 'muse', undefined, credentialValues);
 }
 
 /** Real shared Anthropic token materializer consumed by another admitted Agent. */
@@ -41,15 +42,17 @@ export async function createAnthropicForegroundConnectedAccountFixture(consumer:
 }
 
 async function createForegroundConnectedAccountFixture(accountIds: readonly string[], agentId: 'codex' | 'claude' | 'muse' | 'anthropic',
-  consumer?: Readonly<{ pluginId: string; localId: string; purpose: string }>) {
+  consumer?: Readonly<{ pluginId: string; localId: string; purpose: string }>,
+  museCredentialValues?: Readonly<Record<string, string>>) {
   const accountId = accountIds[0]!;
   const pluginId = `happier.agent.${agentId === 'anthropic' ? 'claude' : agentId}`;
   const service = { pluginId, localId: agentId === 'anthropic' ? 'anthropic' : agentId === 'claude' ? 'claude-subscription' : agentId === 'muse' ? 'muse-account' : 'openai-codex' };
-  const authenticationModeId = agentId === 'anthropic' || agentId === 'muse' ? 'api-key' : 'oauth';
+  const authenticationModeId = agentId === 'muse' && museCredentialValues?.credentialMode === 'native'
+    ? 'native-import' : agentId === 'anthropic' || agentId === 'muse' ? 'api-key' : 'oauth';
   const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'plain',
     payload: { v: 1, values: agentId === 'anthropic' ? { token: 'synthetic-selected-anthropic-key' } : agentId === 'muse'
-      ? { credentialMode: 'manual', inferenceKey: 'synthetic-selected-muse-key' }
+      ? museCredentialValues ?? { credentialMode: 'manual', inferenceKey: 'synthetic-selected-muse-key' }
       : { accessToken: 'work-access', refreshToken: 'work-refresh', idToken: 'work-id', providerAccountId: 'work-account' } },
     randomBytes: length => new Uint8Array(length),
   });

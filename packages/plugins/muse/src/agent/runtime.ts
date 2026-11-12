@@ -1,6 +1,6 @@
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
-import { classifyJsonRpcSubmissionFailure } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { classifyJsonRpcSubmissionFailure, readJsonRpcApplicationRejection, type JsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentRuntime, AgentSessionCatalogControl, AgentSessionConfigurationUpdate, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext,
   AgentSessionHostServices, AgentSessionCompactResult, AgentSessionCancelResult, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentRuntimeJsonValueSchema, createExecutionRunHostBackendFromConversationRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -16,6 +16,7 @@ import { museNativeSkillCatalogItem, readMuseNativeSkills, resolveMuseTurnInput 
 import { readMuseHistoryItems, replayMusePagedHistory } from './externalSessions.js';
 import { reconcileMuseHistoryNotification } from './historyRecovery.js';
 import { recordMuseUsageObservation } from './accountUsage.js';
+import { META_API_KEY_ENV_KEY } from '../connectedAccounts/declarations.js';
 
 // Muse 1.4.14 permissionProfile/list and the exported MSP ApprovalMode contract.
 // Plan has no Muse behavior mode; like the host normalization it stays read-only.
@@ -27,6 +28,26 @@ const MUSE_PERMISSIONS = {
   yolo: { permissionProfile: ':unrestricted', approvalMode: 'allowAll' },
 } as const satisfies Record<NonNullable<AgentSessionConfigurationUpdate['permissionIntent']['value']>,
   { permissionProfile: string; approvalMode: string }>;
+
+
+/** Keep the native refresh cause without logging response prose or credential-shaped data. */
+function readMuseUsageRefreshFailure(error: unknown): Readonly<Record<string, JsonValue>> {
+  const rejection = readJsonRpcApplicationRejection(error);
+  if (rejection && error instanceof Error) {
+    const response: JsonRpcApplicationError = error;
+    const details: Record<string, JsonValue> = rejection.providerErrorCode === undefined ? {} : { code: rejection.providerErrorCode };
+    const data = response.data;
+    if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
+      if ('kind' in data && (data.kind === 'usageRefreshRateLimited' || data.kind === 'usageRefreshUnavailable' || data.kind === 'usageRefreshFailed')) details.kind = data.kind;
+      if ('retryable' in data && typeof data.retryable === 'boolean') details.retryable = data.retryable;
+      if ('retryAfterMs' in data && typeof data.retryAfterMs === 'number' && Number.isFinite(data.retryAfterMs)) details.retryAfterMs = data.retryAfterMs;
+      // Muse documents this field as a non-secret mint-failure classification.
+      if ('failureKind' in data && typeof data.failureKind === 'string') details.failureKind = data.failureKind;
+    }
+    return details;
+  }
+  return error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {};
+}
 
 function musePermissions(configuration: Pick<AgentSessionConfigurationUpdate, 'permissionIntent' | 'workspaceWrites'> | undefined) {
   return MUSE_PERMISSIONS[configuration?.workspaceWrites === 'deny' ? 'read-only'
@@ -239,17 +260,15 @@ async function openMuseConversation<SessionId extends string | undefined>(
       throw new PluginError({ code: 'PLUGIN_EXEC_PROTOCOL_ERROR', message: 'Muse returned a different native Session identity during resume.' });
     }
     const nativeSessionId = native.sessionId;
-    if (sessionServices && sessionId) {
-      // Refresh once through the existing native host: imported credentials can
-      // leave its cache empty. Native refresh mints a key; do not retry or poll.
+    if (sessionServices && sessionId && !request.launchEnvironment?.values[META_API_KEY_ENV_KEY]) {
+      // OAuth-only hosts can refresh their empty cache. A selected key overrides
+      // native login and makes this mint unavailable (-32081); do not retry or poll.
       // Optional allowance data must not delay readiness or the first turn.
       void msp.client.request('usage/refresh', {}, { signal: context.signal })
         .then(params => recordMuseUsageObservation({ params, accountUsage: sessionServices.accountUsage,
           sessionId, env: request.launchEnvironment?.values, signal: context.signal, logger: context.services.logger }))
         .catch(error => {
-          if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage refresh was unavailable', {
-            ...(error instanceof PluginError ? { code: error.code } : error instanceof Error ? { errorType: error.name } : {}),
-          });
+          if (!context.signal.aborted && !closing && !ended) context.services.logger.warn('Muse initial usage refresh was unavailable', readMuseUsageRefreshFailure(error));
         });
     }
     if (request.kind === 'fork' && (selectedMcp.length || explicitPermissions)) {

@@ -37,13 +37,15 @@ const FACTS: AccountDetailUsageFacts = {
 
 describe('AccountDetailUsageSectionView', () => {
     it('keeps the usage and timestamp visible beside its pending refresh status', async () => {
+        const refresh = vi.fn();
         const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView
-            facts={{ ...FACTS, refreshing: true, refresh: vi.fn() }} signedOut={false} now={2_000}
+            facts={{ ...FACTS, refreshing: true, refresh }} signedOut={false} now={2_000}
         /></ItemList>);
         expect(screen.findByTestId('account-detail-usage:refresh-status')).toBeTruthy();
         expect(screen.findByTestId('account-detail-usage:as-of')).toBeTruthy();
         expect(screen.findByTestId('account-detail-usage:meter:five_hour')).toBeTruthy();
-        expect(screen.findByTestId('account-detail-usage:refresh')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('account-detail-usage:refresh');
+        expect(refresh).not.toHaveBeenCalled();
     });
 
     it('says when provider credits keep a spent account usable', async () => {
@@ -69,12 +71,12 @@ describe('AccountDetailUsageSectionView', () => {
         expect(retry).toHaveBeenCalledOnce();
     });
 
-    it.each([0, null, 1_000])('explains observation-only usage without dating a missing sample (%s)', async (fetchedAt) => {
+    it.each([0, null, 1_000])('shows unavailable usage without dating a missing sample (%s)', async (fetchedAt) => {
         const screen = await renderScreen(<ItemList><AccountDetailUsageSectionView
             facts={{ ...FACTS, meters: [], fetchedAt, usageState: 'not_loaded', refresh: vi.fn() }}
             signedOut={false} now={2_000}
         /></ItemList>);
-        expect(screen.getTextContent()).toContain('Usage appears after a Session reports it.');
+        expect(screen.getTextContent()).toContain('Unavailable');
         expect(screen.findByTestId('account-detail-usage:as-of')).toBeNull();
         expect(screen.findByTestId('account-detail-usage:error')).toBeNull();
     });

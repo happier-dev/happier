@@ -12,8 +12,11 @@ import { MUSE_MSP_PLAYBACK_SCRIPT, readMuseLoginRecording, readMuseMspProcessAud
 
 afterEach(() => vi.restoreAllMocks());
 
-it('selects the same qualified Muse Account independently for model demand and foreground native launch', async () => {
-  const account = await createMuseForegroundConnectedAccountFixture(['work', 'personal']);
+it.each(['manual', 'native'] as const)('selects the same keyed Muse Account for contributor models and native launch (%s)', async credentialMode => {
+  const account = await createMuseForegroundConnectedAccountFixture(['work', 'personal'], credentialMode === 'native' ? {
+    credentialMode: 'native', inferenceKey: 'synthetic-selected-muse-key', accountToken: 'synthetic-selected-oauth-token',
+    nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'login', nativeMechanism: '"oauth"', nativeSubsActive: 'true',
+  } : undefined);
   const overrideKey = resolveAgentCliOverrideEnvKey('muse');
   const env = createEnvKeyScope(['PATH', 'META_API_KEY', overrideKey]);
   try {
@@ -31,8 +34,11 @@ it('selects the same qualified Muse Account independently for model demand and f
         // are written by the native process or included in assertion output.
         "const path = require('node:path');",
         "const auth = JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME, 'muse/auth.json'), 'utf8'));",
-        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: auth.providers.meta.api_key === 'synthetic-selected-muse-key', ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key', credentialEnvironmentAbsent: process.env.META_API_KEY === undefined, nativeKeyMode: auth.providers.meta.mechanism === 'api_key' }) + '\\n');`,
-        `process.env.MUSE_TEST_RECORDING ??= ${JSON.stringify(JSON.stringify(recording))};`,
+        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: auth.providers.meta.api_key === 'synthetic-selected-muse-key', ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key', selectedEnvironmentMatches: process.env.META_API_KEY === 'synthetic-selected-muse-key', nativeLoginRetained: auth.providers.meta.mechanism === ${JSON.stringify(credentialMode === 'native' ? 'oauth' : 'api_key')} && ${credentialMode === 'native' ? "auth.providers.meta.access_token === 'synthetic-selected-oauth-token'" : 'true'} }) + '\\n');`,
+        `const playback = JSON.parse(process.env.MUSE_TEST_RECORDING ?? ${JSON.stringify(JSON.stringify(recording))});`,
+        // Native 1.4.15 capture: envKey exposes contributor IDs; accountLogin does not.
+        "for (const row of playback.rows) { const models = row.message?.result?.models; if (Array.isArray(models) && process.env.META_API_KEY === 'synthetic-selected-muse-key') { for (const id of ['muse-spark-1.2-contributor', 'muse-spark-1.3-contributor']) { const base = models.find(model => model.modelId === id.replace('-contributor', '')); models.push({ ...base, modelId: id, displayLabel: id, isDefault: false }); } } }",
+        'process.env.MUSE_TEST_RECORDING = JSON.stringify(playback);',
         `process.env.MUSE_TEST_AUDIT_PATH ??= ${JSON.stringify(catalogAudit)};`,
         MUSE_MSP_PLAYBACK_SCRIPT,
       ].join('\n'));
@@ -66,6 +72,8 @@ it('selects the same qualified Muse Account independently for model demand and f
           expect.objectContaining({ id: 'meta/muse-wonder-1.0' }),
           expect.objectContaining({ id: 'meta/muse-spark-1.3' }),
           expect.objectContaining({ id: 'meta/muse-spark-1.2' }),
+          expect.objectContaining({ id: 'meta/muse-spark-1.2-contributor' }),
+          expect.objectContaining({ id: 'meta/muse-spark-1.3-contributor' }),
         ]),
       } });
       const catalog = await readMuseMspProcessAudit(catalogAudit);
@@ -73,7 +81,7 @@ it('selects the same qualified Muse Account independently for model demand and f
       expect(catalog).toMatchObject({ initializeCount: 1, initializedCount: 1, commandCount: 0,
         autoUpdate: '1', cwd: foreground.directory });
       const readEquality = async () => (await readFile(credentialAudit, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-      expect(await readEquality()).toEqual([{ selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true }]);
+      expect(await readEquality()).toEqual([{ selectedCredentialMatches: true, ambientCredentialUsed: false, selectedEnvironmentMatches: true, nativeLoginRetained: true }]);
 
       // This admission independently acquires its own materialization. The
       // model probe's prepared environment is never fed into launch.
@@ -102,10 +110,11 @@ it('selects the same qualified Muse Account independently for model demand and f
         expect(launch.methods.filter(method => method === 'session/start')).toHaveLength(1);
         expect(launch.methods).not.toContain('model/list');
         expect(launch.methods).not.toContain('turn/start');
+        expect(launch.methods).not.toContain('usage/refresh');
         expect(launch).toMatchObject({ initializeCount: 1, initializedCount: 1, cwd: foreground.directory, autoUpdate: '1' });
         expect(await readEquality()).toEqual([
-          { selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true },
-          { selectedCredentialMatches: true, ambientCredentialUsed: false, credentialEnvironmentAbsent: true, nativeKeyMode: true },
+          { selectedCredentialMatches: true, ambientCredentialUsed: false, selectedEnvironmentMatches: true, nativeLoginRetained: true },
+          { selectedCredentialMatches: true, ambientCredentialUsed: false, selectedEnvironmentMatches: true, nativeLoginRetained: true },
         ]);
       } finally { await session.dispose(); }
     });

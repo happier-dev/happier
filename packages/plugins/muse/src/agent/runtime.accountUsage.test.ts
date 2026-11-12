@@ -55,8 +55,11 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
       bindingsByServiceId: { [serviceId]: { source: 'connected', profileId: ref.accountId } } }),
     connectedServiceSelectionsEnv: environment });
   const usageCredential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref,
-      authenticationModeId: 'api-key', configurationRevision: 'cfg-work', revisionSemantics: 'revisioned', credentialRevision,
-      content: { t: 'plain', v: { v: 1, values: { inferenceKey: 'synthetic-key', credentialMode: 'manual' } } },
+      authenticationModeId: 'native-import', configurationRevision: 'cfg-work', revisionSemantics: 'revisioned', credentialRevision,
+      content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', accountToken: 'synthetic-oauth-token',
+        nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'login',
+        nativeSubsActive: 'true', expiresAtMs: String(Date.UTC(2100, 0, 1)),
+      } } },
       metadata: { scopes: [], providerIdentity: { accountId: 'acct_native' } },
   });
   const persistence = createProviderAccountUsagePersistenceScheduler({ credentials,
@@ -142,5 +145,72 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     await fixture.dispose();
     ipc.mockRestore();
     persistence.dispose();
+  }
+});
+
+
+it('does not mint subscription usage for a known key launch and still completes its first turn', async () => {
+  const captured = readMuseRecord(await readMuseLoginRecording());
+  if (!Array.isArray(captured.rows)) throw new Error('Expected native recording rows');
+  const rows = captured.rows.filter(row => readMuseRecord(readMuseRecord(row).message).method !== 'usage/changed');
+  const environment = { META_API_KEY: 'synthetic-selected-muse-key' };
+  const fixture = await createAdmittedMuseSessionFixture({ environment, native: { recording: { ...captured, rows } satisfies JsonValue } });
+  const events = createAgentSessionRuntimeHarness();
+  try {
+    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
+      launchEnvironment: { values: environment, unset: [] } });
+    session.watch(events.recordRuntimeEvent);
+    await session.send({ inputIds: ['key-input'], input: { text: 'Reply with exactly PEBBLE. Do not use tools.' },
+      delivery: { kind: 'newTurn', turnId: 'key-turn' } });
+    await events.until('turn-complete');
+    expect((await fixture.readAudit()).methods).not.toContain('usage/refresh');
+    expect(fixture.usageWrites).toEqual([]);
+  } finally {
+    events.dispose();
+    await fixture.dispose();
+  }
+});
+
+it.each([
+  { code: -32080, data: { kind: 'usageRefreshRateLimited', retryable: true, retryAfterMs: 54321 } },
+  { code: -32081, data: { kind: 'usageRefreshUnavailable', retryable: false } },
+  { code: -32082, data: { kind: 'usageRefreshFailed', retryable: true, failureKind: 'transient' } },
+])('retains typed native refresh cause $code without blocking startup or retrying', async ({ code, data }) => {
+  const captured = readMuseRecord(await readMuseLoginRecording());
+  if (!Array.isArray(captured.rows)) throw new Error('Expected native recording rows');
+  const request = captured.rows.find(row => readMuseRecord(readMuseRecord(row).message).method === 'usage/read');
+  const requestId = readMuseRecord(readMuseRecord(request).message).id;
+  const rows = captured.rows.map(row => {
+    const message = readMuseRecord(readMuseRecord(row).message);
+    if (row === request) return { ...readMuseRecord(row), message: { ...message, method: 'usage/refresh' } };
+    if (readMuseRecord(row).direction !== 'recv' || message.id !== requestId) return row;
+    const { result: _result, ...response } = message;
+    return { ...readMuseRecord(row), message: { ...response, error: {
+      code, message: 'synthetic-sensitive-provider-message', data: { ...data, credential: 'synthetic-sensitive-credential' },
+    } } };
+  });
+  // Exact receive windows retain native error frames; default playback projects results only.
+  const playbackSteps = ['session/start', 'usage/refresh'].map(method => {
+    const requestRow = rows.findIndex(row => readMuseRecord(readMuseRecord(row).message).method === method);
+    const id = readMuseRecord(readMuseRecord(rows[requestRow]).message).id;
+    const responseRow = rows.findIndex((row, index) => index > requestRow && readMuseRecord(row).direction === 'recv'
+      && readMuseRecord(readMuseRecord(row).message).id === id);
+    if (requestRow < 0 || responseRow < 0) throw new Error('Missing native request/response fixture');
+    return { requestRow, receiveUntilRow: responseRow + 1 };
+  });
+  const fixture = await createAdmittedMuseSessionFixture({ native: { recording: { ...captured, rows } satisfies JsonValue, playbackSteps } });
+  // The fixture observes and forwards the real logger; JSON-RPC/runtime remain intact.
+  try {
+    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+    expect(session).toBeDefined();
+    await vi.waitFor(() => expect(fixture.warnings).toContainEqual(['Muse initial usage refresh was unavailable', {
+      code, ...data,
+    }]));
+    await fixture.closeSession();
+    expect((await fixture.readAudit()).methods.filter(method => method === 'usage/refresh')).toHaveLength(1);
+    expect(JSON.stringify(fixture.warnings)).not.toContain('synthetic-sensitive');
+    expect(fixture.usageWrites).toEqual([]);
+  } finally {
+    await fixture.dispose();
   }
 });

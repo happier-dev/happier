@@ -164,11 +164,15 @@ until you remove them deliberately.
 The unreleased Muse integration is being validated with three connection methods:
 Meta device sign-in, an API key, and explicit import of a complete native login
 from the machine you choose. Device sign-in mints an inference key once while
-connecting. At session startup, Muse refreshes subscription usage once and may
-mint an inference key. Reading saved usage does not mint a key.
+connecting. At session startup, OAuth-only launches refresh subscription usage
+once and may mint an inference key. Reading saved usage does not mint a key.
 
 Selected Muse accounts use a private native credential file. Device and imported
-logins retain their account identity; API-key accounts retain key mode and do not
+logins retain their account identity. When the account has an API key, both model
+listing and Sessions also use that key so native contributor models remain
+available. Muse cannot refresh subscription allowance in this key mode, so
+Happier skips that request and shows Unavailable when no usage was reported.
+OAuth-only accounts keep subscription usage refresh. API-key accounts do not
 imply a subscription allowance. Native-default launches keep your
 original configuration location. Selected native accounts preserve settings and
 trust, and link other existing top-level configuration entries. New top-level
@@ -179,6 +183,13 @@ contributor model variants in the model picker. Contributor selection is not an
 account setting. If credentials expire or are rejected, sign in again explicitly.
 Removing the saved account removes its managed native home after active sessions
 release it; it does not log out your original native Muse installation.
+
+In development builds, native Team delivery shares an access token with a known
+future expiry. The member's Muse obtains its own inference key. An imported login
+that does not report its expiry remains available for brokered sharing; use Meta
+sign-in again to share it natively. Existing accounts pick up delivery support
+from their current connection method without reconnecting solely to refresh that
+support declaration.
 
 [Meta's terms](https://dev.meta.ai/legal/terms-of-service) restrict subscription
 credentials to its coding harness. A working key route does not establish

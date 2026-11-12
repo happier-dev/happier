@@ -101,7 +101,8 @@ export const MUSE_PLUGIN = definePlugin({
         },
         continuity: { verifyResumeReachable: verifyMuseResumeReachable },
         stateSharingDescriptor: museStateSharingDescriptor,
-        // Native file mode preserves OAuth login; an env key overrides it and disables usage refresh.
+        // Catalog and Sessions share the selected key and retained native OAuth file.
+        environmentUses: MUSE_DIRECT_AUTH_ENV_KEYS.map(environmentKey => ({ purpose: MUSE_NATIVE_PURPOSE, environmentKey })),
         environmentUnsetUses: MUSE_DIRECT_AUTH_ENV_KEYS.map(environmentKey => ({ purpose: MUSE_NATIVE_PURPOSE, environmentKey })),
       },
       preflightSessionControls: MUSE_PREFLIGHT_SESSION_CONTROLS,
