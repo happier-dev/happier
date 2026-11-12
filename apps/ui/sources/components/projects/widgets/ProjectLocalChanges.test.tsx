@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { Modal, ModalProvider } from '@/modal';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -52,6 +53,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    renderCustomModals: true,
     // Native confirmation is the boundary; SCM policy, lock, transport and store remain real.
     spies: { confirm: async () => boundary.confirmDiscard || boundary.confirmPush },
 }).module);
@@ -78,7 +80,7 @@ const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/
 const approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
 let accountSettings: ReturnType<typeof storage.getState>['settings'] | null = null;
 let accountSettingsVersion = 0;
-afterEach(() => { vi.useRealTimers(); approvalArtifacts.clear(); accountSettings = null; accountSettingsVersion = 0; });
+afterEach(() => { Modal.hideAll(); vi.useRealTimers(); approvalArtifacts.clear(); accountSettings = null; accountSettingsVersion = 0; });
 
 function snapshot(paths: readonly string[]) {
     return ScmWorkingSnapshotSchema.parse({
@@ -258,7 +260,7 @@ describe('Project Local Changes', () => {
         expect(storage.getState().sessions).toEqual({});
         await screen.unmount();
     });
-    it.each(['header', 'comments'] as const)('ordinary Project authoring from %s defers exact worktree context until approval and keeps it unlisted', async source => {
+    it.each(['header', 'comments'] as const)('ordinary Project authoring from %s defers exact worktree context until native confirmation and keeps it unlisted', async source => {
         const scope = { serverId: runtime.serverId, accountId: 'account-a' };
         accountSettings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, actions: { 'session.authoring.open': { approvalRequiredSurfaces: ['ui'] } },
@@ -281,31 +283,33 @@ describe('Project Local Changes', () => {
         const draftsBefore = listNewSessionDraftProjections(scope);
         const { ProjectShellHeaderHost } = await import('@/components/projects/shell/ProjectShellHeaderHost');
         const { WorkspaceDetailsPanel } = await import('@/components/projects/panes/WorkspaceDetailsPanel');
-        const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-authoring"
+        const screen = await renderScreen(<runtime.Wrapper><ModalProvider><DestinationInstanceHost tabId="project-authoring"
             ref={{ kind: 'project', params: { workspaceRefId: checkout.id, serverId: runtime.serverId, ...boundary.routeParams } }}
             pathname={boundary.pathname} focused visible
             navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
             {source === 'header'
             ? <ProjectShellHeaderHost workspaceRef={checkout} activeRootPath={workspaceScope.rootPath} onSelectRootPath={() => {}} page="overview" />
             : <WorkspaceDetailsPanel workspaceRef={checkout} activeRootPath={workspaceScope.rootPath} scopeId="project:wr_1" />
-        }</DestinationInstanceHost></runtime.Wrapper>);
+        }</DestinationInstanceHost></ModalProvider></runtime.Wrapper>);
         const trigger = source === 'header' ? 'project-shell-header.newSession' : 'workspace-details-open-review-comments-session';
-        await screen.pressByTestIdAsync(trigger);
-        await vi.waitFor(() => expect(screen.findHostByTestId('project-new-session-approval')).not.toBeNull());
+        await act(async () => { screen.pressByTestId(trigger); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
         expect(boundary.navigate).not.toHaveBeenCalled();
         expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[cacheKey]).toEqual(commentsBefore);
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        const firstId = approvalArtifacts.list()[0]?.id;
-        if (!firstId) throw new Error('Missing authoring approval Artifact');
-        await act(async () => { expect(await executor.execute('approval.request.decide', { artifactId: firstId, decision: 'reject' }, { surface: 'ui', serverId: runtime.serverId }))
-            .toMatchObject({ ok: true, result: { status: 'rejected' } }); });
+        // The person's own UI Ask is native consent, never an automation approval Artifact.
+        expect(approvalArtifacts.list()).toEqual([]);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        await flushHookEffects();
         expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
-        await screen.pressByTestIdAsync(trigger);
-        await vi.waitFor(() => expect(approvalArtifacts.list()).toHaveLength(2));
-        await act(async () => { expect(await executor.execute('approval.request.decide', { artifactId: approvalArtifacts.list()[1]!.id, decision: 'approve' }, { surface: 'ui', serverId: runtime.serverId }))
-            .toMatchObject({ ok: true, result: { status: 'executed' } }); });
+        expect(boundary.navigate).not.toHaveBeenCalled();
+        expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[cacheKey]).toEqual(commentsBefore);
+        await act(async () => { screen.pressByTestId(trigger); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+        expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
+        expect(boundary.navigate).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+        await vi.waitFor(() => expect(boundary.navigate).toHaveBeenCalledOnce());
         expect(boundary.navigate).toHaveBeenCalledOnce();
         const opened = boundary.navigate.mock.calls[0]?.[0];
         expect(opened).toMatchObject({ pathname: '/new', params: { draftId: expect.any(String) } });
@@ -329,7 +333,7 @@ describe('Project Local Changes', () => {
         await screen.pressByTestIdAsync(trigger);
         expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
         expect(boundary.navigate).toHaveBeenCalledOnce();
-        expect(approvalArtifacts.list()).toHaveLength(2);
+        expect(approvalArtifacts.list()).toEqual([]);
         accountSettings = { ...accountSettings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) };
         storage.getState().applySettingsForScope(scope, accountSettings, ++accountSettingsVersion);
         await screen.pressByTestIdAsync(trigger);
@@ -339,7 +343,7 @@ describe('Project Local Changes', () => {
         expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[cacheKey]).toEqual(commentsBefore);
         await screen.unmount();
     });
-    it('keeps a pending Project authoring approval visible when one tab’s header takes the Details controls', async () => {
+    it('keeps pending native Project authoring confirmation visible when one tab’s header takes the Details controls', async () => {
         const scope = { serverId: runtime.serverId, accountId: 'account-a' };
         accountSettings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, actions: { 'session.authoring.open': { approvalRequiredSurfaces: ['ui'] } },
@@ -362,18 +366,18 @@ describe('Project Local Changes', () => {
         const { WorkspaceDetailsPanel } = await import('@/components/projects/panes/WorkspaceDetailsPanel');
         const observed: { pane: AppPaneScopeApi | null } = { pane: null };
         function Probe() { observed.pane = useAppPaneScope('project:wr_1'); return null; }
-        const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-authoring"
+        const screen = await renderScreen(<runtime.Wrapper><ModalProvider><DestinationInstanceHost tabId="project-authoring"
             ref={{ kind: 'project', params: { workspaceRefId: checkout.id, serverId: runtime.serverId } }}
             pathname={boundary.pathname} focused visible
             navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
             <Probe /><WorkspaceDetailsPanel workspaceRef={checkout} activeRootPath={workspaceScope.rootPath} scopeId="project:wr_1" />
-        </DestinationInstanceHost></runtime.Wrapper>);
+        </DestinationInstanceHost></ModalProvider></runtime.Wrapper>);
         // Two files keep the strip (and its launcher); the selected one stays selected throughout.
         await act(async () => { observed.pane?.openDetailsTab(createWorkspaceFileDetailsTab('src/b.ts'), { intent: 'pinned' }); });
         await act(async () => { observed.pane?.openDetailsTab(createWorkspaceFileDetailsTab('src/a.ts'), { intent: 'pinned' }); });
         await flushHookEffects();
-        await screen.pressByTestIdAsync('workspace-details-open-review-comments-session');
-        await vi.waitFor(() => expect(screen.findHostByTestId('project-new-session-approval')).not.toBeNull());
+        await act(async () => { screen.pressByTestId('workspace-details-open-review-comments-session'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
         // Closing the other file leaves one with its own header: the strip and its launchers yield; the pending approval must not.
         await act(async () => { observed.pane?.closeDetailsTab('file:src/b.ts'); });
         await flushHookEffects();
@@ -381,7 +385,12 @@ describe('Project Local Changes', () => {
             expect(screen.findAllHostsByTestId('file-details-header.root')).toHaveLength(1);
             expect(screen.findAllHostsByTestId('workspace-details-open-review-comments-session')).toHaveLength(0);
         }, { timeout: 10000 });
-        expect(screen.findHostByTestId('project-new-session-approval')).not.toBeNull();
+        expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
+        expect(boundary.navigate).not.toHaveBeenCalled();
+        expect(approvalArtifacts.list()).toEqual([]);
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        await flushHookEffects();
+        expect(boundary.navigate).not.toHaveBeenCalled();
         await screen.unmount();
     });
     it.each([false, true])('ordinary Project header retains its qualified selected plugin companion and instance across draft opening (closed %s)', async closed => {
