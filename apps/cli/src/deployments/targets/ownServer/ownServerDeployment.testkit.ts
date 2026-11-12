@@ -119,6 +119,13 @@ const nativeEnvironment = { ...(globalEnvFile ? parseEnvironment(globalEnvFile) 
 const interpolate = (value, environment = nativeEnvironment) => typeof value === 'string'
     ? value.replace(/\$\$|\$\{([A-Z_][A-Z0-9_]*)(?::\?[^}]*)?\}/g, (token, name) => {
         if (token === '$$') return '$';
+        if (token.includes(':?') && !environment[name]) {
+            // compose-go MissingRequiredError: retain its native diagnostic at
+            // the process boundary, including an arbitrary private reason.
+            process.stderr.write('error while interpolating services.app.environment: required variable ' + name
+                + ' is missing a value: ' + token.slice(token.indexOf(':?') + 2, -1) + '\n');
+            process.exit(1);
+        }
         if (environment[name] === undefined) throw new Error('fixture_binding_unavailable:' + name);
         return environment[name];
     }) : Array.isArray(value) ? value.map(item => interpolate(item, environment))

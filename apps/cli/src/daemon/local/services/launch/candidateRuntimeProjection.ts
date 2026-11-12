@@ -1,5 +1,6 @@
 /** Native Compose owns parsing; the existing attachment owns runtime custody. */
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
@@ -65,7 +66,18 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
                     const output = await input.io.run({ command: launch.command, args: launch.args, cwd: launch.cwd,
                         env: launch.env, ...(launch.stdin ? { stdin: launch.stdin } : {}),
                         ...(runtime.signal ? { signal: runtime.signal } : {}) });
-                    if (output.exitCode !== 0) return unavailable('native_config');
+                    if (output.exitCode !== 0) {
+                        // compose-go 2.9.1 MissingRequiredError (Compose 2.40.3)
+                        // carries an arbitrary interpolated reason. Export only
+                        // its identifier; native interpolation owns requiredness.
+                        const name = /^error while interpolating [^\r\n]*?: required variable ([a-z_][a-z0-9_]*) is missing a value(?::|\r?$)/imu
+                            .exec(output.stderr ?? '')?.[1];
+                        if (name) {
+                            const details: DeploymentMissingRequiredSecretsV1 = { deployable: false, missingRequiredSecretNames: [name] };
+                            throw new PluginError({ code: 'secret_missing', message: 'Required Environment secrets are unavailable', details });
+                        }
+                        return unavailable('native_config');
+                    }
                     await input.assertCurrent();
                     await runtime.assertCurrent();
                     return output.stdout;
