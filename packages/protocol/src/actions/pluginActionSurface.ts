@@ -64,6 +64,7 @@ export function isHumanSecretApiExcludedActionId(
  * initialization cycle through the full Action registry.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  'computer.secret.fill': 'Confidential filling belongs to the present person through its native input owner.',
   'secrets.shared.reveal': 'Only the present person in the app may display a Saved Secret.',
   ...INTERNAL_ACTION_REASONS,
   'session.view.toolCalls.set': 'Plan 60 §6 reserves transcript visibility for the human reading the conversation.',

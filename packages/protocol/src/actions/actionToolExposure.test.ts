@@ -478,7 +478,7 @@ describe('actionToolExposure', () => {
     // Saved-secret administration, token inventory and installation withhold PAT access at their spec owners;
     // the dedicated registry contract also checks these remain absent from PublicActionId.
     const specApiExcludedActionIds = new Set([
-      'plugins.settings.secret.bind', 'plugins.settings.secret.unbind', 'plugins.settings.secret.delete',
+      'computer.secret.fill', 'plugins.settings.secret.bind', 'plugins.settings.secret.unbind', 'plugins.settings.secret.delete',
       'account.apiTokens.list', 'plugins.install',
     ]);
 
@@ -501,11 +501,13 @@ describe('actionToolExposure', () => {
             && !pluginProvenanceOnlyActionIds.has(spec.id)
             && !humanSecretApiExcludedActionIds.has(spec.id)
             && !specApiExcludedActionIds.has(spec.id)
+            && (!isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id))
             && (spec.requiredAuthority === 'account_automation'
               || ['approval.request.decide', 'session.permission.respond', 'session.user_action.answer'].includes(spec.id)),
         );
         expect(spec.surfaces.plugin, spec.id).toBe(
-          !pluginSurfaceExcludedActionIds.has(spec.id),
+          (!isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id))
+            && !pluginSurfaceExcludedActionIds.has(spec.id),
         );
       }
     }

@@ -27,7 +27,7 @@ import { WORKFLOW_ACTION_IDS_V1 } from '../workflows/actionsV1.js';
 import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
 import { MEMORY_DOCUMENT_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
-import { resolveRuntimeActionSurfaces } from './surfaces.js';
+import { isRuntimeActionExecutorReal, resolveRuntimeActionSurfaces } from './surfaces.js';
 import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveMachineRpcGovernance } from '../machines/peer/mediation/rpc/governanceV1.js';
@@ -40,6 +40,7 @@ import {
   ACTION_IDS,
   PLUGIN_DEV_LOOP_ACTION_IDS_V1,
   RuntimeActionIdV1Schema,
+  isRuntimeActionIdV1,
   type ActionId,
   type RuntimeActionIdV1,
 } from './actionIds.js';
@@ -835,6 +836,10 @@ describe('Action Spec Registry', () => {
       ['plugins.dev.typecheck', 'danger'],
       ['plugins.dev.build', 'danger'],
       ['plugins.dev.test', 'danger'],
+      ['plugins.dev.publication.inspect', 'safe'],
+      ['plugins.dev.publication.prepare', 'safe'],
+      ['plugins.dev.publish', 'danger'],
+      ['plugins.dev.publication.status', 'safe'],
       ['plugins.doctor', 'danger'],
       ['plugins.pack', 'danger'],
       ['plugins.reload', 'danger'],
@@ -972,7 +977,11 @@ describe('Action Spec Registry', () => {
     expect(install.approvalPolicy).toMatchObject({ uiConfirmation: 'policy' });
     for (const surface of ['ui', 'cli', 'agent', 'mcp', 'plugin'] as const) {
       const context = { surface, authority: surface === 'ui' || surface === 'cli' ? 'present_user' as const : 'account_automation' as const };
-      expect(resolveActionApprovalRouting({ actionId: install.id, spec: install, context }).required).toBe(true);
+      expect(resolveActionApprovalRouting({ actionId: install.id, spec: install, context }).required).toBe(surface !== 'ui');
+      if (surface === 'ui') {
+        expect(resolveActionApprovalRouting({ actionId: install.id, spec: install, context }))
+          .toMatchObject({ required: false, uiConfirmationRequired: true });
+      }
       expect(resolveActionApprovalRouting({ actionId: install.id, spec: install, context,
         settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [install.id]: [surface] } }),
       }).required).toBe(false);
@@ -1481,7 +1490,8 @@ describe('Action Spec Registry', () => {
         !isInternalActionId(spec.id)
           && !isPluginProvenanceOnlyActionId(spec.id)
           && !isHumanSecretApiExcludedActionId(spec.id)
-          && !['plugins.settings.secret.bind', 'plugins.settings.secret.unbind', 'plugins.settings.secret.delete',
+          && (!isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id))
+          && !['computer.secret.fill', 'plugins.settings.secret.bind', 'plugins.settings.secret.unbind', 'plugins.settings.secret.delete',
             'plugin.webhook.delivery.movePending', 'account.apiTokens.list', 'plugins.install'].includes(spec.id)
           && (spec.requiredAuthority === 'account_automation'
             || ['approval.request.decide', 'session.permission.respond', 'session.user_action.answer'].includes(spec.id)),
@@ -1489,7 +1499,8 @@ describe('Action Spec Registry', () => {
       expect(Object.prototype.hasOwnProperty.call(spec.surfaces, 'plugin')).toBe(true);
       expect(typeof spec.surfaces.plugin).toBe('boolean');
       expect(spec.surfaces.plugin, spec.id).toBe(
-        !isPluginSurfaceExcludedActionId(spec.id),
+        (!isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id))
+          && !isPluginSurfaceExcludedActionId(spec.id),
       );
       expect(PublicActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.api);
       expect(PluginInvocableActionIdSchema.safeParse(spec.id).success, spec.id).toBe(spec.surfaces.plugin);
@@ -3839,7 +3850,7 @@ describe('Action Spec Registry', () => {
       ...getActionSpec('sessions.external.operation.discard').surfaces,
       plugin: false,
     });
-    expect(spec.surfaces).toMatchObject({ rpc: true, api: true, mcp: true, voice: false, cli: false, agent: true });
+    expect(spec.surfaces).toMatchObject({ rpc: true, api: true, mcp: true, voice: false, cli: true, agent: true });
     // Host-synthesized Agent session lifecycle is deliberately outside the
     // External Sessions plugin contribution, which owns discovery and
     // transcripts only.
@@ -4758,20 +4769,20 @@ describe('Action Spec Registry', () => {
   });
 
   it('binds daemon administrative RPC methods to ActionSpec rows', () => {
-    const expectedBindings = new Map([
-      ['daemon.filesystem.listRoots', RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS],
-      ['daemon.filesystem.browseDirectory', RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY],
-      ['bugreport.collectDiagnostics', RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS],
-      ['bugreport.getLogTail', RPC_METHODS.BUGREPORT_GET_LOG_TAIL],
-      ['bugreport.uploadArtifact', RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT],
-    ]);
+    const expectedBindings = [
+      ['daemon.filesystem.listRoots', RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS, true],
+      ['daemon.filesystem.browseDirectory', RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY, true],
+      ['bugreport.collectDiagnostics', RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, false],
+      ['bugreport.getLogTail', RPC_METHODS.BUGREPORT_GET_LOG_TAIL, false],
+      ['bugreport.uploadArtifact', RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT, false],
+    ] as const;
 
-    for (const [actionId, rpcMethod] of expectedBindings) {
+    for (const [actionId, rpcMethod, mcp] of expectedBindings) {
       const spec = getActionSpec(actionId as ActionId);
 
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
-      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.mcp).toBe(mcp);
       expect(spec.surfaces.api).toBe(true);
     }
   });
