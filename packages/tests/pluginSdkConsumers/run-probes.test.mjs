@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -928,7 +929,7 @@ test('NodeNext compile uses the repository native TypeScript invocation in the c
     'tsconfig.json',
   ]);
   assert.equal(observed.options.cwd, consumerDir);
-  assert.equal(observed.options.timeout, 120_000);
+  assert.equal(observed.options.timeout, undefined);
   assert.equal(observed.options.encoding, 'utf8');
   assert.equal(observed.options.env.CI, '1');
   assert.equal(observed.options.env.npm_config_ignore_scripts, 'false');
@@ -936,6 +937,41 @@ test('NodeNext compile uses the repository native TypeScript invocation in the c
   const compilerEntrypoint = observed.args[0].replaceAll('\\', '/');
   assert.match(compilerEntrypoint, /\/node_modules\/@typescript\/native\//u);
   assert.doesNotMatch(compilerEntrypoint, /\/node_modules\/typescript\/(?:bin|lib)\/tsc/u);
+});
+
+test('SDK packing survives admission beyond the former six-minute phase timeout', async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'plugin-sdk-pack-admission-'));
+  try {
+    const preloadPath = join(fixtureRoot, 'admission.mjs');
+    // Child process spawning is the OS boundary; virtual elapsed time avoids a six-minute test.
+    await writeFile(preloadPath, [
+      'import childProcess from "node:child_process";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'import { writeFileSync } from "node:fs";',
+      'import { join } from "node:path";',
+      'childProcess.spawnSync = (_command, args, options) => {',
+      '  const admissionElapsedMs = 360_001;',
+      '  if (options.timeout > 0 && options.timeout <= admissionElapsedMs) {',
+      '    return { status: null, signal: "SIGTERM", error: Object.assign(new Error("admission interrupted"), { code: "ETIMEDOUT" }) };',
+      '  }',
+      '  const destinationIndex = args.indexOf("--pack-destination");',
+      '  if (destinationIndex < 0) throw new Error("Expected the real npm-pack entry point");',
+      '  writeFileSync(join(args[destinationIndex + 1], "sdk.tgz"), "packed");',
+      '  console.log(`admission-complete:${admissionElapsedMs}`);',
+      '  return { status: 0, signal: null, stdout: "sdk.tgz", stderr: "" };',
+      '};',
+      'syncBuiltinESMExports();',
+    ].join('\n'));
+    const result = spawnSync(process.execPath, [
+      '--import', preloadPath,
+      join(repoRoot, 'packages/tests/pluginSdkConsumers/run-probes.mjs'),
+      '--consumer=pack-admission-only',
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /admission-complete:360001/u);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test('npm stages use the Windows-safe command shim without changing their arguments', () => {

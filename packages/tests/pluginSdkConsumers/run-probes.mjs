@@ -651,7 +651,8 @@ export function runCommand(command, args, options = {}) {
     cwd: options.cwd ?? repoRoot,
     env,
     encoding: 'utf8',
-    timeout: options.timeout ?? 120_000,
+    // Admission and execution share the containing probe lifecycle.
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
     ...(invocation.windowsVerbatimArguments
       ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
       : {}),
@@ -683,7 +684,6 @@ export function runNodeNextTypecheck(consumerDir, options = {}) {
   return runCommand(invocation.command, [...invocation.argsPrefix, '-p', 'tsconfig.json'], {
     cwd: consumerDir,
     stage: 'nodenext-typecheck',
-    timeout: 120_000,
     spawnSyncImpl: options.spawnSyncImpl,
   });
 }
@@ -718,7 +718,6 @@ async function packPluginSdk(workDir) {
     cwd: repoRoot,
     npmCacheDir,
     stage: 'npm-pack',
-    timeout: 360_000,
   });
   const tarballs = (await readdir(packDir)).filter((entry) => entry.endsWith('.tgz'));
   if (tarballs.length !== 1) {
@@ -732,7 +731,6 @@ async function installConsumerDependency(consumerDir, tarballPath, consumerName)
     cwd: consumerDir,
     npmCacheDir: join(consumerDir, '.npm-cache'),
     stage: `install-${consumerName}`,
-    timeout: 180_000,
   });
 }
 
@@ -775,9 +773,6 @@ async function runNodeNextConsumer(workDir, tarballPath) {
   const runResult = runCommand(process.execPath, [join(consumerDir, 'dist', 'index.js')], {
     cwd: consumerDir,
     stage: 'nodenext-runtime',
-    // This adversarial probe imports every runtime entrypoint in one process;
-    // it is intentionally much broader than a real plugin's import graph.
-    timeout: 120_000,
   });
   if (!runResult.stdout.includes('normal-surface:contract-ok')) {
     throw new Error(`Unexpected NodeNext consumer output: ${runResult.stdout}`);
@@ -785,7 +780,6 @@ async function runNodeNextConsumer(workDir, tarballPath) {
   const negativeResult = runCommand(process.execPath, [join(consumerDir, 'runtime-negative.mjs')], {
     cwd: consumerDir,
     stage: 'nodenext-negative-runtime',
-    timeout: 30_000,
   });
   if (!negativeResult.stdout.includes(`negative-paths:${REMOVED_PACKAGE_PATHS.length}`)) {
     throw new Error(`Unexpected negative-path consumer output: ${negativeResult.stdout}`);
@@ -845,7 +839,6 @@ async function runViteConsumer(workDir, tarballPath) {
   runCommand(process.execPath, [join(rootNodeModules, 'vite', 'bin', 'vite.js'), 'build', '--config', 'vite.config.mjs'], {
     cwd: consumerDir,
     stage: 'vite-build',
-    timeout: 120_000,
   });
   const distEntries = await readdir(join(consumerDir, 'dist'));
   const outputFile = distEntries.find((entry) => /^index\.(?:mjs|js)$/u.test(entry));
@@ -855,7 +848,6 @@ async function runViteConsumer(workDir, tarballPath) {
   const runResult = runCommand(process.execPath, [join(consumerDir, 'dist', outputFile)], {
     cwd: consumerDir,
     stage: 'vite-runtime',
-    timeout: 30_000,
   });
   if (!runResult.stdout.includes('vite:function:function')) {
     throw new Error(`Unexpected Vite consumer output: ${runResult.stdout}`);
