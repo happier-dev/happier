@@ -1,3 +1,4 @@
+import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
@@ -193,8 +194,8 @@ export function createTriageReadFixPullRequestsActionHandler(): TriageDataAction
                             readConfiguredInstance: async (sourceInstanceId) =>
                                 (await sourceRelations.findConfiguredInstance(sourceInstanceId, entryRef))?.value.configured ?? null,
                             readSourceSnapshot: async () => ({ contributions: admitted }),
-                            executeGet: async (operation, getInput, getOptions) => await context.services.actions
-                                .executeAdmittedTargetedOperation(operation, getInput, getOptions ?? {}),
+                            executeGet: async (operation, getInput, getOptions) => admitSourceFacts(await context.services.actions
+                                .executeAdmittedTargetedOperation(operation, getInput, getOptions ?? {})),
                             nowMs: () => Date.now(),
                             ...(context.signal ? { signal: context.signal } : {}),
                         });

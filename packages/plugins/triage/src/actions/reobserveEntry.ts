@@ -1,3 +1,4 @@
+import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
@@ -167,8 +168,8 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
           observation.dispose();
         }
       },
-      executeGet: async (operation, getInput, options) => await context.services.actions
-        .executeAdmittedTargetedOperation(operation, getInput, options ?? {}),
+      executeGet: async (operation, getInput, options) => admitSourceFacts(await context.services.actions
+        .executeAdmittedTargetedOperation(operation, getInput, options ?? {})),
       nowMs: () => Date.now(),
       ...(context.signal ? { signal: context.signal } : {}),
     });

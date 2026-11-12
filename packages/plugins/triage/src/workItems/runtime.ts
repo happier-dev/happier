@@ -1,3 +1,4 @@
+import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { TriageDataActionContext } from '../actions/dataContext.js';
 import type { Disposable, PluginWorkItemV1, PluginWorkItemsFindLinkedRequestV1, PluginWorkItemsFindLinkedResultV1, PluginWorkItemTransitionInputV1, PluginWorkItemsWatchRequestV1, PluginWorkItemsResolveRequestV1, PluginWorkItemsResolveResultV1, PluginWorkItemsRuntime } from '@happier-dev/plugin-sdk';
 import { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1,
@@ -133,7 +134,7 @@ async function readWorkItems(request: PluginWorkItemsResolveRequestV1, context: 
             readConfiguredInstance: async id => view.configured.rows.find(row => row.configured.instance.sourceInstanceId === id)?.configured ?? null,
             readSourceSnapshot: async () => ({ contributions: [...view.sources.values()] }),
             executeGet: async (operation, input, options) => native.get(task)?.observation
-                ?? context.services.actions.executeAdmittedTargetedOperation(operation, input, options),
+                ?? admitSourceFacts(await context.services.actions.executeAdmittedTargetedOperation(operation, input, options)),
             nowMs: () => context.invokedAtMs, signal: context.signal,
         })));
         const row = foldTriageListWindow({

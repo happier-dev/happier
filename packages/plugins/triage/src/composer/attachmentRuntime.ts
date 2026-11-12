@@ -1,3 +1,4 @@
+import { admitSourceFacts } from '@happier-dev/triage-protocol/v1';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
     ComposerAttachmentResolveRequestV1,
@@ -34,8 +35,8 @@ export function createTriageEntryAttachmentRuntime(): ComposerAttachmentRuntime 
                 ...(sessionId === undefined ? {} : { sessionId }) }, {
                 sourceRelations: createTriageSourceSessionRelations(context, collections),
                 sessionLinks: collections.sessionLinks,
-                executeGet: async (operation, getInput, options) => await context.services.actions
-                    .executeAdmittedTargetedOperation(operation, getInput, options ?? {}),
+                executeGet: async (operation, getInput, options) => admitSourceFacts(await context.services.actions
+                    .executeAdmittedTargetedOperation(operation, getInput, options ?? {})),
                 ...(context.signal === undefined ? {} : { signal: context.signal }),
             });
     };
