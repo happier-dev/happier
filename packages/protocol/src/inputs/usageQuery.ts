@@ -53,10 +53,11 @@ export const UsageQuerySchema = lazyZodSchema(() => {
 });
 export type UsageQuery = z.infer<typeof UsageQuerySchema>;
 
-/** Private transcript evidence uses admitted turns; only allocation and export consume event rows. */
+/** Private Coach checks and Work allocation consume accounting rows; transcript evidence uses admitted turns. */
 export function usageQueryNeedsContributionRows(query: UsageQuery): boolean {
   return query.includeContributions || query.population !== 'public_eligible_personal'
-    && query.includeWorkEvidence && query.workProjection !== 'summary';
+    && (query.includeSessionEvidence && query.includeCoach !== false
+      || query.includeWorkEvidence && query.workProjection !== 'summary');
 }
 
 /** Source inventory is metadata, independent of accounting period, metric and cost basis. */

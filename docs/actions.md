@@ -3993,7 +3993,9 @@ recovery and prepared-Session Action owners. The current development query also
 admits reversible proposals from real retained evidence. Only Apply queries
 analytics to resolve its evidence key. Undo uses its original mutation receipt;
 dismiss, snooze and restore update the exact preference key without requiring
-it in current analytics. These operations remain usable during an analytics
+it in current analytics. Dismiss/restore and snooze/unsnooze are safe, reversible
+own-Account preferences with no default approval requirement, including for
+terminal credentials. Apply and Undo retain required approval. These operations remain usable during an analytics
 outage, but cannot overwrite an intervening mutation. MCP advice witnesses
 zero per-binding calls in fully observed successful foreground windows; it does
 not measure hidden native schemas or claim causal savings. The observed server

@@ -17097,7 +17097,7 @@ settingsSession: {
             recordPeak: "Le plus en même temps",
             recordLongestTurn: "Plus long tour terminé",
             recordMostAgents: "Le plus d'agents en un jour",
-            turnsCount: ({ count }: { count: string | number }) => `${count} tours`,
+            turnsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'tour' : 'tours'}`,
             countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} sur ${total}`,
           },
           howYouWork: {

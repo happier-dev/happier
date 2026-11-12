@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, SignedRootActionIdSchema } from './actionSpecs.js';
+import { resolveCredentialActionAdmissionV1 } from './decisionAuthority.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import type { ActionId } from './actionIds.js';
 import { resolveUsagePageAggregation } from '../usage/resolveUsagePageAggregation.js';
@@ -30,6 +31,39 @@ function coachKv(read: () => ReturnType<typeof UsageCoachSuppressionStateV1Schem
 }
 
 describe('evidence-bound Coach Action admission', () => {
+    it('lets Account automation dismiss, restore and snooze its own finding without approval', async () => {
+        // Home uses this admission for terminal credentials with no delegated grant.
+        for (const id of ['usage.coach.dismiss', 'usage.coach.snooze'] as const) {
+            expect(SignedRootActionIdSchema.safeParse(id).success).toBe(true);
+            expect(resolveCredentialActionAdmissionV1({ spec: getActionSpec(id),
+                authority: 'account_automation', grant: null, surface: 'cli' })).toMatchObject({ ok: true });
+        }
+        const aggregate = () => resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, asOfMs: 200,
+            detail: { status: 'partial', permissions: [{ requestId: 'p', workId: 'w', requestedAtMs: 120,
+                decidedAtMs: 160, toolId: null, answeringClientCategory: null }] } }] });
+        const base = aggregate().results[0]!.coach!;
+        const evidenceKey = base.findings[0]!.evidenceKey;
+        let state = UsageCoachSuppressionStateV1Schema.parse({ v: 1, suppressions: [] });
+        const executor = createActionExecutor({ usageActions: {
+            query: async () => {
+                const batch = aggregate();
+                return { ...batch, results: batch.results.map(slice => ({ ...slice,
+                    coach: applyUsageCoachPreferences(slice.coach!, state, 200) })) };
+            },
+            coachSuppressions: () => coachKv(() => state, value => { state = value; }),
+        } } as ActionExecutorDeps);
+        const context = { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' } } as const;
+        const read = () => executor.execute('usage.query', { queries: [query] }, context);
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: true }, context)).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ ok: true, result: { results: [{ coach: { findings: [{ state: { dismissed: true } }] } }] } });
+        expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey, dismissed: false }, context)).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ ok: true, result: { results: [{ coach: { findings: [{ state: { dismissed: false } }] } }] } });
+        expect(await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs: 300 }, context)).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ ok: true, result: { results: [{ coach: { findings: [{ state: { snoozedUntilMs: 300 } }] } }] } });
+        expect(await executor.execute('usage.coach.snooze', { query, evidenceKey, untilMs: null }, context)).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ ok: true, result: { results: [{ coach: { findings: [{ state: { snoozedUntilMs: null } }] } }] } });
+    });
+
     it('replaces deliberate Coach preferences without requiring suppression storage', async () => {
         let preferences: unknown = UsageCoachPreferencesV1Schema.parse({});
         const executor = createActionExecutor({
@@ -335,9 +369,9 @@ describe('evidence-bound Coach Action admission', () => {
             expect(suppressions.suppressions).toEqual([{ kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
         }
     });
-    it('admits strict evidence references and keeps every retained Coach write dangerous', async () => {
+    it('admits strict evidence references and keeps remedy mutations dangerous', async () => {
         const executor = createActionExecutor({} as ActionExecutorDeps);
-        for (const id of ['usage.coach.apply', 'usage.coach.undo', 'usage.coach.dismiss', 'usage.coach.snooze'] as const) {
+        for (const id of ['usage.coach.apply', 'usage.coach.undo'] as const) {
             expect(getActionSpec(id as ActionId).safety).toBe('danger');
         }
         const injectedRemedy = await executor.execute('usage.coach.apply' as ActionId, {

@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { resolveUsageComparisonQuery, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, resolveUsageComparisonQuery, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { UsageCoachSuppressionStateV1Schema } from '@happier-dev/protocol/usage/coach/coachActions';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { standardCleanup } from '@/dev/testkit';
@@ -172,4 +172,23 @@ it('keeps the mixed-batch projection path when only its quota member changes', a
     const changed = f.run();
     expect(changed.results[0]).toBe(before.results[0]);
     expectParity(changed, f.fresh());
+});
+
+it('feeds the same measured Coach accounting to UI and Action aggregation while keeping delivery compact', async () => {
+    const f = await fixture();
+    const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, includeCoach: true,
+        includeSessionEvidence: true, includeWorkEvidence: false, includeComparison: false, includeQuota: false });
+    const tokens = { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 };
+    const cost = { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' };
+    const value = { v: 1 as const, totals: { eventCount: 1, tokens, cost }, contributions: [{
+        id: 'reading', observedAtMs: 1500, sessionId: null, turnId: null, modelId: null, agentId: null,
+        machineId: null, projectKey: null, workspaceId: null, source: null, eventCount: 1, tokens, tokenCategories: tokens, cost }] };
+    const accounting = [{ query, value, status: 'available' as const, asOfMs: 2000 }];
+    f.update({ queries: [query], accounting: new Map(accounting.map(row => [getUsageQueryKey(query), row])),
+        work: [], evidenceQueries: [], calendarQueryKeys: new Set() });
+    const ui = f.run().results[0]!;
+    const action = resolveUsagePageAggregation({ queries: [query], accounting, nowMs: 2000 }).results[0]!;
+    expect(action.coach?.findings).toEqual(expect.arrayContaining([expect.objectContaining({ detectorId: 'cache_economics' })]));
+    expect(ui.coach?.findings).toEqual(action.coach?.findings);
+    expect(ui.accounting?.contributions).toBeUndefined();
 });

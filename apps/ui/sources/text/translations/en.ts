@@ -20655,7 +20655,7 @@ const enUsage = {
       recordRangeOngoing: ({ from, to }: { from: string; to: string }) => `${from} – ${to} · still going`,
       recordBusiestDay: "Busiest day",
       recordMostAgents: "Most agents in a day",
-      turnsCount: ({ count }: { count: string | number }) => `${count} turns`,
+      turnsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'turn' : 'turns'}`,
       countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} of ${total}`,
     },
     howYouWork: {

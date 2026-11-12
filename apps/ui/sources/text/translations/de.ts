@@ -17390,7 +17390,7 @@ settingsSession: {
             recordPeak: "Am meisten gleichzeitig",
             recordLongestTurn: "Längster abgeschlossener Durchlauf",
             recordMostAgents: "Die meisten Agents an einem Tag",
-            turnsCount: ({ count }: { count: string | number }) => `${count} Durchläufe`,
+            turnsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'Durchlauf' : 'Durchläufe'}`,
             countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} von ${total}`,
           },
           howYouWork: {

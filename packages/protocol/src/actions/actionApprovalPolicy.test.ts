@@ -752,8 +752,6 @@ describe('isApprovalRequiredByActionsSettings', () => {
     'connectedServices.pools.default.set',
     'usage.coach.apply',
     'usage.coach.undo',
-    'usage.coach.dismiss',
-    'usage.coach.snooze',
     'usage.sources.stop',
     'usage.sources.root.set',
     'widgets.item.add',

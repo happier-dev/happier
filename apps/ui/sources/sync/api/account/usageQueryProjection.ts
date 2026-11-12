@@ -1,4 +1,4 @@
-import { getUsageQueryKey, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { getUsageQueryKey, usageQueryNeedsContributionRows, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
     projectUsageAccountingSnapshotCalendar, type UsageAccountingSourceSnapshot, type UsageWorkSourceSnapshot,
     type UsageHowYouWorkSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryBatchResult,
@@ -63,8 +63,7 @@ function observedAccountingRange(value: UsageQueryResultSlice['accounting']): Us
 
 /** Keep the rich admitted input for private calculations, with its bounded public presentation facts. */
 function prepareAccountingDelivery(snapshot: PreparedUsageAccountingSnapshot, nowMs: number): PreparedUsageAccountingSnapshot {
-    if (snapshot.query.includeContributions || snapshot.query.population !== 'public_eligible_personal'
-        && snapshot.query.includeWorkEvidence && snapshot.query.workProjection === 'detail') return snapshot;
+    if (usageQueryNeedsContributionRows(snapshot.query)) return snapshot;
     const projection = snapshot.priceProjection;
     const value = projection?.value ?? snapshot.value;
     if (!value || snapshot.delivery?.input === value) return snapshot;

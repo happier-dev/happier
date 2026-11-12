@@ -17223,7 +17223,7 @@ settingsSession: {
             recordPeak: "Más a la vez",
             recordLongestTurn: "Turno terminado más largo",
             recordMostAgents: "Más agentes en un día",
-            turnsCount: ({ count }: { count: string | number }) => `${count} turnos`,
+            turnsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'turno' : 'turnos'}`,
             countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} de ${total}`,
           },
           howYouWork: {

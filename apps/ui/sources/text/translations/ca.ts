@@ -15367,7 +15367,7 @@ settingsSession: {
           recordPeak: "Màxim alhora",
           recordLongestTurn: "Torn tancat més llarg",
           recordMostAgents: "Màxim d’agents en un dia",
-          turnsCount: ({ count }: { count: string | number }) => `${count} torns`,
+          turnsCount: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'torn' : 'torns'}`,
           countOf: ({ count, total }: { count: string | number; total: string | number }) => `${count} de ${total}`,
         }, recap: {
             deliveryUnconfirmed: "S’ha obert el full per compartir, però no s’ha pogut confirmar el resultat. Comprova l’aplicació triada abans de tornar-ho a provar.",

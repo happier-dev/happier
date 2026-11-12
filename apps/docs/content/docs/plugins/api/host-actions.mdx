@@ -25346,8 +25346,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Dismiss or re-enable a Coach finding** — Persist dismissal for this exact finding evidence in Account KV. Materially different evidence remains visible.
 
-- Safety: `danger`; side effect: `write`.
-- Approval: `required` result; `blocking` flow.
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
@@ -25363,8 +25363,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Snooze a Coach finding** — Persist an explicit snooze deadline for this exact finding evidence in Account KV.
 
-- Safety: `danger`; side effect: `write`.
-- Approval: `required` result; `blocking` flow.
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.

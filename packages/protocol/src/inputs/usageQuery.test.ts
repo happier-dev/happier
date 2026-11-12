@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { UsageSessionEvidenceRequestSchema } from '../usage/usageSessionEvidence.js';
-import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
+import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
 import { UsageAnalyticsQueryRequestSchema } from '../usage/usageAnalyticsContracts.js';
 import { InputFieldHintSchema } from './inputFields.js';
 import { resolveEffectiveInputFields } from './inputFieldRuntime.js';
@@ -93,6 +93,12 @@ describe('shared UsageQuery', () => {
     expect(getUsageQueryKey(currentOnly)).not.toBe(getUsageQueryKey(full));
     expect(usageQueryToAnalyticsRequest(currentOnly)).toEqual(usageQueryToAnalyticsRequest(full));
     expect(usageQueryToAnalyticsRequest(currentOnly)).not.toHaveProperty('includeComparison');
+  });
+  it('requests private Coach accounting rows even without Work, but keeps public and non-Coach summaries compact', () => {
+    const coach = normalizeUsageQuery({ includeCoach: true, includeSessionEvidence: true, includeWorkEvidence: false });
+    expect(usageQueryNeedsContributionRows(coach)).toBe(true);
+    expect(usageQueryNeedsContributionRows(normalizeUsageQuery({ ...coach, includeCoach: false }))).toBe(false);
+    expect(usageQueryNeedsContributionRows(normalizeUsageQuery({ ...coach, population: 'public_eligible_personal' }))).toBe(false);
   });
   it('demands explicit contribution delivery without changing the accounting wire query', () => {
     const summary = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 } });
