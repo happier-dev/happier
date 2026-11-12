@@ -63,18 +63,13 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
   }
   const graph = await metroServer.getBundler().getBundler().getDependencyGraph();
   signal?.throwIfAborted();
-  await new Promise((resolveReady, reject) => {
-    const finish = error => {
-      graph.off('change', check);
-      signal?.removeEventListener('abort', abort);
-      if (error) reject(error); else resolveReady();
-    };
-    const check = () => { if (paths.every(path => graph.doesFileExist(path))) finish(); };
-    const abort = () => finish(signal.reason);
-    graph.on('change', check);
-    signal?.addEventListener('abort', abort, { once: true });
-    check();
-  });
+  // A published file may predate watcher registration or lose its event during
+  // rapid publication. Metro exposes no public per-file recrawl API, so refuse
+  // this admission visibly rather than waiting for an event with no producer.
+  // Preparation keeps last-good; a later request/refresh can admit indexed files.
+  const missing = paths.find(path => !graph.doesFileExist(path));
+  if (missing) throw Object.assign(new Error(`Source Plugin UI inventory ${inventoryPath} cannot index ${missing}: absent from Metro file map`),
+    { code: 'plugin_ui_inventory_unindexable' });
   return paths;
 }
 

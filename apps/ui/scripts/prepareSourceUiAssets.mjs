@@ -38,7 +38,9 @@ export async function publishSourceUiAssets({ recordPath, outputPath = recordPat
         const contents = await readFile(candidatePath, 'utf8');
         await writeChanged(publicationPath, contents);
     }
-    const { publications, ...published } = prepared;
+    // A published record has no pending candidates. Keep the record shape
+    // readable after in-place publication without retaining compiler scratch.
+    const published = { ...prepared, publications: [] };
     await writeChanged(outputPath, `${JSON.stringify(published)}\n`);
     return published;
 }

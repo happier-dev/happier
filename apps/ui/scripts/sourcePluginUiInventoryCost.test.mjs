@@ -124,11 +124,9 @@ test('artifact requests reuse publication admission and admit changed files befo
   const watcher = new EventEmitter();
   const graph = new EventEmitter();
   const indexed = new Set(assets);
-  let reachedMissing;
   let fileMapChecks = 0;
   graph.doesFileExist = path => {
     fileMapChecks += 1;
-    if (!indexed.has(path)) reachedMissing?.();
     return indexed.has(path);
   };
   const metroServer = {
@@ -157,6 +155,21 @@ test('artifact requests reuse publication admission and admit changed files befo
   }
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const settleAdmission = () => Promise.race([
+    owner.ready().then(() => 'served', error => error.code),
+    new Promise(resolve => {
+      const timer = setTimeout(() => resolve('stalled'), 1000);
+      t.after(() => clearTimeout(timer));
+    }),
+  ]);
+  // A cold start can miss plugin artifacts even with no source-assets record.
+  await rm(recordPath);
+  indexed.delete(pluginAssets[0]);
+  assert.equal(await settleAdmission(), 'plugin_ui_inventory_unindexable',
+    'an existing plugin artifact absent from Metro must settle without watcher events');
+  indexed.add(pluginAssets[0]);
+  await publishRecord();
+  counts.assetStat = counts.assetRealpath = counts.publicationStat = fileMapChecks = 0;
   await Promise.all(Array.from({ length: 6 }, () => owner.ready()));
   t.diagnostic(`cold admission assets=${assets.size} ${JSON.stringify(counts)} fileMapChecks=${fileMapChecks}`);
   assert.equal(counts.assetStat, assets.size, 'concurrent requests share one admission for the published files');
@@ -171,18 +184,20 @@ test('artifact requests reuse publication admission and admit changed files befo
   assert.equal(counts.publicationStat - beforeWarm.publicationStat, 12, 'external publication detection costs two metadata reads per request');
 
   // A one-shot child can atomically publish without this process's callback.
-  // New filesystem bytes still wait for Metro's actual file-map boundary.
+  // Missing Metro entries must fail visibly even when no watcher event arrives.
   const added = fixture.path('consumer/new-source.bundle');
   assets.add(added);
   sourceAssets.push(added);
   await writeFile(added, 'new asset');
   await publishRecord();
-  const missingFromMap = new Promise(resolve => { reachedMissing = resolve; });
-  const changedReady = owner.ready();
-  assert.equal(await Promise.race([changedReady.then(() => 'served'), missingFromMap.then(() => 'waiting')]), 'waiting');
+  const incumbentInventory = await (await import('node:fs/promises')).readFile(inventoryPath, 'utf8');
+  const result = await settleAdmission();
+  assert.equal(result, 'plugin_ui_inventory_unindexable',
+    'an existing asset absent from Metro must settle without watcher events');
+  assert.equal(await (await import('node:fs/promises')).readFile(inventoryPath, 'utf8'), incumbentInventory,
+    'failed admission preserves the last-good inventory');
   indexed.add(added);
-  graph.emit('change');
-  await changedReady;
+  await owner.ready(); // A later request retries failed admission after Metro catches up.
 
   const missing = fixture.path('consumer/missing-source.bundle');
   assets.add(missing);
