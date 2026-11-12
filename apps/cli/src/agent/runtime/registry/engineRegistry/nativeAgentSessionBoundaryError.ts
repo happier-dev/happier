@@ -4,6 +4,7 @@ import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/n
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
     inspectOwnErrorCodeDataProperty,
@@ -115,6 +116,9 @@ function readCanonicalPluginError(error: Error, code: string | undefined): Plugi
     const details = readOwnDataProperty(data, 'details');
     const remediation = readOwnDataProperty(data, 'remediation');
     const diagnostics = readOwnDataProperty(data, 'diagnostics');
+    const carriedFailureCause = readOwnDataProperty(data, 'failureCause');
+    const failureCause = carriedFailureCause === undefined ? undefined
+        : readActionFailureCauseV1(projectNativeAgentDiagnosticValue(carriedFailureCause));
     const candidate = Object.assign(
         new Error(typeof message === 'string' ? message : code),
         {
@@ -129,6 +133,7 @@ function readCanonicalPluginError(error: Error, code: string | undefined): Plugi
                 ...(details === undefined ? {} : { details }),
                 ...(remediation === undefined ? {} : { remediation }),
                 ...(diagnostics === undefined ? {} : { diagnostics }),
+                ...(failureCause === undefined ? {} : { failureCause }),
             }),
             ...(details === undefined ? {} : { details }),
             ...(remediation === undefined ? {} : { remediation }),
@@ -204,6 +209,7 @@ export function sanitizeNativeAgentSessionBoundaryError(
         && diagnosticProperty === undefined
         && readOwnDataProperty(error, 'failureCause') === undefined
         && !failureCause.success
+        && pluginError?.data.failureCause === undefined
         && name === error.name
         && message === error.message
         && stack === error.stack
@@ -221,6 +227,7 @@ export function sanitizeNativeAgentSessionBoundaryError(
             ...(pluginError.details === undefined ? {} : { details: pluginError.details }),
             ...(pluginError.remediation === undefined ? {} : { remediation: pluginError.remediation }),
             ...(pluginError.diagnostics === undefined ? {} : { diagnostics: pluginError.diagnostics }),
+            ...(pluginError.data.failureCause === undefined ? {} : { failureCause: pluginError.data.failureCause }),
         })
         : Object.assign(new Error(message), { name, ...(code !== undefined ? { code }
             : typeof readOwnDataProperty(error, 'code') === 'number' && nativeDetail.providerErrorCode !== undefined

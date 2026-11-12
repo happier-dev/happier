@@ -5,6 +5,8 @@ import {
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import { describe, expect, it } from 'vitest';
+import { projectActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
@@ -19,6 +21,48 @@ import {
 } from './nativeAgentSessionBoundaryError';
 
 describe('native Agent session boundary error sanitization', () => {
+    it.each([false, true])('retains the public PluginError Action cause after native redaction (forced=%s)', forceSafeShape => {
+        const secret = 'private-native-action-refusal';
+        const redaction = registerSensitiveDiagnosticValues([secret]);
+        const failureCause = projectActionFailureCauseV1(
+            Object.assign(new Error('Permission refused'), { code: 'EACCES' }), 'agent.runtime.open',
+        );
+        const message = `Native Action refused: ${secret}`;
+        const data = { code: 'plugin_action_refused', message, retryable: false, failureCause };
+        const local = new PluginError(data);
+        const foreign = Object.assign(new Error(message), { name: 'PluginError',
+            code: data.code, retryable: data.retryable, data: { name: 'PluginError' as const, ...data } });
+        try {
+            for (const error of [local, foreign]) {
+                const sanitized = sanitizeNativeAgentSessionBoundaryError(error, forceSafeShape);
+                expect(isPluginError(sanitized)).toBe(true);
+                if (!isPluginError(sanitized)) throw new Error('The native boundary lost the PluginError ABI');
+                expect(sanitized.data.failureCause).toEqual(failureCause);
+                expect(normalizeActionExecutorThrownError(sanitized).failureCause).toEqual(failureCause);
+                expect(sanitized.message).not.toContain(secret);
+                expect(JSON.stringify(sanitized)).not.toContain(secret);
+            }
+        } finally { redaction.close(); }
+    });
+
+    it.each([false, true])('redacts a secret carried only in the PluginError Action cause (forced=%s)', forceSafeShape => {
+        const secret = 'private.native.action';
+        const redaction = registerSensitiveDiagnosticValues([secret]);
+        try {
+            const failureCause = projectActionFailureCauseV1(
+                Object.assign(new Error('Permission refused'), { code: 'EACCES' }), secret,
+            );
+            const error = new PluginError({ code: 'plugin_action_refused', message: 'Native Action refused',
+                retryable: false, failureCause });
+            // Keep the stack safe so the unforced case reaches the original-error fast path.
+            error.stack = error.message;
+            const sanitized = sanitizeNativeAgentSessionBoundaryError(error, forceSafeShape);
+            expect(isPluginError(sanitized)).toBe(true);
+            expect(JSON.stringify(sanitized)).not.toContain(secret);
+            expect(normalizeActionExecutorThrownError(sanitized).failureCause).toEqual(UNKNOWN_ACTION_FAILURE_CAUSE_V1);
+        } finally { redaction.close(); }
+    });
+
     it.each([false, true])('retains the strict ACP startup diagnostic through boundary reconstruction (forced=%s)', forceSafeShape => {
         const secret = 'private-startup-diagnostic';
         const redaction = registerSensitiveDiagnosticValues([secret]);
