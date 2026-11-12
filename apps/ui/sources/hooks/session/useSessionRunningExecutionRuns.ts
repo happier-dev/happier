@@ -9,6 +9,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
+import { isExecutionRunTargetUnavailable } from '@/sync/runtime/executionRuns/executionRunHeaderReads';
 import {
     readRunningExecutionRunRoster,
     refreshRunningExecutionRunRoster,
@@ -25,7 +26,9 @@ export function resolveRunningExecutionRunsFromListResult(
 /** Every demanded roster uses the same admitted list reader, including Inbox Follow sources. */
 export async function readSessionRunningExecutionRuns(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
     const result = await sessionExecutionRunList(address.sessionId, {}, { serverId: address.serverId });
-    return result.ok === false ? null : resolveRunningExecutionRunsFromListResult(result);
+    return result.ok === false
+        ? isExecutionRunTargetUnavailable(result.errorCode) ? [] : null
+        : resolveRunningExecutionRunsFromListResult(result);
 }
 
 /**

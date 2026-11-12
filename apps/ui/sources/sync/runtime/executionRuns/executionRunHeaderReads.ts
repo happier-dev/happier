@@ -10,7 +10,14 @@ import { subscribeExecutionRunActivity } from './executionRunActivityBus';
 
 type Source = Extract<OtherFollowSourceRefV1, { kind: 'execution_run' }>;
 export type ExecutionRunHeaderReference = Readonly<{ source: Source; demanded: boolean; refreshKey: string }>;
-export type ExecutionRunHeaderSnapshot = Readonly<{ run?: ExecutionRunPublicState; loading: boolean; failed: boolean }>;
+export type ExecutionRunHeaderSnapshot = Readonly<{
+    run?: ExecutionRunPublicState; loading: boolean; failed: boolean;
+    unavailable?: 'target_unavailable';
+}>;
+/** A known offline target is a settled Run state, not an incomplete source read. */
+export function isExecutionRunTargetUnavailable(code: string | null | undefined): boolean {
+    return code === 'target_unavailable' || code === 'execution_run_target_unavailable' || code === 'machine_offline';
+}
 const UNREAD: ExecutionRunHeaderSnapshot = Object.freeze({ loading: true, failed: false });
 const executionRunHeaderKey = (source: Source): string => JSON.stringify('sessionId' in source
     ? ['session', source.sessionId, source.runId] : ['machine', source.machineId, source.runId]);
@@ -24,7 +31,8 @@ const headers = new WeakMap<ServerAccountScopeLifetime, Map<string, Header>>();
 function publish(header: Header, next: ExecutionRunHeaderSnapshot): void {
     const previous = header.snapshot;
     const run = next.run && previous.run && JSON.stringify(next.run) === JSON.stringify(previous.run) ? previous.run : next.run;
-    if (previous.run === run && previous.loading === next.loading && previous.failed === next.failed) return;
+    if (previous.run === run && previous.loading === next.loading && previous.failed === next.failed
+        && previous.unavailable === next.unavailable) return;
     header.snapshot = { ...next, ...(run ? { run } : {}) };
     for (const interest of header.interests.values()) interest.notify();
 }
@@ -54,9 +62,10 @@ function refresh(header: Header, lifetime: ServerAccountScopeLifetime): void {
                 publish(header, { run: response.run, loading: false, failed: false });
             } catch (error) {
                 if (!current()) return;
-                const unavailable = error instanceof WorkflowActionError && (error.rawCode === 'target_unavailable'
-                    || error.rawCode === 'execution_run_target_unavailable' || error.rawCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
-                publish(header, { ...(unavailable && header.snapshot.run ? { run: header.snapshot.run } : {}), loading: false, failed: true });
+                const unavailable = error instanceof WorkflowActionError && isExecutionRunTargetUnavailable(error.rawCode);
+                const retain = unavailable || error instanceof WorkflowActionError && error.rawCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+                publish(header, { ...(retain && header.snapshot.run ? { run: header.snapshot.run } : {}),
+                    loading: false, failed: !unavailable, ...(unavailable ? { unavailable: 'target_unavailable' } : {}) });
             }
         } while (header.dirty && current() && demanded(header));
     })().finally(() => { if (header.request === controller) header.request = null; });

@@ -29,7 +29,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     return createStorageModuleStub({ storage: { getState: () => ({ sessions: {}, settings: {} }) } });
 });
 
-import { resolveRunningExecutionRunsFromListResult, useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
+import { readSessionRunningExecutionRuns, resolveRunningExecutionRunsFromListResult, useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 import { notifyExecutionRunActivity, notifyExecutionRunActivityFromUpdate, notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -63,6 +63,12 @@ describe('useSessionRunningExecutionRuns', () => {
     afterEach(() => {
         standardCleanup();
         vi.useRealTimers();
+    });
+
+    it.each(['target_unavailable', 'execution_run_target_unavailable', 'machine_offline', 'server_error'])('settles a roster read with %s at the shared owner', async errorCode => {
+        rpc.mockResolvedValue({ ok: false, error: errorCode, errorCode });
+        expect(await readSessionRunningExecutionRuns({ serverId: 'server-a', sessionId: 's1' }))
+            .toEqual(errorCode === 'server_error' ? null : []);
     });
 
     it('updates running and terminal rosters on activity without timer reads', async () => {

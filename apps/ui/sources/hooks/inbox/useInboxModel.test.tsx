@@ -60,6 +60,7 @@ import { useInboxDiscussionSource } from './useInboxDiscussionSource';
 import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createExecutionRunHeaderDemand } from '@/sync/runtime/executionRuns/executionRunHeaderReads';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { InboxSummaryProvider, useSharedInboxSummary, type InboxSummary } from './useInboxSummary';
@@ -185,6 +186,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
 
         expect(result).toMatchObject({ ok: true, status: 'ready' });
     });
+
     it('keeps Home summary and open Inbox hook order and commit and read cost stable across unrelated Home updates', async () => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
@@ -1317,7 +1319,10 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(executionRunBoundary.list.mock.calls.length - reads).toBe(1);
     });
 
-    it.each([false, true])('keeps a delivered terminal Run through a warm source outage and recovers its cold projection (notice degraded: %s)', async degradedNotice => {
+    it.each(['target_unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, 'server_error', 'malformed'])(
+        'keeps a delivered terminal Run through %s and recovers its cold projection', async errorCode => {
+        const degradedNotice = errorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+        const sourceFailed = errorCode !== 'target_unavailable';
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
         // Session RPC and the retained Account relay are independent network routes.
@@ -1349,35 +1354,40 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const screen = await renderModel(<MountedInboxContent view="updates" />);
         await vi.waitFor(() => expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(1));
         expect(screen.findByTestId(`inbox.run.${run.runId}`)).not.toBeNull();
-        expect(model!.artifactSource.phase).toBe(degradedNotice ? 'partial' : 'current');
+        await vi.waitFor(() => expect(model!.artifactSource.phase).toBe(degradedNotice ? 'partial' : 'current'));
         expect(model!.openAccountNotices).toEqual([]);
         expect(await readInbox()).toMatchObject({ ok: true, result: { status: degradedNotice ? 'partial' : 'ready', refreshFailed: degradedNotice,
             items: [expect.objectContaining({ producer: 'live', view: 'updates', read: false,
                 focus: { kind: 'execution_run', serverId, sessionId: source.sessionId, id: run.runId } })] } });
         const admitted = model!.items.find(item => item.focus.id === run.runId);
-        executionRunBoundary.get.mockRejectedValue(new RpcError('RPC target unavailable', degradedNotice ? RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE : 'target_unavailable'));
+        if (errorCode === 'malformed') executionRunBoundary.get.mockResolvedValue({ malformed: true });
+        else executionRunBoundary.get.mockRejectedValue(new RpcError('Run read failed', errorCode));
         expect(await createFrontDoorActionExecute()('execution.run.get', { sessionId: source.sessionId, runId: run.runId },
-            { surface: 'ui', serverId })).toMatchObject({ ok: false, errorCode: degradedNotice ? RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE : 'target_unavailable' });
+            { surface: 'ui', serverId })).toMatchObject({ ok: false });
         await act(async () => notifyExecutionRunActivity({ serverId, sessionId: source.sessionId }, { runId: run.runId }));
-        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(true));
-        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([admitted]);
-        expect(model!.items.find(item => item.focus.id === run.runId)).toBe(admitted);
-        expect(screen.findByTestId(`inbox.run.${run.runId}`)).not.toBeNull();
-        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'partial', refreshFailed: true,
-            coverage: { sources: expect.arrayContaining([{ source: 'live_items', status: 'partial', reason: 'content_unavailable' }]) },
-            items: [expect.objectContaining({ focus: expect.objectContaining({ id: run.runId }) })] } });
+        const headers = createExecutionRunHeaderDemand(captureActiveServerAccountScopeLifetime()!, () => {});
+        headers.update([{ source, demanded: false, refreshKey: '' }]);
+        await vi.waitFor(() => expect(headers.read(source)).toMatchObject({ loading: false, failed: sourceFailed }));
+        expect(headers.read(source).unavailable).toBe(sourceFailed ? undefined : 'target_unavailable');
+        headers.dispose();
+        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(sourceFailed));
+        const retained = errorCode === 'target_unavailable' || errorCode === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual(retained ? [admitted] : []);
+        if (retained) expect(model!.items.find(item => item.focus.id === run.runId)).toBe(admitted);
+        if (retained) expect(await readInbox()).toMatchObject({ ok: true,
+            result: { status: sourceFailed ? 'partial' : 'ready', refreshFailed: sourceFailed } });
         const reads = executionRunBoundary.get.mock.calls.length;
         await act(async () => { for (let index = 0; index < 100; index++)
             storage.getState().addArtifact({ ...malformed, id: `unrelated-${index}`, header: { kind: 'markdown', title: 'Document' } }); });
         expect(executionRunBoundary.get).toHaveBeenCalledTimes(reads);
-        expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(1);
+        expect(model!.items.filter(item => item.focus.id === run.runId)).toHaveLength(retained ? 1 : 0);
         await screen.unmount();
 
         // A cold mount has the private occurrence identity, not a copied Run header.
         const cold = await renderModel(<MountedInboxContent view="updates" />);
-        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(true));
+        await vi.waitFor(() => expect(model!.executionRunAttention.failed).toBe(sourceFailed));
         expect(model!.isLoading).toBe(false);
-        expect(model!.showCaughtUp).toBe(false);
+        expect(model!.showCaughtUp).toBe(!sourceFailed);
         expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
         expect(cold.findByTestId(`inbox.run.${run.runId}`)).toBeNull();
         const followReads = executionRunBoundary.follows.mock.calls.length;
