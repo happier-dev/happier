@@ -3223,11 +3223,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
             && 'target' in definition.execution && definition.execution.target === 'account';
         const requester = request.requesterAccount;
         // Only this runtime's own Account may borrow its credentials: local
-        // ingress, or a current custodian Machine admission. A guest admission
-        // or received requester/Session authority must carry its own requester.
-        const custody = !requester && accountTarget && !params?.accountExecution
+        // ingress, or a current custodian Machine admission. A guest admission,
+        // another Account's attributed work (e.g. its automation), or received
+        // requester/Session authority must carry its own requester.
+        const custody = !requester && accountTarget && !params?.accountExecution && sessionCredentials
             ? await import('@/daemon/lifecycle/requesterWorkAttribution') : null;
-        const localAccountCredentials = custody && !custody.carriesNonLocalRequesterAuthority(request.approvalContext)
+        const attributedAccountId = custody?.projectRpcRequesterWorkAttribution(request.approvalContext,
+            request.approvalContext?.serverId ?? sessionCredentialsServerId)?.accountId;
+        const localAccountCredentials = custody
+            && (attributedAccountId === undefined || attributedAccountId === readAccountIdFromToken(sessionCredentials!.token))
+            && !custody.carriesNonLocalRequesterAuthority(request.approvalContext)
             && await custody.canUseCustodianAccountForMachineRequest({ ...request.approvalContext, signal: request.signal })
             ? sessionCredentials : null;
         const accountCredentials = requester?.credentials ?? localAccountCredentials;

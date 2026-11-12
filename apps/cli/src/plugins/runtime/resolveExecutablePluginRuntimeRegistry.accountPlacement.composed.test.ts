@@ -109,6 +109,18 @@ it('retains local Account custody through Machine Actions into an Account Action
         }));
         expect(guest).toMatchObject({ matched: true, result: { ok: false,
             errorCode: 'plugin_action_execution_placement_unavailable' } });
+        // Another Account's automation on this Machine carries only its work
+        // attribution; it must not borrow the Machine owner's Account either.
+        const automation = (requesterAccountId: string) => runWithServerHttpBaseUrl(origin, () => executeContributedAction({
+            runtimeRegistry: runtime!.registry,
+            actionId: buildQualifiedPluginContributionKey({ pluginId: parent.manifest.id, localId: 'start' }),
+            input: { sessionId: 'spawned-on-machine' }, context: { surface: 'cli' },
+            approvalContext: { requesterWorkAttributionV1: { serverId: 'placement-home', accountId: requesterAccountId,
+                machineId: 'session-machine', installationId: 'installation' } },
+        }));
+        expect(await automation('requester-b')).toMatchObject({ matched: true, result: { ok: false,
+            errorCode: 'plugin_action_execution_placement_unavailable' } });
+        expect(await automation(accountId)).toEqual({ matched: true, result: { ok: true, result: { value: 'account-only' } } });
     } finally {
         await runtime?.dispose(); await socket.close(); restore(); await app.close(); fetch.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests();
     }

@@ -742,6 +742,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             ...(source?.serverId ? { serverId: source.serverId } : {}),
             ...(source?.serverIdentityId ? { serverIdentityId: source.serverIdentityId } : {}),
             ...(source?.machineAdmission ? { machineAdmission: source.machineAdmission } : {}),
+            ...(source?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: source.requesterWorkAttributionV1 } : {}),
             ...(source?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: source.verifyMachineAdmissionCurrent } : {}),
             ...(source?.callerInputAuthorization ? { callerInputAuthorization: source.callerInputAuthorization } : {}),
             ...(source?.sessionActionOrigin ? { sessionActionOrigin: source.sessionActionOrigin } : {}),
