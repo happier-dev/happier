@@ -713,7 +713,7 @@ describe('captured usage query projection', () => {
         metadataReads = 0;
         const control = await projectUsageAnalyticsBatch(capturedControl, selected, true, false, timing);
         expect(metadataReads, 'distinct population folds consume the same admitted metadata within this batch').toBe(single);
-        expect(control.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([27330, null, 27330]);
+        expect(control.results.map(result => 'value' in result ? result.value.totals.tokens.total : null)).toEqual([27330, 0, 27330]);
         // A pricing phase can resume more than once when its elapsed slice expires.
         const retainedTransitions = retainedSnapshotsAtPrice.filter((count, index, counts) => index === 0 || count !== counts[index - 1]);
         expect(retainedTransitions, 'pricing retains raw capture only for populations that have not folded yet').toEqual([1, 0]);

@@ -14,7 +14,7 @@ import { hasCompleteUsageCostEvidence, projectUsageAnalyticsSummarySteps, readUs
 import { resolveCapturedUsageModelPriceCatalog, type CapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import type { ScopedUsageContribution, ScopedUsageReplayContext } from "./query/resolveScopedUsageContributions";
 import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
-import { addUsageCostForMode, withEffectiveUsageCost, type UsageCostMode } from "./query/resolveUsageCostMode";
+import { withEffectiveUsageCost, type UsageCostMode } from "./query/resolveUsageCostMode";
 import type { UsageQueryEvent } from "./query/loadUsageEventsForQuery";
 import { buildUsageResultProjection } from "./query/buildUsageResultProjection";
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
@@ -48,7 +48,7 @@ function buildSeries(
     timeZoneOffsetMinutes: number,
     costMode: UsageCostMode,
 ): UsageAnalyticsSeriesBucket[] {
-    const buckets = new Map<number, UsageAnalyticsSeriesBucket>();
+    const buckets = new Map<number, { value: UsageAnalyticsSeriesBucket; rows: ScopedUsageContribution[] }>();
 
     for (const row of rows) {
         const { bucketStartMs, bucketEndMs } = resolveBucketBounds(
@@ -56,21 +56,26 @@ function buildSeries(
             row.observedAt.getTime(),
             timeZoneOffsetMinutes,
         );
-        const current = buckets.get(bucketStartMs) ?? {
+        const group: { value: UsageAnalyticsSeriesBucket; rows: ScopedUsageContribution[] } = buckets.get(bucketStartMs) ?? { rows: [], value: {
             bucketStartMs,
             bucketEndMs,
             eventCount: 0,
             tokens: createEmptyUsageTokens(),
             cost: createEmptyUsageCost(),
-        };
+        } };
+        const current = group.value;
         current.eventCount += row.contributingEventIds.length;
         current.tokens = addUsageTokens(current.tokens, row.tokens);
-        current.cost = addUsageCostForMode(current.cost, row.cost, costMode);
         current.context = readContributionContext(row) ?? current.context;
-        buckets.set(bucketStartMs, current);
+        group.rows.push(row);
+        buckets.set(bucketStartMs, group);
     }
 
-    return Array.from(buckets.values()).sort((left, right) => left.bucketStartMs - right.bucketStartMs);
+    // Publish exact monetary operands once per bucket rather than rebuilding
+    // an accumulator and its numeric/provenance output for every input row.
+    return Array.from(buckets.values(), ({ value, rows }) => ({ ...value,
+        cost: aggregateUsageContributionCosts(rows, costMode),
+    })).sort((left, right) => left.bucketStartMs - right.bucketStartMs);
 }
 
 export async function queryUsageAnalytics(
@@ -220,7 +225,9 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         preparedContributions: population.preparedContributions,
         coverageReasons: totalContributions.flatMap((row) => row.coverageReasons ?? []),
         timelineTruncated: timelineTruncatedFor(request.topLimit), request, ranked: rankedFor(request),
-        deferCost: grouped,
+        // Repricing below owns the published cost facts and presentation for
+        // rich detail too. Raw per-row facts would be immediately replaced.
+        deferCost: true,
     });
     if (!projection.costPresentation) {
         const { effectiveUsd: _selected, ...rawCost } = totals.cost;
