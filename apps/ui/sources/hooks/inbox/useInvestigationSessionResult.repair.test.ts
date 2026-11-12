@@ -21,10 +21,12 @@ import { projectOperationsRunOutcome } from '@/sync/domains/workflows/operations
 import { presentOperationsOutcomeRows } from '@/components/workflows/run/operationsOutcomeRows';
 import { createAccountNoticeInvestigation } from './accountNoticeInvestigation';
 import { useInvestigationSessionResult } from './useInvestigationSessionResult';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: (text: string) => [{ text, reveal: false }],
 }));
+await loadSyncSingletonForTests();
 afterEach(standardCleanup);
 
 function tool(id: string, actionId: string, result: unknown): Message {
@@ -72,9 +74,10 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
                 const link = TriageLinkEntryToSessionInputV1Schema.parse(input);
                 return { v: 1, status: (await relations.write({ ...link, linked: true })).status };
             }
-            if (id === 'deployments.receipts.get') return { ok: true, deployment: {
+            if (id === 'deployments.receipts.get') return { ok: true, deployment: { ...receipt,
                 id: subject.deploymentId, environmentId: subject.environmentId,
                 acceptedExecution: { v: 1, controller: { machineId: machine.machineId, installationId: 'installation' } } } };
+            if (id === 'artifact.get') return { artifact: null };
             if (id === 'agents.backends.list') return { items: [{ targetKey, agentTarget, enabled: true }] };
             if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: machine.machineId, updatedAt: 1, targets: [] };
             if (id === 'projects.list') return { items: [{ projectKey: { id: workspace.workspaceId }, ...machine,
@@ -107,7 +110,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
         isApprovalExecutionOriginCurrent: async () => true,
         approvalsCreate: async ({ request }) => {
             stored = ApprovalRequestSchema.parse(request);
-            const artifactId = request.actionId === 'workflow.run.start' ? 'workflow-approval' : 'approval';
+            const artifactId = 'approval';
             requests.set(artifactId, stored);
             publishApproval(artifactId, stored);
             return { artifactId };
@@ -175,7 +178,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
     try {
         const investigation = await owner.run(subject, { configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
             agentChoice: { kind: 'target', targetKey }, delivery: 'configured' }, { placement: { machine, workspace } });
-        expect(investigation).toMatchObject({ ok: true,
+        expect(investigation, JSON.stringify({ investigation, sessionBoundaryCalls: invoker.calls })).toMatchObject({ ok: true,
             result: { handoff: { kind: 'sendResult', result: { status: 'accepted' } } } });
         const guided = buildGuidedAutomationRequest({ when: createDefaultWhen('schedule'),
             lookAt: ['logs', 'receipts', 'health'], mode: 'chain', channels: [],
@@ -193,12 +196,8 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'repair-chain',
             approvalProfileId: guided.approvalProfileId,
-        })).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'workflow-approval' } });
-        expect(started).toEqual([]);
-        expect(await execute('approval.request.decide', { artifactId: 'workflow-approval', decision: 'approve' }, {
-            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-            serverId: 'home', runtimeAccountId: 'account',
-        })).toMatchObject({ ok: true, result: { status: 'executed' } });
+        })).toMatchObject({ ok: true, result: { admission: 'created', run: { id: start.runId } } });
+        // The designed Confirm admits this start; the inherited profile governs subsequent agent Actions.
         expect(started).toEqual([{ input: start, approvalProfileId: 'builtin:read-propose' }]);
         expect(start.source.kind === 'inline' && start.source.definition).toMatchObject({
             defaults: { conversation: { kind: 'existing_session', sessionId: 'repair', machineId: 'machine' } },

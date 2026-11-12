@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { createReducer } from '@happier-dev/session-core/reducer';
 import type { Message } from '@happier-dev/session-core/messages';
+import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { act, renderHook, standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -11,10 +12,12 @@ import { presentOperationsOutcomeRows } from '@/components/workflows/run/operati
 import { projectOperationsRunOutcome } from '@/sync/domains/workflows/operationsRunOutcome';
 import { createAccountNoticeInvestigation } from './accountNoticeInvestigation';
 import { useInvestigationSessionResult } from './useInvestigationSessionResult';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: (text: string) => [{ text, reveal: false }],
 }));
+await loadSyncSingletonForTests();
 afterEach(standardCleanup);
 
 it('composes one exact failed receipt through the public Action, chosen Agent and Machine, pushed finding and cold reopen', async () => {
@@ -59,9 +62,11 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
             }
             if (id === 'deployments.receipts.get') {
                 reads.push({ id, input });
-                return { ok: true, deployment: { id: subject.deploymentId, environmentId: subject.environmentId,
-                    acceptedExecution: { v: 1, controller: { machineId: 'affected-controller', installationId: 'installation' } } } };
+                return { ok: true, deployment: createDeploymentReceiptHeaderV1({ id: subject.deploymentId,
+                    environmentId: subject.environmentId, state: 'failed',
+                    acceptedExecution: { v: 1, controller: { machineId: 'affected-controller', installationId: 'installation' } } }) };
             }
+            if (id === 'artifact.get') return { artifact: null };
             if (id === 'agents.backends.list') return { items: [{ targetKey, agentTarget, enabled: true }] };
             if (id === 'localServices.launcher.snapshot') return { v: 1, machineId: machine.machineId, updatedAt: 1, targets: [] };
             if (id === 'projects.list') return { items: [{ projectKey: { id: workspace.workspaceId }, ...machine,
@@ -113,7 +118,7 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
     try {
         const started = await owner.run(subject, { configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
             agentChoice: { kind: 'target', targetKey }, delivery: 'configured' }, { placement: { machine, workspace } });
-        expect(started, JSON.stringify(started)).toMatchObject({ ok: true, result: { handoff: { kind: 'sendResult', result: { status: 'accepted' } } } });
+        expect(started, JSON.stringify({ started, sessionBoundaryCalls: invoker.calls })).toMatchObject({ ok: true, result: { handoff: { kind: 'sendResult', result: { status: 'accepted' } } } });
         expect(reads).toEqual([{ id: 'deployments.receipts.get', input: { serverId: scope.serverId,
             environmentId: subject.environmentId, deploymentId: subject.deploymentId } }]);
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({ executionTarget: machine, agentTarget,
