@@ -100,6 +100,9 @@ export function prepareDeploymentTemplateAdditionV1(input: DeploymentTemplateIns
         compose: { ...template.compose, services: template.compose.services.map(service),
             ...(template.compose.primaryService ? { primaryService: service(template.compose.primaryService) } : {}) },
         variables: template.variables.map(entry => ({ ...entry, key: variable(entry.key),
+            // A default naming this database follows the same service rename as its exports.
+            ...(template.data && entry.key === template.data.variables?.host && entry.default === template.data.service
+                ? { default: service(entry.default) } : {}),
             sites: entry.sites.map(site => ({ ...site, service: service(site.service) })) })),
         generatedSecrets: template.generatedSecrets.map(entry => ({ ...entry, key: variable(entry.key) })),
         domains: template.domains.map(entry => ({ ...entry, service: service(entry.service) })),

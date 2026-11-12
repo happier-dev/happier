@@ -512,9 +512,13 @@ describe('PostgreSQL PgBouncer companion (P45-R37)', () => {
         const existing = current();
         const occupied = { content: { ...existing.content, definition: { ...existing.content.definition, document: first.document,
             services: first.services } }, source: JSON.parse(first.document) };
-        const second = JSON.parse(preparePostgres(app, { companions: ['pgbouncer'], existing: occupied as ReturnType<typeof current>, connect: false }).document);
+        const prepared = preparePostgres(app, { companions: ['pgbouncer'], existing: occupied as ReturnType<typeof current>, connect: false });
+        const second = JSON.parse(prepared.document);
         expect(second.services['pgbouncer-2'].environment.DATABASE_URL).toBe('postgres://${DB_USER_2}:${DB_PASSWORD_2}@database-2:5432/${DB_NAME_2}');
         expect(second.services['pgbouncer-2'].depends_on).toEqual({ 'database-2': { condition: 'service_healthy' } });
+        // The endpoint binding must address the new database, just like its paired exports.
+        expect(prepared.bindings).toContainEqual({ purpose: 'variable', name: 'DB_HOST_2', phase: 'runtime',
+            source: { kind: 'value', value: 'database-2' } });
     });
 
     it('refuses an undeclared companion instead of ignoring it', async () => {
