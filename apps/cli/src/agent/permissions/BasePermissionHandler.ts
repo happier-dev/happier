@@ -2649,7 +2649,9 @@ export abstract class BasePermissionHandler {
         } else {
             const context = this.requestCoordinator.getResponseContext(params.input.requestId);
             if (context) {
-                nativeChoice ??= resolveMediatedNativePermissionChoice(context.nativeChoices, decision, scope);
+                if (context.nativeChoices) {
+                    nativeChoice ??= resolveMediatedNativePermissionChoice(context.nativeChoices, decision, scope);
+                }
                 const response = this.resolveIncomingPermissionResponse({
                     id: params.input.requestId, turnId: params.input.turnId,
                     ...(nativeChoice ? { nativeChoice } : {}),
