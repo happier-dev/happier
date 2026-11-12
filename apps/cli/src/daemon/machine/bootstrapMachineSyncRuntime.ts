@@ -1231,8 +1231,9 @@ export async function bootstrapMachineSyncRuntime(
       ...(params.createAgentCatalogObservation ? { observeConnectedAccountSourceModels: request =>
         agentCatalogObservation!.observe(request) } : {}),
       ...(connectedApiMachine ? { invokeConnectedAccountNativeModels: (request, signal) =>
-        connectedApiMachine.getPeerMediationMachineRpcHandlerManager().invokeLocal(RPC_METHODS.CAPABILITIES_INVOKE, request,
-          { signal, verifiedPeerAuthority: 'account_automation' }) } : {}),
+        // The custodian observes its own explicit source. Requester RPC admission
+        // remains at ingress; it cannot lend custody to this host-owned read.
+        machineRpcLifecycleRegistration.hostCapabilities.invoke(request, { signal }) } : {}),
       resolveSharedGateway,
       ...(params.resolveManagedPurposeBindingIntentSelection
         ? { resolveManagedPurposeBindingIntentSelection: params.resolveManagedPurposeBindingIntentSelection }

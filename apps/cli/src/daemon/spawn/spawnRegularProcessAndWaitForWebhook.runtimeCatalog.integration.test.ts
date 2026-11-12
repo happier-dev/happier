@@ -31,6 +31,7 @@ import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
 import { createSpawnHappyCliEnvScope, withTempHappyCliEntrypoint } from '@/testkit/process/spawnHappyCliHarness';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -1893,7 +1894,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(params.pidToSpawnResultResolver.size).toBe(0);
   });
 
-  it.each(['broker_unavailable', 'resource_forbidden'] as const)('preserves %s from runner construction through pre-webhook exit classification', async code => {
+  it.each(['broker_unavailable', 'resource_forbidden', 'resource_unavailable'] as const)('preserves %s from runner construction through pre-webhook exit classification', async code => {
     const child = createFakeChildProcess(5156);
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     const params = withCanonicalChildExitOwner(createParams());
@@ -1908,7 +1909,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
     try {
-      expect(reportSessionRunnerFailure(new SessionTeamCredentialLaunchUnavailableError(code))).toBe(1);
+      expect(reportSessionRunnerFailure(sanitizeNativeAgentSessionBoundaryError(new SessionTeamCredentialLaunchUnavailableError(code), true))).toBe(1);
     } finally {
       output.mockRestore(); log.mockRestore(); fatal.mockRestore();
     }
@@ -1954,7 +1955,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       expect(writes).toHaveLength(code === 'broker_unavailable' ? 0 : 1);
       expect(queue[0]).toMatchObject({ localId: requestId, deliveryStatus: { status: 'queued' } });
     } finally { await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve())); }
-    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { code } });
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { code,
+      failureCause: { code, phase: 'authentication', failureReason: 'unknown' } } });
     expect(isSessionSpawnBrokerUnavailable(response)).toBe(code === 'broker_unavailable');
     expect(params.pidToSpawnResultResolver.size).toBe(0);
   });

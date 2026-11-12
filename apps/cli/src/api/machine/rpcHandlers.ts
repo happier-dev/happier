@@ -37,7 +37,7 @@ import type {
   SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import { DaemonExecutionRunBrokerAuthorityRequestV1Schema, DaemonExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
-import { StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { ExecutionRunPermissionRespondInputSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
@@ -469,6 +469,8 @@ export type MachineRpcHandlerDeps = Readonly<{
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
+  /** Closed custodian work consumes the same capability service without requester ingress. */
+  hostCapabilities: ReturnType<typeof registerCapabilitiesHandlers>;
   captureExecutionRunWorkflowRequester?: ExecutionRunHostBridge['captureWorkflowRequester'];
   captureExecutionRunResumeMaterialization?: ExecutionRunHostBridge['captureResumeMaterialization'];
   /** Close this ingress occurrence while retaining observation until actual finite settlement. */
@@ -617,7 +619,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   // Detached execution runs are owned by this exact authenticated daemon. Reuse
   // the incumbent execution-run bridge/action family with its nullable scope;
   // no Admin target picker, Session projection, or parallel daemon registry.
-  registerCapabilitiesHandlers(rpcHandlerManager, {
+  const hostCapabilities = registerCapabilitiesHandlers(rpcHandlerManager, {
     ...(params.deps?.secretSources ? { secretSources: params.deps.secretSources } : {}),
     ...(params.deps?.savedSecretOperationContext ? { savedSecretOperationContext: params.deps.savedSecretOperationContext } : {}),
     filesystemEffectAdmission,
@@ -632,7 +634,11 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
       ? { activatePurposeBindings: params.deps.activateCapabilitiesPurposeBindings }
       : {}),
   });
-  registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager });
+  registerMachineAgentInstallJobRpcHandlers({ rpcHandlerManager, deps: {
+    agentIsolation: params.deps?.agentIsolation,
+    nativeOperationRuntime: params.deps?.nativeOperationRuntime,
+    resolveHostHomeServerIdentityId: params.deps?.resolveHostHomeServerIdentityId,
+  } });
   let detachedExecutionRunManager: ExecutionRunRequestBridgeContract<ExecutionRunHostBridge> | null = null;
   const executionBudgetRegistry = params.deps?.executionBudgetRegistry ?? createExecutionBudgetRegistry();
   const executionRunRegistration = registerExecutionRunHandlers(rpcHandlerManager, {
@@ -683,29 +689,18 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     if (context?.callerAuthority !== 'present_user') {
       return { ok: false, errorCode: 'present_user_required', error: 'Present-user authority required' };
     }
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    const parsed = ExecutionRunPermissionRespondInputSchema.safeParse(raw);
+    if (!parsed.success) {
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
     }
-    const input = raw as Record<string, unknown>;
-    const runId = typeof input.runId === 'string' ? input.runId.trim() : '';
-    const requestId = typeof input.requestId === 'string' ? input.requestId.trim() : '';
-    const booleanDecision = typeof input.approved === 'boolean' && input.answers === undefined;
-    const structuredAnswer = input.approved === undefined
-      ? StructuredQuestionAnswersV1Schema.safeParse(input.answers)
-      : null;
-    if (!runId || !requestId || (!booleanDecision && !structuredAnswer?.success)) {
-      return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
-    }
+    const { runId, ...response } = parsed.data;
     if (!detachedExecutionRunManager) {
       return { ok: false, errorCode: 'execution_run_target_unavailable', error: 'Execution-run target unavailable' };
     }
     const run = await detachedExecutionRunManager.getForRequest(runId, null,
       projectRpcRequesterWorkAttribution(context, params.deps?.currentServerId ?? configuration.activeServerId));
     if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Execution run not found' };
-    return await detachedExecutionRunManager.completePermissionRequest(runId, {
-      requestId,
-      ...(structuredAnswer?.success ? { answers: structuredAnswer.data } : { approved: input.approved as boolean }),
-    });
+    return await detachedExecutionRunManager.completePermissionRequest(runId, response);
   });
   registerSessionPermissionRpcHandlers({ rpcHandlerManager });
   registerSubagentRpcHandlers({ rpcHandlerManager });
@@ -1243,6 +1238,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   });
 
   return {
+    hostCapabilities,
     retireFiniteExecution,
     captureExecutionRunResumeMaterialization: (runId, occurrenceId) =>
       detachedExecutionRunManager?.captureResumeMaterialization(runId, occurrenceId) ?? null,

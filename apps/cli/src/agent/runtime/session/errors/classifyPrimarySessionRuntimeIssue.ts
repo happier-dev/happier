@@ -26,6 +26,7 @@ import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtim
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeFailureCauseV1Schema, readAgentStartupFailureDetails, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import axios from 'axios';
+import { readSessionRuntimeFailureCause } from './readSessionRuntimeFailureCause';
 import { readNativeStartupFailureDetail } from './nativeStartupFailureDetail';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { readStructuredInputPreparationFailure } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
@@ -91,23 +92,7 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
     const field = readDataField(value, key);
     return typeof field === 'string' && allowed.has(field) ? field : 'unknown';
   };
-  const readDataRecord = (value: unknown): Record<string, unknown> | undefined => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    try {
-      const descriptors = Object.getOwnPropertyDescriptors(value);
-      if (Object.values(descriptors).some(descriptor => !('value' in descriptor))) return undefined;
-      return Object.fromEntries(Object.entries(descriptors).map(([key, descriptor]) => [key, descriptor.value]));
-    } catch { return undefined; }
-  };
-  const cause = readDataRecord(readDataField(readDataField(error, 'details'), 'failureCause')
-    ?? readDataField(error, 'failureCause'));
-  const parsedCause = SessionRuntimeFailureCauseV1Schema.safeParse(cause && {
-    ...cause,
-    ...(Object.hasOwn(cause, 'preparationCause')
-      ? { preparationCause: readDataRecord(cause.preparationCause) ?? null }
-      : {}),
-  });
-  const closedCause = parsedCause.success ? parsedCause.data : null;
+  const closedCause = readSessionRuntimeFailureCause(error);
   const causeReason = closedCause && closedCause.failureReason !== 'unknown'
     && closedCause.failureReason !== 'unclassified_provider_error' ? closedCause.failureReason
     : closedCause?.code && (ProviderErrorCodeV1Schema.safeParse(closedCause.code).success
@@ -125,7 +110,7 @@ export function readSessionPreparationFailureDiagnostic(error: unknown): Readonl
       && (providerDiagnosticCodes.has(originalCode) || readAgentStartupFailureCode(originalCode)
         || originalCode === 'agent_isolation_unavailable') ? originalCode : reason),
     contextSource: readClosedField(error, 'contextSource', preparationDiagnosticSources),
-    ...(parsedCause.success ? { failureCause: parsedCause.data } : {}),
+    ...(closedCause ? { failureCause: closedCause } : {}),
   };
 }
 
@@ -548,7 +533,7 @@ function readTeamCredentialDenial(error: unknown): TeamCredentialDenial | null {
 
 export function classifyPrimarySessionRuntimeIssue(
   input: ClassifyPrimarySessionRuntimeIssueInput,
-): SessionRuntimeIssueV1 {
+): SessionRuntimeIssueV1 & Readonly<{ sanitizedPreview: string }> {
   const attachedDiagnostic = input.cause === 'session_error'
     ? AgentRuntimeDiagnosticDataV1Schema.safeParse(readRecord(input.error)?.diagnostic) : null;
   if (attachedDiagnostic?.success) {
@@ -562,8 +547,7 @@ export function classifyPrimarySessionRuntimeIssue(
   const typedDiagnostic = diagnostic?.success ? diagnostic.data : null;
   const diagnosticDetails = readRecord(typedDiagnostic?.details);
   const structuredInputFailure = readStructuredInputPreparationFailure(input.error);
-  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(diagnosticDetails?.failureCause
-    ?? readRecord(readRecord(input.error)?.details)?.failureCause
+  const failureCause = SessionRuntimeFailureCauseV1Schema.safeParse(readSessionRuntimeFailureCause(typedDiagnostic ?? input.error)
     ?? (structuredInputFailure?.preparationCause ? {
       phase: 'turn_start', failureReason: 'unknown', preparationCause: structuredInputFailure.preparationCause,
     } : undefined));

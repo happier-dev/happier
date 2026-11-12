@@ -2,9 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { classifyPrimarySessionRuntimeIssue } from './classifyPrimarySessionRuntimeIssue';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { withRetry } from '@/agent/acp/withRetry';
 
 describe('native startup failure cause retention', () => {
+  it.each([['root', false], ['root', true], ['details', false], ['details', true]] as const)(
+    'redacts a typed %s cause while dropping unrelated native context (forced=%s)', (envelope, forceSafeShape) => {
+    const failureCause = { code: 'resource_unavailable', phase: 'authentication', failureReason: 'unknown',
+      providerErrorMessage: 'Broker refused api_key=synthetic-private-token' };
+    const native = Object.assign(new Error('Startup failed'), envelope === 'root' ? { failureCause, raw: 'PRIVATE_CONTEXT' }
+      : { details: { failureCause }, raw: 'PRIVATE_CONTEXT' });
+    const error = sanitizeNativeAgentSessionBoundaryError(native, forceSafeShape);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+    expect(issue.failureCause).toMatchObject({ code: 'resource_unavailable', phase: 'authentication',
+      providerErrorMessage: redactBugReportSensitiveText(failureCause.providerErrorMessage) });
+    expect(JSON.stringify(error)).not.toMatch(/synthetic-private-token|PRIVATE_CONTEXT/);
+    const malformed = Object.assign(new Error('Startup failed'), { failureCause: { ...failureCause, raw: 'PRIVATE_CONTEXT' } });
+    expect(sanitizeNativeAgentSessionBoundaryError(malformed, true)).not.toHaveProperty('failureCause');
+  });
+  it.each(['resource_unavailable', 'resource_forbidden', 'broker_unavailable'] as const)(
+    'retains the typed Team broker %s refusal through the native privacy boundary', code => {
+      const original = new SessionTeamCredentialLaunchUnavailableError(code, 'readiness');
+      const error = sanitizeNativeAgentSessionBoundaryError(original, true);
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error });
+      expect(issue.failureCause).toMatchObject({ code, phase: 'authentication', failureReason: 'unknown' });
+      expect(issue.failureCause?.failureReason).not.toBe('unclassified_provider_error');
+    });
   it('enriches an existing unclassified startup cause without losing its native evidence', () => {
     const error = Object.assign(new Error('Native open refused'), { code: -32603,
       details: { failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error' } } });

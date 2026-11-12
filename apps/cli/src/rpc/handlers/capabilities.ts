@@ -374,7 +374,7 @@ async function createGenericCliCapability(
         },
         detect: async ({ request, context }) => {
             const entry = context.cliSnapshot?.clis?.[agentId];
-            return buildCliCapabilityData({ request, entry });
+            return buildCliCapabilityData({ request, entry, agentInstallExecutionScope: context.agentInstallExecutionScope });
         },
         invoke: async ({ method, params, signal, machineSystemTaskResponse }) => {
             const sharedResult = await invokeCliProbeOrInstallMethod(
@@ -434,6 +434,9 @@ function createPluginMarketplaceCapability(
 }
 
 export async function createCliCapabilitiesService(dependencies: Readonly<{
+    /** Supplied only by the host-owned native member effect configuration. */
+    agentInstallExecutionScope?: 'member';
+    agentSharedManagedToolsRoot?: string;
     sessionFactorySource?: AgentSessionFactorySource;
     secretSources?: CliProbeDependencies['secretSources'];
     savedSecretOperationContext?: CliProbeDependencies['savedSecretOperationContext'];
@@ -552,14 +555,18 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             resolvedContributionRegistry,
         ),
         buildContext: async (requests, factorySource) => {
-            const context = await buildDetectContext(requests, factorySource ?? dependencies.sessionFactorySource);
+            const context = await buildDetectContext(requests, factorySource ?? dependencies.sessionFactorySource,
+                dependencies.agentInstallExecutionScope === 'member' ? { sourcePolicy: 'member',
+                    ...(dependencies.agentSharedManagedToolsRoot ? { memberSharedManagedToolsRoot: dependencies.agentSharedManagedToolsRoot } : {}),
+                } : undefined);
             if (context.cliSnapshot && dependencies.observeCliSnapshot) {
                 const observedAgentIds = requests.filter(request => request.id.startsWith('cli.')).map(request => request.id.slice(4));
                 if (observedAgentIds.length) await dependencies.observeCliSnapshot({
                     snapshot: context.cliSnapshot, observedAgentIds, checkedAt: Date.now(),
                 }).catch(error => logger.warn('[CAPABILITIES] Failed to publish Machine Agent install facts', error));
             }
-            return context;
+            return { ...context, ...(dependencies.agentInstallExecutionScope
+                ? { agentInstallExecutionScope: dependencies.agentInstallExecutionScope } : {}) };
         },
     });
 }
@@ -569,7 +576,7 @@ export function registerCapabilitiesHandlers(
     dependencies: Parameters<typeof createCliCapabilitiesService>[0] & Readonly<{
         filesystemEffectAdmission?: FilesystemEffectAdmission;
     }> = {},
-): void {
+): Pick<import('@/capabilities/service').CapabilitiesService, 'invoke'> {
     const admission = dependencies.filesystemEffectAdmission ?? createFilesystemEffectAdmission();
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
     let servicePluginReloadGeneration: number | null = null;
@@ -714,4 +721,6 @@ export function registerCapabilitiesHandlers(
             return await execute();
         };
     }
+    return { invoke: async (request, context) => (await getService()).invoke(request, context) };
+
 }
