@@ -255,6 +255,11 @@ For edge Caddy ingress, the edge Machine is the serving Machine: a different
 runtime member can supply outside evidence. Without a separate edge, active
 runtime members supply same-Machine evidence.
 
+The native Domain Add form requires an explicit HTTP health path and expected
+status, validated by `DeploymentDomainHealthCheckV1Schema`. It does not infer a
+health endpoint from Compose argv or assume `/` and status 200. Provider-managed
+addresses retain their provider routing input instead of native health fields.
+
 Custom certificates become due for replacement at two thirds of their observed
 lifetime. Known validity dates can advance the projected state when read, without
 a new timer. Automatic certificates expose observed expiry without inventing a
@@ -2019,9 +2024,19 @@ execution wiring fails closed. Scoped semantic preparation/key-bootstrap issuanc
 semantic accepted-host continuity after controller changes still require their owning producers.
 Joining restores the retained uniform artifacts onto every joining installation
 and requires a successful native restore before the existing Domain owner enrolls
-routes. Native health can be healthy or unverified when no health check is defined;
+routes. When the requested source is exactly the serving release, the rollout
+owner treats this as enrollment: it requires the same captured workload inputs,
+restores only joining installations, and observes existing members without a
+build, migration or activation. Changed workload inputs refuse before native
+effects. A mixed current-version vector or failed observation leaves the joining
+receipt failed and membership unchanged; it does not redeploy existing members.
+An explicitly different source remains an ordinary deployment to the full fleet.
+Native health can be healthy or unverified when no health check is defined;
 unknown and unhealthy results cannot enroll. Successful uniform settlement activates membership only after signed
-Domain health is stored. Scoped teardown reconciles Domains to the surviving
+Domain health is stored. Enrollment retains the serving receipt pointer and
+native version IDs. The controller signs the retained pointer in the existing
+transition body; the server compares it with the current locked link before
+committing membership. Scoped teardown reconciles Domains to the surviving
 members before native removal. Target-link replacement retains predecessor
 custody independently; unlink consumes the completed teardown proof before
 releasing the retired installation. These are development-source paths; the three-Machine join, rollback and

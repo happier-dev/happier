@@ -116,6 +116,8 @@ declaration; this guide does not yet certify the Iroh connection journey.
 Open the Environment's **Domains** tab and choose **Add domain**. Enter the
 hostname, select the service that should receive traffic, and enter that service's
 **Container port**. Set a path only if the address should route a particular path.
+For a native service, enter the **Outside check** path and its **Expected HTTP
+status**. Use the app's readiness endpoint and the status it actually returns.
 Review the ingress choice and submit the change. Complete any approval the app requests.
 
 Direct public routing needs DNS pointing at the serving Machine and reachable

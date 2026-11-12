@@ -286,7 +286,7 @@ describe('Environment → Domains: add form (P6)', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('adds a redirect alias, your own certificate and a basic-auth user in one Domain Add', async () => {
+  it.each(['docs.happier.dev', '*.happier.dev'])('adds redirect, certificate and basic-auth references for %s in one Domain Add', async hostname => {
     const base = createDeploymentEnvironmentDetailV1();
     const detail = {
       ...base,
@@ -302,18 +302,20 @@ describe('Environment → Domains: add form (P6)', () => {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
       await act(async () => {
-        screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+        screen.changeTextByTestId(`${id}.host`, hostname);
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
         screen.changeTextByTestId(`${id}.redirect`, 'www.happier.dev');
         screen.changeTextByTestId(`${id}.basicAuth`, 'preview');
+        screen.changeTextByTestId(`${id}.check`, '/');
+        screen.changeTextByTestId(`${id}.checkStatus`, '200');
       });
       await screen.pressByTestIdAsync(`${id}.certificate:custom`);
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           content: {
-            hostname: 'docs.happier.dev',
+            hostname,
             target: {
               service: 'web',
               containerPort: 3000,
@@ -325,6 +327,37 @@ describe('Environment → Domains: add form (P6)', () => {
           },
         }),
       );
+    } finally {
+      await screen.unmount();
+      controller.retire();
+    }
+  });
+
+  it('requires an explicit health path and preserves the reviewed HTTP status', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: undefined } };
+    const actions = domainActions(detail);
+    const { screen, controller, settle } = await renderDomains(detail, [], actions);
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(id);
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.host`, 'app.example.test');
+        screen.changeTextByTestId(`${id}.service`, 'web');
+        screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).not.toHaveBeenCalled();
+      await act(async () => {
+        screen.changeTextByTestId(`${id}.check`, '/ready');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).not.toHaveBeenCalled();
+      await act(async () => screen.changeTextByTestId(`${id}.checkStatus`, '204'));
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        content: expect.objectContaining({ healthCheck: { path: '/ready', expectStatus: 204 } }),
+      }));
     } finally {
       await screen.unmount();
       controller.retire();
@@ -410,7 +443,11 @@ describe('Environment → Domains: add form (P6)', () => {
           (item: { id: string }) => item.id,
         ),
       ).toEqual(['web', 'worker']);
-      await act(async () => select(`${id}.service`)!.props.onSelect('web'));
+      await act(async () => {
+        select(`${id}.service`)!.props.onSelect('web');
+        screen.changeTextByTestId(`${id}.check`, '/ready');
+        screen.changeTextByTestId(`${id}.checkStatus`, '204');
+      });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({

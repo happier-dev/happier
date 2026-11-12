@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentDomainContentV1, DeploymentEnvironmentContentV1, DeploymentTargetLinkContentV1 } from '@happier-dev/deployment-protocol/v1';
@@ -306,7 +307,8 @@ function DomainAddForm(
     return ports.length === 1 ? String(ports[0]!.containerPort) : '';
   });
   const [path, setPath] = React.useState('');
-  const [checkPath, setCheckPath] = React.useState('/');
+  const [checkPath, setCheckPath] = React.useState('');
+  const [checkStatus, setCheckStatus] = React.useState('');
   const [redirectTo, setRedirectTo] = React.useState('');
   const [certificate, setCertificate] = React.useState<'managed' | 'custom'>('managed');
   const [basicAuthUser, setBasicAuthUser] = React.useState('');
@@ -326,14 +328,13 @@ function DomainAddForm(
   const containerPort = Number(port);
   const portValid = /^\d+$/.test(port) && containerPort >= 1 && containerPort <= 65535;
   const routePath = path.trim();
-  const probePath = checkPath.trim();
+  const healthCheck = DeploymentDomainHealthCheckV1Schema.safeParse({ path: checkPath.trim(), expectStatus: Number(checkStatus) });
   const duplicate = props.taken.includes(host);
   const pathValid = routePath === '' || routePath.startsWith('/');
-  const probeValid = probePath.startsWith('/');
   const redirect = redirectTo.trim();
   const user = basicAuthUser.trim();
   const ready = host.length > 0 && !duplicate && !props.busy && (provider ? !needsZone || !!zone
-    : service.trim().length > 0 && portValid && pathValid && probeValid && (!needsSelection || !!ingress));
+    : service.trim().length > 0 && portValid && pathValid && healthCheck.success && (!needsSelection || !!ingress));
   return (
     <InlineAddExpander
       isOpen
@@ -349,6 +350,7 @@ function DomainAddForm(
           void props.onAdd({ hostname: host, target: { kind: 'provider', ...(zone ? { zone } : {}) } });
           return;
         }
+        if (!healthCheck.success) return;
         void props.onAdd({
           hostname: host,
           target: {
@@ -357,7 +359,7 @@ function DomainAddForm(
             ...(routePath ? { path: routePath } : {}),
             ...(redirect ? { redirectTo: redirect } : {}),
           },
-          healthCheck: { path: probePath, expectStatus: 200 },
+          healthCheck: healthCheck.data,
           ...(needsSelection && ingress ? { ingress } : {}),
           ...(props.credentials && certificate === 'custom' ? { tls: { kind: 'custom' as const } } : {}),
           ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
@@ -511,6 +513,16 @@ function DomainAddForm(
             monospace
             autoCapitalize="none"
             accessibilityLabel={t('projects.deployments.domainFieldCheck')}
+          />
+        </FieldItem>
+        <FieldItem label={t('projects.deployments.domainFieldCheckStatus')}>
+          <FieldTextInput
+            testID="project-deployments.environment.domains.add.checkStatus"
+            value={checkStatus}
+            onChangeText={setCheckStatus}
+            monospace
+            keyboardType="number-pad"
+            accessibilityLabel={t('projects.deployments.domainFieldCheckStatus')}
           />
         </FieldItem>
         </> : null}
