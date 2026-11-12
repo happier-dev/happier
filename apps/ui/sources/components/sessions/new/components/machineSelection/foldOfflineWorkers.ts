@@ -1,4 +1,4 @@
-import type * as React from 'react';
+import * as React from 'react';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 
 type OfflineFoldCopy = Readonly<{
@@ -14,12 +14,13 @@ type OfflineFoldCopy = Readonly<{
 export function foldOfflineWorkers(
   sections: ReadonlyArray<SelectionListSectionDescriptor>,
   isOffline: (option: SelectionListOption) => boolean,
-  copy: OfflineFoldCopy,
+  copyForSection: (sectionId: string) => OfflineFoldCopy,
 ): SelectionListSectionDescriptor[] {
   return sections.map((section) => {
     if (section.kind !== 'static') return section;
     const folded = section.options.filter(isOffline);
     if (folded.length < 2) return section;
+    const copy = copyForSection(section.id);
     const foldedIds = new Set(folded.map((option) => option.id));
     const fold: SelectionListOption = {
       id: `offline:${section.id}`,
@@ -39,4 +40,18 @@ export function foldOfflineWorkers(
       ],
     };
   });
+}
+
+/** Keep expansion local to its section so a lower disclosure never inserts rows above itself. */
+export function useOfflineWorkerSectionState(): (sectionId: string) => Pick<OfflineFoldCopy, 'open' | 'onToggle'> {
+  const [openSectionIds, setOpenSectionIds] = React.useState<ReadonlySet<string>>(() => new Set());
+  return React.useCallback((sectionId: string) => ({
+    open: openSectionIds.has(sectionId),
+    onToggle: () => setOpenSectionIds((current) => {
+      const next = new Set(current);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    }),
+  }), [openSectionIds]);
 }

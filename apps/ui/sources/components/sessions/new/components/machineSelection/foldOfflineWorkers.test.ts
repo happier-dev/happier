@@ -5,7 +5,7 @@ import { rankOptionsByQuery } from '@/components/ui/selectionList/SelectionListR
 
 const option = (id: string, disabled = false): SelectionListOption => ({ id, label: id, disabled, onSelect: () => {} });
 const section = (options: SelectionListOption[]): SelectionListSectionDescriptor => ({ kind: 'static', id: 'workers', title: 'Workers', options });
-const copy = (open = false) => ({ label: (count: number) => `${count} offline`, detail: 'Not reachable right now', open, onToggle: () => {}, icon: null, accessory: null });
+const copy = (open = false) => () => ({ label: (count: number) => `${count} offline`, detail: 'Not reachable right now', open, onToggle: () => {}, icon: null, accessory: null });
 const offline = (...ids: string[]) => (candidate: SelectionListOption) => ids.includes(candidate.id) && candidate.disabled === true;
 
 const optionsOf = (result: SelectionListSectionDescriptor[]) =>

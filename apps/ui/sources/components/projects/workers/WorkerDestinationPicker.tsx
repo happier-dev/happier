@@ -8,7 +8,7 @@ import type {
 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import { useMachineSelectionListModel, type ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
-import { foldOfflineWorkers } from '@/components/sessions/new/components/machineSelection/foldOfflineWorkers';
+import { foldOfflineWorkers, useOfflineWorkerSectionState } from '@/components/sessions/new/components/machineSelection/foldOfflineWorkers';
 import { useMachinePoolGroups } from '@/components/sessions/new/hooks/machines/useMachinePoolGroups';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
@@ -115,7 +115,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     [props.sourceMachineId, scopedGroups],
   );
   const poolGroups = useMachinePoolGroups(groups);
-  const [offlineOpen, setOfflineOpen] = React.useState(false);
+  const offlineStateForSection = useOfflineWorkerSectionState();
   const onChooseRef = React.useRef(props.onChoose);
   onChooseRef.current = props.onChoose;
   const poolSelection = props.poolSelection;
@@ -288,13 +288,15 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     const offlineOnlyOptionIds = new Set((list.offlineOnlyMachineIdsByServerId[serverId] ?? []).flatMap((id) => [id, `${serverId}::${id}`]));
     const foldedMachineSections = props.servicePresentation
       ? machineSections
-      : foldOfflineWorkers(machineSections, (option) => offlineOnlyOptionIds.has(option.id), {
-          label: (count) => t('projectWorkers.offlineWorkers', { count }),
-          detail: t('projectWorkers.offlineWorkersDetail'),
-          open: offlineOpen,
-          onToggle: () => setOfflineOpen((open) => !open),
-          icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
-          accessory: <Icon name={offlineOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+      : foldOfflineWorkers(machineSections, (option) => offlineOnlyOptionIds.has(option.id), (sectionId) => {
+          const state = offlineStateForSection(sectionId);
+          return {
+            ...state,
+            label: (count) => t('projectWorkers.offlineWorkers', { count }),
+            detail: t('projectWorkers.offlineWorkersDetail'),
+            icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
+            accessory: <Icon name={state.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+          };
         });
     const ordered: SelectionListSectionDescriptor[] = [
       ...(leading.length > 0
@@ -320,7 +322,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
   }, [
     list.rootStep,
     list.offlineOnlyMachineIdsByServerId,
-    offlineOpen,
+    offlineStateForSection,
     props.presentPoolAsAutomatic,
     props.exactTargetOnly,
     props.servicePresentation,

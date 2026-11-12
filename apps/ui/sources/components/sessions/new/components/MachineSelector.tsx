@@ -6,7 +6,7 @@ import { SelectionList, type SelectionListSectionDescriptor } from '@/components
 import { supportsManagedMachineSelection, useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
 import type { ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
 import type { ManagedSessionPlacementV1 } from '@happier-dev/protocol/teams/managedDefaults';
-import { foldOfflineWorkers } from './machineSelection/foldOfflineWorkers';
+import { foldOfflineWorkers, useOfflineWorkerSectionState } from './machineSelection/foldOfflineWorkers';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -104,7 +104,7 @@ export function MachineSelector(props: MachineSelectorProps) {
     const { binding } = useServerCredentialAccountScopeBinding(groupServerId);
     const scope = binding?.isCurrent() ? binding.scope : null;
     const [dropdownOpen, setDropdownOpen] = React.useState(false);
-    const [offlineOpen, setOfflineOpen] = React.useState(false);
+    const offlineStateForSection = useOfflineWorkerSectionState();
     const changeDropdownOpen = React.useCallback((open: boolean) => {
         setDropdownOpen(open);
         props.onDropdownOpenChange?.(open);
@@ -174,15 +174,17 @@ export function MachineSelector(props: MachineSelectorProps) {
     const rootStep = React.useMemo(() => {
         const offlineIds = new Set(model.offlineOnlyMachineIdsByServerId[groupServerId] ?? []);
         return { ...model.rootStep, sections: foldOfflineWorkers(sections,
-            option => offlineIds.has(option.id), {
-                label: count => t('projectWorkers.offlineMachines', { count }),
-                detail: t('projectWorkers.offlineWorkersDetail'),
-                open: offlineOpen,
-                onToggle: () => setOfflineOpen(open => !open),
-                icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
-                accessory: <Icon name={offlineOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+            option => offlineIds.has(option.id), sectionId => {
+                const state = offlineStateForSection(sectionId);
+                return {
+                    ...state,
+                    label: count => t('projectWorkers.offlineMachines', { count }),
+                    detail: t('projectWorkers.offlineWorkersDetail'),
+                    icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
+                    accessory: <Icon name={state.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+                };
             }) };
-    }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineOpen, sections, theme]);
+    }, [groupServerId, model.rootStep, model.offlineOnlyMachineIdsByServerId, offlineStateForSection, sections, theme]);
     const closeManagedSelection = React.useCallback((id: string) => {
         if (managedOffers.some(offer => offer.id === id)) requestClose();
     }, [managedOffers, requestClose]);

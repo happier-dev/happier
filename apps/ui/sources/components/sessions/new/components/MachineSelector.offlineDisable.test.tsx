@@ -86,6 +86,39 @@ describe('MachineSelector', () => {
         await act(async () => { rows()[1]?.onSelect?.(); });
         expect(rows()).toHaveLength(232);
     });
+    it.each(['list', 'dropdown'] as const)('expands only the pressed offline section in place in %s', async presentation => {
+        const owned = Array.from({ length: 223 }, (_, index) => machine(`owned-offline-${index}`, false));
+        const shared = ['shared-a', 'shared-b'].map(id => ({ ...machine(id, false), isShared: true, access: {
+            custodian: { accountId: 'qa-c', displayName: 'QA C' }, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'ready' as const,
+        } }));
+        const screen = await renderMachineSelector(<MachineSelector machines={[...owned, ...shared]} selectedMachine={null}
+            presentation={presentation} disableOfflineMachines={false} onSelect={vi.fn()} showCliGlyphs={false}
+            showFavorites={false} showRecent={false} showSearch={false} testIdPrefix="folds" />);
+        if (presentation === 'dropdown') {
+            await act(async () => { screen.tree.findByType(DropdownMenu).props.onOpenChange(true); });
+        }
+        const visibleRows = () => screen.findAll(node => typeof node.type === 'string' && node.props.role === 'option');
+        const before = visibleRows();
+        expect(before).toHaveLength(2);
+        const pressed = before[1]!;
+        const pressedId = pressed.props.testID as string;
+        const precedingIds = before.slice(0, 1).map(row => row.props.testID);
+        await screen.pressByTestIdAsync(pressedId);
+        const sections = (screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>).rootStep.sections;
+        const ownSection = sections.find(section => section.id === 'all');
+        expect(ownSection?.kind === 'static' ? ownSection.options.map(option => option.id) : []).toEqual(['offline:all']);
+        const expanded = visibleRows();
+        // No rows are inserted above the pressed disclosure, so it remains mounted at its position.
+        expect(expanded.slice(0, 1).map(row => row.props.testID)).toEqual(precedingIds);
+        expect(expanded[1]).toBe(pressed);
+        expect(expanded.map(row => row.props.testID)).toEqual([
+            ...precedingIds, pressedId, 'folds-option:shared-a', 'folds-option:shared-b',
+        ]);
+        expect(screen.findAllHostsByTestId('folds-option:owned-offline-0')).toHaveLength(0);
+        await screen.pressByTestIdAsync(pressedId);
+        expect(visibleRows().map(row => row.props.testID)).toEqual(before.map(row => row.props.testID));
+    });
     it('folds offline-only workflow destinations through the real list model, while keeping locked rows named', async () => {
         const online = machine('online', true);
         const offline = [machine('studio', false), machine('server', false)];
