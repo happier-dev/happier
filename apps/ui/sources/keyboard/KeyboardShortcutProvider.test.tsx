@@ -27,6 +27,8 @@ import * as cmState from '@codemirror/state';
 import * as cmView from '@codemirror/view';
 import { ShortcutsSheet } from './shortcutsSheet/ShortcutsSheet';
 import { useImageAnnotator } from '@/components/ui/media/annotation/useImageAnnotator';
+import { useBrowserKeyboardShortcuts, type BrowserKeyboardShortcutLabels } from '@/components/browser/useBrowserKeyboardShortcuts';
+import { selectBrowserToolbarModel } from '@/sync/domains/browser/shell';
 import type { ImageAnnotator } from '@/components/ui/media/annotation/annotatorStore';
 
 // ESM namespace exports cannot be reconfigured; Vitest supplies transparent spies.
@@ -85,6 +87,43 @@ vi.mock('expo-modules-core', async (importOriginal) => ({
 }));
 
 describe('KeyboardShortcutProvider', () => {
+    it('keeps browser hints aligned with disabled, rebound and unavailable commands', async () => {
+        testState.platformOS = 'web';
+        vi.stubGlobal('navigator', { platform: 'Win32' });
+        storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: false } });
+        const back = vi.fn();
+        let hints: BrowserKeyboardShortcutLabels = {};
+        function Browser({ canGoBack }: { canGoBack: boolean }) {
+            hints = useBrowserKeyboardShortcuts({
+                model: { ...selectBrowserToolbarModel(null), canGoBack },
+                onBack: back, onForward: () => {}, onFocusAddress: () => {}, onReload: () => {}, onStop: () => {},
+            });
+            return null;
+        }
+        const element = (canGoBack: boolean) => <KeyboardShortcutProvider handlers={{}}><Browser canGoBack={canGoBack} /></KeyboardShortcutProvider>;
+        const screen = await renderScreen(element(true));
+        try {
+            expect(hints['browser.back']).toBeUndefined();
+            await act(async () => {
+                window.dispatchEvent(createKeyboardEvent({ key: '[', code: 'BracketLeft', altKey: true }));
+            });
+            expect(back).not.toHaveBeenCalled();
+            await act(async () => {
+                storage.setState({ settings: { ...initialSettings, keyboardShortcutsV2Enabled: true,
+                    keyboardShortcutOverridesV1: { 'browser.back': [{ binding: 'Alt+B' }] } } });
+            });
+            expect(hints['browser.back']).toBe('Alt+B');
+            await act(async () => {
+                window.dispatchEvent(createKeyboardEvent({ key: 'b', code: 'KeyB', altKey: true }));
+            });
+            expect(back).toHaveBeenCalledTimes(1);
+            await screen.update(element(false));
+            expect(hints['browser.back']).toBeUndefined();
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it.each([false, true])('dispatches and labels the mounted annotator at default preferences, then releases its keys on exit (modal bridge: %s)', async bridged => {
         testState.platformOS = 'web';
         vi.stubGlobal('navigator', { platform: 'MacIntel' });

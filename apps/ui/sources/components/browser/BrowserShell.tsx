@@ -537,7 +537,7 @@ export function BrowserShell(props: Readonly<{
 
     // The escape to the user's own browser: one action, in `⋯`, for any page with an address — it
     // no longer floats over the page's own controls.
-    const openableUrl = activeView && (activeView.target.kind === 'externalUrl' || activeView.target.kind === 'localServicePreview')
+    const openableUrl = activeView && (activeView.target.kind === 'externalUrl' || activeView.target.kind === 'localServicePreview' || activeView.target.kind === 'streamedBrowser')
         ? activeView.currentUrl ?? activeView.pendingUrl ?? null
         : null;
     // A page this device's browser can never open (the Machine's own localhost) is not offered at all.

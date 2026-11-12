@@ -473,6 +473,35 @@ await import('./BrowserShell');
 await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 
 describe('BrowserShell', () => {
+  it('offers the streamed public-page escape and hides Machine loopback', async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const { selectBrowserOpenExternalAvailability } = await import('@/sync/domains/browser/actions/openExternal');
+    const state = await createShellState();
+    const onOpenInSystemBrowser = vi.fn();
+    for (const url of ['https://example.com/recovered', 'http://127.0.0.1:5173/']) {
+      const view = { ...state.viewsById.view_1!,
+        target: { kind: 'streamedBrowser', targetId: 'managed-page', streamId: 'managed-stream' } as const,
+        adapterKind: 'streamedBrowserSurface' as const, engineKind: 'streamedSurface' as const,
+        currentUrl: url, pendingUrl: null };
+      const screen = await renderScreen(<BrowserShell browserSessionId={view.browserSessionId} platform="web"
+        state={{ ...state, viewsById: { ...state.viewsById, [view.viewId]: view } }} onCommand={vi.fn()}
+        onOpenInSystemBrowser={onOpenInSystemBrowser}
+        openExternalAvailability={selectBrowserOpenExternalAvailability({ view })} testID="browser-shell" />);
+      try {
+        const menu = screen.root.findAll(node => node.props?.testID === 'browser-shell-overflow' && Array.isArray(node.props.items))[0];
+        const items: readonly import('./toolbar').BrowserToolbarOverflowItem[] = menu?.props.items ?? [];
+        const escape = items.find(item => item.id === 'open-in-your-browser');
+        if (url.startsWith('https:')) {
+          expect(escape).toBeDefined();
+          await act(async () => { escape?.onPress(); });
+          expect(onOpenInSystemBrowser).toHaveBeenCalledWith({ browserSessionId: view.browserSessionId, viewId: view.viewId });
+        } else {
+          expect(escape).toBeUndefined();
+        }
+      } finally { await screen.unmount(); }
+    }
+  });
+
   it('routes native DevTools from overflow through the surface Action callback', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const state = await createShellState();

@@ -1,12 +1,10 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
 import {
-    buildKeyboardShortcutLabels,
     ESCAPE_LAYER_PRIORITIES,
-    resolveKeyboardPlatform,
     useEscapeLayer,
     useKeyboardShortcutHandlers,
+    useKeyboardShortcutLabel,
     type KeyboardShortcutHandlers,
 } from '@/keyboard';
 import type { BrowserToolbarModel } from '@/sync/domains/browser/shell';
@@ -80,13 +78,18 @@ export function useBrowserKeyboardShortcuts(input: Readonly<{
         },
     });
 
-    // Labels for the `tooltip` + `KeyHint` surfaces, resolved from the same command registry so a
-    // rebound shortcut is never advertised with its stale default.
+    // Consume the dispatch owner's effective labels, including preferences and live handlers.
+    const address = useKeyboardShortcutLabel('browser.address.focus');
+    const back = useKeyboardShortcutLabel('browser.back');
+    const forward = useKeyboardShortcutLabel('browser.forward');
+    const reload = useKeyboardShortcutLabel('browser.reload');
     return React.useMemo(
-        (): BrowserKeyboardShortcutLabels => buildKeyboardShortcutLabels(
-            resolveKeyboardPlatform(),
-            Platform.OS === 'web' ? 'web' : 'native',
-        ),
-        [],
+        (): BrowserKeyboardShortcutLabels => ({
+            'browser.address.focus': address,
+            'browser.back': back,
+            'browser.forward': forward,
+            'browser.reload': reload,
+        }),
+        [address, back, forward, reload],
     );
 }

@@ -326,14 +326,14 @@ async function executeBrowserControlAction(
         const control = input.control ?? input.resolveControl?.(viewInput);
         const view = control?.readState()?.viewsById[viewInput.viewId];
         if (!view || view.browserSessionId !== viewInput.browserSessionId
-            || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview')) {
+            || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview' && view.target.kind !== 'streamedBrowser')) {
             return browserRuntimeActionDisabledResult('browser_view_unavailable');
         }
         // The same availability the menu reads: a managed page on the Machine's localhost never opens here.
-        if (view.target.kind === 'externalUrl' && !selectBrowserOpenExternalAvailability({ view }).enabled) {
+        if (view.target.kind !== 'localServicePreview' && !selectBrowserOpenExternalAvailability({ view }).enabled) {
             return browserRuntimeActionDisabledResult('browser_view_unavailable');
         }
-        let url = view.pendingUrl ?? view.currentUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        let url = view.currentUrl ?? view.pendingUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
         if (view.target.kind === 'localServicePreview') {
             if (!control?.resolveOpenExternalUrl) return browserRuntimeActionDisabledResult('browser_adapter_unavailable');
             const resolved = await control.resolveOpenExternalUrl(view, args.context.signal);

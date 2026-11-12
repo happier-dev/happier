@@ -11,9 +11,10 @@ import { isDaemonAuthoritativeBrowserView } from '../control/commands';
 
 /** A managed page on the Machine's own localhost: this device's browser would open its own instead. */
 function isMachineLocalAddress(view: BrowserControlViewState): boolean {
-    if (view.target.kind !== 'externalUrl' || !isDaemonAuthoritativeBrowserView(view)) return false;
+    if (!isDaemonAuthoritativeBrowserView(view)) return false;
     try {
-        return isLoopbackHostname(new URL(view.pendingUrl ?? view.currentUrl ?? view.target.url).hostname);
+        const url = view.currentUrl ?? view.pendingUrl ?? (view.target.kind === 'externalUrl' ? view.target.url : null);
+        return url !== null && isLoopbackHostname(new URL(url).hostname);
     } catch {
         return false;
     }
@@ -39,10 +40,10 @@ export type BrowserOpenExternalUrlResult = ServerPreviewAccessResult
 /** The menu and admitted Action read the same current Service and preview facts. */
 export function selectBrowserOpenExternalAvailability(input: BrowserOpenExternalFacts): BrowserOpenExternalAvailability {
     const { view } = input;
-    if (!view || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview')) {
+    if (!view || (view.target.kind !== 'externalUrl' && view.target.kind !== 'localServicePreview' && view.target.kind !== 'streamedBrowser')) {
         return { enabled: false, reasonCode: 'browser_view_unavailable' };
     }
-    if (view.target.kind === 'externalUrl') {
+    if (view.target.kind === 'externalUrl' || view.target.kind === 'streamedBrowser') {
         return isMachineLocalAddress(view) ? { enabled: false, reasonCode: 'browser_view_unavailable' } : { enabled: true };
     }
     const service = selectServiceForEndedPreview(input.localServiceTargets ?? [], view.target)

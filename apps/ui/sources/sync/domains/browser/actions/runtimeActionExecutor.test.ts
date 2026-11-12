@@ -409,6 +409,31 @@ describe('browser runtime action executor', () => {
         } }))).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
         expect(openExternalUrl).not.toHaveBeenCalled();
     });
+    it.each(['https://example.com/recovered', 'http://127.0.0.1:5173/', 'http://[::1]:5173/'])(
+        'uses the streamed current address for the own-browser escape (%s)', async url => {
+        const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { selectBrowserOpenExternalAvailability } = await import('./openExternal');
+        const state = openViewState({ adapterKind: 'streamedBrowserSurface', engineKind: 'streamedSurface',
+            target: { kind: 'streamedBrowser', targetId: 'managed-page', streamId: 'managed-stream' },
+            capabilities: buildBrowserAdapterCapabilities({ adapterKind: 'streamedBrowserSurface',
+                supportedTargetKinds: ['streamedBrowser'], supportedRenderEngines: ['streamedSurface'] }), currentUrl: url });
+        const applyDispatchResult = vi.fn();
+        const execute = createBrowserRuntimeActionExecutor({ control: { readState: () => state, applyDispatchResult } });
+        vi.mocked(openExternalUrl).mockClear();
+        const result = await execute(runtimeArgs({ actionId: 'browser.view.openExternal', input: {
+            browserSessionId: 'browser_session_1', viewId: 'view_1', commandId: 'open-streamed-page',
+        } }));
+        if (url.startsWith('https:')) {
+            expect(selectBrowserOpenExternalAvailability({ view: state.viewsById.view_1 })).toEqual({ enabled: true });
+            expect(result).toMatchObject({ status: 'dispatched' });
+            expect(openExternalUrl).toHaveBeenCalledWith(url);
+        } else {
+            expect(selectBrowserOpenExternalAvailability({ view: state.viewsById.view_1 })).toEqual({ enabled: false, reasonCode: 'browser_view_unavailable' });
+            expect(result).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+            expect(openExternalUrl).not.toHaveBeenCalled();
+        }
+        expect(applyDispatchResult).not.toHaveBeenCalled();
+    });
     it('fulfills an allowed OS-tab handoff below browser.view.open without materializing a view', async () => {
         const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const state = createBrowserControlState();
