@@ -191,7 +191,7 @@ describe('committed service health receiver admission', () => {
               pluginId: eventRef.pluginId, materializationId: 'services' } }, sourceStatus: null, sourceCatalogStatus: null,
             triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ binding, mode: 'plain',
               definition: { v: 1, sourceInstanceId: 'saved-source', sourceConfig: { v: 1,
-                subject: { kind: 'machineService', machineId: 'controller', serviceId: 'db' }, checks: [{ checkId: 'tcp',
+                subject: { kind: 'machineService', machineId: 'watched-service', serviceId: 'db' }, checks: [{ checkId: 'tcp',
                   kind: { pluginId: eventRef.pluginId, localId: 'tcp' }, binding: { kind: 'healthCheck' },
                   config: { host: 'localhost', port: 5432 }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1 }], alerts },
                 displayLabel: 'Saved health', filter: null, maximumObservationAgeMs: null } })) }] });

@@ -37,8 +37,8 @@ describe('explicit saved heartbeat enrollment', () => {
         try {
             const investigation = { mode: 'auto_start', configuredActionId: 'saved-investigation' };
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject: source.subject, investigation }))
-                .toMatchObject({ mode: 'preview', sourceConfig: { subject: source.subject, investigation,
-                    alerts: { channels, phases: ['open', 'recovered'] } } });
+                .toMatchObject({ mode: 'preview', destinationSelectionContext: { serverId: 'server', machineId: 'observer' },
+                    sourceConfig: { subject: source.subject, investigation, alerts: { channels, phases: ['open', 'recovered'] } } });
             expect(settingsReads).toBe(1);
             expect(await kit.invokeAction('health/setup', { ...source, mode: 'preview', investigation,
                 checks: [{ ...source.checks[0], kind: { pluginId: caller.pluginId, localId: 'heartbeat' }, config: { graceMs: 200 } }],
@@ -82,7 +82,8 @@ describe('explicit saved heartbeat enrollment', () => {
         const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { healthChecks: services } });
         try {
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
-                testContext: { serverId: 'profile-home', machineId: 'controller', sourceInstanceId, expectedSourceRevision: 'saved-revision' },
+                testContext: { serverId: 'profile-home', machineId: 'remote-observer', sourceInstanceId, expectedSourceRevision: 'saved-revision' },
+                destinationSelectionContext: { serverId: 'profile-home', machineId: 'remote-observer' },
             });
             expect(sourceReads).toBe(1);
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject,

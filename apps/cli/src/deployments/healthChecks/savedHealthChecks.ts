@@ -146,7 +146,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                 if (isPreviewRequest(request)) {
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();
-                    if (!seed.isOccurrenceCurrent() || !seed.resolveCurrentPluginMaterializationRef?.()) return unavailable('source_unavailable');
+                    const caller = seed.resolveCurrentPluginMaterializationRef?.();
+                    if (!seed.isOccurrenceCurrent() || !caller) return unavailable('source_unavailable');
                     const { mode, ...draft } = request.sourceConfig;
                     const saved = await input.readSavedSource?.(request.sourceInstanceId, signal);
                     signal.throwIfAborted();
@@ -176,7 +177,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         sourceConfig.alerts = { channels: channels ?? [], phases: ['open', 'recovered'] };
                     }
                     signal.throwIfAborted();
-                    const machineId = environment?.environment.controllerMachineId ?? (draft.subject.kind === 'machineService' ? draft.subject.machineId : undefined);
+                    const machineId = environment?.environment.controllerMachineId ?? retained?.observer.machineId ?? caller.machineId;
                     const testContext = retained && machineId && retained.source.alerts !== undefined
                         && createCanonicalJsonSigningInput(sourceConfig.alerts) === createCanonicalJsonSigningInput(retained.source.alerts)
                         ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId, expectedSourceRevision: retained.revision } : undefined;
