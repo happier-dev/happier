@@ -1,3 +1,5 @@
+import { createReactNativeSkiaMock } from './reactNativeSkia';
+
 /** Native Skia is the system boundary: keep geometry, pixelation and React consumers real. */
 export type RecordedSkiaDraw = Readonly<{
     kind: 'image' | 'path' | 'text';
@@ -17,9 +19,10 @@ export function createSkiaModuleMock() {
         pictures: [] as RecordedSkiaPicture[],
     };
     const paint = () => ({ setAntiAlias() {}, setAlphaf() {}, setBlendMode() {}, setStyle() {}, setColor() {},
-        setStrokeWidth() {}, setStrokeCap() {}, setStrokeJoin() {} });
+        setStrokeWidth() {}, setStrokeCap() {}, setStrokeJoin() {}, dispose() {} });
     const image = (tag: string, width = 4, height = 4) => ({
         tag, width: () => width, height: () => height,
+        dispose() {},
         readPixels: (x: number, y: number, info: { width: number; height: number }) => {
             boundary.log.push(`read ${x},${y} ${info.width}x${info.height}`);
             return boundary.pixelsAvailable
@@ -32,7 +35,7 @@ export function createSkiaModuleMock() {
     const source = image('source');
     const path = (d = '') => ({ d, fillType: 0, setIsVolatile() {}, setFillType(value: number) { this.fillType = value; }, rewind() {}, moveTo() {}, quadTo() {} });
     const canvas = (draws: RecordedSkiaDraw[] = []) => ({
-        scale() {}, save() {}, restore() {}, drawCircle() {}, drawRect() {},
+        scale() {}, save() {}, saveLayer() {}, restore() {}, drawCircle() {}, drawRect() {},
         drawSvg: (svg: { hasFonts: boolean }) => {
             boundary.log.push('svg');
             if (svg.hasFonts) boundary.log.push('svg text');
@@ -53,12 +56,13 @@ export function createSkiaModuleMock() {
         drawText: () => { boundary.log.push('text'); draws.push({ kind: 'text' }); },
     });
     const module = {
+        ...createReactNativeSkiaMock(),
         Canvas: 'SkiaCanvas', Group: 'SkiaGroup', Path: 'SkiaPath', Picture: 'SkiaPicture',
         useImage: () => source,
         useRawData: (uri: string, factory: (data: { uri: string }) => TestImage | null) => factory({ uri }),
         notifyChange() {},
         createPicture: (draw: (value: ReturnType<typeof canvas>) => void) => {
-            const picture: RecordedSkiaPicture = { draws: [] };
+            const picture = { draws: [] as RecordedSkiaDraw[], dispose() {} };
             draw(canvas(picture.draws));
             boundary.pictures.push(picture);
             return picture;
