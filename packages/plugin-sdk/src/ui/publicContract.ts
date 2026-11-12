@@ -339,6 +339,8 @@ export type PluginUiHostApiSurfaceContextV1 = {
     target: PluginUiHostApiSurfaceTargetV1;
     /** Host page chrome for app pages; absent on other surface placements. */
     page?: ProtocolPluginUiHostApiSurfaceContextV1['page'];
+    /** Read-only context of the page that opened this companion. */
+    readonly openedFrom?: ProtocolPluginUiHostApiSurfaceContextV1['openedFrom'];
     /** Read-only pending review from the mounted host's canonical approval presenter. */
     pendingApproval?: ProtocolPluginUiHostApiSurfaceContextV1['pendingApproval'];
     /** The mounted host is loading Machine prerequisites; Account/local work remains available. */
@@ -365,7 +367,7 @@ export type PluginUiHostApiSurfaceContextV1 = {
     theme: PluginUiHostApiSurfaceThemeV1;
     translations: Record<string, string>;
     /** Absent for Account-visible presentation without an executable occurrence. */
-    targetedContributions?: ProtocolPluginUiHostApiSurfaceContextV1['targetedContributions'];
+    targetedContributions?: PluginUiTargetedContributionsV1;
 };
 
 export type PluginUiResourceSubscriptionEventV1 =
