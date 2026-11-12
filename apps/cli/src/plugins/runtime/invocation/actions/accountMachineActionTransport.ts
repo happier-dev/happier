@@ -1,8 +1,9 @@
 import type { TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectPluginActionFailureCode } from '@happier-dev/protocol/plugins/actions/invocation';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readActionSessionTargetOperands } from '@happier-dev/protocol/actions/executor/sessionTargets';
@@ -96,7 +97,7 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
             waitForResultOnCancel: true, signal: input.request.signal,
         }));
         return result.ok ? { status: 'executed', value: result.result }
-            : { status: 'failed', code: result.code, message: result.message ?? result.code,
+            : { status: 'failed', code: result.code, message: result.message ?? result.code, data: new PluginError(result).data,
                 ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
                 ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }) };
     } catch (error) {
@@ -104,10 +105,8 @@ export async function invokeAccountMachineSourceAction(input: AccountMachineTran
             // Disposition proves no dispatch, not why the RPC owner refused it.
             const cause = readRpcErrorCode(error)
                 ?? (error && typeof error === 'object' && 'code' in error ? error.code : undefined);
-            const code = cause === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE
-                ? 'plugin_action_execution_origin_unavailable' : projectPluginActionFailureCode(cause);
-            return { status: 'unavailable', code,
-                message: code === 'plugin_action_execution_origin_unavailable' ? 'The selected Machine is unavailable' : code,
+            const code = projectPluginActionFailureCode(cause);
+            return { status: 'unavailable', code, message: code,
                 actionHandlerInvocation: 'notStarted' };
         }
         // The transport may have emitted the request. No fallback or automatic

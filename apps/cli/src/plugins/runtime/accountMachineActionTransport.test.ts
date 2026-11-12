@@ -62,13 +62,17 @@ it.each([
     { outcome: 'ui', placement: 'selected' },
     { outcome: 'uiAutomation', placement: 'selected' },
     { outcome: 'lostAck', placement: 'selected' },
+    { outcome: 'authoredRefusal', placement: 'selected' },
     { outcome: 'notSent', placement: 'selected' },
     { outcome: 'authorizationRefused', placement: 'selected' },
     { outcome: 'modeMismatch', placement: 'selected' },
     { outcome: 'unclassified', placement: 'selected' },
+    { outcome: 'declarationRefusal', placement: 'selected' },
+    { outcome: 'declarationRefusalTransport', placement: 'selected' },
     { outcome: 'acknowledged', placement: 'session' },
     { outcome: 'acknowledged', placement: 'sessionLookup' },
 ] as const)('keeps an authored Account aggregate local and preserves its $placement Machine source outcome ($outcome)', async ({ outcome, placement }) => {
+    const presentUi = outcome === 'ui' || outcome === 'authoredRefusal';
     const app = fastify();
     const endpoint = 'http://account-machine.test';
     const features = registerAccountHomeHttp(app, { accountId: 'owner', serverId: 'account-machine' });
@@ -78,7 +82,7 @@ it.each([
         dataEncryptionKey: null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
         effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
     } }));
-    const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner', outcome === 'ui' || outcome === 'uiAutomation' ? { primary: {
+    const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner', presentUi || outcome === 'uiAutomation' ? { primary: {
         manifest: admittedSourceManifest, projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions'),
         entryPath: resolve(import.meta.dirname, 'accountMachineActionIntent.fixture.ts'),
     } } : {});
@@ -94,6 +98,12 @@ it.each([
     machineRpc.mockImplementation(async (request: Parameters<typeof import('@/session/transport/rpc/machineRpc').callExactMachineRpc>[0]) => {
         requests.push(request);
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
+            if ((outcome === 'declarationRefusal' || outcome === 'declarationRefusalTransport') && request.request && typeof request.request === 'object'
+                && 'sourcePluginId' in request.request) {
+                if (outcome === 'declarationRefusalTransport') throw markRpcRequestDisposition(createRpcCallError({
+                    error: 'Machine transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }), 'notSent');
+                return { status: 'unavailable', code: 'plugin_targeted_contributions_unavailable' };
+            }
             return DaemonPluginUiTargetedContributionsReadResponseSchema.parse({ status: 'sourceDeclarations',
                 pluginId, sourceDeclarations: [source] });
         }
@@ -108,6 +118,8 @@ it.each([
         if (outcome === 'unclassified') throw markRpcRequestDisposition(new Error('Unclassified preparation failure'), 'notSent');
         providerEffects++;
         if (outcome === 'lostAck') throw new Error('Machine acknowledgement lost after effect');
+        if (outcome === 'authoredRefusal') return { ok: false, code: 'credential_unavailable',
+            message: 'Reconnect the selected account.', remediation: { kind: 'retry' } };
         return { ok: true, result: { key: 'provider', machine: true } };
     });
     await app.ready();
@@ -120,15 +132,15 @@ it.each([
             serverIdentityId: 'account-machine', serverApiUrl: endpoint,
             ...(placement === 'selected' ? { machineId: 'selected-machine' } : {}) });
         const context: ActionExecutorContext = {
-            surface: outcome === 'ui' || outcome === 'uiAutomation' ? 'ui' : 'cli',
-            ...(outcome === 'ui' ? { authority: 'present_user' as const } : outcome === 'uiAutomation' ? { authority: 'account_automation' as const } : {}),
-            ...(outcome === 'ui' || outcome === 'uiAutomation' ? { actionRequestId: '4d13dc15-d859-4c0e-9abe-d561a12894d5' } : {}),
+            surface: presentUi || outcome === 'uiAutomation' ? 'ui' : 'cli',
+            ...(presentUi ? { authority: 'present_user' as const } : outcome === 'uiAutomation' ? { authority: 'account_automation' as const } : {}),
+            actionRequestId: '4d13dc15-d859-4c0e-9abe-d561a12894d5',
             runtimeAccountId: 'owner', serverId: 'account-machine', serverIdentityId: 'account-machine',
             ...(placement !== 'selected' ? { defaultSessionId: 'bound-session' } : {}),
             ...(placement === 'session' ? { defaultSessionMachineId: 'selected-machine' } : {}),
         };
         const input = { action: { pluginId, localId: 'source' }, input: { key: 'provider' } };
-        const result = outcome === 'ui' || outcome === 'uiAutomation'
+        const result = presentUi || outcome === 'uiAutomation'
             ? await (async () => {
                 const host = { token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
                     serverHttpBaseUrl: endpoint, runtimeActionMachineId: 'selected-machine',
@@ -139,14 +151,16 @@ it.each([
                 return attempt.result;
             })()
             : await cli.execute('action.invoke', input, context);
-        expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent'
-            ? { ok: false, errorCode: 'plugin_action_execution_origin_unavailable' }
+        expect(result, JSON.stringify(result)).toMatchObject(outcome === 'notSent' || outcome === 'declarationRefusalTransport'
+            ? { ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE }
             : outcome === 'authorizationRefused' ? { ok: false, errorCode: 'action_forbidden' }
             : outcome === 'modeMismatch' ? { ok: false, errorCode: 'machine_content_mode_mismatch' }
             : outcome === 'unclassified' ? { ok: false, errorCode: 'plugin_action_execution_failed' }
+            : outcome === 'declarationRefusal' ? { ok: false, errorCode: 'plugin_targeted_contributions_unavailable' }
             : outcome === 'lostAck' ? { ok: false, errorCode: 'plugin_action_outcome_unknown' }
+            : outcome === 'authoredRefusal' ? { ok: false, errorCode: 'credential_unavailable',
+                details: { name: 'PluginError', remediation: { kind: 'retry' } } }
             : { ok: true, result: { key: 'provider', machine: true } });
-        expect(requests.length).toBeGreaterThanOrEqual(2);
         for (const request of requests) {
             expect(request.machineId).toBe('selected-machine');
             expect(request.requireCurrentMachine).toBe(true);
@@ -160,12 +174,12 @@ it.each([
                     invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId, contributionLocalId: 'source',
                         sourceCustody: { kind: 'account_release', pluginId } } } });
                 expect(input.invocation?.kind === 'clientPluginAction' && input.invocation.clientActionBinding.materializationRef).toBeUndefined();
-                expect(input.executionSurface).toBe(outcome === 'ui' ? 'ui' : 'cli');
-                expect(input.presentUserIntent).toBe(outcome === 'ui' ? 'confirmed' : undefined);
+                expect(input.executionSurface).toBe(presentUi ? 'ui' : 'cli');
+                expect(input.presentUserIntent).toBe(presentUi ? 'confirmed' : undefined);
                 expect(input.requestId).toBe(context.actionRequestId);
                 expect(request.authorityCeiling).toBe('account_automation');
             }
         }
-        expect(providerEffects).toBe(['notSent', 'authorizationRefused', 'modeMismatch', 'unclassified'].includes(outcome) ? 0 : 1);
+        expect(providerEffects).toBe(['notSent', 'authorizationRefused', 'modeMismatch', 'unclassified', 'declarationRefusal', 'declarationRefusalTransport'].includes(outcome) ? 0 : 1);
     } finally { restore(); await app.close(); }
 });
