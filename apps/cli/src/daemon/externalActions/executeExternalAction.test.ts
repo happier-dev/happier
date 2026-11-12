@@ -351,6 +351,27 @@ describe('executeExternalAction', () => {
     } finally { network.mockRestore(); }
   });
 
+  it.each([
+    ['registries.updates.check', { kind: 'app', environments: [{ environmentId: 'selected', expectedRevision: 1 }] }],
+    ['deployments.health.read', { serverId: 'srv_registry', environmentId: 'selected', deploymentId: 'receipt',
+      targetLinkId: 'runtime', machineId: 'registry-machine', installationId: 'installation',
+      service: { kind: 'deployment', machineId: 'registry-machine', environmentId: 'selected',
+        environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } }],
+  ] as const)('admits local %s before signed remote admission exists', async (actionId, input) => {
+    const result = await executeExternalAction({
+      actionId,
+      envelope: { v: 1, requestId: 'local-app-update', input },
+      principal: { authority: 'account_automation' },
+      localRootInvocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'account_automation' },
+      currentMachineId: 'registry-machine', currentAccountId: 'account-1', currentServerId: 'srv_registry',
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }),
+      executor: createActionExecutor(createUnavailableHostActionDeps()),
+    });
+    // The intentionally unavailable host must produce an executor result, not
+    // reject the local input as an invalid signed remote envelope.
+    expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: false } } });
+  });
+
   it('refuses missing or substituted app update demand before any Account or registry read', async () => {
     const actionId = 'registries.updates.check';
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(43));

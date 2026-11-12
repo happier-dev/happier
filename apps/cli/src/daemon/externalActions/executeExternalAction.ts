@@ -520,8 +520,9 @@ async function executeExternalActionRequest(input: Readonly<{
   // same invocation before approval, native submission or Session birth.
   try {
     const appAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.registryAppUpdateAdmission : undefined;
-    if (!sameStrictJsonValue(appAdmission, projectRegistryAppUpdateAdmissionV1(actionId.data, decodedInput))
-      || envelope.data.v === 2 && !sameStrictJsonValue(appAdmission, envelope.data.registryAppUpdateAdmission))
+    if (executionAuthorization?.success
+      && (!sameStrictJsonValue(appAdmission, projectRegistryAppUpdateAdmissionV1(actionId.data, decodedInput))
+        || envelope.data.v === 2 && !sameStrictJsonValue(appAdmission, envelope.data.registryAppUpdateAdmission)))
       throw new TypeError('Registry app update admission mismatch');
     const decisionAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.approvalDecisionAdmission : undefined;
     const expectedRead = projectDeploymentReadAdmissionV1(actionId.data, decodedInput);
@@ -561,8 +562,9 @@ async function executeExternalActionRequest(input: Readonly<{
         throw new TypeError('Deployment preparation Home mismatch');
     }
     const readAdmission = executionAuthorization?.success ? executionAuthorization.data.binding.deploymentReadAdmission : undefined;
-    if (!sameStrictJsonValue(expectedRead, readAdmission)
-      || envelope.data.v === 2 && !sameStrictJsonValue(readAdmission, envelope.data.deploymentReadAdmission))
+    if (executionAuthorization?.success
+      && (!sameStrictJsonValue(expectedRead, readAdmission)
+        || envelope.data.v === 2 && !sameStrictJsonValue(readAdmission, envelope.data.deploymentReadAdmission)))
       throw new TypeError('Deployment read admission mismatch');
     if (expectedRead && executionAuthorization?.success) {
       const home = decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
