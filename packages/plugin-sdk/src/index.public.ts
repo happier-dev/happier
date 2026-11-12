@@ -266,3 +266,6 @@ export { readTrimmedString } from './sessions/fileStores/records.js';
 export { redactBugReportSensitiveText } from './diagnostics.js';
 export { trimBugReportTextToMaxBytes } from './diagnostics.js';
 export type { PluginCaptureFrameV1, PluginCaptureReceiptV1, PluginCaptureCodecIdV1, PluginCaptureSourceDeclaration } from './captureSources.js';
+
+export { DeploymentDomainDnsRecordInputV1ProtocolSchema, DeploymentDomainDnsRecordResultV1ProtocolSchema,
+    type DeploymentDomainDnsRecordInputV1, type DeploymentDomainDnsRecordResultV1 } from './deploymentTargets.js';

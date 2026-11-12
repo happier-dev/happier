@@ -14,7 +14,7 @@ import type { ActionSettingsActionId } from '../actionSettings.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1, HostReviewedChildInvocationV1 } from './types.js';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1, retainHostReviewedChildCredentialScopeAdmissionV1, type HostReviewedChildPolicyV1 } from './deploymentRoleChild.js';
 import { HostReviewedChildrenPlanV1Schema } from './hostReviewedChildrenV1.js';
-import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentDomainDnsVerifyActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 
 /** Stored review facts are closed; they never create a host invocation port. */
 export function readHostReviewedChildrenPlanV1(value: unknown): HostReviewedChildrenPlanV1 | undefined {
@@ -144,6 +144,17 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   if (declarations && declarations.children.length > 0 && !plan) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
   const policies: HostReviewedChildPolicyV1[] = [];
   for (const child of plan?.children ?? []) {
+    const qualifiedId = typeof child.action === 'string' ? null : formatQualifiedPluginActionId(child.action);
+    const definition = qualifiedId && (context.approvalProfileId || isDeploymentDomainDnsVerifyActionIdV1(actionId))
+      ? deps.listContributedActionDefinitions?.({ id: qualifiedId }).find(candidate => candidate.id === qualifiedId)
+      : undefined;
+    // The read root cannot acquire credentials for a selected writer. Author-declared
+    // semantics come from the canonical contribution projection, never Action ids.
+    if (isDeploymentDomainDnsVerifyActionIdV1(actionId)) {
+      const effect = typeof child.action === 'string' ? getActionSpec(child.action).sideEffectClass : definition?.sideEffectClass;
+      if (effect !== 'read' && effect !== 'none')
+        return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    }
     // Concrete demanded effects are admitted before any parent effect or Ask.
     // Dynamic operands remain at their existing dispatch-time target boundary.
     if (child.input !== undefined) {
@@ -157,10 +168,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
       : await readActionApprovalScopeAdmissionV1({ actionId: childId, spec: getActionSpec(childId), input,
       context, deps, phase: params.approvalReplay ? 'replay' : 'prepare', isSameHome: params.isSameHome });
     if ('ok' in scope) return scope;
-    const qualifiedId = typeof child.action === 'string' ? null : formatQualifiedPluginActionId(child.action);
-    const defaultSafety = qualifiedId && context.approvalProfileId
-      ? deps.listContributedActionDefinitions?.({ id: qualifiedId }).find(definition => definition.id === qualifiedId)?.safety
-      : undefined;
+    const defaultSafety = context.approvalProfileId ? definition?.safety : undefined;
     const policy = prepareHostReviewedChildPolicyV1(child, context, scope.approvalScope, params.reviewAdmitted, defaultSafety);
     if (!policy) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     policies.push(child.input !== undefined ? retainHostReviewedChildCredentialScopeAdmissionV1(policy, context) : policy);

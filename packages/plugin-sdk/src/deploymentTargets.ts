@@ -50,3 +50,6 @@ export type DeploymentTargetCommonV1 = Pick<DeploymentTargetContributionV1,
 
 export type DeploymentTargetAuthorDefinitionV1 = DeploymentTargetContributionV1 extends infer T
     ? T extends unknown ? Omit<T, 'id'> : never : never;
+
+export { DeploymentDomainDnsRecordInputV1ProtocolSchema, DeploymentDomainDnsRecordResultV1ProtocolSchema,
+    type DeploymentDomainDnsRecordInputV1, type DeploymentDomainDnsRecordResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';

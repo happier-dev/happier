@@ -149,6 +149,52 @@ export type DeploymentsActionInputById = {
         serverId: string;
         environmentId: string;
     };
+    readonly "deployments.domains.dns.create": {
+        serverId: string;
+        environmentId: string;
+        domainId: string;
+        requestKey: string;
+        expectedRevision: number;
+        expectedDomainRevision: number;
+        dns: {
+            credentialRef: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            zoneId: string;
+            ttl: number;
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+        };
+    };
+    readonly "deployments.domains.dns.verify": {
+        serverId: string;
+        environmentId: string;
+        domainId: string;
+        requestKey: string;
+        expectedRevision: number;
+        expectedDomainRevision: number;
+        dns: {
+            credentialRef: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            zoneId: string;
+            ttl: number;
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+        };
+    };
     readonly "deployments.domains.verify": {
         expectedDomainRevision: number;
         expectedRevision: number;
@@ -493,9 +539,9 @@ export type DeploymentsActionInputById = {
         intent?: 'add' | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         generatedSecretAudience?: undefined | {
-            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
+            groupGrants?: string[] | undefined;
         };
         connectTo?: undefined | {
             service: string;
@@ -1198,6 +1244,10 @@ export type DeploymentsActionInputById = {
         protection: 'nonProduction' | 'production';
         deployerMode: 'chosen' | 'managers' | 'members';
         projectSourceId?: string | undefined;
+        deployerPrincipals?: undefined | {
+            principalKind: 'account' | 'teamGroup';
+            principalId: string;
+        }[];
         newProject?: undefined | {
             name: string;
             requestKey: string;
@@ -1209,10 +1259,6 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
-        deployerPrincipals?: undefined | {
-            principalKind: 'account' | 'teamGroup';
-            principalId: string;
-        }[];
         managedRetention?: 'keep' | 'until-delete' | undefined;
         previewCompanionOfEnvironmentId?: string | undefined;
         name?: string | undefined;
@@ -1561,9 +1607,9 @@ export type DeploymentsActionInputById = {
             phase: 'build' | 'runtime';
         }[];
         generatedSecretAudience?: undefined | {
-            groupGrants?: string[] | undefined;
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
+            groupGrants?: string[] | undefined;
         };
         domainBindings?: undefined | {
             templateDomainId: string;
@@ -3757,6 +3803,36 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    };
+    readonly "deployments.domains.dns.create": {
+        ok: true;
+        domainId: string;
+        records: {
+            name: string;
+            type: string;
+            result: {
+                kind: 'configured' | 'pending';
+                changeId?: string | undefined;
+            } | {
+                kind: 'refused' | 'unknown';
+                code: string;
+            };
+        }[];
+    };
+    readonly "deployments.domains.dns.verify": {
+        ok: true;
+        domainId: string;
+        records: {
+            name: string;
+            type: string;
+            result: {
+                kind: 'configured' | 'pending';
+                changeId?: string | undefined;
+            } | {
+                kind: 'refused' | 'unknown';
+                code: string;
+            };
+        }[];
     };
     readonly "deployments.domains.verify": {
         domain: {
@@ -7865,6 +7941,10 @@ export type DeploymentsActionResultById = {
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
+            deployerPrincipals?: undefined | {
+                principalKind: 'account' | 'teamGroup';
+                principalId: string;
+            }[];
             newProject?: undefined | {
                 name: string;
                 requestKey: string;
@@ -7876,10 +7956,6 @@ export type DeploymentsActionResultById = {
                     teamId: string;
                 };
             };
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
             managedRetention?: 'keep' | 'until-delete' | undefined;
             previewCompanionOfEnvironmentId?: string | undefined;
             preview?: undefined | {
@@ -8227,9 +8303,9 @@ export type DeploymentsActionResultById = {
                 phase: 'build' | 'runtime';
             }[];
             generatedSecretAudience?: undefined | {
-                groupGrants?: string[] | undefined;
                 accountGrants?: string[] | undefined;
                 teamGrants?: string[] | undefined;
+                groupGrants?: string[] | undefined;
             };
             domainBindings?: undefined | {
                 templateDomainId: string;

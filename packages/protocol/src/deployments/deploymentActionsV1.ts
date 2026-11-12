@@ -1,3 +1,6 @@
+import { DeploymentDomainDnsInputV1Schema, DeploymentDomainDnsResultV1Schema } from './deploymentDomainDnsV1.js';
+export * from './deploymentDomainDnsV1.js';
+export { isDeploymentDomainDnsActionIdV1, isDeploymentDomainDnsVerifyActionIdV1, DEPLOYMENT_DOMAIN_DNS_CREATE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_DNS_VERIFY_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
 import { DeploymentBindingsSetInputV1Schema } from './deploymentBindingPatchV1.js';
 export { DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsSetInputV1Schema, type DeploymentBindingsPreparedInputV1, type DeploymentBindingsSetInputV1 } from './deploymentBindingPatchV1.js';
 import { DeploymentDeployInputV1Schema, DeploymentDeployActionInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentRollbackActionInputV1Schema } from './deploymentDeployIntentV1.js';
@@ -689,6 +692,8 @@ export type DeploymentDataQueryResultV1 = z.infer<typeof DeploymentDataQueryResu
 export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   ...DeploymentBackupActionInputSchemasV1,
   'deployments.backups.configure': DeploymentBackupConfigureInputV1Schema,
+  'deployments.domains.dns.create': DeploymentDomainDnsInputV1Schema,
+  'deployments.domains.dns.verify': DeploymentDomainDnsInputV1Schema,
   'deployments.domains.add': DeploymentDomainAddInputV1Schema,
   'deployments.domains.remove': DeploymentDomainRemoveInputV1Schema,
   'deployments.domains.verify': DeploymentDomainVerifyInputV1Schema,
@@ -744,6 +749,8 @@ export const DeploymentEnvironmentCreateActionResultV1Schema = lazyZodSchema(() 
 export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   ...DeploymentBackupActionResultSchemasV1,
   'deployments.backups.configure': DeploymentBackupConfigureResultV1Schema,
+  'deployments.domains.dns.create': DeploymentDomainDnsResultV1Schema,
+  'deployments.domains.dns.verify': DeploymentDomainDnsResultV1Schema,
   'deployments.domains.add': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.remove': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.verify': lazyZodSchema(() => z.union([DeploymentDomainMutationResultV1Schema, DeploymentDomainDnsPreviewResultV1Schema])),

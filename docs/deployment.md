@@ -99,6 +99,28 @@ surfaces consume the same typed DNS projection. The nonvisual Action adapter
 performs work only on explicit demand; the surface owner wires open and manual
 Check again. There is no polling, background registry or public-address discovery.
 
+The separate `deployments.domains.dns.create` and
+`deployments.domains.dns.verify` Actions consume required records already retained
+in a provider Domain's `providerObservation.dns`. The person selects the DNS
+Action, Connected Account, hosted zone and TTL for that operation. The Domain
+owner groups records by name and type and dispatches them through ordinary
+reviewed children; it neither derives addresses nor keeps a DNS registry.
+Native Domains return `required_fact_unavailable` for `domain_dns_records` from
+`expected_ingress`: the token challenge above does not produce record values.
+
+The Route53 plugin uses the public Connected Account environment materialization
+contract for AWS access keys and an optional session token. Authentication checks
+the account's connection test hosted zone; each Domain operation selects its own
+destination hosted zone. Each explicit record Action signs requests with
+SigV4. Creation uses AWS `CREATE`, preserving incumbent records. A lost write
+acknowledgement returns an unknown outcome; inspect configuration before retrying.
+Verification reads one exact name/type record set and compares its TTL and values.
+A match means configured, including AWS's pending configuration; it does not mean
+public propagation, Domain readiness or application health. A returned change ID
+can be inspected explicitly by the leaf Action without polling. See the
+[AWS change API](https://docs.aws.amazon.com/Route53/latest/APIReference/API_ChangeResourceRecordSets.html)
+and [record-list API](https://docs.aws.amazon.com/Route53/latest/APIReference/API_ListResourceRecordSets.html).
+
 ## Platform variable roles (0.3 development)
 
 Vercel and Cloudflare platform targets project variable names, presence and
@@ -1938,7 +1960,9 @@ In current development, a selective reduction that keeps common installations
 requires `drainedDeploymentId` before dropping the removed members. It must name
 the latest receipt for the exact Environment and predecessor link: a settled,
 successful teardown whose signed proof names exactly the removed Machine and
-installation pairs. A later deployment attempt, including a failed attempt that
+installation pairs, and those installations must still be current. Selective
+reduction and whole-target disposition share this proof verifier. A later
+deployment attempt, including a failed attempt that
 leaves the serving pointer unchanged, invalidates the older drain proof. Partial
 teardown preserves the serving pointer and link revision, so its proof revision
 must equal the current predecessor revision. Whole-target teardown instead clears
