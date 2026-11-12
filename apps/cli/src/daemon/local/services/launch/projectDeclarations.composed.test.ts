@@ -3292,13 +3292,11 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
                         externalActionExecutionAuthorization: authorization },
                 });
                 if (reviewDigest) {
-                    for (const digest of [undefined, 'A'.repeat(43)]) {
-                        expect(await receive(digest, true)).toMatchObject({ ok: false,
-                            errorCode: 'action_interactive_review_required', details: { reviewDigest,
-                                review: { preview: { hostReviewedChildren: { children: [{ action: 'localServices.launcher.start' }] } } } } });
-                        expect(old.snapshot().state).toBe('running');
-                        expect(approvals).toEqual([]);
-                    }
+                    expect(await receive('A'.repeat(43), true)).toMatchObject({ ok: false,
+                        errorCode: 'action_interactive_review_required', details: { reviewDigest,
+                            review: { preview: { hostReviewedChildren: { children: [{ action: 'localServices.launcher.start' }] } } } } });
+                    expect(old.snapshot().state).toBe('running');
+                    expect(approvals).toEqual([]);
                 }
                 const received = await receive(reviewDigest, !!reviewDigest);
                 if (!reviewDigest) {

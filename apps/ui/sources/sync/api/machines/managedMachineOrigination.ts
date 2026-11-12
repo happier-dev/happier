@@ -243,7 +243,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     params.signal?.throwIfAborted();
     const target = { kind: 'machine' as const, machineId: controller.machineId };
     const addressedContext = { ...context, externalActionTarget: context.externalActionTarget ?? target };
-    context = params.confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, addressedContext) : addressedContext;
+    context = params.confirmInFlow ? bindPresentUserActionConfirmation(actionId, input, addressedContext, params.reviewDigest) : addressedContext;
     const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
     const binding: ExternalActionEncryptionBindingV2 = { serverIdentityId: account.serverIdentityId, accountId: account.accountId,
         authentication, actionId, requestId, target };

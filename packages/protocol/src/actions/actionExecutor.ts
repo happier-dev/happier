@@ -3300,8 +3300,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const carriesOwnReview = ctx.surface === 'ui' && !isApprovalAction
       && (isPresentUserHostInvocation(ctx) || isHomeAdmittedPresentUserHostInvocation(ctx, actionId));
     const noConfirmationPresenter = !deps.presentUserActionConfirmation || ctx.interactivePresentation === 'unavailable';
-    // Only the executor that carries reviews (no presenter) verifies them; a presenting executor relays the confirmation.
-    if (noConfirmationPresenter && (confirmedReviewDigest !== undefined || nativeConfirmation && carriesOwnReview)) {
+    // Only carried-review confirmations require this comparison. Existing in-flow confirmations
+    // already passed the input-bound consent owner and need no receiving-host review round trip.
+    if (noConfirmationPresenter && confirmedReviewDigest !== undefined) {
       // The person confirmed one exact review; changed consequences ask again with the fresh review.
       const review = await prepareCurrentApproval();
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };

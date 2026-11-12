@@ -45,7 +45,7 @@ vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (inpu
   return { port: 43129, stop: async () => {} };
 } }));
 
-it.each([false, true])('continues one confirmed acquire through the installed daemon factory and real guest Setup/Session receivers (setup=%s)', async withSetup => {
+it.each([false, true])('continues normal UI Create confirmation without a review digest through the installed daemon and real guest Setup/Session receivers (setup=%s)', async withSetup => {
   onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null; });
   const homeId = 'srv_managed_confirmed';
   const serverUrl = 'https://session-home.test';

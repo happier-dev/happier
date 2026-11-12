@@ -99,6 +99,7 @@ describe('delegated managed preset origination', () => {
         const boundInput = pool ? { ...input, controller: selectedController,
             reviewedFacts: exactPreset.delegatedAcquire?.kind === 'ready' ? exactPreset.delegatedAcquire.reviewedFacts : undefined } : input;
         const codecKeys: string[] = [];
+        const confirmationDigests: (string | undefined)[] = [];
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (isServerFetchConnectivityProbeRequest(url)) return Response.json({});
@@ -151,11 +152,13 @@ describe('delegated managed preset origination', () => {
                 purpose: { kind: 'external_action' }, machineId: selectedController.machineId,
                 installationId: selectedController.installationId, serverIdentityId: homeId,
                 installationPrivateKey: installation.secretKey })).toBeNull();
-            const codec = openManagedControllerActionCodecV1({ authorization: request.executionAuthorization,
+            const openedCodec = openManagedControllerActionCodecV1({ authorization: request.executionAuthorization,
                 machineId: selectedController.machineId, installationId: selectedController.installationId,
-                serverIdentityId: homeId, installationPrivateKey: installation.secretKey });
-            expect(codec).not.toBeNull();
-            if (!codec) throw new Error('Expected invocation codec');
+                serverIdentityId: homeId, installationPrivateKey: installation.secretKey, includeInvocation: true });
+            expect(openedCodec).not.toBeNull();
+            if (!openedCodec) throw new Error('Expected invocation codec');
+            const codec = openedCodec.material;
+            confirmationDigests.push(openedCodec.invocation?.presentUserConfirmation?.reviewDigest);
             codecKeys.push(encodeBase64(codec.machineKey));
             expect(codec).not.toHaveProperty('credentials');
             if (material) expect(codec.machineKey).not.toEqual(material.machineKey);
@@ -179,7 +182,10 @@ describe('delegated managed preset origination', () => {
             expect(authorizations).toBe(1); expect(executions).toBe(1);
             if (mode === 'current') {
                 expect(await executeManagedMachineNativeAction({ account, actionId, input,
-                    context: { surface: 'ui', authority: 'present_user', actionRequestId: requestId } })).toEqual(result);
+                    confirmInFlow: true, reviewDigest: 'A'.repeat(43),
+                    context: { surface: 'ui', authority: 'present_user', actionRequestId: requestId,
+                        runtimeAccountId: accountId, serverId: homeId, serverIdentityId: homeId } })).toEqual(result);
+                expect(confirmationDigests).toEqual([undefined, 'A'.repeat(43)]);
                 expect(codecKeys[0]).not.toBe(codecKeys[1]);
             }
         } else {
