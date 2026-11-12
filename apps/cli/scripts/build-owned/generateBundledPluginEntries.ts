@@ -167,6 +167,7 @@ import { renderRetainedUiBundledPluginEntriesTs } from './bundledPlugins/retaine
 import { renderBundledBrandAssetsTs } from './bundledPlugins/brandAssets.ts';
 import {
   renderBundledVoiceEntriesTs,
+  renderRetainedBundledVoiceEntriesTs,
   renderBundledVoiceSelectionOptionsTs,
   renderBundledVoiceRuntimeEntriesTs,
 } from './bundledPlugins/voice.ts';
@@ -3806,12 +3807,22 @@ export async function publishBundledPluginSemanticProjection(
   const voiceRuntimeOutputs = options.targetOwnedOnly ? [] : renderBundledVoiceRuntimeProjectionOutputs(
     options.rootDir, voiceProjection.sources, runtimeFailures, options.mode,
   );
-  const { uiOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
+  const { uiOutPath, uiVoiceEntriesOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
   const uiTranslationOutputs = options.targetOwnedOnly ? [] : renderBundledPluginTranslationOutputs(pluginPackages, options.rootDir);
   const uiDeclarationOutputs = [];
   if (!options.targetOwnedOnly && existsSync(uiOutPath)) {
     uiDeclarationOutputs.push({ outPath: uiOutPath, out: renderRetainedUiBundledPluginEntriesTs(
       readFileSync(uiOutPath, 'utf8'), pluginPackages, uiOutPath,
+    ) });
+  }
+  if (!options.targetOwnedOnly && existsSync(uiVoiceEntriesOutPath)) {
+    // Runtime failures do not withdraw admitted semantic membership. Presentation
+    // leaves and Protocol selection options remain the last published facts.
+    const voiceDeclarations = pluginPackages.flatMap(entry => isBundledFirstPartyVoicePackageId(entry.pluginPackageId)
+      ? [{ manifest: entry.manifest, pluginPackageId: entry.pluginPackageId, presentations: [] }]
+      : []);
+    uiDeclarationOutputs.push({ outPath: uiVoiceEntriesOutPath, out: renderRetainedBundledVoiceEntriesTs(
+      readFileSync(uiVoiceEntriesOutPath, 'utf8'), voiceDeclarations, uiVoiceEntriesOutPath,
     ) });
   }
 

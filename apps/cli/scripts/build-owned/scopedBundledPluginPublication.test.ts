@@ -1,17 +1,18 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { ModuleKind, transpileModule } from 'typescript';
+import { createSourceFile, isIdentifier, isVariableStatement, ModuleKind, ScriptTarget, transpileModule } from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import { readBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
-import { importPluginAuthorRuntimeModules, main, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
+import { importPluginAuthorRuntimeModules, main, publishBundledPluginEntries, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
 import { parseGeneratorCliArgs } from './bundledPlugins/options.ts';
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage, writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox.ts';
 import { writeRetainedCatalogAgent } from '../__tests__/testkit/bundledPluginProjectionSandbox.ts';
 import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/serialize.ts';
 import { renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
-import type { BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
+import { renderBundledVoiceEntriesTs, renderBundledVoiceSelectionOptionsTs } from './bundledPlugins/voice.ts';
+import type { BundledFirstPartyVoiceProjectionSource, BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
 
 // Prepare the publisher's genuine source graph outside individual scenarios,
 // matching the adjacent Account declaration publication harness.
@@ -35,6 +36,18 @@ function browserActionReference(pluginId: string) {
     browserTargets: [{ id: 'preview', title: 'Preview', url: 'https://preview.example.test/' }],
     browserActions: [{ id: 'runner', title: 'Runner', target: 'preview', action: { pluginId, localId: 'missing' } }],
   };
+}
+
+function readVoiceManifest(source: string, name: string): unknown {
+  const parsed = createSourceFile('generatedVoice.ts', source, ScriptTarget.Latest);
+  const statement = parsed.statements.find(statement => isVariableStatement(statement)
+    && statement.declarationList.declarations.some(declaration => isIdentifier(declaration.name) && declaration.name.text === name));
+  if (!statement) throw new Error(`Missing Voice manifest ${name}`);
+  const exports: Record<string, unknown> = {};
+  runInNewContext(transpileModule(statement.getText(parsed), {
+    compilerOptions: { module: ModuleKind.CommonJS },
+  }).outputText, { exports });
+  return exports[name];
 }
 
 describe('scoped bundled publication', () => {
@@ -252,6 +265,87 @@ describe('scoped bundled publication', () => {
       expect(readFileSync(peerProjection, 'utf8')).toBe(publishedPeer);
       expect(readFileSync(peerArtifact, 'utf8')).toBe(publishedArtifact);
       if (packageArtifacts) expect(JSON.parse(readFileSync(join(fixture.repoRoot, 'packages/plugins/inspector/.happier-plugin/plugin.json'), 'utf8')).displayName).toBe('New Inspector');
+    } finally { fixture.cleanup(); }
+  });
+
+  it.each(['published', 'new'] as const)('scoped write refreshes admitted Voice manifests while retaining published peer presentations (%s target)', async targetMembership => {
+    const fixture = await createScopedPublicationFixture();
+    try {
+      const sources: BundledFirstPartyVoiceProjectionSource[] = [];
+      for (const id of ['openai', 'xai'] as const) {
+        const packageRoot = writeWorkspacePackageFixture({ repoRoot: fixture.repoRoot,
+          workspacePath: `packages/plugins/${id}`, packageName: `@happier-dev/plugins-${id}`,
+          manifestOverrides: { exports: { './happier-plugin-ui/voice-runtime': { default: './dist/ui/voice/runtime.js' } } },
+        });
+        writeBundledPluginSourceInputs({ repoRoot: fixture.repoRoot, pluginId: id, writePackageJson: false });
+        const manifest = { schemaVersion: 2, id: `happier.voice.${id}`, version: '0.0.0', displayName: id,
+          runtime: { apiVersion: 1 }, contributes: { voiceProviders: [{
+            id: `realtime-${id}`, title: `Published ${id}`, kind: 'conversation',
+            roles: ['realtime_conversation'], platforms: ['web'],
+            capabilities: { turn: { cancelResponse: false, bargeIn: false, clearInput: true } },
+            client: { artifactId: 'voice-runtime', exportName: 'activate' },
+          }] } };
+        const admitted = ingestPluginManifestV2(manifest);
+        if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+        mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
+        writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), serializeCanonicalPluginManifest(admitted.manifest));
+        writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
+        mkdirSync(join(packageRoot, 'src/ui/voice'), { recursive: true });
+        writeFileSync(join(packageRoot, 'src/ui/voice/entries.ts'), 'throw new Error("Voice presentation source is mid-edit");');
+        sources.push({ pluginPackageId: id, pluginId: manifest.id, packageName: `@happier-dev/plugins-${id}`,
+          packageVersion: '0.0.0', manifest: admitted.manifest, hasConversationProvider: true,
+          conversationPlatforms: ['web'], conversationClient: { artifactId: 'voice-runtime', exportName: 'activate' },
+          presentations: [{ providerId: `${manifest.id}/realtime-${id}`, settingsSectionId: `voice.${id}`,
+            selectionOptions: [{ id: 'byo', modeId: 'byo', titleKey: `voice.${id}.title` }] }],
+        });
+      }
+      writeCliBundledHostPackage({ happyCliDir: fixture.happyCliDir,
+        bundledDependencies: ['inspector', 'neighbor', 'fixture-acp', ...(targetMembership === 'published' ? ['openai'] : []), 'xai']
+          .map(id => `@happier-dev/plugins-${id}`) });
+      await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
+        parseGeneratorCliArgs(['--root', fixture.repoRoot, '--mode', 'write', '--aggregate']),
+        { protocol: { ingestPluginManifestV2 } }, lease,
+      ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
+      const voicePath = join(fixture.repoRoot, 'apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts');
+      const optionsPath = join(fixture.repoRoot, 'packages/protocol/src/voice/settings/generatedBundledVoiceSelectionOptions.ts');
+      mkdirSync(dirname(voicePath), { recursive: true });
+      mkdirSync(dirname(optionsPath), { recursive: true });
+      const publishedSources = targetMembership === 'published' ? sources : sources.filter(source => source.pluginPackageId !== 'openai');
+      const publishedVoice = renderBundledVoiceEntriesTs(publishedSources);
+      const publishedOptions = renderBundledVoiceSelectionOptionsTs(publishedSources);
+      writeFileSync(voicePath, publishedVoice);
+      writeFileSync(optionsPath, publishedOptions);
+      const peerAssetPath = join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/xai.json');
+      const publishedPeerAsset = readFileSync(peerAssetPath, 'utf8');
+      writeFileSync(join(fixture.repoRoot, 'packages/plugins/xai/src/manifest.ts'), 'throw new Error("Foreign Voice manifest is mid-edit");');
+      const target = sources[0]!;
+      const updated = ingestPluginManifestV2({ ...target.manifest, contributes: { ...target.manifest.contributes,
+        voiceProviders: target.manifest.contributes.voiceProviders.map(provider => ({ ...provider, title: 'Current OpenAI',
+          capabilities: { turn: { cancelResponse: true, bargeIn: false } },
+        })),
+      } });
+      if (!updated.ok) throw new Error(JSON.stringify(updated.diagnostics));
+      writeFileSync(join(fixture.repoRoot, 'packages/plugins/openai/src/manifest.ts'),
+        `export const PLUGIN_MANIFEST = ${JSON.stringify(updated.manifest)};`);
+      writeCliBundledHostPackage({ happyCliDir: fixture.happyCliDir,
+        bundledDependencies: ['inspector', 'neighbor', 'fixture-acp', 'openai', 'xai'].map(id => `@happier-dev/plugins-${id}`) });
+
+      // main() owns the actual checkout's publication lease. Exercise its same
+      // canonical operation under this sandbox's real lease, as isolation tests do.
+      await withWorkspaceBundleLock(lease => publishBundledPluginEntries(
+        parseGeneratorCliArgs(['--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-openai']), lease,
+      ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
+
+      const currentVoice = readFileSync(voicePath, 'utf8');
+      expect(readVoiceManifest(currentVoice, 'OPENAI_BUNDLED_VOICE_MANIFEST')).toEqual({ id: updated.manifest.id,
+        contributes: { voiceProviders: updated.manifest.contributes.voiceProviders } });
+      expect(readVoiceManifest(currentVoice, 'XAI_BUNDLED_VOICE_MANIFEST'))
+        .toEqual(readVoiceManifest(publishedVoice, 'XAI_BUNDLED_VOICE_MANIFEST'));
+      const presentationStart = 'export const BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS';
+      expect(currentVoice.slice(currentVoice.indexOf(presentationStart)))
+        .toBe(publishedVoice.slice(publishedVoice.indexOf(presentationStart)));
+      expect(readFileSync(optionsPath, 'utf8')).toBe(publishedOptions);
+      expect(readFileSync(peerAssetPath, 'utf8')).toBe(publishedPeerAsset);
     } finally { fixture.cleanup(); }
   });
 

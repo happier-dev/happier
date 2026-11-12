@@ -1,4 +1,5 @@
 /** Pure projection rendering; filesystem, preparation and publication stay in the generator. */
+import { createSourceFile, isIdentifier, isVariableStatement, ScriptTarget } from 'typescript';
 import {
   renderJsonLiteral,
 } from './literals.ts';
@@ -9,12 +10,15 @@ import type {
   JsonValue,
 } from './projectionFacts.ts';
 
+type BundledVoiceDeclarationSource = Pick<BundledFirstPartyVoiceProjectionSource, 'manifest' | 'pluginPackageId' | 'presentations'>
+  & Partial<BundledFirstPartyVoiceProjectionSource>;
+
 function toBundledVoiceImportPrefix(packageId: BundledFirstPartyVoicePackageId): string {
   return packageId.toUpperCase().replace(/[^A-Z0-9]/g, '_');
 }
 
 function renderBundledVoiceManifestProjectionConstant(
-  source: BundledFirstPartyVoiceProjectionSource,
+  source: Pick<BundledFirstPartyVoiceProjectionSource, 'manifest' | 'pluginPackageId'>,
 ): readonly string[] {
   const prefix = toBundledVoiceImportPrefix(source.pluginPackageId);
   const projection = { id: source.manifest.id,
@@ -28,7 +32,7 @@ function renderBundledVoiceManifestProjectionConstant(
 }
 
 export function renderBundledVoiceEntriesTs(
-  sources: readonly BundledFirstPartyVoiceProjectionSource[],
+  sources: readonly BundledVoiceDeclarationSource[],
 ): string {
   const lines: string[] = [];
   lines.push('/**');
@@ -71,6 +75,30 @@ export function renderBundledVoiceEntriesTs(
   lines.push('})) satisfies readonly VoiceProviderPresentation[];');
   lines.push('');
   return lines.join('\n');
+}
+
+/**
+ * Scoped/aggregate publication refreshes admitted declarations, including new
+ * membership, without reopening authored presentation leaves. Full publication
+ * owns presentation and selection-option preparation; keep those published facts.
+ */
+export function renderRetainedBundledVoiceEntriesTs(
+  source: string,
+  sources: readonly BundledVoiceDeclarationSource[],
+  outPath: string,
+): string {
+  const presentationStatement = (text: string) => {
+    const parsed = createSourceFile(outPath, text, ScriptTarget.Latest);
+    const statement = parsed.statements.find(statement => isVariableStatement(statement)
+      && statement.declarationList.declarations.some(declaration => isIdentifier(declaration.name)
+        && declaration.name.text === 'BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS'));
+    if (!statement) throw new Error(`Missing published Voice presentations: ${outPath}`);
+    return { start: statement.getStart(parsed), end: statement.end, text: statement.getText(parsed) };
+  };
+  const retained = presentationStatement(source);
+  const rendered = renderBundledVoiceEntriesTs(sources);
+  const current = presentationStatement(rendered);
+  return rendered.slice(0, current.start) + retained.text + rendered.slice(current.end);
 }
 
 /** Published selection semantics are the same data for UI controls and headless Actions. */
