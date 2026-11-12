@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
@@ -303,7 +303,13 @@ describe('Environment → Permissions: recorded platform access', () => {
 
   it('does not borrow a data link principal when runtime content is unavailable', async () => {
     const detail = { ...manager(), targetLinks: [{ targetLink: createDeploymentTargetLinkHeaderV1({ role: 'data', targetKind: 'database', machines: [], members: [], source: { kind: 'plugin', contribution: { pluginId: 'com.example.database', localId: 'database' } } }),
-      content: { providerIdentity: { providerAccountId: 'data-org', providerResourceId: 'database', providerEnvironment: 'main' } } }] };
+      content: {
+        credentialPrincipal: { kind: 'account' as const, accountId: 'data-owner',
+          purpose: { consumer: { pluginId: 'com.example.database', localId: 'inspect' }, purpose: 'database' },
+          target: { kind: 'account' as const, account: { service: { pluginId: 'com.example.database', localId: 'database' }, accountId: 'data-connection' } } },
+        providerEnvironment: { kind: 'custom' as const, id: 'main' },
+        providerIdentity: { providerAccountId: 'data-org', providerResourceId: 'database', providerEnvironment: 'main' },
+      } }] };
     const screen = await renderScreen(<DeploymentPermissionsPanel detail={detail as never}
       machineName={() => 'vps-1'} onOpenController={() => {}} />);
     try { expect(screen.findByTestId(`${prefix}.platform`)).toBeNull(); }

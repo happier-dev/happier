@@ -34,6 +34,7 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
+import { DeploymentPlatformAccess } from './DeploymentPlatformAccess';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner } from './DeploymentEnvironmentDetail';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
@@ -131,6 +132,7 @@ export const DeploymentPermissionsPanel = React.memo(
             mode="info"
           />
         </ItemGroup>
+        <DeploymentPlatformAccess detail={props.detail} scope={accountScope} lifetime={props.lifetime ?? null} />
         <EnvironmentApprovals environment={environment} environmentName={props.detail.content.name} />
         {props.onOpenPreviews ? <ItemGroup>
           <Item testID="project-deployments.environment.permissions.previews"
