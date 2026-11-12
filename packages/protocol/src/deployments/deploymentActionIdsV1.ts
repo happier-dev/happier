@@ -42,6 +42,9 @@ export function isDeploymentBackupEvidenceActionIdV1(value: string): boolean {
 
 export const DEPLOYMENT_CANCEL_ACTION_ID_V1 = 'deployments.cancel';
 export const DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 = 'deployments.publish.prepare';
+export const DEPLOYMENT_PREPARE_ACTION_ID_V1 = 'deployments.prepare';
+/** Prepare's reviewed Session creation or message handoff retains this role. */
+export const DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 = 'prepare-session';
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
 export const DEPLOYMENT_ROLLBACK_ACTION_ID_V1 = 'deployments.rollback';
 export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
@@ -72,6 +75,12 @@ export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string)
 export const DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 = 'deployments.environments.delete';
 export const DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 = 'deployments.targets.unlink';
 
+/** Template composition spends these writes through the exact preparation owner. */
+export function isDeploymentTemplateStorageActionIdV1(value: string): boolean {
+  return value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    || value === 'deployments.targets.link' || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+}
+
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
   DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1,
@@ -86,7 +95,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, 'deployments.receipts.get', DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   'deployments.observation.get',
-  DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
+  DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',
   DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
 ] as const;
@@ -103,6 +112,10 @@ export function isDeploymentTargetLinkActionIdV1(value: string): value is 'deplo
 /** Private observation identities require installed requester content custody. */
 export function isDeploymentObservationReadActionIdV1(value: string): value is 'deployments.observation.get' {
   return value === 'deployments.observation.get';
+}
+
+export function isDeploymentReceiptReadActionIdV1(value: string): value is 'deployments.receipts.get' | 'deployments.receipts.list' {
+  return value === 'deployments.receipts.get' || value === 'deployments.receipts.list';
 }
 
 /** Receipt observation and its private recorded result share the installed Machine owner. */
@@ -149,7 +162,7 @@ export function isDeploymentDomainMetadataReadActionIdV1(value: string): value i
 export function isDeploymentEnvironmentMetadataReadActionIdV1(value: string): value is
   DeploymentDomainMetadataReadActionIdV1 | 'deployments.receipts.get' | 'deployments.receipts.list' | 'deployments.observation.get' {
   return isDeploymentDomainMetadataReadActionIdV1(value)
-    || value === 'deployments.receipts.get' || value === 'deployments.receipts.list' || value === 'deployments.observation.get';
+    || isDeploymentReceiptReadActionIdV1(value) || value === 'deployments.observation.get';
 }
 /** Existing rollout and teardown roots may reconcile their admitted runtime membership. */
 export function isDeploymentMembershipActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): value is

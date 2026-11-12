@@ -51,7 +51,7 @@ import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreview
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
 import { resolveApprovalOriginForRequest, projectActionApprovalOrigin, projectActionObservationContext, resolvePolicyApprovalRequestingSessionId, projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1, resolveExplicitApprovalRequestingSessionId, isApprovalActionId, isApprovalRequestActionReplayAdmitted, isBlockingApprovalRequest } from './executor/approvalOrigins.js';
 import { isPresentUserApprovalDecisionForOrigin, resolveMachineServiceLogsApprovalLifetime } from './executor/approvalOrigins.js';
-import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { prepareApprovalReplayAuthorization, resolveRetainedLogsReplayContext } from './executor/approvalReplayAuthorization.js';
 import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './executor/approvalDecisionFailure.js';
 import { createConfidentialApprovalContinuation, isDecidingHumanAdmissionCurrent } from './executor/confidentialContinuation.js';
@@ -6031,8 +6031,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const result = await deps.deploymentPrepare(input, ctx,
             (childId, childInput) => invokeHostReviewedChildV1({
               parent: { actionId, input: projectNativeJsonValueForTransport(input) as Record<string, JsonValue> },
-              context: ctx, child: { action: childId, role: 'prepare-session', input: projectNativeJsonValueForTransport(childInput) },
-              admittedReview: { action: childId, role: 'prepare-session', surface: ctx.surface ?? 'cli' },
+              context: ctx, child: { action: childId, role: DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, input: projectNativeJsonValueForTransport(childInput) },
+              admittedReview: { action: childId, role: DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, surface: ctx.surface ?? 'cli' },
               execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput,
                 { ...childContext, serverId: ctx.externalActionExecutionAuthorization?.binding.serverIdentityId ?? childContext.serverId }),
             }));

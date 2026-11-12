@@ -336,7 +336,7 @@ export function machineUpdateHandler(
                 if (externalAction && (!verifiedInvocation
                     || verifiedInvocation.principal.accountId !== userId
                     || verifiedInvocation.binding.machineId !== sourceMachineId
-                    || parsed.data.targetMachineId !== sourceMachineId
+                    || parsed.data.targetMachineId !== sourceMachineId && !verifiedInvocation.deploymentPrepareSessionInput
                     || verifiedInvocation.effectActionId !== "session.message.send"
                     || verifiedInvocation.target.kind !== "session"
                     || verifiedInvocation.target.sessionId !== parsed.data.sessionId

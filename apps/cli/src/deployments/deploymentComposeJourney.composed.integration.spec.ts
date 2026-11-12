@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { execFileSync } from 'node:child_process';
-import { request as httpRequest } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
@@ -15,6 +15,10 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ACTION_SPECS, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DEPLOYMENT_ACTION_IDS_V1, type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
+import { DeploymentTeardownPreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownVolumesV1';
 import { ProjectSourcesCreateOutputV1Schema, ProjectSourcesReadOutputV1Schema,
     ProjectSourcesUpdateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
@@ -22,6 +26,8 @@ import {
     DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
     DeploymentTemplateInstantiateResultV1Schema, ProjectDeploymentDefaultsOutputV1Schema,
     DeploymentTargetLinkResultV1Schema, DeploymentReceiptResultV1Schema, DeploymentReceiptGetResultV1Schema,
+    DeploymentDomainMutationResultV1Schema,
+    captureDeploymentBindingSavedSecretRevisionsV1,
     encodeBase64,
     type ActionExecutorDeps,
     type ActionExecuteResult,
@@ -31,6 +37,7 @@ import {
     MachineAgentIsolationSetResultV1Schema,
     readMachineAgentIsolationPolicyV1,
     readMachineServiceWatchesV1,
+    MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema,
     machineServiceIdentityTupleV1,
     type MachineAgentIsolationStatusV1,
 } from '@happier-dev/protocol';
@@ -38,6 +45,7 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DEFAULT_MACHINE_UNUSED_RETENTION_MS_V1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { DeploymentEnvironmentContentV1Schema, DeploymentContentV1Schema,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
@@ -59,6 +67,12 @@ import { createProjectAccountSnapshotMutation } from '@/workspaces/projectAccoun
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDeploymentSocketHome, type DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createAccountTokenForTests } from '../../../server/sources/testkit/lightSqliteHarness';
+import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
+import { sessionRoutes } from '../../../server/sources/app/api/routes/session/sessionRoutes';
+import { sessionPendingRoutes } from '../../../server/sources/app/api/routes/session/pendingRoutes';
+import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.testkit';
+import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.testkit';
+import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.testkit';
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
@@ -707,10 +721,24 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
  */
 describe.skipIf(process.platform !== 'linux')('personal Compose deployment continuity', () => {
     let home: DeploymentSocketHomeFixture;
+    type HomeHttpObservation = Readonly<{ method: string; path: string; status: number }>;
+    let observeRootHttp: ((observation: HomeHttpObservation) => void) | undefined;
     beforeAll(async () => {
         home = await createDeploymentSocketHome({ encryptionMode: 'e2ee',
             prepareMachineContent: (encryptionKey, metadata) => createMachineContentCodec({ encryptionMode: 'e2ee',
-                encryptionKey, encryptionVariant: 'dataKey' }).encodeStored(metadata) });
+                encryptionKey, encryptionVariant: 'dataKey' }).encodeStored(metadata),
+            configureApp: app => {
+                registerQualifiedConnectedAccountCredentialRoutesV4(app);
+                sessionRoutes(app);
+                sessionPendingRoutes(app);
+                // Observe the real server response, including fetch requests and
+                // requests made by the enrolled guest's separate process. Keep
+                // credentials, bodies and query values out of failure output.
+                app.addHook('onResponse', async (request, reply) => {
+                    observeRootHttp?.({ method: request.method,
+                        path: new URL(request.url, 'https://home.invalid').pathname, status: reply.statusCode });
+                });
+            } });
     });
     afterAll(async () => { if (home) await home.close(); });
     it.each(['stored', 'repository'] as const)('prepares a native deployment through MCP from %s without caller Machine custody or managed enrollment', async sourceKind => {
@@ -1146,13 +1174,84 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 return accountPost(url, body, config);
             });
             const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-                runtimeOptions: { pluginIds: ['happier.scm.backend.git', 'happier.deployment.templates'],
+                runtimeOptions: { pluginIds: ['happier.scm.backend.git', 'happier.scm.forge.github', 'happier.deployment.templates', 'happier.machine.services', 'happier.backup.destinations', 'happier.deploy.vercel', 'happier.machine.vercel'],
                     scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } } });
             cleanup.push(() => mounted.dispose());
             const daemonLifetime = new AbortController();
             cleanup.push(async () => { daemonLifetime.abort(); });
             const s0DockerDirectory = join(home.baseDir, 'docker-boundary');
-            const s0Docker = await createOwnServerDockerBoundary(s0DockerDirectory);
+            const caddyDirectory = join(home.baseDir, 'coverage-caddy');
+            await mkdir(caddyDirectory);
+            const caddySocket = join(caddyDirectory, 'admin.sock');
+            const caddyConfigPath = join(caddyDirectory, 'config.json');
+            const caddyConfig: Record<string, unknown> = { admin: { listen: 'unix//run/coverage-caddy/admin.sock|0660' },
+                apps: { http: { servers: {
+                    private: { listen: [':9381'], automatic_https: { disable: true }, routes: [], errors: { routes: [] } },
+                    public: { listen: [':443'], tls_connection_policies: [{}], routes: [], errors: { routes: [] } },
+                    public_http: { listen: [':80'], automatic_https: { disable: true }, routes: [] },
+                } }, tls: { automation: { policies: [] }, certificates: { load_pem: [] } } } };
+            await writeFile(caddyConfigPath, JSON.stringify(caddyConfig));
+            const caddyEtags = new Map<string, { value: unknown; snapshot: string }>();
+            // Caddy's Unix HTTP API is the external boundary. All Domain
+            // discovery, route ownership, placement and signing remain real.
+            const caddy = createServer(async (request, response) => {
+                const segments = request.url!.split('/').filter(Boolean).map(decodeURIComponent);
+                const findId = (value: unknown, id: string): { parent: Record<string, unknown> | unknown[]; key: string } | undefined => {
+                    if (!value || typeof value !== 'object') return undefined;
+                    for (const [key, child] of Object.entries(value)) {
+                        if (child && typeof child === 'object' && '@id' in child && child['@id'] === id)
+                            return { parent: value as Record<string, unknown>, key };
+                        const found = findId(child, id);
+                        if (found) return found;
+                    }
+                    return undefined;
+                };
+                let selected: unknown = caddyConfig;
+                let parent: Record<string, unknown> | unknown[] | undefined;
+                let key: string | undefined;
+                if (segments[0] === 'id') {
+                    const found = findId(caddyConfig, segments[1]!);
+                    if (!found) { response.writeHead(404).end(); return; }
+                    ({ parent, key } = found);
+                    selected = Reflect.get(parent, key);
+                } else for (const segment of segments.slice(1)) {
+                    if (!selected || typeof selected !== 'object') { response.writeHead(404).end(); return; }
+                    parent = selected as Record<string, unknown>; key = segment;
+                    selected = Reflect.get(parent, segment);
+                }
+                if (request.method === 'GET') {
+                    if (selected === undefined) { response.writeHead(404).end(); return; }
+                    const snapshot = JSON.stringify(selected);
+                    const etag = `"${createHash('sha256').update(`${request.url}:${snapshot}`).digest('hex')}"`;
+                    caddyEtags.set(etag, { value: selected, snapshot });
+                    response.setHeader('ETag', etag); response.end(snapshot); return;
+                }
+                const condition = request.headers['if-match'];
+                const admitted = typeof condition === 'string' ? caddyEtags.get(condition) : undefined;
+                if (condition && (!admitted || JSON.stringify(admitted.value) !== admitted.snapshot)) {
+                    response.writeHead(412).end(); return;
+                }
+                if (!parent || key === undefined) { response.writeHead(400).end(); return; }
+                let body = '';
+                for await (const chunk of request) body += String(chunk);
+                if (request.method === 'DELETE') {
+                    if (Array.isArray(parent)) parent.splice(Number(key), 1); else delete parent[key];
+                } else if (Array.isArray(parent) && request.method === 'PUT') parent.splice(Number(key), 0, JSON.parse(body));
+                else Reflect.set(parent, key, JSON.parse(body));
+                response.end();
+            });
+            await new Promise<void>((resolve, reject) => { caddy.once('error', reject); caddy.listen(caddySocket, resolve); });
+            cleanup.push(() => new Promise<void>(resolve => caddy.close(() => resolve())));
+            const publicPorts = { '443/tcp': [{ HostIp: '203.0.113.7', HostPort: '443' }] };
+            const s0Docker = await createOwnServerDockerBoundary(s0DockerDirectory, { nativeCaddy: {
+                Id: 'e'.repeat(64), Name: '/root-coverage-caddy', State: { Running: true },
+                Config: { Image: nativeCaddyImage, Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' },
+                    Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'] },
+                HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, PortBindings: publicPorts, Mounts: [
+                    { Type: 'bind', Source: caddyDirectory, Target: '/run/coverage-caddy' },
+                    { Type: 'bind', Source: caddyConfigPath, Target: '/etc/caddy/happier.json' } ] },
+                NetworkSettings: { Ports: publicPorts, Networks: {} },
+            } });
             vi.stubEnv('PATH', `${s0DockerDirectory}${delimiter}${process.env.PATH ?? ''}`);
             // Both registrations mutate the one native image-store fixture.
             const s0ImagesA = [await s0Docker.registerImage('web', 'A'), await s0Docker.registerImage('db', 'A')];
@@ -1189,6 +1288,8 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 readCredentials: async () => controllerCredentials, machineId: controllerMachineId,
                 serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
             const invokedActions: string[] = [];
+            const coveredDeploymentRoots = new Set<string>();
+            const rootHttpObservations = new Map<string, HomeHttpObservation[]>();
             const invokeRaw = (name: string, input: unknown, confirmed = true) => {
                 const actionId = ActionIdSchema.parse(name);
                 invokedActions.push(actionId);
@@ -1198,7 +1299,27 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     actionRequestId: randomUUID(), authority: 'present_user',
                     ...(confirmed ? { presentUserConfirmation: { actionId } } : {}) });
             };
-            const invoke = async (name: string, input: unknown) => settlePublicApproval(invokeRaw, await invokeRaw(name, input));
+            const invokeWithoutHttpGuard = async (name: string, input: unknown) => settlePublicApproval(invokeRaw, await invokeRaw(name, input));
+            const invoke = async (name: string, input: unknown) => {
+                const observations: HomeHttpObservation[] = [];
+                const previous = observeRootHttp;
+                observeRootHttp = row => { previous?.(row); observations.push(row); };
+                try {
+                    const result = await invokeWithoutHttpGuard(name, input);
+                    expect(observations.filter(row => row.status === 401 || row.status === 403),
+                        `${name} made an HTTP call its admitted flow could not authorize`).toEqual([]);
+                    rootHttpObservations.set(name, [...(rootHttpObservations.get(name) ?? []), ...observations]);
+                    if (result.ok && (DEPLOYMENT_ACTION_IDS_V1.some(id => id === name) || name === MACHINE_SERVICE_ADOPT_ACTION_ID)) {
+                        const output = getActionSpec(ActionIdSchema.parse(name)).outputSchema.parse(result.result);
+                        const refused = output !== null && typeof output === 'object'
+                            && (('ok' in output && output.ok === false) || ('kind' in output
+                                && ['partial', 'refused', 'conflict', 'unavailable', 'unsupported', 'outcome_unknown'].includes(String(output.kind)))
+                                || ('state' in output && ['failed', 'cancelled'].includes(String(output.state))));
+                        if (!refused) coveredDeploymentRoots.add(name);
+                    }
+                    return result;
+                } finally { observeRootHttp = previous; }
+            };
             const managedEnrollment = await home.readManagedEnrollment(home.machineId);
             if (!managedEnrollment) throw new Error('Target retention requires the actual enrolled allocation');
             const readManagedAllocation = async () => {
@@ -1347,6 +1468,12 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             if (!firstRead.ok) throw new Error(`First target read refused: ${firstRead.errorCode}`);
             const first = DeploymentEnvironmentGetResultV1Schema.parse(firstRead.result);
             if (!first.ok) throw new Error(`First target admission refused: ${first.error}`);
+            const controllerSet = await invoke('deployments.environments.controller.set', {
+                serverId: home.serverId, environmentId: environment.environmentId,
+                expectedRevision: first.environment.revision, controllerMachineId: home.machineId,
+            });
+            expect(controllerSet).toMatchObject({ ok: true, result: { ok: true,
+                environmentId: environment.environmentId, revision: first.environment.revision } });
             const firstTarget = first.targetLinks.find(link => link.id === first.environment.runtimeTargetLinkId);
             if (!firstTarget) throw new Error('The create Action must persist its first target link');
             // The later link entry has the same reviewed allocation consequence.
@@ -2002,7 +2129,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             expect(templateDefinition.composeDigest).toBe(`sha256:${createHash('sha256').update(templateDefinition.document).digest('hex')}`);
             expect(templateContent.template).toMatchObject({ templateRef, services: ['database'],
                 definition: { kind: 'stored', contentRevision: templateDefinition.contentRevision, composeDigest: templateDefinition.composeDigest },
-                data: { engine: 'postgres', service: 'database' }, loginFields: { password: 'DB_PASSWORD' } });
+                data: [{ engine: 'postgres', service: 'database' }], loginFields: { password: 'DB_PASSWORD' } });
             expect(templateContent.bindings).toContainEqual({ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime',
                 source: { kind: 'secret', ref: p42Ref, resourceRevision: 1 } });
             expect(templateContent.bindings).toContainEqual(retainedTemplateBinding);
@@ -2088,6 +2215,256 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             if (!templateReceiptBody || typeof templateReceiptBody.body !== 'string') throw new Error('Template receipt content is unavailable');
             expect(DeploymentContentV1Schema.parse(JSON.parse(templateReceiptBody.body)).sourceIntent).toEqual(templateDefinition);
             expect(await s0Docker.readRuntimeEnvironment('database')).toMatchObject({ POSTGRES_PASSWORD: p42Secret });
+            // Cover the ordinary bindings writer independently of reviewed role setup.
+            const beforeCoverageBinding = await readStoredEnvironment();
+            const coverageBinding = await invoke('deployments.bindings.set', { serverId: home.serverId,
+                environmentId: storedEnvironment.environmentId, expectedRevision: beforeCoverageBinding.environment.revision,
+                set: [{ purpose: 'variable', name: 'DB_PASSWORD', phase: 'runtime',
+                    source: { kind: 'secret', ref: p42Ref, resourceRevision: 1 } }], remove: [] });
+            if (!coverageBinding.ok) throw new Error(`Runtime binding refused: ${coverageBinding.errorCode}`);
+
+            // Existing-state boundary fixture: the real deployment already sealed
+            // this Saved Secret for this installation. A retained dataRole binding
+            // spends that same resource/revision grant; the native DB role is
+            // already provisioned. Query still uses real Home admission, encrypted
+            // Artifact content, grant opening, service acquisition and SQL parsing.
+            const beforeCoverageQuery = await db.deploymentEnvironment.findUniqueOrThrow({
+                where: { id: storedEnvironment.environmentId } });
+            const queryArtifact = await nativeDeploymentArtifacts(home).read(beforeCoverageQuery.contentArtifactId);
+            if (!queryArtifact || typeof queryArtifact.body !== 'string') throw new Error('Query fixture content is unavailable');
+            const queryContent = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(queryArtifact.body));
+            queryContent.bindings.push({ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+                source: { kind: 'secret', ref: p42Ref, resourceRevision: 1 } });
+            expect(await db.machineSecretGrant.count({ where: { environmentId: storedEnvironment.environmentId,
+                machineId: home.machineId, installationId: home.installationId,
+                kind: 'secret', resourceId: p42ResourceId, resourceRevision: 1 } })).toBe(1);
+            const queryContentReference = await prepareContent(queryContent, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1);
+            const queryFixtureEnvironment = await db.deploymentEnvironment.update({
+                where: { id: storedEnvironment.environmentId }, data: { ...queryContentReference,
+                    referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(queryContent.bindings),
+                    revision: { increment: 1 } } });
+            await s0Docker.setReadOnlyQueryOutput('value\n1\n', p42Secret);
+            const beforeQueryMaterialOffline = authorMaterialOffline;
+            authorMaterialOffline = true;
+            try {
+                const existingRoleQuery = await invoke('deployments.data.query', { serverId: home.serverId,
+                    environmentId: storedEnvironment.environmentId, expectedRevision: queryFixtureEnvironment.revision,
+                    targetLinkId: templateTarget.id, deploymentId: templateReceipt.deploymentId,
+                    machineId: home.machineId, installationId: home.installationId,
+                    service: 'database', sql: 'SELECT 1 AS value', params: {} });
+                if (!existingRoleQuery.ok) throw new Error(`Existing read-role query refused: ${existingRoleQuery.errorCode}`);
+                expect(existingRoleQuery.result).toMatchObject({ columns: [{ name: 'value' }], rows: [['1']], complete: true });
+            } finally {
+                authorMaterialOffline = beforeQueryMaterialOffline;
+                // Restore only our temporary fixture pointer, never a later writer's content.
+                const restoredQueryFixture = await db.deploymentEnvironment.updateMany({ where: {
+                    id: storedEnvironment.environmentId, contentArtifactId: queryContentReference.contentArtifactId,
+                    revision: queryFixtureEnvironment.revision }, data: {
+                    contentArtifactId: beforeCoverageQuery.contentArtifactId,
+                    contentHeaderVersion: beforeCoverageQuery.contentHeaderVersion,
+                    contentBodyVersion: beforeCoverageQuery.contentBodyVersion,
+                    referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(
+                        DeploymentEnvironmentContentV1Schema.parse(JSON.parse(queryArtifact.body)).bindings),
+                    revision: { increment: 1 } } });
+                expect(restoredQueryFixture.count).toBe(1);
+            }
+            // Run remaining read/preparation roots through this same real
+            // executor and Home. Inputs come from the preceding successful
+            // creation/deployment, rather than a parallel HTTP-purpose table.
+            authorMaterialOffline = false;
+            const coverageEnvironment = await readStoredEnvironment();
+            const coverageTarget = coverageEnvironment.targetLinks.find(link => link.id === storedTarget.targetLinkId);
+            const coverageService = mounted.registry.projectManagedServices.listProjectServices().find(service =>
+                service.kind === 'environment' && service.environmentId === storedEnvironment.environmentId && service.composeService === 'web');
+            if (!coverageTarget?.activeDeploymentId || !coverageService || coverageService.kind !== 'environment'
+                || coverageService.identity?.kind !== 'deployment') throw new Error('Root coverage requires the actual deployed web service');
+            const address = { serverId: home.serverId, environmentId: storedEnvironment.environmentId };
+            const nativeRead = { ...address, deploymentId: coverageTarget.activeDeploymentId, targetLinkId: coverageTarget.id,
+                machineId: home.machineId, installationId: home.installationId, service: coverageService.identity };
+            const scenarios: Partial<Record<DeploymentActionIdV1, () => unknown>> = {
+                'deployments.environments.list': () => ({ serverId: home.serverId, projectSourceId: storedSource.source.id }),
+                'deployments.receipts.list': () => address,
+                'deployments.domains.list': () => address,
+                'deployments.health.current': () => ({ ...address, targetLinkId: coverageTarget.id, machineId: home.machineId }),
+                'deployments.health.read': () => nativeRead,
+                'deployments.drift.read': () => ({ ...nativeRead, expectedRevision: coverageEnvironment.environment.revision }),
+                'deployments.logs.read': () => ({ ...nativeRead, kind: 'runtime' }),
+                'deployments.restart': () => ({ ...nativeRead, expectedGeneration: coverageService.instanceId }),
+                'deployments.publish.prepare': () => ({ serverId: home.serverId, machineId: home.machineId,
+                    installationId: home.installationId, projectSourceId: storedSource.source.id,
+                    sourceRevision: storedSource.source.revision, templateRef }),
+            };
+            for (const actionId of DEPLOYMENT_ACTION_IDS_V1) {
+                const scenario = scenarios[actionId];
+                if (!scenario) continue;
+                const result = await invoke(actionId, scenario());
+                expect.soft(result.ok, `${actionId} must execute its valid real-flow scenario${result.ok ? '' : `: ${result.errorCode}`}`).toBe(true);
+                if (actionId === 'deployments.restart') expect(result).toMatchObject({ ok: true, result: {
+                    kind: 'observed', serviceId: coverageService.serviceId, generation: coverageService.instanceId,
+                } });
+            }
+            const beforeDomain = await readStoredEnvironment();
+            const domainTarget = beforeDomain.targetLinks.find(link => link.id === storedTarget.targetLinkId);
+            if (!domainTarget) throw new Error('Domain coverage requires its actual runtime target');
+            const domainAddress = { ...address, domainId: randomUUID() };
+            const domainAdded = await invoke('deployments.domains.add', { ...domainAddress,
+                expectedRevision: beforeDomain.environment.revision, targetLinkId: domainTarget.id,
+                expectedTargetLinkRevision: domainTarget.revision, requestKey: randomUUID(),
+                content: { hostname: 'coverage.example.test', target: { service: 'web', containerPort: 3000 } } });
+            expect(domainAdded).toMatchObject({ ok: true, result: { ok: true } });
+            expect(await invoke('deployments.health.current', { ...address, targetLinkId: domainTarget.id,
+                machineId: home.machineId, domainIds: [domainAddress.domainId] })).toMatchObject({ ok: true, result: { ok: true } });
+            const readCoverageDomain = async () => {
+                const read = await invoke('deployments.domains.get', domainAddress);
+                if (!read.ok) throw new Error(`Domain coverage read failed: ${read.errorCode}`);
+                const detail = DeploymentDomainMutationResultV1Schema.parse(read.result);
+                if (!detail.ok) throw new Error(`Domain coverage read refused: ${detail.error}`);
+                return detail;
+            };
+            const beforeVerify = await readCoverageDomain();
+            expect(await invoke('deployments.domains.verify', { ...domainAddress,
+                expectedRevision: beforeVerify.revision, expectedDomainRevision: beforeVerify.domain.revision,
+                requestKey: randomUUID() })).toMatchObject({ ok: true, result: { ok: true } });
+            const beforeRemove = await readCoverageDomain();
+            expect(await invoke('deployments.domains.remove', { ...domainAddress,
+                expectedRevision: beforeRemove.revision, expectedDomainRevision: beforeRemove.domain.revision,
+                requestKey: randomUUID() })).toMatchObject({ ok: true, result: { ok: true } });
+            const promoted = await invoke('deployments.promote', { serverId: home.serverId,
+                environmentId: defaultedTemplateResult.environmentId, sourceEnvironmentId: storedEnvironment.environmentId,
+                sourceDeploymentId: templateReceipt.deploymentId, artifact: 'image', requestKey: randomUUID() });
+            expect(promoted).toMatchObject({ ok: true, result: { ok: true, state: 'succeeded' } });
+            if (!promoted.ok) throw new Error(`Promotion coverage failed: ${promoted.errorCode}`);
+            const promotedReceipt = DeploymentReceiptResultV1Schema.parse(promoted.result);
+            if (!promotedReceipt.ok) throw new Error('Promotion coverage requires its actual receipt');
+            const promotedRead = await invoke('deployments.receipts.get', { serverId: home.serverId,
+                environmentId: defaultedTemplateResult.environmentId, deploymentId: promotedReceipt.deploymentId });
+            if (!promotedRead.ok) throw new Error(`Cancellation receipt read failed: ${promotedRead.errorCode}`);
+            const promotedHeader = DeploymentReceiptGetResultV1Schema.parse(promotedRead.result);
+            if (!promotedHeader.ok) throw new Error('Cancellation requires the actual receipt revision');
+            // A late Cancel against a settled operation is an admitted,
+            // idempotent request and preserves its completed result.
+            expect(await invoke('deployments.cancel', { serverId: home.serverId,
+                environmentId: defaultedTemplateResult.environmentId, deploymentId: promotedReceipt.deploymentId,
+                expectedReceiptRevision: promotedHeader.deployment.revision }))
+                .toMatchObject({ ok: true, result: { ok: true, state: 'succeeded' } });
+            const preparationApi = await runWithServerHttpBaseUrl(home.baseUrl, () => ApiClient.create(credentials));
+            const preparationSession = await runWithServerHttpBaseUrl(home.baseUrl, () => preparationApi.getOrCreateSession({
+                tag: `deployment-root-coverage-${randomUUID()}`, state: null,
+                metadata: { machineId: home.machineId, path: repositoryPath, host: 'coverage-machine',
+                    user: 'coverage-user', homeDir: home.baseDir, version: '0.3', os: 'linux' },
+            }));
+            if (!preparationSession) throw new Error('Preparation requires a real Session created at this Home');
+            const preparationClient = runWithServerHttpBaseUrl(home.baseUrl,
+                () => preparationApi.sessionSyncClient(preparationSession));
+            cleanup.push(() => preparationClient.close());
+            const preparationMessages: unknown[] = [];
+            preparationClient.onUserMessage(message => { preparationMessages.push(message); });
+            await preparationClient.ensureMetadataSnapshot();
+            preparationClient.keepAlive(false, 'remote');
+            await vi.waitFor(async () => expect((await db.session.findUnique({
+                where: { id: preparationSession.id }, select: { active: true },
+            }))?.active).toBe(true));
+            const preparedSource = await invoke('deployments.prepare', { projectSourceId: source.source.id,
+                sourceRevision: source.source.revision,
+                repository: { kind: 'github', deployment: 'https://github.com', repository: 's0/app' },
+                baseCommit: commitB, workspace: { kind: 'workspace-ref', serverId: home.serverId, id: workspaceId },
+                sessionRef: { serverId: home.serverId, sessionId: preparationSession.id } });
+            expect(preparedSource).toMatchObject({ ok: true, result: { kind: 'handedOff',
+                sessionRef: { sessionId: preparationSession.id } } });
+            await vi.waitFor(() => expect(preparationMessages.length).toBeGreaterThan(0));
+            if (candidateA.sourceIntent.kind !== 'repository') throw new Error('Provider coverage requires its repository Source');
+            await runDeploymentRootProviderCoverage({ home, invoke, projectSourceId: source.source.id,
+                sourceIntent: { ...candidateA.sourceIntent, sha: commitB }, prepareContent });
+            await runDeploymentRootBackupCoverage({ home, invoke, docker: s0Docker,
+                environmentId: storedEnvironment.environmentId, targetLinkId: templateTarget.id,
+                deploymentId: templateReceipt.deploymentId, secretRef: p42Ref, readEnvironment: readStoredEnvironment });
+            await runDeploymentRootMoveCoverage({ home, credentials, invoke, environmentId: storedEnvironment.environmentId,
+                projectSourceId: storedSource.source.id, definition: templateDefinition });
+
+            // Adoption's Create child reads managed retention after publishing
+            // content. Use a real watched unmanaged Compose project so that
+            // this related root covers that exact post-publication demand.
+            const adoptionDirectory = join(home.baseDir, 'root-coverage-adoption');
+            await mkdir(adoptionDirectory);
+            const adoptionCompose = join(adoptionDirectory, 'compose.json');
+            const adoptionBinding = { purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const,
+                source: { kind: 'value' as const, value: 'https://adopted.example.test' } };
+            await writeFile(adoptionCompose, JSON.stringify({ name: 's0-root-coverage-adoption', services: {
+                worker: { image: s0ImagesA[0].registryReference, pull_policy: 'never',
+                    environment: { PUBLIC_URL: '${PUBLIC_URL:?}' } },
+            } }));
+            execFileSync(s0Docker.executablePath, ['compose', '--project-name', 's0-root-coverage-adoption',
+                '--project-directory', adoptionDirectory, '-f', adoptionCompose, 'up', '--no-build', '--pull', 'never', '-d'],
+            { env: { ...process.env, PUBLIC_URL: adoptionBinding.source.value } });
+            const machineAddress = { serverId: home.serverId, machineId: home.machineId };
+            const discoveryResult = await invoke('machines.services.discovery', { ...machineAddress,
+                adapter: { pluginId: 'happier.machine.services', localId: 'compose' } });
+            if (!discoveryResult.ok) throw new Error(`Adoption discovery failed: ${discoveryResult.errorCode}`);
+            const discovered = MachineServicesDiscoveryResultV1Schema.parse(discoveryResult.result);
+            const candidate = discovered.kind === 'snapshot'
+                ? discovered.candidates.find(row => row.name === 's0-root-coverage-adoption') : undefined;
+            if (!candidate) throw new Error('Adoption must discover the unmanaged native Compose project');
+            const watchResult = await invoke('machines.services.watch', { ...machineAddress,
+                candidateId: candidate.candidateId, expectedRevision: candidate.revision, lifecyclePurpose: 'deployment' });
+            if (!watchResult.ok) throw new Error(`Adoption watch failed: ${watchResult.errorCode}`);
+            const listResult = await invoke('machines.services.list', machineAddress);
+            if (!listResult.ok) throw new Error(`Adoption watch read failed: ${listResult.errorCode}`);
+            const watchedServices = MachineServicesListResultV1Schema.parse(listResult.result);
+            const watched = watchedServices.kind === 'snapshot'
+                ? watchedServices.services.find(row => row.nativeInstance?.nativeResourceId === candidate.nativeResourceId) : undefined;
+            if (!watched?.generation) throw new Error('Adoption must use the actual watched native generation');
+            const adoption = { ...machineAddress, serviceId: watched.serviceId, expectedGeneration: watched.generation,
+                profiles: [], requestKey: randomUUID() };
+            const reviewResult = await invoke(MACHINE_SERVICE_ADOPT_ACTION_ID, { ...adoption, mode: 'review' });
+            if (!reviewResult.ok) throw new Error(`Adoption review failed: ${reviewResult.errorCode}`);
+            const review = MachineServiceAdoptResultV1Schema.parse(reviewResult.result);
+            if (review.kind !== 'review') throw new Error('Adoption must review the native Compose definition');
+            expect(review.variables).toContainEqual({ name: 'PUBLIC_URL', phase: 'runtime', required: true, hasDefault: false });
+            const adoptedResult = await invoke(MACHINE_SERVICE_ADOPT_ACTION_ID, { ...adoption, mode: 'apply',
+                reviewedDigest: review.reviewedDigest, bindingsConfirmed: true, bindings: [adoptionBinding],
+                destination: { projectSourceId: storedSource.source.id, name: 'Adopted root coverage',
+                    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                    controllerMachineId: home.machineId, buildMachineId: home.machineId } });
+            if (!adoptedResult.ok) throw new Error(`Adoption apply failed: ${adoptedResult.errorCode}`);
+            const adopted = MachineServiceAdoptResultV1Schema.parse(adoptedResult.result);
+            expect(adopted.kind).toBe('adopted');
+            if (adopted.kind !== 'adopted') throw new Error(`Adoption did not complete: ${adopted.kind}`);
+            const adoptedRead = await invoke('deployments.environments.get', { serverId: home.serverId, environmentId: adopted.environmentId });
+            if (!adoptedRead.ok) throw new Error(`Adopted Environment read failed: ${adoptedRead.errorCode}`);
+            const adoptedEnvironment = DeploymentEnvironmentGetResultV1Schema.parse(adoptedRead.result);
+            if (!adoptedEnvironment.ok) throw new Error('Adopted Environment must remain readable');
+            const adoptedArtifact = await nativeDeploymentArtifacts(home).read(adoptedEnvironment.environment.contentArtifactId);
+            if (!adoptedArtifact || typeof adoptedArtifact.body !== 'string') throw new Error('Adopted binding requires its actual stored content');
+            expect(DeploymentEnvironmentContentV1Schema.parse(JSON.parse(adoptedArtifact.body)).bindings).toContainEqual(adoptionBinding);
+            expect(rootHttpObservations.get(MACHINE_SERVICE_ADOPT_ACTION_ID)).toContainEqual({
+                method: 'POST', path: '/v1/machines/managed/actions/list', status: 200,
+            });
+            // Destructive roots consume the state established above only after
+            // every read and adoption assertion has finished.
+            const teardownPreview = await invoke('deployments.teardown', { ...address, requestKey: randomUUID(),
+                reason: 'manual', mode: 'preview' });
+            if (!teardownPreview.ok) throw new Error(`Teardown preview failed: ${teardownPreview.errorCode}`);
+            const observedVolumes = DeploymentTeardownPreviewV1Schema.parse(teardownPreview.result);
+            const teardown = await invoke('deployments.teardown', { ...address, requestKey: randomUUID(), reason: 'manual',
+                volumes: observedVolumes.volumes.map(volume => ({ name: volume.name, disposition: 'keep' })) });
+            expect(teardown).toMatchObject({ ok: true, result: { ok: true, state: 'succeeded' } });
+            const beforeUnlink = await readEnvironment();
+            const unlinked = await invoke('deployments.targets.unlink', { serverId: home.serverId,
+                environmentId: environment.environmentId, expectedRevision: beforeUnlink.environment.revision,
+                targetLinkId: beforeUnlink.target.id, expectedTargetLinkRevision: beforeUnlink.target.revision,
+                requestKey: randomUUID(), detachKeepRunning: true });
+            expect(unlinked).toMatchObject({ ok: true, result: { ok: true } });
+            const beforeDeleteResult = await invoke('deployments.environments.get', { serverId: home.serverId,
+                environmentId: environment.environmentId });
+            if (!beforeDeleteResult.ok) throw new Error(`Delete preparation failed: ${beforeDeleteResult.errorCode}`);
+            const beforeDelete = DeploymentEnvironmentGetResultV1Schema.parse(beforeDeleteResult.result);
+            if (!beforeDelete.ok) throw new Error('Delete preparation requires the current Environment');
+            const deleted = await invoke('deployments.environments.delete', { serverId: home.serverId,
+                environmentId: environment.environmentId, expectedRevision: beforeDelete.environment.revision,
+                requestKey: randomUUID(), detachKeepRunning: true });
+            expect(deleted).toMatchObject({ ok: true, result: { ok: true } });
+            expect.soft([...DEPLOYMENT_ACTION_IDS_V1, MACHINE_SERVICE_ADOPT_ACTION_ID]
+                .filter(actionId => !coveredDeploymentRoots.has(actionId)), 'roots missing a successful real-flow coverage scenario').toEqual([]);
         } finally {
             try { for (const dispose of cleanup.reverse()) await dispose(); }
             finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }

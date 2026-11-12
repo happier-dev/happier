@@ -48,6 +48,7 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
   z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
     newProject: z.optional(DeploymentNewProjectV1Schema), machineId: id,
+    workspace: z.optional(z.strictObject({ kind: z.literal('workspace-ref'), id })),
     deploy: z.optional(z.strictObject({ requestKey: id })),
     environment: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }),
@@ -145,8 +146,12 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
   }
   if (actionId === 'deployments.templates.instantiate') {
     const environment = readRecord(value.environment);
+    const destination = readRecord(value.destination);
     const deploy = readDeploymentTemplateDeployIntentV1(value);
     return DeploymentPreparationAdmissionV1Schema.parse({ operation: 'template', mode: value.mode,
+      ...(destination.kind === 'repositoryPullRequest' ? { workspace: {
+        kind: readRecord(destination.workspace).kind, id: readRecord(destination.workspace).id,
+      } } : {}),
       ...(deploy === undefined ? {} : { deploy }),
       ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId } }), machineId: value.machineId, target: value.target,
       environment: environment.kind === 'existing' ? environment : {

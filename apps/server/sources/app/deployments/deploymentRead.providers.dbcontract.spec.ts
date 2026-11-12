@@ -22,6 +22,9 @@ import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteSer
 import { readArtifactForCaller } from '@/app/artifacts/artifactAccessService';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { projectDeploymentNativeAdmissionV1, type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { readAdmittedDeploymentScopeInTx } from './deploymentPreparationAuthorization';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine deployment list on native providers', () => {
@@ -670,6 +673,66 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ ok: true, items: [{ id: filteredIds[0] }], nextCursor: filteredIds[0] });
         } finally { await app.close(); }
+    });
+
+    it('opens one demanded prune-history Artifact through the selected target lineage on the native provider', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Prune scope', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: randomUUID() } });
+        const artifact = async () => db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
+            headerVersion: 1, bodyVersion: 1, header: new Uint8Array(), body: new Uint8Array(),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
+        const environmentContent = await artifact();
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machine.id, contentArtifactId: environmentContent.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id, role: 'runtime', sourceKind: 'host',
+            hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured', createdByAccountId: owner.id,
+            contentArtifactId: environmentContent.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const predecessor = await db.deploymentTargetLink.create({ data: { ...link, id: randomUUID() } });
+        const unrelated = await db.deploymentTargetLink.create({ data: { ...link, id: randomUUID() } });
+        await db.deploymentTargetLink.update({ where: { id: link.id }, data: { predecessorTargetLinkId: predecessor.id } });
+        const contents = await Promise.all([artifact(), artifact()]);
+        const receipts = await Promise.all([predecessor, unrelated].map((target, index) => db.deployment.create({ data: {
+            environmentId: environment.id, targetLinkId: target.id, operation: 'deploy', state: 'failed',
+            requestKey: randomUUID(), actionOperationId: randomUUID(), requestedByAccountId: owner.id,
+            contentArtifactId: contents[index]!.id, contentHeaderVersion: 1, contentBodyVersion: 1 } })));
+        const actionId = 'deployments.backups.prune';
+        const native = projectDeploymentNativeAdmissionV1(actionId, buildDeploymentBackupActionInputV1(actionId, {
+            serverId, environmentId: environment.id, targetLinkId: link.id, deploymentId: receipts[0]!.id,
+            machineId: machine.id, installationId: machine.installationId!, expectedRevision: environment.revision,
+            configRevision: 1, retention: { kind: 'keepEverything' } }));
+        // Scope fixtures contain only fields this owner consumes; signature/mint behavior is composed separately.
+        const binding = { actionId, serverIdentityId: serverId, accountId: owner.id, deploymentNativeAdmission: native,
+            environmentId: environment.id } as ExternalActionExecutionAuthorizationBindingV1;
+        for (const [index, content] of contents.entries()) {
+            const requests: { action: string; model?: string; args: unknown }[] = [];
+            const stop = observePrismaRequests(db, { before: request => { requests.push(request); } });
+            const scope = await inReadSnapshot(tx => readAdmittedDeploymentScopeInTx(tx, binding,
+                undefined, undefined, undefined, { artifactId: content.id })).finally(stop);
+            expect(scope?.artifactIds.has(content.id)).toBe(index === 0);
+            expect(scope?.receiptTargets).toEqual(expect.arrayContaining([
+                { environmentId: environment.id, targetLinkId: link.id }, { environmentId: environment.id, targetLinkId: predecessor.id }]));
+            const historyReads = requests.filter(request => request.model === 'Deployment' && request.action === 'findMany');
+            expect(historyReads, 'one demanded document query, never a receipt inventory crawl').toHaveLength(1);
+            expect(historyReads[0]!.args).toMatchObject({ where: { environmentId: environment.id,
+                targetLinkId: { in: expect.arrayContaining([link.id, predecessor.id]) }, contentArtifactId: { in: [content.id] } } });
+            expect(requests.filter(request => request.model === 'Artifact'), 'scope never opens Artifact bodies').toEqual([]);
+        }
+        if (provider === 'postgres') {
+            const plan = await db.$transaction(async tx => {
+                await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+                return tx.$queryRawUnsafe<unknown[]>(
+                    'EXPLAIN (FORMAT JSON) SELECT "contentArtifactId" FROM "Deployment" WHERE "environmentId" = $1 AND "targetLinkId" IN ($2, $3) AND "contentArtifactId" = $4',
+                    environment.id, link.id, predecessor.id, contents[0]!.id);
+            });
+            const indexedPlan = JSON.stringify(plan);
+            expect(indexedPlan).toContain('"Index Cond"');
+            expect(indexedPlan).not.toContain('"Node Type":"Seq Scan"');
+        }
     });
 
     it('filters membership before paging and preserves current Source admission without opening content', async () => {

@@ -472,6 +472,8 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
             return { Id: id, Name: '/' + project + '-' + service + '-' + (replica + 1), Image: image.nativeId,
             Config: { Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service,
                 'com.docker.compose.project.working_dir': args[args.indexOf('--project-directory') + 1],
+                'com.docker.compose.project.config_files': files.map(file => file.path).join(','),
+                'com.docker.compose.oneoff': 'False',
                 'com.docker.compose.container-number': String(replica+1) },
                 Env: Object.entries(definition.environment || {}).map(([name, value]) => name + '=' + value),
                 StopTimeout: definition.stop_grace_period === undefined ? undefined
@@ -562,8 +564,13 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const image = args.find(arg => imageFor(arg));
     if (!image) throw new Error('fixture_missing_operation_image');
     const password = mounts.find(mount => mount.type === 'bind' && mount.target === environment.RESTIC_PASSWORD_FILE);
-    const archiveTool = args[args.indexOf('--entrypoint') + 1] === '/bin/tar';
-    if (!password && !archiveTool) throw new Error('fixture_missing_operation_credentials');
+    const entrypoint = args[args.indexOf('--entrypoint') + 1];
+    const archiveTool = entrypoint === '/bin/tar';
+    const isolatedHelper = !args.includes('--repo') && args.includes('--read-only') && args[args.indexOf('--network') + 1] === 'none';
+    const sqliteHelper = isolatedHelper && imageFor(image).image.service === 'sqlite' && args.includes('-batch') && args.includes('-bail');
+    const stageReader = isolatedHelper && entrypoint === '/bin/cat' && imageFor(image).image.service === 'restic'
+        && mounts.some(mount => mount.type === 'volume' && mount.target === '/happier/staging');
+    if (!password && !archiveTool && !sqliteHelper && !stageReader) throw new Error('fixture_missing_operation_credentials');
     const output = { passwordReadable: password ? fs.readFileSync(password.source, 'utf8').startsWith('repository-') : false,
         accessPresent: environment.AWS_ACCESS_KEY_ID?.startsWith('access-') === true,
         secretPresent: environment.AWS_SECRET_ACCESS_KEY?.startsWith('secret-') === true,
@@ -591,6 +598,11 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const watcher = fs.watch(__dirname, (_, file) => { if (String(file) === 'docker-state.json') release(); });
         release();
     } else finish();
+} else if (args[0] === 'restart') {
+    const selected = state.containers.filter(row => args.slice(1).includes(row.Id));
+    if (!selected.length || selected.length !== args.length - 1) throw new Error('fixture_missing_restart_container');
+    for (const row of selected) row.State.Status = 'running';
+    save();
 } else if (args[0] === 'start') {
     if (!args.includes('--attach') || !args.includes('--interactive')) throw new Error('fixture_unattached_operation_start');
     const row = state.containers.find(row => row.Id === args.at(-1));

@@ -307,7 +307,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         // The Environment row, receipt CAS and Artifact owner serialize this write;
         // an earlier Serializable snapshot would conflict with unrelated Account cursor publication.
         const result = await inTx(tx => transitionDeploymentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'ReadCommitted' });
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'ReadCommitted' });
         return reply.code(status(result)).send(result);
     });
     app.get('/v1/deployments/environments/:environmentId/deployments', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

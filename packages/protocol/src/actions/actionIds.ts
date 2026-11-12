@@ -34,6 +34,10 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
 }
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
+/** Prepare's existing-Session handoff is the canonical message Action. */
+export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, effectActionId: string): boolean {
+  return rootActionId === DEPLOYMENT_PREPARE_ACTION_ID_V1 && effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
+}
 export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
 
 /** Native Service Stop consumes only its exact handle; Ask stays with the original Account. */
@@ -68,7 +72,7 @@ export {
   BROWSER_PROFILE_ACTION_IDS, BROWSER_PROFILE_MUTATION_ACTION_IDS, isBrowserProfileActionIdV1,
 } from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DEPLOYMENT_ACTION_IDS_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './specs/machineConnectionActionIdsV1.js';

@@ -7,14 +7,18 @@ import {
   encodePlainMachineStoredContent,
   encodePlainArtifactStoredContent,
   ArtifactJsonCreateHttpInputV1Schema,
+  DeploymentEnvironmentCreateResultV1Schema,
 } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentContentArtifactIdV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createDeploymentEnvironmentContentArtifactIdV1, projectDeploymentPreparationAdmissionV1,
+  EXTERNAL_ACTION_REVIEWED_CHILD_HEADER, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
   computeExternalActionRequestEnvelopeDigestV1,
   encodeExternalActionResolvedTargetV1,
   signExternalActionMachineRequestV1,
 } from '@happier-dev/protocol/actions';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import {
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
@@ -27,10 +31,16 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
+import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { readDeploymentCreateHttpPurposeInTx } from '@/app/deployments/deploymentPreparationAuthorization';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import {
   createLightSqliteHarness,
   type LightSqliteHarness,
@@ -154,11 +164,13 @@ describe('adopt create preparation admission', () => {
       method: string,
       path: string,
       body?: unknown,
+      reviewedChild?: ReviewedActionChildHttpProofV1,
     ) => ({
       [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
       [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
       [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]:
         encodeExternalActionResolvedTargetV1(root.binding.target),
+      ...(reviewedChild ? { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild) } : {}),
       [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]:
         signExternalActionMachineRequestV1({
           authorizationToken: root.token,
@@ -169,6 +181,7 @@ describe('adopt create preparation admission', () => {
           method,
           path,
           ...(body === undefined ? {} : { body }),
+          ...(reviewedChild ? { reviewedChild } : {}),
           privateKey: key.secretKey,
         }),
     });
@@ -358,6 +371,126 @@ describe('adopt create preparation admission', () => {
       const otherRead = await read(other);
       expect(otherRead.statusCode, otherRead.body).toBe(401);
       expect(otherRead.json()).toMatchObject({ authorizationRefusal: 'deployment_preparation' });
+    }, { authentication: 'real' });
+  });
+
+  it('admits the adopted host allocation lookup and refuses another Machine or Home (J52)', async () => {
+    const f = await fixture();
+    const root = await f.mint('machines.services.adopt', f.adoptInput(f.destination.id));
+    const path = managedMachineActionEndpointPathV1('machines.managed.list');
+    const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.stranger.id,
+      metadata: '{}', installationId: crypto.randomUUID() } });
+    await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+      const send = (body: Record<string, unknown>, effect = 'machines.managed.list', signedRoot = root) => app.inject({
+        method: 'POST', url: path, payload: body,
+        headers: f.headers(signedRoot, effect, 'POST', path, body),
+      });
+      const body = { homeId: serverId, enrolledMachineId: f.machine.id };
+      const own = await send(body);
+      expect(own.statusCode, own.body).toBe(200);
+      expect(own.json()).toMatchObject({ machines: [] });
+      for (const invalid of [{ ...body, enrolledMachineId: other.id }, { ...body, homeId: 'another-home' }, { homeId: serverId }]) {
+        const denied = await send(invalid);
+        expect(denied.statusCode, denied.body).toBe(401);
+      }
+      expect((await send(body, 'machines.managed.get')).statusCode).toBe(401);
+      const unwatch = await f.mint('machines.services.unwatch', {
+        serverId, machineId: f.machine.id, serviceId: 'compose:web',
+      });
+      expect((await send(body, 'machines.managed.list', unwatch)).statusCode).toBe(401);
+    }, { authentication: 'real' });
+  });
+
+  it('spends adopt preparation on its exact reviewed Create and conditional bindings children (J52)', async () => {
+    const f = await fixture();
+    const bindings = [{ purpose: 'variable' as const, name: 'PUBLIC_URL', phase: 'runtime' as const,
+      source: { kind: 'value' as const, value: 'https://example.test' } }];
+    const input = { ...f.adoptInput(f.destination.id), bindings };
+    const root = await f.mint('machines.services.adopt', input);
+    const content = await createArtifact({ actorUserId: f.actor.id, artifactId: crypto.randomUUID(),
+      kind: 'v1:other:deployment-environment.v1',
+      header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Adopted' })),
+      body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({
+        body: JSON.stringify({ ...createDeploymentEnvironmentDetailV1().content, bindings: [] }),
+      })),
+      dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+    if (!content.ok) throw new Error(content.error);
+    const linkContent = await createArtifact({ actorUserId: f.actor.id, artifactId: crypto.randomUUID(),
+      kind: 'v1:other:deployment-target-link.v1',
+      header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Adopted' })),
+      body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+      dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+    if (!linkContent.ok) throw new Error(linkContent.error);
+    const prepared = { serverId, projectSourceId: f.destination.id, requestKey: input.requestKey,
+      protection: input.destination.protection, purpose: input.destination.purpose, deployerMode: input.destination.deployerMode,
+      controllerMachineId: f.machine.id, contentArtifactId: content.artifact.id,
+      contentHeaderVersion: content.artifact.headerVersion, contentBodyVersion: content.artifact.bodyVersion,
+      firstTargetLink: { machines: [{ machineId: f.machine.id, installationId: f.machine.installationId! }],
+        contentArtifactId: linkContent.artifact.id,
+        contentHeaderVersion: linkContent.artifact.headerVersion, contentBodyVersion: linkContent.artifact.bodyVersion } };
+    const createChild = { actionId: 'deployments.environments.create', role: 'adopt-environment',
+      inputDigest: computeActionInputApprovalDigestV1('deployments.environments.create', prepared) };
+    const path = '/v1/deployments/environments';
+    let createdEnvironment: Extract<ReturnType<typeof DeploymentEnvironmentCreateResultV1Schema.parse>, { ok: true }> | undefined;
+    await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+      const send = (body: typeof prepared, child?: ReviewedActionChildHttpProofV1, effect = 'deployments.environments.create') => app.inject({
+        method: 'POST', url: path, payload: body,
+        headers: f.headers(root, effect, 'POST', path, body, child),
+      });
+      // Only the exact reviewed Create child may allocate the Environment under this root.
+      expect((await send(prepared, undefined, 'machines.services.adopt')).statusCode).toBe(401);
+      const created = await send(prepared, createChild);
+      expect.soft(created.statusCode, created.body).toBe(200);
+      if (created.statusCode === 200) {
+        const parsed = DeploymentEnvironmentCreateResultV1Schema.parse(created.json());
+        if (parsed.ok) createdEnvironment = parsed;
+      }
+      const changed = await send({ ...prepared, requestKey: crypto.randomUUID() }, createChild);
+      expect(changed.statusCode, changed.body).toBe(401);
+      const wrongRole = await send(prepared, { ...createChild, role: 'other-create' });
+      expect(wrongRole.statusCode, wrongRole.body).toBe(401);
+    }, { authentication: 'real' });
+
+    // Continue from the allocation actually persisted by the signed HTTP child.
+    const environment = createdEnvironment;
+    if (!environment) throw new Error('Expected signed reviewed Create to allocate the Environment');
+    const authored = { serverId, environmentId: environment.environmentId,
+      expectedRevision: environment.revision, set: bindings, remove: [] };
+    const bindingChild = { actionId: 'deployments.bindings.set', role: 'adopt-bindings',
+      inputDigest: computeActionInputApprovalDigestV1('deployments.bindings.set', authored) };
+    const body = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: environment.environmentId,
+      expectedRevision: environment.revision, contentArtifactId: content.artifact.id,
+      contentHeaderVersion: content.artifact.headerVersion, contentBodyVersion: content.artifact.bodyVersion,
+      referencedSavedSecretRevisions: [], grants: [] });
+    const bindingsPath = `/v1/deployments/environments/${environment.environmentId}/bindings`;
+    const purpose = (payload: typeof body, reviewedChild: ReviewedActionChildHttpProofV1 = bindingChild) => inTx(tx =>
+      readDeploymentCreateHttpPurposeInTx(tx, root.binding, 'deployments.bindings.set', {
+        method: 'POST', path: bindingsPath, body: payload, routeInput: payload, reviewedChild,
+      }));
+    expect.soft(await purpose(body)).toMatchObject({ child: { environmentId: environment.environmentId } });
+    expect(await purpose({ ...body, environmentId: crypto.randomUUID() })).toBeNull();
+    expect(await purpose(body, { ...bindingChild, role: 'other-bindings' })).toBeNull();
+    const foreignContent = await createArtifact({ actorUserId: f.actor.id, artifactId: crypto.randomUUID(),
+      kind: 'v1:other:deployment-environment.v1',
+      header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Other Environment' })),
+      body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({
+        body: JSON.stringify({ ...createDeploymentEnvironmentDetailV1().content, bindings: [] }),
+      })), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+    if (!foreignContent.ok) throw new Error(foreignContent.error);
+    const { firstTargetLink: _firstTargetLink, ...foreignPrepared } = prepared;
+    const foreignEnvironment = await inTx(tx => createDeploymentEnvironmentInTx(tx, f.actor.id,
+      { ...foreignPrepared, requestKey: crypto.randomUUID(), contentArtifactId: foreignContent.artifact.id,
+        contentHeaderVersion: foreignContent.artifact.headerVersion, contentBodyVersion: foreignContent.artifact.bodyVersion }));
+    if (!foreignEnvironment.ok) throw new Error(foreignEnvironment.error);
+    await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+      const read = (path: string) => app.inject({ method: 'GET', url: path,
+        headers: f.headers(root, 'deployments.bindings.set', 'GET', path, undefined, bindingChild) });
+      const own = await read(`/v1/deployments/environments/${environment.environmentId}?serverId=${serverId}`);
+      expect.soft(own.statusCode, own.body).toBe(200);
+      const artifact = await read(`/v1/artifacts/${content.artifact.id}`);
+      expect.soft(artifact.statusCode, artifact.body).toBe(200);
+      const foreign = await read(`/v1/deployments/environments/${foreignEnvironment.environmentId}?serverId=${serverId}`);
+      expect(foreign.statusCode, foreign.body).toBe(401);
     }, { authentication: 'real' });
   });
 
