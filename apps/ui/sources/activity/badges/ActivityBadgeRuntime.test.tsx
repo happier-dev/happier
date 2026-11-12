@@ -189,9 +189,13 @@ vi.mock('@/hooks/inbox/useChangelog', () => ({
     useChangelog: () => ({ hasUnread: changelogUnreadValue }),
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({ importOriginal, overrides: {
     isDesktopHost: () => isDesktopHostValue,
-}));
+    desktopHostKind: () => isDesktopHostValue ? 'tauri' : null,
+    } });
+});
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
     useActivityAttentionSource: () => {

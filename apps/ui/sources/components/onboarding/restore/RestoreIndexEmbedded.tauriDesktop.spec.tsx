@@ -16,9 +16,13 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({ importOriginal, overrides: {
     isDesktopHost: () => true,
-}));
+    desktopHostKind: () => 'tauri',
+    } });
+});
 
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,

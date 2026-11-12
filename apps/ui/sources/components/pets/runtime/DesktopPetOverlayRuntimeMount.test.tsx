@@ -100,11 +100,15 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({ importOriginal, overrides: {
     isDesktopHost: () => platformState.tauri,
+    desktopHostKind: () => platformState.tauri ? 'tauri' : null,
     useDesktopHostRoleAvailability: () => platformState.pending ? null : platformState.tauri
         ? { kind: 'available' } : { kind: 'unavailable', reason: 'electron_overlay_unavailable' },
-}));
+    } });
+});
 
 vi.mock('@/components/pets/desktop/runtime/DesktopPetOverlayRuntime', () => ({
     DesktopPetOverlayRuntime: (props: Record<string, unknown>) => {
