@@ -165,7 +165,7 @@ beforeEach(async () => {
         approvalWaivedSurfaces: Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(id => [id, ['ui', 'agent']])),
     }) };
     const machineRows = MACHINES.map(machine => ({
-        ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }),
+        ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine: { ...machine, activeAt: Date.now() } }),
         ...(machine.id === 'machine-1' ? { installationPublicKey: readActions[0]!.machine.installationPublicKey } : {}),
         metadata: encodePlainMachineStoredContent(machine.metadata),
     }));
@@ -198,6 +198,12 @@ beforeEach(async () => {
     // Hydrate through Sync so the plain Machine content mode is available to
     // active RPC as well as scoped RPC; a display fixture has no storage-mode authority.
     await (await import('@/sync/sync')).sync.refreshMachines();
+    // Display the full rows admitted by Sync, including their canonical live-presence slices.
+    for (let index = 0; index < MACHINES.length; index++) {
+        const admitted = storage.getState().machines[MACHINES[index]!.id];
+        if (!admitted) throw new Error('Expected admitted Machine fixture');
+        MACHINES[index] = admitted;
+    }
     for (const machine of MACHINES) {
         machine.activeAt = Date.now();
         recordMachineRequestSucceeded({ ...scope, machineId: machine.id });
@@ -255,7 +261,7 @@ describe('workflow project target control', () => {
         const onChange = vi.fn();
         const screen = await renderControl({ machines, target: null, onChange });
         await screen.pressByTestIdAsync('workflow-editor-machine-option:machine-2');
-        await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/member/workspace' }));
+        await vi.waitFor(async () => expect(onChange).toHaveBeenCalledWith({ machineId: 'machine-2', directory: '/member/workspace' }));
     });
 
     it('opens placement and edits its directory through mounted commands using the same project adapter', async () => {
@@ -283,9 +289,10 @@ describe('workflow project target control', () => {
                 return selected!;
             });
             await act(async () => {
-                expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id,
+                const outcome = await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id,
                     ...(input === undefined ? {} : { input }) }, { surface: 'agent', authority: 'account_automation',
-                    expectedAccountId: 'account-a', actionRequestId: `trigger-placement-agent-${++invocationNumber}` })).toMatchObject({ ok: true });
+                    expectedAccountId: 'account-a', actionRequestId: `trigger-placement-agent-${++invocationNumber}` });
+                expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
             });
         };
         expect(screen.findByTestId('coach-placement-where-popover')).toBeNull();

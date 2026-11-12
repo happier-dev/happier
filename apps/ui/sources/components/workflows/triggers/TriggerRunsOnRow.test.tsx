@@ -22,11 +22,14 @@ const machines = ['studio', 'linux'].map((id) => createMachineFixture({ id, acti
 beforeEach(async () => {
     home = await createPlainArtifactHomeFixture('https://triggers.test');
     storage.setState({
-        machines: Object.fromEntries(machines.map((machine) => [machine.id, machine])),
-        machineListByServerId: { [home.home.id]: machines },
+        machines: {},
+        machineListByServerId: { [home.home.id]: [] },
         machineListStatusByServerId: { [home.home.id]: 'idle' },
         authoringMemory: { ...authoringMemoryDefaults, recentMachinePaths: [{ machineId: 'linux', path: '/repo/service' }] },
     });
+    // Full Machine ingress admits the presence answer before picker subscriptions observe these rows.
+    storage.getState().applyMachines(machines.map(machine => ({ ...machine, activeAt: Date.now() })), true,
+        { sourceServerId: home.home.id, sourceAccountId: 'artifact-account' });
 });
 afterEach(async () => {
     await standardCleanup();
@@ -41,7 +44,8 @@ describe('trigger Runs on', () => {
             role: 'use', resourceMode: 'plain', accessState: 'ready',
         } });
         if (!home) throw new Error('Expected a bound Home');
-        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [home.home.id]: [machine] } });
+        storage.getState().applyMachines([machine], true,
+            { sourceServerId: home.home.id, sourceAccountId: 'artifact-account' });
         const screen = await renderScreen(<TriggerRunsOnRow testID="shared-runs-on" target={{ machineId: machine.id, directory: '/repo' }}
             onChange={vi.fn()} description="Where this trigger runs" />);
         expect(screen.getTextContent()).toContain(t('machineRequester.fullSignIn', { machine: 'tester.local', retention: 'trigger' }));
