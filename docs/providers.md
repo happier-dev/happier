@@ -1201,14 +1201,24 @@ Native inventories and generated single-model overlays do not establish account
 entitlement. Frozen native model overlays use the same shared next-prompt
 replacement path; their plugins do not own a separate restart controller.
 
-Pi and OpenCode's qualified-purpose rows own native Connected Account delivery in
-0.3 development source. They consume producer-exported service identities and
-service materializations; no generic Provider-to-account source or receiver-side
-credential decoder is involved. Kimi Code key delivery preserves the selected
-region, and Vertex delivery preserves opaque service-account JSON in a private
-file with its project and location. GitHub grants occupy the native Copilot OAuth
-slot so the native driver owns the inference-token exchange and seat refusal.
-These routes remain separate choices from an optional gateway Provider connection.
+Pi and OpenCode's qualified-purpose rows own Connected Account delivery in
+0.3 development source. A purpose may declare `managedProviderEndpoint` with an
+exact Provider implementation identity and upstream purpose. Its optional
+`modelIdPrefix` maps an Agent native namespace to the exact Provider catalog id;
+it does not grant models absent from that catalog. Shared Provider
+launch admission carries the selected Account or resolved Pool member into the
+existing managed endpoint acquisition and Agent Provider adapter for Sessions
+and finite Runs. It does not create a saved Provider connection. Pi and OpenCode's
+Muse purpose uses CLIProxyAPI's `meta-upstream` route; CLIProxyAPI alone supplies
+the Muse client identity. The adopted source is omitted from native credential
+materialization and follows the existing managed endpoint custody lifecycle.
+
+Other native purposes consume producer-exported service identities and service
+materializations. Kimi Code key delivery preserves the selected region, and
+Vertex delivery preserves opaque service-account JSON in a private file with its
+project and location. GitHub grants occupy the native Copilot OAuth slot so the
+native driver owns the inference-token exchange and seat refusal. An explicitly
+selected gateway Provider connection remains a separate choice.
 
 OpenCode's native model inventory likewise does not establish ChatGPT account
 entitlement. In 0.3 development, its native route decoder and shared catalog

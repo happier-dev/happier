@@ -4772,6 +4772,24 @@ contracts, not released availability or mixed-version runtime certification.
 
 ### Encrypted socket RPC binding (v0.3 development)
 
+Unreleased 0.3 `scm.workEvidence.read` carries one Machine's Session/workspace/turn
+set in one encrypted request. Its public outer selector contains only Session
+ids. Home uses the same admission owner as singleton SCM evidence reads, once
+per unique Session, and replaces that selector with individual `session.write`
+proofs or typed refusals. The daemon accepts that batch stamp only through its
+authenticated Home ingress and checks each Session through `authorizeWorkSession`.
+A refused or unlisted Session returns no witnesses while admitted siblings
+continue. Native discovery is shared by resolved repository within the read;
+Session/turn membership still scopes each witness. Existing singleton methods
+keep their exact Session proof contract.
+
+Matching Protocol, Home, CLI daemon and UI/native source must reload together.
+An older daemon without this distinct method returns method unavailable; clients
+do not fall back to per-Session evidence fan-out. This direct development cut adds
+no persistence migration, wire epoch, capability negotiation, retry, timeout or
+Session-count limit. The shared Usage collector and its CLI/UI adapters consume
+the batch; other many-Session SCM evidence readers use the same dispatcher.
+
 E2EE socket RPC uses the shared codec's V2 plaintext envelopes: requests bind
 the complete target-prefixed method, caller-generated 128-bit call id and request
 direction; responses bind that call id and response direction. Unbound encrypted
@@ -7989,6 +8007,23 @@ paths, has neither this native launcher schema nor the Move contract; no
 predecessor adapter is introduced.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Connected Account purpose declarations add optional
+`managedProviderEndpoint`, a closed pair of exact Provider contribution identity
+and upstream purpose, with an optional native `modelIdPrefix` mapping checked
+against the exact Provider catalog. Omission retains native delivery. The field is routing
+authority, not an ignorable hint: shared Provider launch admission resolves the
+selected binding through the declared managed endpoint before native launch.
+The live Agent Provider binding source also accepts a closed `connected_account`
+variant identifying the admitted Agent purpose and exact selected Account;
+resolved Pool intent and credential acquisition remain with their existing owners.
+The SDK projects the canonical purpose type rather than duplicating its schema.
+Matching Protocol, SDK, CLI host and declaring plugins reload together; earlier
+strict development readers reject these additions. This unpublished direct cut
+adds no wire epoch, capability, saved connection or persistence migration. The
+inspected `../0.2` frontier `b825a99dfedcb68e223155a1ba0be84babe9e2d0`
+has no Connected Account purpose declaration module at this path, so no
+predecessor adapter is introduced.
 
 Unreleased 0.3 plugin Session input sources and durable `pluginSession`
 provenance accept optional `displayNameSnapshot`, a descriptive source label
