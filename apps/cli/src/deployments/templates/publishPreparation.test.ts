@@ -11,6 +11,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -74,7 +75,12 @@ it.each(['happier-catalog', 'coolify-templates'] as const)('prepares an exact %s
             ok: true, projectSourceId: 'project', sourceRevision: 2, revision: 0, content: null } };
         throw new Error('Unexpected Project transport');
     });
-    vi.spyOn(axios, 'post').mockImplementation(async url => { mutations.push(String(url)); throw new Error('Preparation may not write'); });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
+        if (availability !== undefined) return { status: 200, data: availability };
+        mutations.push(String(url));
+        throw new Error('Preparation may not write');
+    });
     const deps = createDaemonDeploymentActionDeps({
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
         credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
