@@ -1,7 +1,7 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from './actionSpecs.js';
 import { expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRequestV1, verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1, verifyExternalActionMachineRpcRequestV1 } from './externalActionExecutionAuthorization.js';
+import { computeExternalActionRequestEnvelopeDigestV1, readExternalActionBindingAuthority, signExternalActionMachineRequestV1, verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1, verifyExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1, verifyExternalActionMachineRpcRequestV1 } from './externalActionExecutionAuthorization.js';
 import { computeExternalActionSocketRpcRequestDigestV1 } from './externalActionExecutionAuthorization.js';
 import { encodeDeploymentChildExecutionV1, decodeDeploymentChildExecutionV1, projectDeploymentChildExecutionProofV1 } from './externalActionExecutionAuthorization.js';
 import { encodeReviewedActionChildHttpProofV1, decodeReviewedActionChildHttpProofV1 } from './externalActionExecutionAuthorization.js';
@@ -22,6 +22,16 @@ import { DeploymentChildExecutionProofV1Schema } from '../deployments/deployment
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
+
+it.each([
+  ['account', { authentication: { kind: 'account', tokenEpoch: 1 } }, 'present_user'],
+  ['terminal', { authentication: { kind: 'terminal', tokenEpoch: 1 } }, 'account_automation'],
+  ['api_token', { principalId: 'principal', credentialId: 'credential', grant: {} }, 'account_automation'],
+  ['account native spawn child', { authentication: { kind: 'account', tokenEpoch: 1 }, nativeCredentialSpawnChild: { requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43) } }, 'account_automation'],
+] as const)('projects %s binding authority through the canonical owner', (_kind, fields, expected) => {
+  const binding = fields as unknown as ExternalActionExecutionAuthorizationBindingV1;
+  expect(readExternalActionBindingAuthority(binding)).toBe(expected);
+});
 
 it('binds private preview template content while preserving the reviewed Environment metadata', () => {
   const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
@@ -158,7 +168,7 @@ it.each([
   const target = { kind: 'machine', machineId: 'runtime' } as const;
   const input = { serverId: 'srv_restore', environmentId: 'environment', machineId: target.machineId,
     installationId: 'installation', targetLinkId: 'runtime-link', deploymentId: 'capture-receipt',
-    restoreBackupId: 'backup', expectedRevision: 3, mode,
+    source: { kind: 'repository' as const, snapshotId: 'backup' }, expectedRevision: 3, mode,
     ...(mode === 'confirm' ? { prepareOperationId: 'prepared-restore' } : {}) };
   const envelope = accountMode === 'plain' ? { v: 1, requestId: 'restore-root', target, input } as const
     : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: 'srv_restore', accountId: 'owner', actionId,
@@ -175,7 +185,7 @@ it.each([
   expect(isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
   expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, environmentId: 'foreign-environment' },
     { actionId, machineId: target.machineId, envelope })).toBe(false);
-  const differentBackup = projectDeploymentNativeAdmissionV1(actionId, { ...input, restoreBackupId: 'other-backup' });
+  const differentBackup = projectDeploymentNativeAdmissionV1(actionId, { ...input, source: { ...input.source, snapshotId: 'other-backup' } });
   expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, deploymentNativeAdmission: differentBackup },
     { actionId, machineId: target.machineId, envelope })).toBe(false);
   if (mode === 'confirm') {
@@ -205,6 +215,34 @@ it.each(['plain', 'e2ee'] as const)('binds native teardown to its explicit Envir
   expect(isExternalActionAuthorizationBoundToEnvelope(binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
   expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, environmentId: 'another-environment' },
     { actionId, machineId: target.machineId, envelope })).toBe(false);
+});
+
+it.each(['plain', 'e2ee'] as const)('leaves an ordinary qualified Action outside deployment read admission (%s)', mode => {
+  const actionId = 'action.invoke';
+  const target = { kind: 'machine', machineId: 'receiver' } as const;
+  const input = { action: { pluginId: 'acme.reviewed-picker', localId: 'assign' }, input: { issue: 'ISSUE-42', assignee: 'alice' } };
+  const envelope = mode === 'plain' ? { v: 1, requestId: 'ordinary-root', target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: 'srv_binding', accountId: 'actor', actionId, requestId: 'ordinary-root', target,
+        authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  expect(projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId, envelope })).toBeUndefined();
+});
+
+it('retains required deployment read metadata and refuses a mismatched real read admission', () => {
+  const target = { kind: 'machine', machineId: 'receiver' } as const;
+  const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+    binding: { serverIdentityId: 'srv_binding', accountId: 'actor', actionId: 'deployments.health.read', requestId: 'read-root', target,
+      authentication: { kind: 'account', tokenEpoch: 1 } },
+    input: { serverId: 'srv_binding', environmentId: 'environment', deploymentId: 'receipt', targetLinkId: 'runtime',
+      machineId: target.machineId, installationId: 'installation', service: { kind: 'deployment', machineId: target.machineId,
+        environmentId: 'environment', environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } },
+    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  expect(projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: 'deployments.health.read', envelope }))
+    .toMatchObject({ actionId: 'deployments.health.read' });
+  expect(() => projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: 'action.invoke', envelope })).toThrow(TypeError);
+  expect(() => projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: 'deployments.health.read',
+    envelope: { ...envelope, deploymentReadAdmission: undefined } })).toThrow();
 });
 
 it.each(['deployments.prepare', 'deployments.health.read'] as const)(

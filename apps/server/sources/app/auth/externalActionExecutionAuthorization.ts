@@ -60,7 +60,7 @@ import { isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativ
 import { getActionSpec, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
-    isMachineDeploymentEnvironmentAccessActionIdV1, SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+    isMachineDeploymentEnvironmentAccessActionIdV1, SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SESSION_ATTENTION_SET_ACTION_ID } from '@happier-dev/protocol/sessions/organization/attentionActionIdsV1';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -2491,12 +2491,22 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     proof: ExternalActionExecutionRequestProof): Promise<Pick<VerifiedExternalActionExecutionRequest,
         'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead'> | false> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (admission?.actionId !== 'deployments.data.query') return false;
+    if (admission?.actionId !== 'deployments.data.query' && admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1) return false;
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
         if (!secret.success || secret.data.materialization.kind !== 'dataRole') return false;
         const body = secret.data, materialization = secret.data.materialization;
+        if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+            if (!('targetLinkId' in materialization)) return false;
+            if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
+                || body.targetLinkId !== admission.targetLinkId || materialization.targetLinkId !== admission.targetLinkId
+                || materialization.expectedRevision !== admission.expectedRevision || body.machineId !== verified.binding.machineId
+                || body.installationId !== verified.binding.installationId
+                || (proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body))) return false;
+            return {};
+        }
+        if ('targetLinkId' in materialization) return false;
         return body.serverId === verified.binding.serverIdentityId && body.environmentId === admission.environmentId
             && body.targetLinkId === admission.targetLinkId && body.machineId === admission.machineId
             && body.installationId === admission.installationId && materialization.deploymentId === admission.deploymentId
@@ -2506,9 +2516,12 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     if (verified.signedChildPurpose.sibling.deploymentRead) {
         if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) return false;
         return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
-            ...(verified.effectActionId === 'deployments.receipts.get' ? { deploymentId: admission.deploymentId } : {}),
+            ...(admission.actionId === 'deployments.data.query' && verified.effectActionId === 'deployments.receipts.get'
+                ? { deploymentId: admission.deploymentId } : {}),
             contentCustody: true } } };
     }
+    if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.effectActionId === admission.actionId
+        && await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(db, verified.binding, proof)) return {};
     if (verified.effectActionId !== admission.actionId || !isReadOnlyArtifactHttpPurpose(proof)) return false;
     if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
     const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
@@ -3390,7 +3403,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Restart consumes its native handle, not Environment, receipt or Artifact
         // content. Only transport of the exact admitted root/codec remains.
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuse('deployment_restart_purpose');
-    } else if (verified.binding.actionId === 'deployments.data.query') {
+    } else if (verified.binding.actionId === 'deployments.data.query'
+        || verified.binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {
             const purpose = await readDeploymentDataQueryHttpPurpose(verified, proof);
             if (!purpose) return refuse('deployment_native_read_purpose');

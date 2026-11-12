@@ -25,10 +25,14 @@ import { t } from '@/text';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { readDeploymentActionError } from './deploymentActionOutcome';
 
+type DeploymentDataQuerySheetStatement = DeploymentDataQueryStatementV1 & Readonly<{ database?: string }>;
+
 export type DeploymentDataQuerySheetInput = Readonly<{
   name: string;
   parameterHint: string;
-  run: (statement: DeploymentDataQueryStatementV1) => Promise<DeploymentDataQueryResultV1>;
+  /** Managed query schemas may require an explicit database; native services already own theirs. */
+  database?: Readonly<{ title: string; supportingText?: string }>;
+  run: (statement: DeploymentDataQuerySheetStatement) => Promise<DeploymentDataQueryResultV1>;
   setup?: Readonly<{
     lifetime: ServerAccountScopeLifetime;
     machineId: string;
@@ -59,6 +63,7 @@ function DeploymentDataQuerySheet(props: DeploymentDataQuerySheetInput & CustomM
   const id = 'project-deployments.query';
   const [sql, setSql] = React.useState('');
   const [paramsText, setParamsText] = React.useState('{}');
+  const [database, setDatabase] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<DeploymentDataQueryResultV1 | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -84,7 +89,8 @@ function DeploymentDataQuerySheet(props: DeploymentDataQuerySheetInput & CustomM
     const statement = DeploymentDataQueryStatementV1Schema.safeParse({ sql, params });
     if (!statement.success) { setError('query_parameters_invalid'); return; }
     setBusy(true); setError(null); setResult(null);
-    try { setResult(DeploymentDataQueryResultV1Schema.parse(await props.run(statement.data))); }
+    try { setResult(DeploymentDataQueryResultV1Schema.parse(await props.run({ ...statement.data,
+      ...(props.database ? { database } : {}) }))); }
     catch (failure) { const outcome = readDeploymentActionError(failure); setError(outcome.kind === 'refused' ? outcome.code : 'query_unavailable'); }
     finally { setBusy(false); }
   };
@@ -102,13 +108,17 @@ function DeploymentDataQuerySheet(props: DeploymentDataQuerySheetInput & CustomM
   };
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, testID: `${id}.close`, disabled: busy }}>
     <RoundButton testID={`${id}.run`} title={t('projects.deployments.databaseQuery.run')} size="normal"
-      disabled={busy || sql.trim().length === 0} loading={busy} onPress={() => { void run(); }} />
+      disabled={busy || sql.trim().length === 0 || Boolean(props.database && database.trim().length === 0)} loading={busy} onPress={() => { void run(); }} />
   </ModalCardFooterActions>;
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
   const header = <View style={deploymentSheetStyles.body}>
     <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseQuery.description', { name: props.name })}</Text>
+    {props.database ? <FieldItem label={props.database.title} {...(props.database.supportingText ? { supportingText: props.database.supportingText } : {})}>
+      <FieldTextInput testID={`${id}.database`} value={database} onChangeText={setDatabase} editable={!busy}
+        accessibilityLabel={props.database.title} autoCapitalize="none" />
+    </FieldItem> : null}
     <FieldItem label={t('projects.deployments.databaseQuery.sql')} supportingText={props.parameterHint}>
       <FieldTextInput testID={`${id}.sql`} value={sql} onChangeText={setSql} multiline monospace editable={!busy}
         accessibilityLabel={t('projects.deployments.databaseQuery.sql')} autoCapitalize="none" />
@@ -130,7 +140,7 @@ function DeploymentDataQuerySheet(props: DeploymentDataQuerySheetInput & CustomM
     {busy ? <SurfaceStateCard testID={`${id}.working`} kind="loading" size="line" title={t('projects.deployments.databaseQuery.working')} /> : null}
     {error || refusalCode ? <SurfaceStateCard testID={`${id}.refused`} kind="unavailable" size="line"
       title={t('projects.deployments.databaseQuery.unavailable')} diagnosticCode={error ?? refusalCode}
-      {...(refusalCode === 'read_role_setup_required' || refusalCode === 'read_role_unavailable'
+      {...(refusalCode === 'secret_missing' || refusalCode === 'read_role_setup_required' || refusalCode === 'read_role_unavailable'
         ? { reason: t('projects.deployments.databaseQuery.roleUnavailable') } : {})} /> : null}
     {success && !success.complete ? <SurfaceStateCard testID={`${id}.incomplete`} kind="unavailable" size="line"
       title={t('projects.deployments.databaseQuery.incomplete')} diagnosticCode={success.diagnostic?.code ?? null} /> : null}

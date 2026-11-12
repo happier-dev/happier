@@ -11,17 +11,21 @@ import { MachineConnectorSecretGrantSubjectV1Schema, MachineSecretGrantV1Schema 
 /** Private installed-daemon transport, never an Action or public binding projection. */
 export const EnvironmentSecretLaunchAdmissionBodyV1Schema = z.strictObject({
     serverId: id, environmentId: id, targetLinkId: id, machineId: id, installationId: id,
-    materialization: z.discriminatedUnion('kind', [
+    materialization: z.union([
         z.strictObject({ kind: z.literal('review'), contentArtifactId: id }),
         z.strictObject({ kind: z.literal('deployment'), deploymentId: id, actionOperationId: id }),
         z.strictObject({ kind: z.literal('copySourceRead'), deploymentId: id, actionOperationId: id }),
         z.strictObject({ kind: z.literal('dataRole'), expectedRevision: revision, deploymentId: id, service: id }),
-        z.strictObject({ kind: z.literal('bindings'), expectedRevision: revision, buildMachineId: z.optional(id), domainIds: z.optional(z.array(id)) }),
+        z.strictObject({ kind: z.literal('dataRole'), expectedRevision: revision, targetLinkId: id }),
+        z.strictObject({ kind: z.literal('bindings'), expectedRevision: revision, buildMachineId: z.optional(id), domainIds: z.optional(z.array(id)),
+            dataRoleTargetLinkIds: z.optional(z.array(id).check(z.refine(ids => new Set(ids).size === ids.length))) }),
         z.strictObject({ kind: z.literal('domain'), domainId: id, expectedDomainRevision: revision,
             actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,
             use: z.optional(EnvironmentDomainCredentialBindingV1Schema) }),
     ]),
-});
+}).check(z.refine(body => body.materialization.kind !== 'dataRole' || !('targetLinkId' in body.materialization)
+    || body.targetLinkId === body.materialization.targetLinkId,
+{ message: 'Managed data-role materialization must use the signed target link.' }));
 export type EnvironmentSecretLaunchAdmissionBodyV1 = z.infer<typeof EnvironmentSecretLaunchAdmissionBodyV1Schema>;
 export const EnvironmentSecretLaunchAdmissionInputV1Schema = z.extend(EnvironmentSecretLaunchAdmissionBodyV1Schema,
     { proof: MachineInstallationProofV1Schema });
@@ -32,6 +36,7 @@ export const EnvironmentSecretClientBindingsInputV1Schema = z.strictObject({
     kind: z.literal('clientBindings'), serverId: id, environmentId: id, expectedRevision: revision,
     buildMachineId: z.optional(id),
     domainIds: z.optional(z.array(id)),
+    dataRoleTargetLinkIds: z.optional(z.array(id).check(z.refine(ids => new Set(ids).size === ids.length))),
 });
 export const EnvironmentSecretAdmissionRequestV1Schema = z.union([
     EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema,
@@ -47,6 +52,8 @@ export type EnvironmentDomainSecretLaunchAdmissionV1 = z.infer<typeof Environmen
 export const EnvironmentSecretBindingPreparationV1Schema = z.strictObject({
     runtimeInstallations: z.array(installation), buildInstallation: z.optional(installation),
     proposedBuildInstallation: z.optional(installation),
+    /** Exact current controller destination for managed data-role custody only. */
+    controllerInstallation: z.optional(installation),
     domainDestinations: z.optional(z.strictObject({ status: z.enum(['complete', 'incomplete']),
         domains: z.array(z.strictObject({ domainId: id, installations: z.array(installation) })) })),
 });

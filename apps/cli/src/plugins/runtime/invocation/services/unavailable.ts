@@ -454,6 +454,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                 pluginId: seed.plugin.id,
                 signal: seed.signal,
                 isOccurrenceCurrent: seed.isOccurrenceCurrent,
+                ...(seed.readDataRole ? { readDataRole: seed.readDataRole } : {}),
                 ...(seed.sharedSaveAdmission ? { sharedSaveAdmission: seed.sharedSaveAdmission } : {}),
                 registerRawForRedaction: (value) => params.secretRedactor!.registerRaw({
                     pluginId: seed.plugin.id,

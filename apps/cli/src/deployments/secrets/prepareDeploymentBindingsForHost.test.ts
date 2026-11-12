@@ -8,7 +8,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, accou
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentBindingsSetStorageInputV1Schema,
     DeploymentEnvironmentUpdateStorageInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema,
     type EnvironmentSecretBindingV1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
@@ -40,7 +40,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, createDeploymentEnvironme
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
-import { sealMachineSecretGrant } from './machineSecretGrant';
+import { openMachineSecretGrant, sealMachineSecretGrant } from './machineSecretGrant';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
 
 const sourceFixtures: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>[] = [];
@@ -64,13 +64,17 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, name: 'uses the reacquired E2EE root requester custody for approved copy bindings' },
     { placementChange: false, mode: 'plain' as const, external: false, replay: true, missingCustody: true,
         name: 'refuses missing requester custody before plain owner material can be acquired' },
+    { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true,
+        name: 'seals a managed read role only to its admitted controller' },
+    { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true,
+        name: 'seals a managed read role to its admitted controller without a runtime target' },
     { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, missingCustody: true,
         name: 'refuses missing requester custody before E2EE owner material can be acquired' },
     { placementChange: false, mode: 'plain' as const, external: false, atomicMove: true, name: 'saves reviewed database connection definition and ordinary secret bindings in one Environment update' },
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
         document: 'services: {app: {image: "example/app:1"}, database: {image: "postgres:17", volumes: ["data:/var/lib/postgresql/data"]}}\nvolumes: {data: {}}',
@@ -112,6 +116,14 @@ it.each([
             installationId: installation.installationId } });
     const builderKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
     const builder = { machineId: 'machine-c', installationId: 'installation-c', publicKey: Buffer.from(builderKeys.publicKey).toString('base64url') };
+    const controllerSeed = new Uint8Array(32).fill(33);
+    const controllerKeys = nacl.sign.keyPair.fromSeed(controllerSeed);
+    const controller = { machineId: 'machine-controller', installationId: 'installation-controller',
+        publicKey: Buffer.from(controllerKeys.publicKey).toString('base64url') };
+    const managedDataLink = managedDataRole ? createDeploymentTargetLinkHeaderV1({ id: 'managed-data-link',
+        environmentId: detail.environment.id, role: 'data', targetKind: 'database', machines: [], members: [],
+        source: { kind: 'plugin', contribution: { pluginId: 'fixture.data', localId: 'database' } } }) : undefined;
+    if (managedDataLink) detail.targetLinks.push({ targetLink: managedDataLink, content: detail.targetLinks[0]!.content });
     let environment = { ...detail.environment, revision: configureChild ? 2 : detail.environment.revision, buildMachineId: preTarget && !preTargetWithBuilder ? undefined : placementChange ? builder.machineId : installation.machineId,
         runtimeTargetLinkId: preTarget ? undefined : detail.environment.runtimeTargetLinkId };
     vi.spyOn(identityStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
@@ -127,9 +139,11 @@ it.each([
             source: { kind: 'secret', ref, resourceRevision: 1 } },
     ] : [];
     if (atomicMove) detail.content.bindings = operational;
-    const bindings: EnvironmentSecretBindingV1[] = preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
-        role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
-        : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', source: { kind: 'secret', ref, resourceRevision: 1 } }];
+    const bindings: EnvironmentSecretBindingV1[] = managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } }]
+        : preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
+            role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
+            : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', source: { kind: 'secret', ref, resourceRevision: 1 } }];
     if (preTargetWithBuilder) {
         const build: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
             source: { kind: 'secret', ref, resourceRevision: 1 } };
@@ -159,6 +173,7 @@ it.each([
     let environmentReads = 0;
     const boundaryIssues: unknown[] = [];
     let bindingAdmissionReads = 0;
+    const dataRoleTargetLinkIdsByAdmission: string[][] = [];
     let current = true;
     let denyBindingAdmission = false;
     const artifactWrites: string[] = [];
@@ -238,10 +253,19 @@ it.each([
                 return { status: 403, data: { ok: false, error: 'deployment_access_denied' } };
             const buildMachineId = 'kind' in admission ? admission.buildMachineId
                 : admission.materialization.kind === 'bindings' ? admission.materialization.buildMachineId : undefined;
+            const dataRoleTargetLinkIds = 'kind' in admission
+                ? admission.kind === 'clientBindings' ? admission.dataRoleTargetLinkIds ?? [] : []
+                : admission.materialization.kind === 'bindings' ? admission.materialization.dataRoleTargetLinkIds ?? [] : [];
+            if ('kind' in admission ? admission.kind === 'clientBindings' : admission.materialization.kind === 'bindings') {
+                dataRoleTargetLinkIdsByAdmission.push([...dataRoleTargetLinkIds]);
+            }
+            if (dataRoleTargetLinkIds.some(targetLinkId => targetLinkId !== managedDataLink?.id))
+                return { status: 403, data: { ok: false, error: 'secret_missing' } };
             return { status: 200, data: { ok: true, grants,
             bindingPreparation: { runtimeInstallations: preTarget ? [] : [installation],
                 ...(environment.buildMachineId ? { buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation } : {}),
-                ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}) } } };
+                ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}),
+                ...(dataRoleTargetLinkIds.length ? { controllerInstallation: controller } : {}) } } };
         }
         environmentReads++;
         const data = { ok: true, environment, targetLinks: detail.targetLinks.map(item => item.targetLink) };
@@ -345,12 +369,19 @@ it.each([
                         execute: async (_input, bindingContext) => daemon.deploymentAction!('deployments.bindings.set', bindingInput, bindingContext),
                     }),
                 }) : await daemon.deploymentAction!('deployments.bindings.set', bindingInput, {});
+                if (managedDataLink) expect(dataRoleTargetLinkIdsByAdmission).toEqual(
+                    Array.from({ length: attempt + 1 }, () => [managedDataLink.id]));
                 expect(result, JSON.stringify({ result, attempt, artifactWrites, bindingAdmissionReads, environmentReads, boundaryIssues })).toMatchObject({ ok: true });
                 const written = writes.at(-1)!;
                 if (configureChild) expect(written.contentArtifactId).toBe(createDeploymentEnvironmentContentArtifactIdV1({
                     ...replayContext.externalActionExecutionAuthorization!.binding,
                     actionId: 'deployments.bindings.set', environmentId: environment.id }));
-                expect(written).toMatchObject({ grants: incumbentOperationalGrants,
+                if (managedDataLink) {
+                    expect(written.grants).toHaveLength(1);
+                    expect(openMachineSecretGrant({ grant: written.grants[0]!, machineId: controller.machineId,
+                        installationId: controller.installationId, installationPrivateSeed: controllerSeed }))
+                        .toEqual({ kind: 'secret', value: 'private-runtime-value' });
+                } else expect(written).toMatchObject({ grants: incumbentOperationalGrants,
                     referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] });
                 const opened = readDeploymentEnvironmentArtifactV1(written,
                     await createCredentialedAccountArtifactStore(credentials).read(written.contentArtifactId, {
@@ -360,8 +391,8 @@ it.each([
                 put(environment.contentArtifactId, { ...detail.content, bindings });
             }
             expect(writes).toHaveLength(configureChild ? 1 : 2);
-            expect(materialReads).toBe(0);
-            expect(bindingAdmissionReads).toBe(preTargetWithBuilder ? 2 : 0);
+            expect(materialReads).toBe(managedDataLink ? 2 : 0);
+            expect(bindingAdmissionReads).toBe(managedDataLink || preTargetWithBuilder ? 2 : 0);
             return;
         }
         if (atomicMove) {
@@ -432,19 +463,28 @@ it.each([
             contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
             referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] };
         const result = await prepare({ input, context: {} });
+        if (managedDataLink) expect(dataRoleTargetLinkIdsByAdmission).toEqual([[managedDataLink.id]]);
         expect(result).not.toHaveProperty('errorCode');
         if ('errorCode' in result) throw new Error(result.errorCode);
         grants = result.grants;
         expect(materialReads).toBe(1);
         expect(nativeVaultReads).toBe(external ? 1 : 0);
         expect(JSON.stringify(result).includes('private-runtime-value')).toBe(false);
-        const launch = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: detail.environment.id,
-            machineId: installation.machineId, installationId: installation.installationId,
-            installationPrivateSeed: seed, phase: 'runtime', bindings, grants,
+        if (managedDataLink) {
+            expect(result.grants).toHaveLength(1);
+            expect(openMachineSecretGrant({ grant: result.grants[0]!, machineId: controller.machineId,
+                installationId: controller.installationId, installationPrivateSeed: controllerSeed }))
+                .toEqual({ kind: 'secret', value: 'private-runtime-value' });
+        } else {
+            const launch = await prepareEnvironmentSecretBindingsForLaunch({ environmentId: detail.environment.id,
+                machineId: installation.machineId, installationId: installation.installationId,
+                installationPrivateSeed: seed, phase: 'runtime', bindings, grants,
 
-            async assertCurrent() {} });
-        expect(launch.env.SECRET === 'private-runtime-value').toBe(true);
-        launch.dispose();
+                async assertCurrent() {} });
+            expect(launch.env.SECRET === 'private-runtime-value').toBe(true);
+            launch.dispose();
+        }
+        if (managedDataLink) return;
         // The CAS now points to the prepared content, still using the same installed subjects.
         put(detail.environment.contentArtifactId, content);
         const retained = await prepare({ input, context: {} });

@@ -101,15 +101,15 @@ export const DeploymentEnvironmentContentV1Schema = z.strictObject({
 { message: 'Binding purpose identities must be unique.' }));
 export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmentContentV1Schema>;
 
-/** The credential writer also authors backup and self-hosted role references. Combined definition
+/** The credential writer also authors backup and data-role references. Combined definition
  * updates preserve them, alongside the other operational owners' rows. */
 export function isEnvironmentSecretBindingManagedByBindingsWriterV1(binding: EnvironmentSecretBindingV1,
     writer: 'environment' | 'bindings' | 'variables' = 'environment'):
     binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' | 'registry' | 'backupDestination' }>
-        | Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole'; service: string }> {
+        | Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole' }> {
     return binding.purpose === 'variable' || writer !== 'variables' && binding.purpose === 'registry'
         || writer === 'bindings' && (binding.purpose === 'backupDestination'
-            || binding.purpose === 'dataRole' && 'service' in binding);
+            || binding.purpose === 'dataRole');
 }
 
 /** A combined definition update carries existing operational custody without authoring it. */
@@ -117,7 +117,7 @@ export function readRetainedOperationalEnvironmentBindingGrantsV1(input: Readonl
     previousBindings: readonly EnvironmentSecretBindingV1[];
     bindings: readonly EnvironmentSecretBindingV1[];
     existingGrants: readonly MachineSecretGrantV1[];
-    /** Only the explicit credential writer may edit backup and self-hosted role references. */
+    /** Only the explicit credential writer may edit backup and data-role references. */
     writer?: 'environment' | 'bindings' | 'variables';
 }>): readonly MachineSecretGrantV1[] | null {
     const operational = (bindings: readonly EnvironmentSecretBindingV1[]) => bindings

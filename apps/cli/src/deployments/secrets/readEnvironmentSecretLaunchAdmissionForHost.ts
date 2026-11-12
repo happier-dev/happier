@@ -8,6 +8,7 @@ import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizat
 import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { deploymentOutputValidationFailure } from '../outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -67,13 +68,15 @@ export async function readEnvironmentSecretLaunchAdmissionForHost(input: OwnServ
     return admitted;
 }
 
-/** Query opens only its private service binding; Home supplies exact admitted installation custody. */
+/** Query opens only its private service or exact managed-link binding; Home supplies installed custody. */
 export async function readEnvironmentDataRoleLaunchAdmissionForHost(input: Omit<HostSecretAdmissionRequest, 'materialization'> & Readonly<{
-    expectedRevision: number; deploymentId: string; service: string;
-}>): Promise<OwnServerSecretLaunchAdmission> {
-    const admitted = await readEnvironmentSecretAdmissionForHost({ ...input, materialization: {
-        kind: 'dataRole', expectedRevision: input.expectedRevision, deploymentId: input.deploymentId, service: input.service,
-    } });
+    expectedRevision: number;
+}> & (Readonly<{ deploymentId: string; service: string }> | Readonly<{ deploymentId?: never; service?: never }>)): Promise<OwnServerSecretLaunchAdmission> {
+    const native = input.deploymentId !== undefined && input.service !== undefined;
+    if (!native && (input.deploymentId !== undefined || input.service !== undefined)) return refuse('invalid_action_output');
+    const admitted = await readEnvironmentSecretAdmissionForHost({ ...input, materialization: native
+        ? { kind: 'dataRole', expectedRevision: input.expectedRevision, deploymentId: input.deploymentId, service: input.service }
+        : { kind: 'dataRole', expectedRevision: input.expectedRevision, targetLinkId: input.targetLinkId } });
     if (admitted.bindingPreparation || admitted.domainAdmission) { admitted.release(); return refuse('invalid_action_output'); }
     return admitted;
 }
@@ -90,11 +93,12 @@ export async function readEnvironmentDomainSecretLaunchAdmissionForHost(input: O
 
 /** The same private admission owner serves explicit manager preparation, never a public inventory. */
 export async function readEnvironmentSecretBindingPreparationForHost(input: Omit<BindingPreparationAdmissionRequest, 'materialization'> & Readonly<{
-    expectedRevision: number; buildMachineId?: string; domainIds?: readonly string[];
+    expectedRevision: number; buildMachineId?: string; domainIds?: readonly string[]; dataRoleTargetLinkIds?: readonly string[];
 }>) {
     const admitted = await readEnvironmentSecretAdmissionForHost({ ...input,
         materialization: { kind: 'bindings', expectedRevision: input.expectedRevision,
             ...(input.domainIds?.length ? { domainIds: [...input.domainIds] } : {}),
+            ...(input.dataRoleTargetLinkIds?.length ? { dataRoleTargetLinkIds: [...input.dataRoleTargetLinkIds] } : {}),
             ...(input.buildMachineId ? { buildMachineId: input.buildMachineId } : {}) } });
     if (!admitted.bindingPreparation) { admitted.release(); return refuse('invalid_action_output'); }
     return { ...admitted, bindingPreparation: admitted.bindingPreparation };
@@ -188,7 +192,9 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
         ? EnvironmentSecretClientBindingsInputV1Schema.parse({ kind: 'clientBindings', serverId: input.serverId,
             environmentId: input.environmentId, expectedRevision: input.materialization.expectedRevision,
             ...(input.materialization.buildMachineId ? { buildMachineId: input.materialization.buildMachineId } : {}),
-            ...(input.materialization.domainIds?.length ? { domainIds: input.materialization.domainIds } : {}) })
+            ...(input.materialization.domainIds?.length ? { domainIds: input.materialization.domainIds } : {}),
+            ...(input.materialization.dataRoleTargetLinkIds?.length
+                ? { dataRoleTargetLinkIds: input.materialization.dataRoleTargetLinkIds } : {}) })
         : EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId: input.serverId,
         environmentId: input.environmentId, targetLinkId: input.targetLinkId,
         machineId: input.machineId, installationId: input.installationId,
@@ -200,7 +206,8 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
             body, input.materialization.kind === 'bindings'
                 ? input.materialization.buildMachineId || input.environmentUpdate
                     ? 'deployments.environments.update' : 'deployments.bindings.set'
-                : input.materialization.kind === 'dataRole' ? 'deployments.data.query'
+                : input.materialization.kind === 'dataRole'
+                    ? 'targetLinkId' in input.materialization ? ACTION_INVOKE_ACTION_ID_V1 : 'deployments.data.query'
                 : input.materialization.kind === 'domain' && !input.materialization.use
                     ? 'deployments.domains.add'
                     : (input.materialization.kind === 'deployment' || input.materialization.kind === 'copySourceRead') && (input.context.externalActionExecutionAuthorization?.binding.actionId === 'deployments.backups.restore'

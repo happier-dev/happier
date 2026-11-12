@@ -22,7 +22,8 @@ import { initEncrypt } from '@/modules/encrypt';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { observeDeploymentDomainNativeForTest } from '@/testkit/observedDeploymentDomain.testkit';
-import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { accountRoutes } from '@/app/api/routes/account/accountRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { createProjectSourceInTx, updateProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -39,10 +40,29 @@ import { createDeploymentEnvironmentInTx, setDeploymentEnvironmentBindingsInTx, 
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { createDeploymentInTx } from './deploymentService';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
+import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { createDeploymentDomainInTx } from './deploymentDomainService';
 import type { Server } from 'socket.io';
+import { Server as SocketServer } from 'socket.io';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from '@/app/api/socket/externalActionDispatcher';
+import { withTempDir } from '../../../../cli/src/testkit/fs/tempDir';
+import { createEnvKeyScope } from '../../../../cli/src/testkit/env/envScope';
+import { seedTestServerProfile } from '../../../../cli/src/testkit/serverProfiles';
+import { reloadConfiguration } from '../../../../cli/src/configuration';
+import { readOrCreateInstallationIdentitySync } from '../../../../cli/src/daemon/identity/store';
+import { createDeploymentTargetRoleAdmissionHost } from '../../../../cli/src/deployments/targets/createDeploymentTargetRoleAdmissionHost';
+import { createManagedDataRoleSecretReaderForHost } from '../../../../cli/src/deployments/secrets/createManagedDataRoleSecretReaderForHost';
+import { sealMachineSecretGrant } from '../../../../cli/src/deployments/secrets/machineSecretGrant';
+import { createDeclaredPluginSecretsService } from '../../../../cli/src/plugins/runtime/context/secrets';
+import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
+import { projectExternalActionRequesterHttpAuthorization } from '../../../../cli/src/api/externalActionExecutionAuthorization';
+import { managedDataQueryPostgresAvailable, managedQueryProviderHttp, managedQueryRolePassword,
+    startManagedQueryPostgres } from '../../../../cli/src/plugins/runtime/invocation/managedDataQueryPostgresql.testkit';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import * as neonEntry from '../../../../../packages/plugins/deployment-neon/src/index.js';
 
 describe('private installed Environment secret launch transport', () => {
     const serverId = `srv_${'c'.repeat(32)}`;
@@ -57,7 +77,7 @@ describe('private installed Environment secret launch transport', () => {
     afterAll(async () => { await harness?.close(); });
 
     async function admittedTeamDelivery(mode: 'plain' | 'e2ee' = 'plain', distinctController = false, roleService?: string,
-        runtimePlacement: 'host' | 'plugin' = 'host') {
+        runtimePlacement: 'host' | 'plugin' = 'host', secretValue = 'launch-trims-private-sentinel') {
         const ownerKey = nacl.box.keyPair(), requesterKey = nacl.box.keyPair();
         const owner = await db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding(ownerKey.publicKey) : {}) } });
@@ -140,7 +160,7 @@ describe('private installed Environment secret launch transport', () => {
         if (!linked.ok) throw new Error(linked.error);
         const resourceId = crypto.randomUUID();
         const resourceKey = nacl.randomBytes(32);
-        const resourceContent = { v: 1 as const, name: 'Delivery credential', kind: 'token' as const, value: 'launch-trims-private-sentinel' };
+        const resourceContent = { v: 1 as const, name: 'Delivery credential', kind: 'token' as const, value: secretValue };
         const envelopes = (dataKey: Uint8Array, recipients: readonly Readonly<{ id: string; publicKey: Uint8Array }>[]) =>
             mode === 'plain' ? [] : recipients.map(recipient => ({ recipientAccountId: recipient.id,
                 encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: recipient.publicKey,
@@ -302,6 +322,195 @@ describe('private installed Environment secret launch transport', () => {
         const fixture = await admittedTeamDelivery('plain', true, undefined, 'plugin');
         expect(await inTx(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, fixture.requester.id, fixture.payload)))
             .toMatchObject({ ok: true, grants: [fixture.grant] });
+    });
+
+    it('delivers a managed data-role grant only through its exact signed plugin query action', async () => {
+        const f = await admittedTeamDelivery('plain', true, undefined, 'plugin');
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } },
+            data: { role: 'member' } });
+        const runtime = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const grant = { ...f.grant, machineId: f.controller.machineId, installationId: f.controller.installationId };
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: runtime.id, grants: [grant] }));
+        const action = { pluginId: 'acme.daemon-runtime', localId: 'query-read' };
+        const dataContent = await f.artifact('deployment-target-link.v1');
+        const data = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { serverId,
+            environmentId: runtime.id, expectedRevision: runtime.revision,
+            source: { kind: 'plugin', contribution: { pluginId: action.pluginId, localId: 'database' } },
+            targetKind: 'neon', machineId: f.controller.machineId, installationId: f.controller.installationId, machines: [],
+            role: 'data', requestKey: crypto.randomUUID(), ...dataContent }));
+        if (!data.ok) throw new Error(data.error);
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: data.targetLinkId } });
+        const credentialRef = { service: { pluginId: action.pluginId, localId: 'connection' }, accountId: 'connected' };
+        const query = { v: 1 as const, serverId, environmentId: row.id, expectedRevision: row.revision,
+            targetLinkId: link.id, expectedTargetLinkRevision: link.revision, credentialRef,
+            credentialPrincipal: { kind: 'account' as const, accountId: f.owner.id, purpose: {
+                consumer: action, purpose: 'deploy-manage' as const,
+            }, target: { kind: 'account' as const, account: credentialRef } },
+            providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
+            providerEnvironment: { kind: 'custom' as const, id: 'branch' }, database: 'managed', sql: 'SELECT 1', params: {} };
+        const target = { kind: 'machine' as const, machineId: f.controller.machineId };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { action, input: query } };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
+            serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+            actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', envelope.input) });
+        const body = { serverId, environmentId: row.id, targetLinkId: link.id,
+            machineId: f.controller.machineId, installationId: f.controller.installationId,
+            materialization: { kind: 'dataRole' as const, expectedRevision: row.revision, targetLinkId: link.id } };
+        const url = `/v1/deployments/environments/${encodeURIComponent(body.environmentId)}/secret-launch-admission`;
+        await withAuthenticatedTestApp(app => registerDeploymentRoutes(app), async app => {
+            const launch = async (current: EnvironmentSecretLaunchAdmissionBodyV1, privateKey = f.controller.keys.secretKey) => {
+                const payload = { ...current, proof: signMachineInstallationProof({ payload: { version: 1, accountId: f.requester.id,
+                    machineId: current.machineId, installationId: current.installationId,
+                    deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(current) } }, privateKey }) };
+                return app.inject({ method: 'POST', url, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'action.invoke',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: 'action.invoke', target, installationId: current.installationId, requestId: envelope.requestId,
+                    method: 'POST', path: url, body: payload, privateKey }),
+                } });
+            };
+            const result = await launch(body);
+            expect(result.statusCode, result.body).toBe(200);
+            expect(result.json()).toEqual({ ok: true, grants: [grant] });
+            const crossArm = await launch({ ...body, materialization: { kind: 'dataRole', expectedRevision: row.revision,
+                deploymentId: f.receipt.deploymentId, service: 'neon' } });
+            expect(crossArm.statusCode, crossArm.body).toBe(401);
+            const wrongController = await launch({ ...body, machineId: f.payload.machineId, installationId: f.payload.installationId }, f.keys.secretKey);
+            expect(wrongController.statusCode, wrongController.body).toBe(401);
+            await db.deploymentTargetLink.update({ where: { id: link.id }, data: { revision: { increment: 1 } } });
+            const stale = await launch(body);
+            expect(stale.statusCode, stale.body).toBe(403);
+            expect(stale.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
+        }, { authentication: 'real' });
+        const mismatchEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: { action: { pluginId: 'other.plugin', localId: action.localId }, input: query } };
+        await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id, serverIdentityId: serverId,
+            authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch }, actionId: 'action.invoke',
+            machineId: f.controller.machineId, target, requestId: mismatchEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(mismatchEnvelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', mismatchEnvelope.input) })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } } });
+        const withdrawnEnvelope = { ...envelope, requestId: crypto.randomUUID() };
+        await expect(auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id, serverIdentityId: serverId,
+            authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch }, actionId: 'action.invoke',
+            machineId: f.controller.machineId, target, requestId: withdrawnEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(withdrawnEnvelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', withdrawnEnvelope.input) })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    });
+
+    it.skipIf(!managedDataQueryPostgresAvailable)('composes Neon data query through a real Home socket, installed P42 identity and database role', async () => {
+        await withTempDir('happier-managed-query-home-', async homeDir => {
+            const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+            const lifetime = new AbortController();
+            const app = createAuthenticatedTestApp({ authentication: 'real' });
+            const sockets = new SocketServer(app.server, { path: '/v1/updates' });
+            let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> | undefined;
+            let kit: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
+            let postgres: Awaited<ReturnType<typeof startManagedQueryPostgres>> | undefined;
+            try {
+                environment.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: serverId });
+                reloadConfiguration();
+                accountRoutes(app); artifactsRoutes(app); registerDeploymentRoutes(app);
+                const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+                environment.patch({ HAPPIER_SERVER_URL: origin });
+                reloadConfiguration();
+                await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: origin });
+
+                // The host reads this isolated on-disk identity; neither the reader nor
+                // the server transport receives a fixture identity or secret callback.
+                const installation = readOrCreateInstallationIdentitySync();
+                const installationPublicKey = decodeBase64(installation.publicKey, 'base64url');
+                const f = await admittedTeamDelivery('plain', true, undefined, 'host', managedQueryRolePassword);
+                await db.machine.update({ where: { id: f.controller.machineId }, data: {
+                    installationId: installation.installationId, installationPublicKey,
+                } });
+                const runtime = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+                const action = { pluginId: neonEntry.manifest.id, localId: 'query-read' };
+                const targetContent = await f.artifact('deployment-target-link.v1');
+                const data = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { serverId,
+                    environmentId: runtime.id, expectedRevision: runtime.revision,
+                    source: { kind: 'plugin', contribution: { pluginId: action.pluginId, localId: 'database' } },
+                    targetKind: 'neon', machineId: f.controller.machineId, installationId: installation.installationId, machines: [],
+                    role: 'data', requestKey: crypto.randomUUID(), ...targetContent }));
+                if (!data.ok) throw new Error(data.error);
+                const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: data.targetLinkId } });
+                const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: runtime.id } });
+                const definition = DeploymentEnvironmentContentV1Schema.parse({ ...f.content, bindings: [{ purpose: 'dataRole',
+                    targetLinkId: link.id, role: 'readOnlyPassword', source: { kind: 'secret',
+                        ref: formatSharedSavedSecretRefV1(f.resourceId), resourceRevision: f.resourceRevision } }] });
+                const definitionContent = await f.artifact('deployment-environment.v1', definition);
+                const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: row.id,
+                    machineId: f.controller.machineId, installationId: installation.installationId,
+                    resourceId: f.resourceId, resourceRevision: f.resourceRevision }, installationPublicKey,
+                    content: { kind: 'secret', value: managedQueryRolePassword } });
+                const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.owner.id, { serverId, environmentId: row.id,
+                    expectedRevision: row.revision, ...definitionContent, grants: [grant],
+                    referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings) }));
+                if (!bound.ok) throw new Error(bound.error);
+                const current = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: row.id } });
+                const credentialRef = { service: { pluginId: action.pluginId, localId: 'neon' }, accountId: 'connected' };
+                const query = { v: 1 as const, serverId, environmentId: current.id, expectedRevision: current.revision,
+                    targetLinkId: link.id, expectedTargetLinkRevision: link.revision, credentialRef,
+                    credentialPrincipal: { kind: 'account' as const, accountId: f.owner.id, purpose: {
+                        consumer: action, purpose: 'deploy-manage' as const,
+                    }, target: { kind: 'account' as const, account: credentialRef } },
+                    providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' },
+                    providerEnvironment: { kind: 'custom' as const, id: 'br-main' }, database: 'neondb',
+                    sql: 'SELECT value FROM query_fixture', params: {} };
+                const target = { kind: 'machine' as const, machineId: f.controller.machineId };
+                const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { action, input: query } };
+                const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.requester.id,
+                    serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.requester.tokenEpoch },
+                    actionId: 'action.invoke', machineId: f.controller.machineId, target, requestId: envelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                    deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', envelope.input) });
+                const token = await auth.createToken(f.requester.id, undefined, { kind: 'account', authority: 'present_user' });
+                requester = await admitRequesterAccountActionContext({ authorization, credentials: { token, encryption: null },
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin,
+                    isCurrent: async () => !lifetime.signal.aborted, isCustodyCurrent: async () => !lifetime.signal.aborted,
+                    signal: lifetime.signal });
+                if (!requester) throw new Error('Expected real requester Account admission');
+                const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                    target, serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin,
+                    installationId: installation.installationId, privateKey: installation.privateKey,
+                    isCurrent: requester.isCurrent, signal: lifetime.signal });
+                if (!projected) throw new Error('Expected signed requester HTTP projection');
+                const context = { signal: lifetime.signal, externalActionTarget: target,
+                    externalActionExecutionAuthorization: projected };
+                const host = await createDeploymentTargetRoleAdmissionHost(context, { readCurrentMachineId: () => f.controller.machineId,
+                    resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
+                if (!host) throw new Error('Expected real deployment query host');
+                const admittedEnvironment = await host.readEnvironment({ environmentId: current.id, targetLinkId: link.id, context });
+                const readDataRole = createManagedDataRoleSecretReaderForHost({ host, environment: admittedEnvironment, query, context });
+                const secrets = createDeclaredPluginSecretsService({ pluginId: action.pluginId, declarations: [],
+                    resolveCustody: () => null, signal: lifetime.signal, isOccurrenceCurrent: () => true,
+                    registerRawForRedaction: () => {}, readDataRole });
+                postgres = await startManagedQueryPostgres();
+                console.info(`[managedDataQuery.real-home] started owned PostgreSQL PID ${postgres.pid}`);
+                const requests: HttpRequest[] = [];
+                kit = await createPluginTestkit({ manifest: neonEntry.manifest, module: neonEntry, services: {
+                    secrets, http: createPluginHttpFixture(managedQueryProviderHttp(postgres, requests)),
+                } });
+                await expect(kit.invokeAction('query-read', query, { surface: 'cli' })).resolves.toEqual({ ok: true,
+                    columns: [{ name: 'value' }], rows: [['original']], complete: true });
+                await expect(kit.invokeAction('query-read', { ...query, sql: "INSERT INTO query_fixture VALUES ('changed')" },
+                    { surface: 'cli' })).rejects.toMatchObject({ code: 'query_failed' });
+                expect(postgres.run('SELECT value FROM query_fixture').stdout.trim()).toBe('original');
+                expect(requests.filter(request => new URL(request.url).pathname === '/sql')).toHaveLength(2);
+            } finally {
+                lifetime.abort(); await kit?.dispose(); await requester?.dispose();
+                if (postgres) {
+                    await postgres.stop();
+                    console.info(`[managedDataQuery.real-home] stopped owned PostgreSQL PID ${postgres.pid}`);
+                }
+                await new Promise<void>(resolve => sockets.close(() => resolve()));
+                await app.close(); environment.restore(); reloadConfiguration();
+            }
+        });
     });
 
     it.each(['plain', 'e2ee'] as const)('delivers %s installed role custody only through the exact signed query read', async mode => {

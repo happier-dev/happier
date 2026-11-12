@@ -95,6 +95,9 @@ import { createStablePluginHttpHost } from '../fetch/service';
 import { createConnectedAccountPluginHttpPurposeHost } from '../fetch/connectedAccountPurpose';
 import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeBindings/resolveTarget';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import { managedDataQueryPostgresAvailable, managedQueryEndpoint, managedQueryProviderHttp,
+    managedQueryRolePassword, startManagedQueryPostgres } from './managedDataQueryPostgresql.testkit';
 import * as supabaseEntry from '../../../../../../packages/plugins/deployment-supabase/src/index.js';
 import * as neonEntry from '../../../../../../packages/plugins/deployment-neon/src/index.js';
 import * as vercelEntry from '../../../../../../packages/plugins/deploy-vercel/src/index.js';
@@ -107,7 +110,7 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey,
+import { EnvironmentSecretLaunchAdmissionInputV1Schema, MachineConnectorSecretGrantInputV1Schema, machineSecretGrantSubjectKey,
     computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/deployment-protocol';
 import * as installationStore from '@/daemon/identity/store';
 import { writeMachineConnectorSecretGrantForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
@@ -1506,6 +1509,129 @@ describe('buildTargetActionInvocationRegistry', () => {
                 target?.dispose(); await kit.dispose();
             }
         });
+    it.skipIf(!managedDataQueryPostgresAvailable)('composes Neon read SQL through real P42 role opening and a database-enforced role', async () => {
+        const postgres = await startManagedQueryPostgres();
+        console.info(`[managedDataQuery.postgresql] started owned PostgreSQL PID ${postgres.pid}`);
+        const kit = await createPluginTestkit({ manifest: neonEntry.manifest, module: neonEntry });
+        let target: ReturnType<typeof buildRegistry> | undefined;
+        let installation: ReturnType<typeof vi.spyOn> | undefined;
+        let home: ReturnType<typeof vi.spyOn> | undefined;
+        try {
+            const pluginManifest = normalizePluginManifestV2(neonEntry.manifest);
+            const pluginId = pluginManifest.id;
+            const localId = 'query-read';
+            const handler = kit.registration('actions', localId);
+            if (!handler) throw new Error('Neon query Action did not activate');
+            const stored = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+            const account = { service: { pluginId, localId: 'neon' }, accountId: 'selected-account' };
+            const principal = { kind: 'account' as const, accountId: 'custody-account', purpose: {
+                consumer: { pluginId, localId }, purpose: 'deploy-manage' as const,
+            }, target: { kind: 'account' as const, account } };
+            const providerIdentity = { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'br-main' };
+            const providerEnvironment = { kind: 'custom' as const, id: 'br-main' };
+            const selected = stored.state.environment.targetLinks[0]!;
+            selected.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: 'database' } };
+            selected.targetLink.targetKind = 'neon';
+            selected.content = { credentialPrincipal: principal, providerIdentity, providerEnvironment };
+            const input = { ...stored.input, credentialRef: account, credentialPrincipal: principal, providerIdentity, providerEnvironment,
+                database: 'neondb', sql: "SELECT $1::text AS duplicate, $1::text AS duplicate, NULL::text AS missing, ''::text AS empty",
+                params: { '1': "quoted'; INSERT INTO query_fixture VALUES ('injected'); --\nvalue" } };
+            const resourceId = 'managed-read-role';
+            stored.state.environment.content = { ...stored.state.environment.content, bindings: [{ purpose: 'dataRole',
+                targetLinkId: input.targetLinkId, role: 'readOnlyPassword', source: {
+                    kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1,
+                } }] };
+            const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(47));
+            const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: input.environmentId,
+                machineId: 'controller', installationId: 'installation-controller', resourceId, resourceRevision: 1 },
+                installationPublicKey: keys.publicKey, content: { kind: 'secret', value: managedQueryRolePassword } });
+            installation = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
+                installationId: 'installation-controller', publicKey: encodeBase64(keys.publicKey, 'base64url'),
+                privateKey: encodeBase64(keys.secretKey, 'base64url') });
+            const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'custody-account' })).toString('base64url')}.signature`;
+            const host = { ...stored.host, credentials: { ...stored.host.credentials, token } };
+            // Home transport is the external boundary. The actual signed body,
+            // P42 grant opening and registry-seeded SDK capability stay real.
+            home = vi.spyOn(axios, 'request').mockImplementation(async config => {
+                const request = EnvironmentSecretLaunchAdmissionInputV1Schema.parse(config.data);
+                expect(config.url).toBe(`https://home.test/v1/deployments/environments/${input.environmentId}/secret-launch-admission`);
+                expect(request).toMatchObject({ serverId: 'home', environmentId: input.environmentId, targetLinkId: input.targetLinkId,
+                    machineId: 'controller', installationId: 'installation-controller', materialization: {
+                        kind: 'dataRole', expectedRevision: input.expectedRevision, targetLinkId: input.targetLinkId,
+                    } });
+                return { status: 200, statusText: 'OK', headers: {}, config: config ?? {}, data: { ok: true, grants: [grant] } };
+            });
+            const revision = 'csr_abcdefghijklmnopqrstuv';
+            const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, status: 'connected',
+                authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: revision,
+                configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null,
+                displayName: 'Selected Neon Account', scopes: [] });
+            const descriptor = pluginManifest.contributes.connectedAccountDescriptors.find(entry => entry.id === 'neon');
+            if (!descriptor) throw new Error('Neon Connected Account descriptor is missing');
+            const unexpected = async (): Promise<never> => { throw new Error('The query cannot select or write connected Accounts'); };
+            const owner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'custody-account',
+                store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
+                selectTarget: unexpected, resolveTarget: createPurposeTargetResolver({ available: true,
+                    resolveService: async () => ({ service: account.service, authentication: descriptor.authentication }), listAccounts: async () => [profile] }),
+                resolveCredentialRevision: async () => revision,
+                materializeAccount: async ({ credentialRevisionBasis }) => {
+                    credentialRevisionBasis?.captureCredentialRevision(revision);
+                    return { kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-provider-credential' } };
+                }, projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+            });
+            const requests: HttpRequest[] = [];
+            const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} },
+                connectedAccounts: createStablePluginConnectedAccountsHost(owner),
+                http: createStablePluginHttpHost({ purposeHost: createConnectedAccountPluginHttpPurposeHost(owner, { registerRawForRedaction() {} }),
+                    adapter: managedQueryProviderHttp(postgres, requests) }),
+            });
+            const contributes = registry({ pluginManifest });
+            target = buildRegistry({ ...owners, contributes, executionRealm: 'account',
+                targetActivationFacts: [fact({ pluginId, pluginVersion: pluginManifest.version,
+                    required: [{ family: 'actions', localId }], bound: [{ family: 'actions', localId }] })],
+                targetRegistrations: [{ pluginId, occurrenceId: '7', registration: { family: 'actions', localId, value: handler } }],
+                actionFormConnectedAccounts: owner, readDeploymentTargetRoleAdmissionHost: async () => host,
+            });
+            const invoke = (sql: string, params: Record<string, string> = {}) => target!.invoke({ pluginId, localId,
+                input: { ...input, sql, params }, surface: 'cli' });
+            await expect(invoke(input.sql, input.params)).resolves.toMatchObject({ status: 'executed', value: {
+                ok: true, columns: [{ name: 'duplicate' }, { name: 'duplicate' }, { name: 'missing' }, { name: 'empty' }],
+                rows: [[input.params['1'], input.params['1'], null, '']], complete: true,
+            } });
+            const sql = requests.filter(request => new URL(request.url).pathname === '/sql');
+            expect(sql).toHaveLength(1);
+            expect(requests.filter(request => new URL(request.url).pathname.endsWith('/endpoints'))).toHaveLength(1);
+            expect(requests.filter(request => new URL(request.url).pathname.endsWith('/databases'))).toHaveLength(1);
+            expect(sql[0]).toMatchObject({ method: 'POST', redirect: 'manual', url: 'https://api.eu-central-1.aws.neon.tech/sql' });
+            expect(sql[0]?.headers?.['Neon-Batch-Read-Only']).toBe('true');
+            expect(sql[0]?.credentialBinding).toBeUndefined();
+            const connection = new URL(sql[0]?.headers?.['Neon-Connection-String'] ?? '');
+            expect(connection).toMatchObject({ username: 'happier_ro', hostname: managedQueryEndpoint.host, pathname: '/neondb' });
+            expect(postgres.run('SELECT value FROM query_fixture').stdout.trim()).toBe('original');
+
+            // The role is not rescued by the wrapper's READ ONLY transaction:
+            // direct low-role writes/escalation still reach PostgreSQL and fail.
+            for (const statement of ["INSERT INTO query_fixture VALUES ('changed')", 'CREATE TABLE public.should_not_exist(value text)',
+                'SET ROLE postgres', "BEGIN READ WRITE; INSERT INTO query_fixture VALUES ('changed')"]) {
+                expect(postgres.run(statement, 'happier_ro', managedQueryRolePassword).status).not.toBe(0);
+            }
+            for (const statement of ["INSERT INTO query_fixture VALUES ('changed')", 'CREATE TABLE public.should_not_exist(value text)',
+                'SET ROLE postgres', "BEGIN READ WRITE; INSERT INTO query_fixture VALUES ('changed')", 'SELECT 1; SELECT 2']) {
+                await expect(invoke(statement)).resolves.toMatchObject({ status: 'failed', code: 'query_failed' });
+            }
+            expect(postgres.run('SELECT value FROM query_fixture').stdout.trim()).toBe('original');
+            expect(postgres.run("SELECT to_regclass('public.should_not_exist')").stdout.trim()).toBe('');
+
+            expect(postgres.run('ALTER ROLE happier_ro CREATEROLE', undefined, undefined, 'postgres').status).toBe(0);
+            await expect(invoke("SELECT 'caller-must-not-run' AS caller")).resolves.toMatchObject({ status: 'executed', value: {
+                ok: false, error: 'deployment_unavailable', diagnostic: { code: 'read_role_unavailable' },
+            } });
+        } finally {
+            home?.mockRestore(); installation?.mockRestore(); target?.dispose(); await kit.dispose();
+            await postgres.stop();
+            console.info(`[managedDataQuery.postgresql] stopped owned PostgreSQL PID ${postgres.pid}`);
+        }
+    });
     it.each(['current', 'principal', 'target-machine', 'scope', 'group', 'group-mismatch', 'group-change'] as const)('admits only the stored deployment role custody before purpose materialization (%s)', async variant => {
         const group = variant.startsWith('group');
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect', group ? { target: {

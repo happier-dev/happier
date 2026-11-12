@@ -2,7 +2,7 @@ import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -58,6 +58,7 @@ import { isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import { ActionOperationListActionInputV1Schema, ActionOperationGetActionInputV1Schema } from './specs/actionOperations.js';
 import { AccountEncryptionModeSchema, type AccountEncryptionMode } from '../features/payload/capabilities/encryptionCapabilities.js';
+import { readDeferredDeclarationDescriptor } from '../plugins/contributions/deferredDeclarationFields.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
 import type { ProjectAccountRowCipherV1 } from '../projects/projectAccountRowCipherV1.js';
 import type { PromptArtifactRefV1 } from '../prompts/library/promptArtifactRefsV1.js';
@@ -331,6 +332,14 @@ export function parseExternalActionResponseEnvelopeV1(
   };
 }
 
+/** Extracts a validated response while preserving its outer failure correlation. */
+export function readExternalActionResponseExecutionV1(
+  envelope: Pick<ExternalActionResponseEnvelopeV1, 'execution' | 'requestId'>,
+): ActionExecuteResult {
+  return !envelope.execution.ok && envelope.execution.requestId === undefined && envelope.requestId !== undefined
+    ? { ...envelope.execution, requestId: envelope.requestId } : envelope.execution;
+}
+
 const ExternalActionDaemonDispatchInvalidRequestCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_action',
   'invalid_envelope',
@@ -477,9 +486,11 @@ function projectStrictJsonExternalActionResponseEnvelopeV1(
     const output: Record<string, unknown> = Object.create(null);
     for (const key of Object.keys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      // Accessors are not JSON data and must not be invoked at this boundary.
-      if (!descriptor || !('value' in descriptor)) return invalid;
-      const projected = project(descriptor.value, nextAncestors, depth + 1);
+      // Accessors are not JSON data and must not be invoked at this boundary,
+      // except host-deferred declaration fields, which are data not yet read.
+      const deferred = descriptor ? readDeferredDeclarationDescriptor(value, descriptor) : null;
+      if (!descriptor || (!('value' in descriptor) && !deferred)) return invalid;
+      const projected = project(deferred ? deferred.value : descriptor.value, nextAncestors, depth + 1);
       if (projected !== omitted) output[key] = projected;
     }
     return output;
@@ -1059,13 +1070,19 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
 export function projectExternalActionDeploymentReadEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
 }>): DeploymentReadAdmissionV1 | undefined {
-  if (!isDeploymentReadAdmissionActionIdV1(input.actionId)) {
+  const requiresDeploymentReadAdmission = isDeploymentReadAdmissionActionIdV1(input.actionId);
+  const qualifiedManagedQuery = input.actionId === ACTION_INVOKE_ACTION_ID_V1;
+  if (!requiresDeploymentReadAdmission && !qualifiedManagedQuery) {
     if (input.envelope.v === 2 && input.envelope.deploymentReadAdmission) throw new TypeError('Unexpected deployment read admission');
     return undefined;
   }
   const admission = input.envelope.v === 1 ? projectDeploymentReadAdmissionV1(input.actionId, input.envelope.input)
-    : DeploymentReadAdmissionV1Schema.parse(input.envelope.deploymentReadAdmission);
-  if (admission?.actionId !== input.actionId) throw new TypeError('Deployment read admission mismatch');
+    : qualifiedManagedQuery && input.envelope.deploymentReadAdmission === undefined
+      ? undefined
+      : DeploymentReadAdmissionV1Schema.parse(input.envelope.deploymentReadAdmission);
+  if (admission === undefined ? requiresDeploymentReadAdmission : admission.actionId !== input.actionId) {
+    throw new TypeError('Deployment read admission mismatch');
+  }
   return admission;
 }
 /** Missing older-client metadata grants no approval-reply settlement purpose. */
@@ -1346,11 +1363,15 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     || preparation.machineId === value.machineId && preparation.target.installationId !== value.installationId)) {
     context.addIssue({ code: 'custom', path: ['deploymentPreparationAdmission'], message: 'Template admission binds its controller and selected runtime installation.' });
   }
+  const qualifiedManagedQueryRead = value.actionId === ACTION_INVOKE_ACTION_ID_V1
+    && value.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
   if (isDeploymentReadAdmissionActionIdV1(value.actionId) ? !value.deploymentReadAdmission
     || value.deploymentReadAdmission.actionId !== value.actionId || value.target.kind !== 'machine'
     || value.target.machineId !== value.machineId || value.deploymentReadAdmission.machineId !== value.machineId
     || ('installationId' in value.deploymentReadAdmission
-      && value.deploymentReadAdmission.installationId !== value.installationId) : value.deploymentReadAdmission !== undefined) {
+      && value.deploymentReadAdmission.installationId !== value.installationId)
+    : qualifiedManagedQueryRead ? value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+      : value.deploymentReadAdmission !== undefined) {
     context.addIssue({ code: 'custom', path: ['deploymentReadAdmission'], message: 'Deployment reads bind their exact authenticated receiver and operation.' });
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {

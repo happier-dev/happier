@@ -92,8 +92,10 @@ it('admits an owned Workflow preview teardown through exact approval while retai
   const context = { surface: 'agent', authority: 'account_automation' } as const;
   expect(spec.irreversible).toBe(true);
   expect(resolveActionApprovalRouting({ actionId, spec, input, settings, context }).required).toBe(true);
-  expect(resolveActionApprovalRouting({ actionId, spec, input, settings,
-    context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } }).required).toBe(true);
+  const nativeReview = resolveActionApprovalRouting({ actionId, spec, input, settings,
+    context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } });
+  expect(nativeReview.required).toBe(false);
+  expect(nativeReview.uiConfirmationRequired).toBe(true);
   const approvedOperation = WorkflowApprovedOperationV1Schema.parse({ parent: { actionId, input },
     approvedBy: { accountId: 'owner' }, steps: [{ actionId, input }] });
   expect(resolveActionApprovalRouting({ actionId, spec, input, settings, context, approvedOperation }).required).toBe(false);
@@ -126,6 +128,21 @@ it('binds current edge read authority to its authenticated controller without in
     { ...admission, actionId: 'deployments.logs.read' }]) {
     expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({ ...binding, deploymentReadAdmission }).success).toBe(false);
   }
+});
+
+it('binds a qualified managed data query to its generic Action target', () => {
+  const admission = { actionId: 'action.invoke' as const,
+    action: { pluginId: 'happier.deploy.neon', localId: 'query-read' },
+    environmentId: 'environment', targetLinkId: 'managed-data', expectedRevision: 4, expectedTargetLinkRevision: 3 };
+  const binding = { serverIdentityId: 'home', accountId: 'reader', authentication: { kind: 'account' as const, tokenEpoch: 0 },
+    machineId: 'controller', installationId: 'installed', custodianAccountId: 'owner', actionId: 'action.invoke',
+    requestId: 'managed-query', requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'machine' as const, machineId: 'controller' }, deploymentReadAdmission: admission };
+  const schema = externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema;
+
+  expect(schema.safeParse(binding).success).toBe(true);
+  expect(schema.safeParse({ ...binding, target: { kind: 'machine', machineId: 'another-controller' } }).success).toBe(false);
+  expect(schema.safeParse({ ...binding, deploymentReadAdmission: { ...admission, actionId: 'deployments.data.query' } }).success).toBe(false);
 });
 
 it('preserves producer effect evidence through the closed public refusal envelope', () => {
@@ -602,7 +619,7 @@ describe('External Action API envelope v1', () => {
 
     // A Runner row the Home publishes without its activation claim stays
     // parseable; the claim then simply cannot select it for a Session target.
-    expect(ExternalActionMachineBootstrapListV1Schema.parse([runnerRow])).toEqual([{ ...runnerRow, runnerClaim: null }]);
+    expect(ExternalActionMachineBootstrapListV1Schema.parse([runnerRow])).toEqual([{ ...runnerRow, runnerClaim: null, managedMachineRef: null }]);
     // A persistent Machine keeps the released minimal row; kind is projected.
     expect(ExternalActionMachineBootstrapListV1Schema.parse([{
       id: 'machine-1',
@@ -843,12 +860,14 @@ describe('External Action API envelope v1', () => {
     expect(authority).toEqual({ statusCode: 403, payload: { error: 'present_user_required' } });
     expect(ExternalActionHttpErrorSchema.parse(authority.payload)).toEqual(authority.payload);
     expect(ExternalActionHttpErrorSchema.safeParse({ ...authority.payload, authority: 'present_user' }).success).toBe(false);
-    const scope = projectExternalActionHttpError('credential_scope_denied', 'request-not-disclosed');
-    expect(scope).toEqual({ statusCode: 403, payload: { error: 'credential_scope_denied' } });
+    const scope = projectExternalActionHttpError('credential_scope_denied', 'request-correlated');
+    expect(scope).toEqual({ statusCode: 403, payload: { error: 'credential_scope_denied', requestId: 'request-correlated' } });
     expect(ExternalActionHttpErrorSchema.parse(scope.payload)).toEqual(scope.payload);
     expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(scope.statusCode, scope.payload))
-      .toEqual({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
-    for (const payload of [{ ...scope.payload, details: {} }, { error: 'unknown_denial' }, null, []]) {
+      .toEqual({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', requestId: 'request-correlated' });
+    expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(403, { ...scope.payload, details: {} }))
+      .toEqual({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', requestId: 'request-correlated', details: {} });
+    for (const payload of [{ ...scope.payload, unknownTransitFact: true }, { error: 'unknown_denial' }, null, []]) {
       expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(403, payload)).toBeNull();
     }
     for (const status of [200, 400, 401, 404, 500]) {
@@ -1081,4 +1100,27 @@ describe('External Action API envelope v1', () => {
     expect(projectExternalActionExecutionResultV1({ ...failure, goalControlFailure: facet, privateTransit: true }))
       .toEqual({ ...failure, ...(retained ? { goalControlFailure: facet } : {}) });
   });
+});
+
+
+it('retains credential denial correlation and the validated daemon cause through the shared HTTP reader', () => {
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
+  const diagnostic = { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause } as const;
+  const projected = externalActionApi.projectExternalActionHttpError('credential_scope_denied', 'denied-request', undefined, diagnostic);
+  expect(projected.payload).toMatchObject({ requestId: 'denied-request', diagnostic });
+  expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(projected.statusCode, projected.payload))
+    .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', requestId: 'denied-request', failureCause });
+});
+
+it('projects a validated V1 outer request ID onto its failure without changing success', () => {
+  const failure = { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
+  const envelope = { v: 1, actionId: 'session.stop', requestId: 'outer-only', execution: failure };
+  const parsed = externalActionApi.parseExternalActionResponseEnvelopeV1(envelope);
+  if (!parsed) throw new Error('Expected a validated response');
+  expect(externalActionApi.readExternalActionResponseExecutionV1(parsed)).toEqual({ ...failure, requestId: 'outer-only' });
+  expect(externalActionApi.readExternalActionResponseExecutionV1({ ...parsed, execution: { ...failure, ok: false, requestId: 'authored-cause' } }))
+    .toMatchObject({ requestId: 'authored-cause' });
+  const success = { ok: true as const, result: {} };
+  expect(externalActionApi.readExternalActionResponseExecutionV1({ ...parsed, execution: success })).toEqual(success);
+  expect(externalActionApi.parseExternalActionResponseEnvelopeV1(envelope)).toEqual(envelope);
 });

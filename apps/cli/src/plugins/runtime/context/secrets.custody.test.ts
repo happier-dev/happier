@@ -37,6 +37,34 @@ describe('declared plugin secret custody', () => {
         expect('createStablePluginSecretsService' in pluginSecretsContext).toBe(false);
     });
 
+    it('exposes only the host-captured data-role reader without using Account Saved Secret custody', async () => {
+        const readDataRole = vi.fn(async () => 'managed-read-only-password');
+        const readSavedSecret = vi.fn(async () => 'account-secret-must-not-be-read');
+        const registerRawForRedaction = vi.fn();
+        const service = createDeclaredPluginSecretsService({
+            pluginId: 'acme.data',
+            declarations: [],
+            resolveCustody: () => ({
+                async status() { return { state: 'missing' as const, revision: 'none' }; },
+                async get() { return null; },
+                async set() { return { revision: 'none' }; },
+                async delete() { return { revision: 'none' }; },
+                readSavedSecret,
+            }),
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            registerRawForRedaction,
+            readDataRole,
+        });
+
+        expect('readDataRole' in service).toBe(true);
+        if (!('readDataRole' in service) || typeof service.readDataRole !== 'function') throw new Error('Expected data-role reader');
+        await expect(service.readDataRole()).resolves.toBe('managed-read-only-password');
+        expect(readDataRole).toHaveBeenCalledOnce();
+        expect(readSavedSecret).not.toHaveBeenCalled();
+        expect(registerRawForRedaction).toHaveBeenCalledWith('managed-read-only-password');
+    });
+
     it('fails closed instead of creating the retired local plugin secret key', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-secret-custody-'));
         const paths = resolvePluginStorePaths({ happyHomeDir });

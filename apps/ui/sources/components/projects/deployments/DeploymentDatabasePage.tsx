@@ -6,6 +6,7 @@ import type { DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol
 export { DeploymentAddRefusal, showDeploymentAppSourcesSheet } from './DeploymentAddReview';
 import * as React from 'react';
 import { View } from 'react-native';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
@@ -45,12 +46,13 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import { DeploymentBackupControls, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
-import { engineNames } from './DeploymentDataCard';
+import { databaseEngineTitle } from './databasePresentation';
 import {
   DeployOutcomeBanner,
   type DeploymentReviewHandle,
 } from './DeploymentEnvironmentDetail';
 import { DeploymentDataQueryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { readDeploymentTargetActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -107,6 +109,13 @@ function resolveDatabase(detail: Detail, key: string): Database | null {
     (entry) => entry.targetLink.role === 'data' && entry.targetLink.id === key,
   );
   return link ? { kind: 'managed', key, link } : null;
+}
+
+/** The provider action schema, not its id, decides whether the shared sheet asks for a database. */
+function queryInputRequiresDatabase(inputSchema: unknown): boolean {
+  if (!isRecord(inputSchema) || !Array.isArray(inputSchema.required) || !inputSchema.required.includes('database')) return false;
+  const database = isRecord(inputSchema.properties) ? inputSchema.properties.database : undefined;
+  return isRecord(database) && database.type === 'string';
 }
 
 const HISTORY_ACTION = {
@@ -258,9 +267,11 @@ export function DeploymentDatabasePage(
         }
       : null;
 
+  const providerConsole = database.kind === 'managed' ? database.link.content.data?.providerConsole : undefined;
   const title =
     database.kind === 'selfHosted'
-      ? `${engineNames[database.data.engine]}${database.data.version ? ` ${database.data.version}` : ''}`
+      ? databaseEngineTitle(database.data)
+      : database.link.content.data ? databaseEngineTitle(database.link.content.data)
       : ((database.link.targetLink.source?.kind === 'plugin'
           ? platformTitle(database.link.targetLink.source)
           : null) ?? database.link.targetLink.targetKind);
@@ -277,7 +288,9 @@ export function DeploymentDatabasePage(
               : database.data.service,
           },
         ]
-      : [{ key: 'where', text: database.link.targetLink.targetKind }];
+      : [{ key: 'where', text: database.link.targetLink.source.kind === 'plugin'
+          ? platformTitle(database.link.targetLink.source) ?? database.link.targetLink.targetKind
+          : database.link.targetLink.targetKind }];
 
   const openQuery = actions && lifetime
     && (database.kind === 'selfHosted' || queryDeclarations.state.status !== 'loading') ? () => {
@@ -309,15 +322,31 @@ export function DeploymentDatabasePage(
     const binding = contribution ? readDeploymentTargetActionRolesV1(contribution).find(entry => entry.role === 'query.readOnly') : undefined;
     const action = manifest?.contributes.actions?.find(entry => entry.id === binding?.action);
     const input = buildPreviewBranchReadInput(detail, database.link);
+    const controllerMachineId = detail.environment.controllerMachineId;
     const sqlHint = action?.inputHints?.fields?.find(field => field.path === 'sql')?.description;
+    const databaseHint = action?.inputHints?.fields?.find(field => field.path === 'database');
     showDeploymentDataQuerySheet({ name: title,
       parameterHint: sqlHint ? resolvePluginLocalizedStringV2Text(sqlHint) : '',
+      ...(queryInputRequiresDatabase(action?.inputSchema) ? { database: {
+        title: databaseHint ? resolvePluginLocalizedStringV2Text(databaseHint.title) : t('projects.deployments.databaseQuery.database'),
+        ...(databaseHint?.description ? { supportingText: resolvePluginLocalizedStringV2Text(databaseHint.description) } : {}),
+      } } : {}),
+      ...(controllerMachineId && detail.environment.capabilities.manage ? { setup: {
+        lifetime, machineId: controllerMachineId,
+        configure: async source => {
+          const result = await actions.setBindings({ environmentId: detail.environment.id,
+            expectedRevision: detail.environment.revision,
+            set: [{ purpose: 'dataRole', targetLinkId: database.link.targetLink.id, role: 'readOnlyPassword', source }], remove: [] });
+          if (result.ok) void record.refresh();
+          return result;
+        }, onApproval: (artifactId: string) => props.review.request(artifactId),
+      } } : {}),
       run: async statement => {
-        if (!manifest || !action || !input) return { ok: false, error: 'deployment_unavailable',
+        if (!manifest || !action || !input || !controllerMachineId) return { ok: false, error: 'deployment_unavailable',
           diagnostic: { code: queryDeclarations.state.status === 'failed' ? queryDeclarations.state.code
-            : !input ? 'managed_query_custody_unavailable' : 'managed_query_action_unavailable' } };
+            : !input ? 'managed_query_custody_unavailable' : !controllerMachineId ? 'machine_unavailable' : 'managed_query_action_unavailable' } };
         const result = await actions.inspectPlatformTarget(formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
-          { ...input, ...statement });
+          { ...input, ...statement }, { externalActionTarget: { kind: 'machine', machineId: controllerMachineId } });
         return result.ok ? DeploymentDataQueryResultV1Schema.parse(result.value)
           : { ok: false, error: 'deployment_unavailable', diagnostic: { code: result.code } };
       },
@@ -640,11 +669,16 @@ export function DeploymentDatabasePage(
               testID={`${id}.provider`}
               title={t('projects.deployments.databaseProviderTitle')}
             >
+              {providerConsole ? <Item testID={`${id}.providerConsole`}
+                title={providerConsole.label}
+                onPress={() => { void openExternalUrl(providerConsole.url); }} /> : null}
               {openManaged ? <Item testID={`${id}.manage`} title={t('projects.deployments.managedData.manage')}
                 onPress={openManaged} /> : null}
               <Item
-                title={title}
-                subtitle={database.link.targetLink.targetKind}
+                title={database.link.targetLink.source.kind === 'plugin'
+                  ? platformTitle(database.link.targetLink.source) ?? database.link.targetLink.targetKind
+                  : database.link.targetLink.targetKind}
+                subtitle={database.link.content.providerIdentity?.providerResourceId}
                 mode="info"
               />
             </ItemGroup>

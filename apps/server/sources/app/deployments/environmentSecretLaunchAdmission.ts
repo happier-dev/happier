@@ -10,6 +10,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
 import { readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
@@ -19,7 +20,8 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { readAcceptedDeploymentDomainSecretDestinationInTx, readDeploymentDomainOperationalDestinationsInTx } from './deploymentDomainService';
 import type { DeploymentChildAdmission } from './deploymentChildAuthorization';
-import { readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
+import { readCurrentManagedDataTargetLinksInTx, readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
+import { readAdmittedDeploymentDataQueryScopeInTx } from './deploymentReadAuthorization';
 
 /** Machine setup storage admission; the configure invocation owns provider/operation currentness and plaintext custody. */
 export async function accessMachineConnectorSecretGrantInTx(tx: Tx, actorAccountId: string,
@@ -89,7 +91,8 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     input: EnvironmentSecretAdmissionRequestV1, authentication: DeploymentAuthentication = {},
     admittedChild?: DeploymentChildAdmission,
     admittedBackup?: DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
-    admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>,
+    admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: 'deployments.data.query' }>
+        | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
     const factsOnly = input.materialization.kind === 'domain' && !input.materialization.use;
@@ -111,10 +114,23 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         installationId: input.installationId, deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
         proof, publicKey: installationPublicKey })) return deploymentFailure('deployment_access_denied');
     if (input.materialization.kind === 'dataRole') {
-        // The query HTTP-purpose owner has already admitted the exact current
-        // Environment/receipt/receiver. Service and binding selection remain
-        // private to the host; possession of another seal never selects a role.
+        // HTTP binds the signed query operands; this scope owner decides their
+        // current Environment/link custody. Service and binding selection stay
+        // private to the host; another seal never selects a role.
         if (!admittedDataQuery) return deploymentFailure('deployment_access_denied');
+        const scope = await readAdmittedDeploymentDataQueryScopeInTx(tx, admittedDataQuery);
+        if (!scope) return deploymentFailure('deployment_access_denied');
+        if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+            const materialization = input.materialization;
+            if (!('targetLinkId' in materialization) || input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId
+                || materialization.targetLinkId !== admittedDataQuery.targetLinkId
+                || materialization.expectedRevision !== admittedDataQuery.expectedRevision) {
+                return deploymentFailure('deployment_access_denied');
+            }
+            if (scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
+        } else if ('targetLinkId' in input.materialization) {
+            return deploymentFailure('deployment_access_denied');
+        }
         const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, input);
         if (!loaded.ok) return loaded;
         return { ok: true, grants: await readEnvironmentMachineSecretGrantsInTx(tx, {
@@ -123,7 +139,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     }
     if (input.materialization.kind === 'bindings') return readEnvironmentBindingPreparationInTx(tx, actorAccountId,
         { serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.materialization.expectedRevision,
-            domainIds: input.materialization.domainIds,
+            domainIds: input.materialization.domainIds, dataRoleTargetLinkIds: input.materialization.dataRoleTargetLinkIds,
             targetLinkId: input.targetLinkId, ...(input.materialization.buildMachineId
                 ? { buildMachineId: input.materialization.buildMachineId } : {}) }, authentication);
     if (input.materialization.kind === 'domain') {
@@ -218,7 +234,8 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
 
 /** Both preparing hosts consume the same current Environment principal, capability and installation decision. */
 async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: string,
-    input: Readonly<{ serverId: string; environmentId: string; expectedRevision: number; targetLinkId?: string; buildMachineId?: string; domainIds?: readonly string[] }>,
+    input: Readonly<{ serverId: string; environmentId: string; expectedRevision: number; targetLinkId?: string; buildMachineId?: string;
+        domainIds?: readonly string[]; dataRoleTargetLinkIds?: readonly string[] }>,
     authentication: DeploymentAuthentication,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
@@ -234,6 +251,9 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
     }) : null;
     if (loaded.row.runtimeTargetLinkId && !link) return deploymentFailure('deployment_access_denied');
     const runtimeMachines = link ? readDeploymentTargetRuntimeInstallations(link) : [];
+    const managedDataLinks = await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: loaded.row.id,
+        targetLinkIds: input.dataRoleTargetLinkIds ?? [] });
+    if (managedDataLinks === null) return deploymentFailure('deployment_access_denied');
     const domainDestinations = await readDeploymentDomainOperationalDestinationsInTx(tx, {
         environmentId: loaded.row.id, domainIds: input.domainIds ?? [],
     });
@@ -241,6 +261,7 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
         installationId: member.installationId, role: 'target' as const })),
         ...(loaded.row.buildMachineId ? [{ machineId: loaded.row.buildMachineId, role: 'build' as const }] : []),
         ...(input.buildMachineId ? [{ machineId: input.buildMachineId, role: 'build' as const }] : []),
+        ...(managedDataLinks.length ? [{ machineId: loaded.row.controllerMachineId, role: 'controller' as const }] : []),
         ...domainDestinations.domains.flatMap(domain => domain.placements.map(placement => ({ machineId: placement.machineId,
             installationId: placement.installationId, role: 'target' as const })))];
     const denied = await admitDeploymentMachinesInTx(tx, loaded.admission.owner, recipients);
@@ -266,5 +287,6 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
                     installationId: placement.installationId, publicKey: placement.installationPublicKey })),
             })) },
             ...(loaded.row.buildMachineId ? { buildInstallation: keys.get(loaded.row.buildMachineId) } : {}),
-            ...(input.buildMachineId ? { proposedBuildInstallation: keys.get(input.buildMachineId) } : {}) } });
+            ...(input.buildMachineId ? { proposedBuildInstallation: keys.get(input.buildMachineId) } : {}),
+            ...(managedDataLinks.length ? { controllerInstallation: keys.get(loaded.row.controllerMachineId) } : {}) } });
 }

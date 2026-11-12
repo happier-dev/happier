@@ -18,16 +18,18 @@ describe('multi-Machine deployment contracts', () => {
             bindings: [{ ...backup, source: { ...source, resourceRevision: 2 } }, data], existingGrants: [] };
         expect(readRetainedOperationalEnvironmentBindingGrantsV1(input)).toBeNull();
         expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings' })).toEqual([]);
-        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings', bindings: [backup] })).toBeNull();
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings', bindings: [backup] })).toEqual([]);
     });
-    it('admits service role edits only through the explicit binding writer while retaining managed-role custody', () => {
+    it('admits service and managed data-role edits only through the explicit binding writer', () => {
         const source = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1('role-credential'), resourceRevision: 1 };
         const service = EnvironmentSecretBindingV1Schema.parse({ purpose: 'dataRole', service: 'postgres', role: 'readOnlyPassword', source });
         const managed = EnvironmentSecretBindingV1Schema.parse({ purpose: 'dataRole', targetLinkId: 'managed-data', role: 'readOnlyPassword', source });
         const input = { previousBindings: [service, managed], bindings: [managed], existingGrants: [] };
         expect(readRetainedOperationalEnvironmentBindingGrantsV1(input)).toBeNull();
         expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, writer: 'bindings' })).toEqual([]);
-        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, bindings: [service], writer: 'bindings' })).toBeNull();
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ ...input, bindings: [service], writer: 'bindings' })).toEqual([]);
+        expect(readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: [], bindings: [managed], existingGrants: [],
+            writer: 'bindings' })).toEqual([]);
     });
     it('removes a configured migration without resetting the other saved policies', () => {
         const current = createOwnServerEnvironmentConfigurationV1({ rollout: 'startFirst', autoRestorePreviousRelease: false,

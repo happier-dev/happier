@@ -1,3 +1,4 @@
+import { captureConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { createDeploymentTargetRoleExecEnvironmentForHost } from '@/deployments/targets/createDeploymentTargetRoleExecEnvironmentForHost';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -57,14 +58,19 @@ import { PLUGIN_ACCOUNT_STORAGE_UNAVAILABLE_CODE } from '../context/storage';
 import { createPluginAccountActionSettingsService } from '@happier-dev/cli-common/plugins/registration/accountActionSettings';
 import { readPluginActionInputParser, readPluginActionReadObserver, readPluginActionResultParser } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleAdmissionHost } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
+import { createManagedDataRoleSecretReaderForHost } from '@/deployments/secrets/createManagedDataRoleSecretReaderForHost';
 import { admitDeploymentTargetCredentialPrincipalForHost } from '@/deployments/targets/admitDeploymentTargetCredentialPrincipalForHost';
 import { DeploymentTargetCredentialPrincipalV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import type { DeploymentTargetDataQueryInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { createDeploymentTargetRoleSourceAdmissionForHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { createDeploymentTargetRoleWorkloadBindingForHost } from '@/deployments/targets/createDeploymentTargetRoleWorkloadBindingForHost';
-import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildOperationV1, invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 
 type TargetRegistration = Readonly<{
     pluginId: string;
@@ -184,7 +190,8 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     actionFormConnectedAccounts?: Pick<
         ConnectedAccountPurposeBindingOwner,
         'resolveBindingIntent'
-    > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings' | 'resolveBindingIntentSelection'>>;
+    > & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'activatePurposeBindings' | 'resolveBindingIntentSelection'>>
+        & Partial<Pick<import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime, 'admitActionPurposeBindings'>>;
     /**
      * Canonical host-only source resolver for declared history-gap recovery
      * bindings. The target Action lifecycle remains the operation owner.
@@ -424,6 +431,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             let admittedPurposeRuntime: ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | undefined;
             let deploymentSource: PluginInvocationServicesSeed['deploymentSource'];
             let managedWorkloads: PluginInvocationServicesSeed['managedWorkloads'];
+            let readDataRole: PluginInvocationServicesSeed['readDataRole'];
             if (roles?.length) {
                 const unavailable = (code = 'deployment_target_role_unavailable') => ({ status: 'unavailable' as const, code, message: code });
                 const context = { ...input.approvalContext, signal: input.signal };
@@ -446,6 +454,14 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }
                     admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
                     if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable();
+                    if (admitted.role === 'query.readOnly') {
+                        if (!('environment' in admitted)) return unavailable('deployment_invalid');
+                        // Role admission already parsed and authorized the exact role input.
+                        // This is type-only narrowing for its host-private SDK capability.
+                        const query = admitted.input as DeploymentTargetDataQueryInputV1;
+                        readDataRole = createManagedDataRoleSecretReaderForHost({ host, environment: admitted.environment,
+                            query, context });
+                    }
                     if (executionTarget === 'daemon' && params.ensureEnvironmentServices) {
                         managedWorkloads = createDeploymentTargetRoleWorkloadBindingForHost({ admission: admitted, host, context,
                             ensureEnvironmentServices: params.ensureEnvironmentServices,
@@ -554,18 +570,28 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 isCurrent: input.isCurrent,
             });
             if (revalidation) return revalidation;
-            return admittedPurposeTarget || admittedTeamPrincipal || managedWorkloads
+            return admittedPurposeTarget || admittedTeamPrincipal || managedWorkloads || readDataRole
                 ? { status: 'admitted' as const,
                     ...(admittedPurposeTarget ? { connectedAccountPurposeTarget: admittedPurposeTarget } : {}),
                     ...(admittedTeamPrincipal ? { connectedAccountTeamPrincipal: admittedTeamPrincipal } : {}),
                     ...(admittedPurposeRuntime ? { connectedAccountPurposeRuntime: admittedPurposeRuntime } : {}),
                     ...(admittedPlatformOperation ? { connectedAccountPlatformOperation: admittedPlatformOperation } : {}),
                     ...(deploymentSource ? { deploymentSource } : {}),
-                    ...(managedWorkloads ? { managedWorkloads } : {}) } : null;
+                    ...(managedWorkloads ? { managedWorkloads } : {}),
+                    ...(readDataRole ? { readDataRole } : {}) } : null;
         },
         bindConnectedAccountActionOperation: async (input) => {
             const actionFormConnectedAccounts = input.admittedPurposeRuntime ?? params.actionFormConnectedAccounts;
-            const snapshot = await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
+            const selectedPurposes = input.approvalContext?.invocationServices?.connectedAccountPurposeBindingSelection;
+            const captured = selectedPurposes ? captureConnectedAccountInvocationPurposeBinding({
+                ...selectedPurposes, identity: { pluginId: input.pluginId, localId: input.localId },
+                operationId: input.approvalContext?.externalActionExecutionAuthorization?.binding.requestId ?? input.correlationId,
+                isCurrent: input.isCurrent,
+            }) : undefined;
+            const snapshot: Awaited<ReturnType<typeof resolveRegistryConnectedAccountActionPurposeBindingSnapshot>> = captured ? {
+                purposes: captured.purposes, bindings: captured.purposeBindings.bindings,
+                ...(captured.purposeBindings.teamResourceSelections ? { teamResourceSelections: captured.purposeBindings.teamResourceSelections } : {}),
+            } : await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
                 registry: params.contributes,
                 qualifiedActionId: buildQualifiedPluginContributionKey(
                     createPluginContributionIdentity({
@@ -591,6 +617,44 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
             });
             if ('status' in snapshot) return snapshot;
             if (snapshot.purposes.length === 0) return null;
+            if (snapshot.teamResourceSelections?.length) {
+                let context = input.approvalContext;
+                const action = { pluginId: input.pluginId, localId: input.localId };
+                const actionId = formatQualifiedPluginActionId(action);
+                if (context?.externalActionExecutionAuthorization?.binding.actionId === ACTION_INVOKE_ACTION_ID_V1
+                    && !readHostAdmittedReviewedChildV1(context)) {
+                    const reviewed = readHostReviewedChildOperationV1(context, actionId, input.input);
+                    if (reviewed) {
+                        // Spend the registry's existing exact Action admission; the
+                        // issuer supplies its private signed child transport proof.
+                        const projected = await invokeHostReviewedChildV1({ parent: reviewed.parent, context,
+                            child: { action, role: 'action_invoke', input: input.input }, admittedReview: reviewed,
+                            execute: async (_input, childContext) => ({ context: childContext }) });
+                        if ('context' in projected) context = projected.context;
+                    }
+                }
+                const authorization = context?.externalActionExecutionAuthorization;
+                const resolveRequestHeaders = createExternalActionRequesterServerRequestHeaders(context);
+                if (!actionFormConnectedAccounts?.admitActionPurposeBindings || !authorization || !resolveRequestHeaders) {
+                    return Object.freeze({ status: 'unavailable' as const, code: 'plugin_connected_account_team_resource_unavailable',
+                        message: 'The selected Team credential requires an admitted Action' });
+                }
+                const admission = await actionFormConnectedAccounts.admitActionPurposeBindings({
+                    subject: { kind: 'action_operation', operationId: authorization.binding.requestId,
+                        actionId: formatQualifiedPluginActionId({ pluginId: input.pluginId, localId: input.localId }),
+                        pluginVersion: input.pluginVersion, consumer: { pluginId: input.pluginId, localId: input.localId },
+                        isCurrent: input.isCurrent },
+                    purposes: snapshot.purposes, bindings: snapshot.bindings,
+                    teamResourceSelections: snapshot.teamResourceSelections, signal: input.signal,
+                    ...(snapshot.bindingSelections ? { bindingSelections: snapshot.bindingSelections } : {}),
+                    ...(input.recordOperationCredentialUse ? { recordOperationCredentialUse: input.recordOperationCredentialUse } : {}),
+                    resolveRequestHeaders,
+                });
+                if (admission.kind === 'brokered') return Object.freeze({ executeBrokeredAction: admission.execute, dispose() {} });
+                return Object.freeze({ exactPurposeBindingSubjectId: admission.lease.subjectId,
+                    ...(input.admittedPurposeRuntime ? { connectedAccountsOwner: input.admittedPurposeRuntime.owner } : {}),
+                    dispose: () => admission.lease.dispose() });
+            }
             if (!actionFormConnectedAccounts?.activatePurposeBindings) {
                 return Object.freeze({
                     status: 'unavailable' as const,

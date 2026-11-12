@@ -624,6 +624,8 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean;
     registerRawForRedaction(value: string): void;
+    /** Exact host-admitted managed data-role reader; no SDK selector is exposed. */
+    readDataRole?: NonNullable<SecretsService['readDataRole']>;
     sharedSaveAdmission?: PluginSharedSaveAdmission;
 }>): SecretsService {
     const declarations = new Map<string, DeclaredPluginSecret>();
@@ -657,6 +659,7 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
         declaration: { custody: 'account' },
         signal: params.signal,
     }) ?? null;
+    const readDataRole = params.readDataRole;
 
     function assertCurrent(signal?: AbortSignal): void {
         if (signal?.aborted || params.signal.aborted || !params.isOccurrenceCurrent()) {
@@ -714,6 +717,19 @@ export function createDeclaredPluginSecretsService(params: Readonly<{
     }
 
     return Object.freeze({
+        ...(readDataRole
+            ? {
+                async readDataRole(options?: { signal?: AbortSignal }) {
+                    assertCurrent(options?.signal);
+                    const value = await readDataRole({
+                        signal: options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal,
+                    });
+                    assertCurrent(options?.signal);
+                    params.registerRawForRedaction(value);
+                    return value;
+                },
+            }
+            : {}),
         async readSavedSecret(ref: string, options?: { resourceRevision?: number; signal?: AbortSignal }) {
             assertCurrent(options?.signal);
             if (!accountCustody?.readSavedSecret) {
@@ -818,6 +834,8 @@ export type StableDeclaredPluginSecretsHost = Readonly<{
         signal: AbortSignal;
         isOccurrenceCurrent(): boolean;
         registerRawForRedaction(value: string): void;
+        /** Exact host-admitted managed data-role reader; never plugin-selected. */
+        readDataRole?: NonNullable<SecretsService['readDataRole']>;
         sharedSaveAdmission?: PluginSharedSaveAdmission;
     }>): SecretsService | null;
     /**
@@ -867,6 +885,7 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
         signal: AbortSignal;
         isOccurrenceCurrent(): boolean;
         registerRawForRedaction(value: string): void;
+        readDataRole?: NonNullable<SecretsService['readDataRole']>;
         sharedSaveAdmission?: PluginSharedSaveAdmission;
     }>): SecretsService => {
         return createDeclaredPluginSecretsService({
@@ -876,6 +895,7 @@ export function createStableDeclaredPluginSecretsHost(params: Readonly<{
             signal: input.signal,
             isOccurrenceCurrent: input.isOccurrenceCurrent,
             registerRawForRedaction: input.registerRawForRedaction,
+            ...(input.readDataRole ? { readDataRole: input.readDataRole } : {}),
             ...(input.sharedSaveAdmission ? { sharedSaveAdmission: input.sharedSaveAdmission } : {}),
         });
     };

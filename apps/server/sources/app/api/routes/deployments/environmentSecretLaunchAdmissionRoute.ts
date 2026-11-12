@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema,
     MachineConnectorSecretGrantInputV1Schema, MachineConnectorSecretGrantResultV1Schema } from '@happier-dev/deployment-protocol';
 import { readEnvironmentSecretLaunchAdmissionInTx, accessMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretLaunchAdmission';
@@ -45,7 +46,8 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         const binding = readDeploymentExecutionBindingFromRequest(request);
         const native = binding?.deploymentNativeAdmission;
         const readAdmission = binding?.deploymentReadAdmission;
-        const admittedDataQuery = readAdmission?.actionId === 'deployments.data.query' ? readAdmission : undefined;
+        const admittedDataQuery = readAdmission?.actionId === 'deployments.data.query' || readAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
+            ? readAdmission : undefined;
         const admittedBackup = native && 'kind' in native && (native.kind === 'restore' || native.kind === 'backup') ? native : undefined;
         if (request.authTokenKind === 'api_token' && !admittedBackup && !admittedDataQuery && !request.externalActionDeploymentChildSigner
             && !(request.externalActionReviewedChildAdmission?.actionId === 'deployments.bindings.set'

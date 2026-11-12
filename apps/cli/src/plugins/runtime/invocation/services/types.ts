@@ -72,6 +72,8 @@ export type PluginExternalActionContext = Readonly<{
 export type PluginInvocationServicesSeed = Readonly<{
     /** Account custody retained by the Session admission; never an SDK operand. */
     requesterAccount?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+    /** Exact host-admitted managed data role; no role, link, or ref reaches plugin input. */
+    readDataRole?: NonNullable<PluginServices['secrets']['readDataRole']>;
     /** Exact resource admission, captured by the host before the handler starts. */
     managedWorkloads?: PluginServices['managedServices']['observeWorkload'];
     /** Host-private current Run attachment; never projected into plugin context. */

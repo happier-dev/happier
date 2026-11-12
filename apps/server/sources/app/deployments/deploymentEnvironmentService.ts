@@ -33,7 +33,8 @@ import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { linkDeploymentTargetForAdmittedEnvironmentInTx, readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
+import { linkDeploymentTargetForAdmittedEnvironmentInTx, readCurrentManagedDataTargetLinksInTx,
+    readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
 import { admitDeploymentDeployerPrincipalsInTx, replaceDeploymentDeployerPrincipalsInTx, sameDeploymentDeployerPrincipals } from './deploymentEnvironmentDeployers';
 import { admitPreviewEnvironmentRelationInTx } from './previewEnvironmentRelation';
 import { readDeploymentDomainInventoryInTx } from './deploymentDomainService';
@@ -300,7 +301,7 @@ async function createDeploymentEnvironmentForSourceInTx(tx: Tx, actorAccountId: 
         if (!original || original.digest !== digest) return deploymentFailure('deployment_conflict');
         const { environmentId } = original;
         const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, environmentId, authentication);
-        return loaded.ok && !loaded.row.deletedAt ? { ok: true as const, environmentId,
+        return loaded.ok && !loaded.row.deletedAt ? { ok: true as const, environmentId, replayed: true as const,
             projectSourceId: loaded.row.projectSourceId, revision: loaded.row.revision,
             ...(loaded.row.runtimeTargetLinkId ? { runtimeTargetLinkId: loaded.row.runtimeTargetLinkId } : {}),
             ...(original.previewDataTargets ? { previewDataTargets: original.previewDataTargets } : {}) }
@@ -613,6 +614,15 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     const runtimeInstallations = link ? readDeploymentTargetRuntimeInstallations(link) : [];
     const preparedContent = await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, input);
     if (!preparedContent.ok) return preparedContent;
+    const managedDataTargetLinkIds = preparedContent.content?.bindings.flatMap(binding => binding.purpose === 'dataRole'
+        && 'targetLinkId' in binding ? [binding.targetLinkId] : []) ?? [];
+    const managedDataLinks = await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: loaded.row.id,
+        targetLinkIds: managedDataTargetLinkIds });
+    if (managedDataLinks === null) return deploymentFailure('deployment_conflict');
+    const controller = managedDataLinks.length ? await tx.machine.findUnique({ where: { id: loaded.row.controllerMachineId },
+        select: { id: true, installationId: true } }) : null;
+    const controllerInstallation = controller?.installationId ? { machineId: controller.id, installationId: controller.installationId } : null;
+    if (managedDataLinks.length && !controllerInstallation) return deploymentFailure('deployment_conflict');
     const previous = isDeepStrictEqual(deploymentContentReference(loaded.row), deploymentContentReference(input)) ? preparedContent
         : await readPlainDeploymentEnvironmentContentInTx(tx, actorAccountId, loaded.admission.owner, loaded.row);
     if (!previous.ok) return previous;
@@ -653,7 +663,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     // References survive authoring before placement; grants cover only current installations.
     const secretRevisions = new Map(input.referencedSavedSecretRevisions.map(ref => [ref.resourceId, ref.revision]));
     const subjects = new Set<string>();
-    const recipients = new Map<string, { machineId: string; installationId: string; role: 'target' | 'build' }>();
+    const recipients = new Map<string, { machineId: string; installationId: string; role: 'target' | 'build' | 'controller' }>();
     for (const grant of input.grants) {
         if (grant.kind === 'connectorToken' || grant.environmentId !== input.environmentId) return deploymentFailure('deployment_conflict');
         const key = machineSecretGrantSubjectKey(grant);
@@ -664,11 +674,15 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             : retained && !isDeepStrictEqual(retained, grant)) return deploymentFailure('deployment_conflict');
         const runtime = runtimeInstallations.some(member => member.machineId === grant.machineId && member.installationId === grant.installationId);
         const build = buildMachineId === grant.machineId;
-        if (!retained && (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build : !runtime && !build)) {
+        const controllerRecipient = grant.kind === 'secret' && controllerInstallation !== null && controllerInstallation.machineId === grant.machineId
+            && controllerInstallation.installationId === grant.installationId;
+        if (!retained && (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build
+            : !runtime && !build && !controllerRecipient)) {
             return deploymentFailure('deployment_conflict');
         }
-        if (runtime || build) recipients.set(JSON.stringify([grant.machineId, grant.installationId]), {
-            machineId: grant.machineId, installationId: grant.installationId, role: runtime ? 'target' : 'build',
+        if (runtime || build || controllerRecipient) recipients.set(JSON.stringify([grant.machineId, grant.installationId]), {
+            machineId: grant.machineId, installationId: grant.installationId,
+            role: controllerRecipient ? 'controller' : runtime ? 'target' : 'build',
         });
         if (grant.kind === 'secret') {
             const existing = secretRevisions.get(grant.resourceId);
@@ -708,7 +722,9 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 : binding.purpose === 'variable' && binding.phase === 'build';
             if (needsBuild && !buildRecipient) return deploymentFailure('deployment_conflict');
             const destinations = binding.purpose === 'dataRole'
-                ? runtimeInstallations.filter(member => input.grants.some(grant => grant.kind === 'secret'
+                ? 'targetLinkId' in binding
+                    ? controllerInstallation ? [controllerInstallation] : []
+                    : runtimeInstallations.filter(member => input.grants.some(grant => grant.kind === 'secret'
                     && grant.resourceId === resourceId && grant.resourceRevision === binding.source.resourceRevision
                     && grant.machineId === member.machineId && grant.installationId === member.installationId))
                 : environmentSecretBindingInstallationsV1<{ machineId: string; installationId: string }>(binding,

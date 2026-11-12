@@ -44,6 +44,11 @@ export interface SecretsService {
     saveShared(id: string, input: SharedSecretSaveInput, options?: { signal?: AbortSignal }): Promise<SharedSecretSaveResult>;
     /** Read a Saved Secret reference through this invocation's captured Account custody. */
     readSavedSecret(ref: string, options?: { resourceRevision?: number; signal?: AbortSignal }): Promise<string>;
+    /**
+     * Optional host-captured read-only data-role password for the admitted
+     * managed data query. Callers cannot select a link, reference, or role.
+     */
+    readDataRole?(options?: { signal?: AbortSignal }): Promise<string>;
     status(id: string): Promise<SecretStatus>;
     get(id: string, options?: { reason?: string; signal?: AbortSignal; sourceKind?: 'inline' }): Promise<string>;
     set(

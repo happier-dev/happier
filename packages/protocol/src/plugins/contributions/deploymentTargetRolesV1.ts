@@ -4,7 +4,7 @@ import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../tea
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTimestampV1Schema as timestamp } from '../../deployments/deploymentIdentifiersV1.js';
-import { DeploymentSourceIntentV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
+import { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
 import { DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariablesV1.js';
 export * from './deploymentTargetVariablesV1.js';
 import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
@@ -77,6 +77,13 @@ export const DeploymentTargetPreparedNativeV1Schema = lazyZodSchema(() => z.stri
 export type DeploymentTargetPreparedNativeV1 = z.infer<typeof DeploymentTargetPreparedNativeV1Schema>;
 export const DeploymentTargetPreparedNativeV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetPreparedNativeV1Schema);
 
+/** Inert provider facts captured with the protected data link, never connection credentials. */
+export const DeploymentManagedDataPresentationV1Schema = lazyZodSchema(() => z.strictObject({
+    engine: id, version: z.optional(id),
+    providerConsole: z.optional(z.strictObject({ url: publicUrl, label: id })),
+}));
+export type DeploymentManagedDataPresentationV1 = z.infer<typeof DeploymentManagedDataPresentationV1Schema>;
+
 /** Protected provider link content; the host remains the sole association writer. */
 export const DeploymentTargetLinkProviderContentV1Schema = lazyZodSchema(() => z.strictObject({
     credentialPrincipal: DeploymentTargetCredentialPrincipalV1Schema,
@@ -85,6 +92,8 @@ export const DeploymentTargetLinkProviderContentV1Schema = lazyZodSchema(() => z
     repositoryAccess: z.optional(DeploymentTargetRepositoryAccessV1Schema),
     preparedNative: z.optional(DeploymentTargetPreparedNativeV1Schema),
     ownedVariables: z.optional(z.array(DeploymentTargetOwnedVariableV1Schema)),
+    data: z.optional(DeploymentManagedDataPresentationV1Schema),
+    providerUrl: z.optional(publicUrl),
 }));
 export type DeploymentTargetLinkProviderContentV1 = z.infer<typeof DeploymentTargetLinkProviderContentV1Schema>;
 export const DeploymentTargetLinkProviderContentV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetLinkProviderContentV1Schema);
@@ -129,6 +138,18 @@ export const DeploymentTargetLinkRoleInputV1Schema = preparationInput;
 export type DeploymentTargetInspectInputV1 = z.infer<typeof DeploymentTargetInspectInputV1Schema>;
 export type DeploymentTargetLinkRoleInputV1 = z.infer<typeof DeploymentTargetLinkRoleInputV1Schema>;
 
+/** A reviewed provider resource creation precedes the host-owned association write. */
+export const DeploymentTargetCreateInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetPreparationBaseV1Schema, {
+    environmentId: id, expectedRevision: revision, providerAccountId: id, requestKey: id, resourceName: id,
+    providerIdentity: z.optional(z.never()), targetLinkId: z.optional(z.never()),
+    expectedTargetLinkRevision: z.optional(z.never()),
+    repository: z.optional(ScmHostingRepositoryIdentityV1Schema),
+    productionBranch: z.optional(ScmBranchSourceRefSchema),
+    sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
+}));
+export type DeploymentTargetCreateInputV1 = z.infer<typeof DeploymentTargetCreateInputV1Schema>;
+export const DeploymentTargetCreateInputV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetCreateInputV1Schema);
+
 /** Data operations consume one selected link without inventing a runtime receipt. */
 export const DeploymentTargetDataInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetRoleCommonInputV1Schema, {
     targetLinkId: id, expectedTargetLinkRevision: revision,
@@ -151,7 +172,7 @@ export const DeploymentTargetVariablesSyncInputV1Schema = lazyZodSchema(() => z.
 }));
 export type DeploymentTargetVariablesSyncInputV1 = z.infer<typeof DeploymentTargetVariablesSyncInputV1Schema>;
 export const DeploymentTargetDataQueryInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetDataInputV1Schema,
-    DeploymentDataQueryStatementV1Schema.shape));
+    { ...DeploymentDataQueryStatementV1Schema.shape, database: id }));
 export type DeploymentTargetDataQueryInputV1 = z.infer<typeof DeploymentTargetDataQueryInputV1Schema>;
 export const DeploymentTargetDataQueryInputV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetDataQueryInputV1Schema);
 
@@ -176,7 +197,7 @@ const logsInput = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1S
     cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), ref: z.optional(id), tail: z.optional(z.literal(true)),
 }));
 const runtimeLogsInput = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
-    cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), service: MachineDeploymentServiceIdentityV1Schema,
+    cursor: z.optional(ManagedServiceNativeLogCursorV1Schema), service: z.optional(MachineDeploymentServiceIdentityV1Schema),
 }));
 export const DeploymentTargetLogsResultV1ProtocolSchema = projectZodProtocolSchema(ManagedServiceNativeLogResultV1Schema);
 export const DeploymentTargetPriorDeploymentRefV1Schema = lazyZodSchema(() => z.strictObject({
@@ -208,7 +229,7 @@ export const DeploymentTargetDomainResultV1ProtocolSchema = projectZodProtocolSc
 
 /** One role map is consumed by both routed execution and direct qualified-Action admission. */
 export const DeploymentTargetRuntimeRoleInputSchemasV1 = {
-    inspect: DeploymentTargetInspectInputV1Schema, link: DeploymentTargetLinkRoleInputV1Schema,
+    create: DeploymentTargetCreateInputV1Schema, inspect: DeploymentTargetInspectInputV1Schema, link: DeploymentTargetLinkRoleInputV1Schema,
     deploy: DeploymentTargetDeployInputV1Schema, uploadDeploy: DeploymentTargetUploadDeployInputV1Schema,
     observe: DeploymentTargetObserveInputV1Schema, cancel: DeploymentTargetCancelInputV1Schema,
     rollback: DeploymentTargetRollbackInputV1Schema, promote: DeploymentTargetPromoteInputV1Schema,
@@ -235,6 +256,7 @@ export type DeploymentTargetRoleV1 = keyof typeof DeploymentTargetRoleInputSchem
 export type DeploymentTargetDataRoleV1 = Exclude<DeploymentTargetRoleV1, DeploymentTargetRuntimeRoleV1>;
 export type DeploymentTargetRoleInputV1 = z.infer<typeof DeploymentTargetRoleInputSchemasV1[DeploymentTargetRoleV1]>;
 export const DeploymentTargetRoleInputProtocolSchemasV1 = {
+    create: DeploymentTargetCreateInputV1ProtocolSchema,
     inspect: projectZodProtocolSchema(DeploymentTargetInspectInputV1Schema),
     link: projectZodProtocolSchema(DeploymentTargetLinkRoleInputV1Schema),
     deploy: projectZodProtocolSchema(DeploymentTargetDeployInputV1Schema),

@@ -9,21 +9,32 @@ const input = { ...DeploymentTargetPreparationBaseV1ProtocolSchema.parse({ v: 1,
   targetLinkId: 'data-link', expectedTargetLinkRevision: 1, credentialRef,
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: credentialRef.service.pluginId, localId: 'query-read' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'org', providerResourceId: 'parent-ref', providerEnvironment: 'preview-ref' },
-  providerEnvironment: { kind: 'custom', id: 'preview-ref' } }), sql: 'select $1::text as value', params: { '1': 'hello' } };
+  providerEnvironment: { kind: 'custom', id: 'preview-ref' } }), database: 'postgres', sql: 'select $1::text as value', params: { '1': 'hello' } };
 
-async function host(body: unknown = [{ value: 'hello', nullable: null }], status = 201, error?: Error, onRequest?: () => void) {
+async function host(body: unknown = [{ value: 'hello', nullable: null }], status = 201, error?: Error, onRequest?: () => void, errorAtRequest = 1) {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     onRequest?.();
-    if (error) throw error;
-    return { status, body: new TextEncoder().encode(JSON.stringify(body)), headers: {} };
+    if (error && requests.length === errorAtRequest) throw error;
+    const query = JSON.parse(new TextDecoder().decode(request.body)).query;
+    const response = query === 'SELECT current_database() AS database' ? [{ database: 'postgres' }] : body;
+    return { status, body: new TextEncoder().encode(JSON.stringify(response)), headers: {} };
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   return { kit, requests };
 }
 
 describe('Supabase qualified read-only SQL', () => {
+  it('refuses a database the dedicated provider endpoint cannot select', async () => {
+    const h = await host();
+    try {
+      expect(await h.kit.invokeAction('query-read', { ...input, database: 'other' }))
+        .toMatchObject({ ok: false, error: 'unsupported_action', diagnostic: { code: 'database_unsupported' } });
+      expect(h.requests).toHaveLength(1);
+      expect(JSON.parse(new TextDecoder().decode(h.requests[0]?.body)).query).toBe('SELECT current_database() AS database');
+    } finally { await h.kit.dispose(); }
+  });
   it('rejects a query declaration that adds a second input beyond the canonical contract', async () => {
     const actions = entry.manifest.contributes.actions?.map(action => action.id === 'query-read'
       ? { ...action, inputSchema: { ...action.inputSchema, properties: { ...action.inputSchema?.properties, credentialOverride: { type: 'string' as const } } } }
@@ -40,10 +51,10 @@ describe('Supabase qualified read-only SQL', () => {
       const result = await h.kit.invokeAction('query-read', input, { surface: 'ui' });
       expect(result).toEqual({ ok: true, columns: [{ name: 'value' }, { name: 'nullable' }], rows: [['hello', null]], complete: false,
         diagnostic: { code: 'provider_completeness_unknown' } });
-      expect(h.requests).toHaveLength(1);
-      expect(h.requests[0]).toMatchObject({ url: 'https://api.supabase.com/v1/projects/preview-ref/database/query/read-only', method: 'POST',
+      expect(h.requests).toHaveLength(2);
+      expect(h.requests[1]).toMatchObject({ url: 'https://api.supabase.com/v1/projects/preview-ref/database/query/read-only', method: 'POST',
         credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy-manage' } });
-      expect(JSON.parse(new TextDecoder().decode(h.requests[0]?.body))).toEqual({ query: input.sql, parameters: ['hello'] });
+      expect(JSON.parse(new TextDecoder().decode(h.requests[1]?.body))).toEqual({ query: input.sql, parameters: ['hello'] });
       const target = entry.manifest.contributes.deploymentTargets?.[0];
       if (target?.role !== 'data') throw new Error('Missing Supabase data target');
       expect(target.dataV1?.query?.readOnly).toBe('query-read');
@@ -78,11 +89,21 @@ describe('Supabase qualified read-only SQL', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('retains boundary failure codes without replaying read-only requests', async () => {
+  it('reports unavailable when database selection cannot fit the incumbent response boundary', async () => {
     const h = await host(undefined, 201, new PluginError({ code: 'plugin_fetch_response_too_large' }));
     try {
-      await expect(h.kit.invokeAction('query-read', input)).rejects.toMatchObject({ code: 'plugin_fetch_response_too_large' });
+      expect(await h.kit.invokeAction('query-read', input)).toMatchObject({ ok: false,
+        error: 'deployment_unavailable', diagnostic: { code: 'action_result_size_limit' } });
       expect(h.requests).toHaveLength(1);
+    } finally { await h.kit.dispose(); }
+  });
+
+  it('reports incomplete when query results cannot fit the incumbent response boundary', async () => {
+    const h = await host(undefined, 201, new PluginError({ code: 'plugin_fetch_response_too_large' }), undefined, 2);
+    try {
+      expect(await h.kit.invokeAction('query-read', input)).toEqual({ ok: true, columns: [], rows: [], complete: false,
+        diagnostic: { code: 'action_result_size_limit' } });
+      expect(h.requests).toHaveLength(2);
     } finally { await h.kit.dispose(); }
   });
 

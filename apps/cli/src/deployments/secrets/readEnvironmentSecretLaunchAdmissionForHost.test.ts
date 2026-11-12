@@ -85,6 +85,56 @@ describe('installed Environment secret launch reader', () => {
         await expect(admitted.assertCurrent()).rejects.toMatchObject({ code: 'secret_missing' });
     });
 
+    it('signs an admitted qualified managed query for its exact data link without selecting a service role', async () => {
+        install();
+        const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
+        const actionId = 'action.invoke' as const;
+        const action = { pluginId: 'happier.deploy.neon', localId: 'query-read' };
+        const target = { kind: 'machine' as const, machineId: 'machine' };
+        const credentialRef = { service: { pluginId: 'happier.deploy.neon', localId: 'neon' }, accountId: 'connected' };
+        const query = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 3,
+            targetLinkId: 'link', expectedTargetLinkRevision: 2, credentialRef,
+            credentialPrincipal: { kind: 'account' as const, accountId: 'owner', purpose: {
+                consumer: action, purpose: 'deploy-manage',
+            }, target: { kind: 'account' as const, account: credentialRef } },
+            providerIdentity: { providerAccountId: 'org', providerResourceId: 'project', providerEnvironment: 'branch' },
+            providerEnvironment: { kind: 'custom' as const, id: 'branch' }, database: 'neondb', sql: 'SELECT 1', params: {} };
+        const envelope = { v: 1 as const, requestId: 'managed-query-request', target, input: { action, input: query } };
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'managed-query-root', binding: {
+            accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home', actionId,
+            target, machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner',
+            accountEncryptionMode: 'plain', requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, envelope.input),
+        } });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
+            serverIdentityId: 'home', serverHttpBaseUrl: request.serverHttpBaseUrl, target,
+            installationId: 'installation', privateKey: keys.secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected the managed query HTTP projection');
+        const sent: unknown[] = [];
+        vi.spyOn(axios, 'request').mockImplementation(async config => {
+            const { proof, ...body } = EnvironmentSecretLaunchAdmissionInputV1Schema.parse(config.data);
+            expect(verifyMachineInstallationProof({ payload: { version: 1, accountId: 'owner', machineId: 'machine',
+                installationId: 'installation', deploymentSecretLaunch: {
+                    requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } }, proof, publicKey: keys.publicKey })).toBe(true);
+            expect(config.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(actionId);
+            expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId: actionId,
+                target, installationId: 'installation', requestId: envelope.requestId, method: 'POST',
+                path: '/v1/deployments/environments/environment/secret-launch-admission', body: config.data,
+                signature: String(config.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? ''), publicKey: keys.publicKey })).toBe(true);
+            sent.push(body);
+            return { status: 200, data: { ok: true, grants: [] } };
+        });
+        const { materialization: _materialization, ...baseRequest } = request;
+        const admitted = await reader.readEnvironmentDataRoleLaunchAdmissionForHost({ ...baseRequest, expectedRevision: 3,
+            context: { externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope } });
+        expect(sent).toEqual([{ serverId: 'home', environmentId: 'environment', targetLinkId: 'link',
+            machineId: 'machine', installationId: 'installation',
+            materialization: { kind: 'dataRole', expectedRevision: 3, targetLinkId: 'link' } }]);
+        expect(admitted.grants).toEqual([]);
+        admitted.release();
+    });
+
     it('continues template Domain facts with its real admitted child proof and preserves Home refusal', async () => {
         install();
         const actionId = 'deployments.domains.add' as const;

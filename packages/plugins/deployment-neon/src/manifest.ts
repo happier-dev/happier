@@ -19,6 +19,8 @@ export const plugin = definePlugin({
   hostAccess: { required: [
     { id: 'neon-api', capability: 'network', reason: 'Read the selected Neon resources and manage approved projects and preview branches.',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://console.neon.tech' }], methods: ['GET', 'POST', 'DELETE'] } },
+    { id: 'neon-sql', capability: 'network', reason: 'Query the selected branch using its bound read-only database login.',
+      scope: { targets: [{ kind: 'httpsHostSuffix', hostSuffix: 'neon.tech' }], methods: ['POST'] } },
     { id: 'deploy-manage', capability: 'connectedAccounts', reason: 'Use the selected Neon management credential.',
       scope: { serviceRefs: ['neon'], operations: ['use'], materializationKinds: ['httpHeaders'] } },
   ], optional: [] },

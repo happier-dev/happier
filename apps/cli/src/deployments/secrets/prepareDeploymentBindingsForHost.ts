@@ -10,7 +10,8 @@ import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkCon
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1, DeploymentEnvironmentGetResultV1 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentBindingsSetInputV1 } from '@happier-dev/protocol';
+type DeploymentEnvironmentGetResultV1 = ReturnType<typeof DeploymentEnvironmentGetResultV1Schema.parse>;
 import { readDeploymentEnvironmentArtifactV1, readDeploymentTargetLinkArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
     isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1,
     machineSecretGrantSubjectKey, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
@@ -78,6 +79,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     return async (request: DeploymentBindingPreparationRequestV1):
         Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure> => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
         let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
+        let targetLinkContent: PreparedDeploymentBindingStorageV1['targetLinkContent'];
         let admission: Awaited<ReturnType<typeof readEnvironmentSecretBindingPreparationForHost>> | undefined;
         let dataRolePreparation: Awaited<ReturnType<PrepareDataRoleBindingsForHost>> | undefined;
         try {
@@ -131,6 +133,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 const keep = new Set(input.providerVariables.keepTheirs);
                 candidate.content.bindings = candidate.content.bindings.filter(binding => binding.purpose !== 'variable' || !keep.has(binding.name));
             }
+            const dataRoleTargetLinkIds = [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
+                binding.purpose === 'dataRole' && 'targetLinkId' in binding ? [binding.targetLinkId] : []))];
             const selectedCaptures = captureDeploymentBindingSavedSecretRevisionsV1(candidate.content.bindings);
             if (!request.buildMachineId && !request.environmentUpdate && 'referencedSavedSecretRevisions' in input
                 && !matchesDeploymentBindingSavedSecretCapturesV1(selectedCaptures,
@@ -181,9 +185,10 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     ...(artifactId ? { publication: 'create' as const } : {}), content: { ...(artifactId ? { artifactId } : {}),
                         header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: candidate.content.name },
                         body: JSON.stringify(synchronized.linkContent), signal: context.signal, beforeWrite: assertCurrent, authorizationHeaders: headers } });
-                return { ...await complete([]), providerVariables, targetLinkContent: { targetLinkId: platformLink.id,
+                targetLinkContent = { targetLinkId: platformLink.id,
                     expectedTargetLinkRevision: platformLink.revision, contentArtifactId: created.artifactId,
-                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion } };
+                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
+                if (dataRoleTargetLinkIds.length === 0) return { ...await complete([]), providerVariables, targetLinkContent };
             }
             if (candidate.content.bindings.length === 0 && current.content.bindings.length === 0) {
                 await assertAuthority();
@@ -191,7 +196,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             }
             // References can be authored before placement. The shared binding owner
             // decides which uses need a destination; no secret is acquired without one.
-            if (!targetLinkId && !loaded.environment.buildMachineId && !request.buildMachineId) {
+            if (!targetLinkId && !loaded.environment.buildMachineId && !request.buildMachineId && dataRoleTargetLinkIds.length === 0) {
                 const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
                     bindings: candidate.content.bindings, previousBindings: current.content.bindings,
                     runtimeInstallations: [], existingGrants: [], assertCurrent });
@@ -210,6 +215,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 ...(request.environmentUpdate ? { environmentUpdate: true } : {}),
                 domainIds: request.environmentUpdate ? [] : [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
                     binding.purpose === 'domainCredential' ? [binding.domainId] : []))],
+                dataRoleTargetLinkIds,
                 context, signal: context.signal ?? new AbortController().signal });
             const retainedAdmission = admission;
             const retainedOperationalGrants = request.environmentUpdate
@@ -242,6 +248,11 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 ? candidate.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : candidate.content.bindings;
             const previousBindings = request.environmentUpdate
                 ? current.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : current.content.bindings;
+            const controllerInstallation = retainedAdmission.bindingPreparation.controllerInstallation;
+            const managedDataRoleDestinations = controllerInstallation
+                ? [...preparedBindings, ...previousBindings].flatMap(binding => binding.purpose === 'dataRole'
+                    && 'targetLinkId' in binding && dataRoleTargetLinkIds.includes(binding.targetLinkId)
+                    ? [{ binding, installations: [decodeInstallation(controllerInstallation)] }] : []) : [];
             if (!request.environmentUpdate && [...preparedBindings, ...previousBindings].some(binding =>
                 binding.purpose === 'dataRole' && 'service' in binding) && host.prepareDataRoleBindings) {
                 dataRolePreparation = await host.prepareDataRoleBindings({ input, environment: loaded, content: candidate.content,
@@ -249,16 +260,17 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                     existingGrants: retainedAdmission.grants });
             }
+            const operationalDestinations = [...(dataRolePreparation?.operationalDestinations ?? []), ...managedDataRoleDestinations];
             const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
                 bindings: preparedBindings, previousBindings,
                 runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                 ...(buildInstallation ? { buildInstallation: decodeInstallation(buildInstallation) } : {}),
                 ...(decodedDomainDestinations ? { domainDestinations: decodedDomainDestinations } : {}),
-                ...(dataRolePreparation ? { operationalDestinations: dataRolePreparation.operationalDestinations } : {}),
+                ...(operationalDestinations.length ? { operationalDestinations } : {}),
                 ...(request.buildMachineId ? { previousDestinations: {
                     runtimeInstallations: retainedAdmission.bindingPreparation.runtimeInstallations.map(decodeInstallation),
                     ...(decodedDomainDestinations ? { domainDestinations: decodedDomainDestinations } : {}),
-                    ...(dataRolePreparation ? { operationalDestinations: dataRolePreparation.operationalDestinations } : {}),
+                    ...(operationalDestinations.length ? { operationalDestinations } : {}),
                     ...(retainedAdmission.bindingPreparation.buildInstallation
                         ? { buildInstallation: decodeInstallation(retainedAdmission.bindingPreparation.buildInstallation) } : {}),
                 } } : {}),
@@ -269,7 +281,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const grants = new Map([...prepared.grants, ...retainedOperationalGrants]
                 .map(grant => [machineSecretGrantSubjectKey(grant), grant]));
             await dataRolePreparation?.complete([...grants.values()]);
-            return await complete([...grants.values()]);
+            return { ...await complete([...grants.values()]), ...(providerVariables ? { providerVariables } : {}),
+                ...(targetLinkContent ? { targetLinkContent } : {}) };
         } catch (error) {
             const result = failure(request.context.signal?.aborted ? { code: 'cancelled' } : error);
             return providerVariables ? { ...result, effectAttempted: true, details: { providerVariables } } : result;

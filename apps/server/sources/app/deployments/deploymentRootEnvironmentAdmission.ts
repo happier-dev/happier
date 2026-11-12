@@ -1,4 +1,5 @@
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
   isDeploymentBackupConfigureNativeAdmissionV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1,
@@ -232,7 +233,9 @@ export async function admitDeploymentRootBindingInTx(
   if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
     return { ok: false };
   }
-  if (isDeploymentReadAdmissionActionIdV1(binding.actionId)
+  const managedDataRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
+    && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
+  if ((isDeploymentReadAdmissionActionIdV1(binding.actionId) || managedDataRead)
     && (!binding.deploymentReadAdmission
       || !await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication))) {
     return { ok: false };

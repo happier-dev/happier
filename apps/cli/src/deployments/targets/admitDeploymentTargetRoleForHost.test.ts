@@ -8,6 +8,30 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { request as requestCloudflareDeployment } from '../../../../../packages/plugins/deploy-cloudflare/src/platform/deploymentHttp';
 
 describe('deployment role host admission', () => {
+    it('admits resource creation only as the exact reviewed link child with manager custody', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const { providerIdentity, targetLinkId, expectedTargetLinkRevision, ...base } = fixture.input;
+        const role = 'create' as const;
+        const action = { pluginId: fixture.request.pluginId, localId: fixture.request.localId };
+        const input = normalizeStrictJsonValue({ ...base, providerAccountId: providerIdentity.providerAccountId,
+            requestKey: 'request', resourceName: 'application', credentialPrincipal: {
+                ...base.credentialPrincipal, purpose: fixture.request.purposeAuthorization!.purpose,
+            } });
+        const request = { ...fixture.request, role, input, bindings: [{ ...fixture.request.bindings[0]!, role }] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).rejects.toMatchObject({ code: 'action_forbidden' });
+        const port = createHostReviewedChildPortV1({ actionId: 'deployments.targets.link',
+            input: { serverId: base.serverId, environmentId: base.environmentId, expectedRevision: 1 },
+            context: fixture.request.context, reviewAdmitted: true,
+            plan: { children: [{ action, role, input }] }, policies: [{ action, role, surface: 'cli' }],
+            async execute(_envelope, context) {
+                const admitted = await admitDeploymentTargetRoleForHost({ ...request, context }, fixture.host);
+                return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
+            } });
+        await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true, result: { role } });
+        fixture.state.environment.environment.capabilities.manageTargets = false;
+        await expect(port.invoke({ action, role, input })).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+
     it('captures runtime custody on the selected target daemon when its controller is elsewhere', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
         const link = fixture.state.environment.targetLinks[0]!.targetLink;
@@ -479,11 +503,9 @@ describe('deployment role host admission', () => {
         ['runtime link', 'target_mismatch'], ['foreign target', 'target_mismatch'],
         ['foreign native resource', 'deployment_access_denied'], ['foreign branch', 'deployment_access_denied'],
         ['foreign principal', 'deployment_access_denied'], ['wrong controller', 'machine_unavailable'],
-        ['stale link', 'deployment_conflict'], ['stale environment', 'deployment_conflict'],
         ['missing read capability', 'deployment_access_denied'],
     ] as const)('refuses managed data with %s', async (change, code) => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture(
-            change === 'stale link' || change === 'stale environment' ? 'branches.create' : 'query.readOnly');
+        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
         if (change === 'runtime link') fixture.state.environment.targetLinks[0]!.targetLink.role = 'runtime';
         if (change === 'foreign target') fixture.state.environment.targetLinks[0]!.targetLink.targetKind = 'foreign';
         if (change === 'foreign native resource') fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
@@ -494,10 +516,19 @@ describe('deployment role host admission', () => {
             ...fixture.input, credentialPrincipal: { ...fixture.input.credentialPrincipal, accountId: 'foreign' },
         } };
         if (change === 'wrong controller') fixture.state.environment.environment.controllerMachineId = 'foreign';
-        if (change === 'stale link') fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
-        if (change === 'stale environment') fixture.state.environment.environment.revision = 2;
         if (change === 'missing read capability') fixture.state.environment.environment.capabilities.read = false;
         await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code });
+    });
+    it.each(['environment', 'link'] as const)('refuses a stale managed query %s before provider provenance', async stale => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+        fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
+            ...fixture.input.providerIdentity, providerResourceId: 'foreign-before-provenance',
+        };
+        if (stale === 'environment') fixture.state.environment.environment.revision = 2;
+        else fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_conflict' });
+        expect(fixture.state.reads).toBe(1);
     });
     it.each(['projects.provision', 'connectionSecret.save'] as const)('requires target management for %s', async role => {
         const fixture = createDeploymentTargetRoleAdmissionFixture(role);
