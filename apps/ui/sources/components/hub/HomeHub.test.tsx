@@ -753,8 +753,8 @@ describe('HomeHub', () => {
         await act(async () => {
             screen.findByTestId('home-layout.automations.grip')!.props.onKeyDown({ key: 'ArrowUp', preventDefault() {} });
         });
-        const announcement = (id: string) => screen.findByTestId(id)!.findAllByType(Text)
-            .map(node => node.props.children).join('');
+        const announcement = (id: string) => screen.findByTestId(id)!.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
         // Home also mounts surface feedback. The foreground list owns this
         // move's announcement and its acknowledgement, so Home stays silent.
         expect.soft(announcement('home-layout.reorder.status')).not.toBe('');

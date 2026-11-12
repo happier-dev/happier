@@ -3,6 +3,7 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getHomeHubDefaultLayoutV1 } from '@happier-dev/protocol/home';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -127,7 +128,7 @@ describe('Home layout write feedback without Sections', () => {
         failWrite = false;
         await act(async () => { readPresentationNotice()!.undo!.run(); });
         await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
-        expect(artifact.layout()).toMatchObject({ order: [], hidden: [] });
+        expect(artifact.layout()).toEqual(getHomeHubDefaultLayoutV1());
         expect(readPresentationNotice()).toBeNull();
     });
 });
