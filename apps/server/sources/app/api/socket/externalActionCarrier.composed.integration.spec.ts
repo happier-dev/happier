@@ -1,3 +1,4 @@
+import { SessionSpawnNewApiInputSchema } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
@@ -83,7 +84,7 @@ const expectedResponseCarrierLimitBytes = 25_000_000;
 type RelayedRequestSummary = Readonly<{
     actionId: string;
     socketPayloadBytes: number;
-    inputBlobBytes: number | null;
+    inputTextBytes: number | null;
     inputHasMultibyteCharacter: boolean;
 }>;
 
@@ -107,14 +108,23 @@ function waitForConnection(socket: ReturnType<typeof ioClient>): Promise<void> {
     });
 }
 
+// Spawn admission has consumed the canonical public operands since 6324db8cb34a.
+function sessionSpawnInput(text: string) {
+    return SessionSpawnNewApiInputSchema.parse({
+        directory: { kind: 'path', path: '/workspace' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } },
+        initialInput: { text },
+    });
+}
+
 function externalActionJsonPayloadWithByteLength(byteLength: number): string {
-    const prefix = '{"v":1,"requestId":"carrier-boundary","target":{"kind":"machine","machineId":"machine-external-action-carrier"},"input":{"blob":"';
-    const suffix = '"}}';
-    const multibyteCharacter = "é";
-    const paddingLength = byteLength - Buffer.byteLength(prefix + multibyteCharacter + suffix, "utf8");
+    const envelope = { v: 1, requestId: 'carrier-boundary', target: { kind: 'machine', machineId },
+        input: sessionSpawnInput('é') };
+    const paddingLength = byteLength - Buffer.byteLength(JSON.stringify(envelope), 'utf8');
     if (paddingLength < 0) throw new Error("Requested payload is too small");
 
-    const payload = prefix + "x".repeat(paddingLength) + multibyteCharacter + suffix;
+    envelope.input = sessionSpawnInput('x'.repeat(paddingLength) + 'é');
+    const payload = JSON.stringify(envelope);
     if (Buffer.byteLength(payload, "utf8") !== byteLength) {
         throw new Error("External Action payload did not reach the requested byte length");
     }
@@ -145,22 +155,15 @@ function summarizeRelayedRequest(rawRequest: unknown): Readonly<{
     if (dispatch.envelope.v !== 1) {
         throw new TypeError("Expected the V1 carrier branch");
     }
-    const input = dispatch.envelope.input;
-    const blob = (
-        typeof input === "object"
-        && input !== null
-        && !Array.isArray(input)
-        && typeof (input as Record<string, unknown>).blob === "string"
-    )
-        ? (input as Record<string, unknown>).blob as string
-        : null;
+    const input = SessionSpawnNewApiInputSchema.parse(dispatch.envelope.input);
+    const text = input.initialInput?.text;
 
     return {
         summary: {
             actionId: dispatch.actionId,
             socketPayloadBytes: Buffer.byteLength(JSON.stringify(request), "utf8"),
-            inputBlobBytes: blob === null ? null : Buffer.byteLength(blob, "utf8"),
-            inputHasMultibyteCharacter: blob?.includes("é") ?? false,
+            inputTextBytes: text === undefined ? null : Buffer.byteLength(text, "utf8"),
+            inputHasMultibyteCharacter: text?.includes("é") ?? false,
         },
         dispatch,
     };
@@ -329,8 +332,9 @@ describe("external Action server-to-daemon request carrier", () => {
             if (reconciled.kind !== 'ready' || reconciled.target?.kind !== 'session') throw new Error('Session target was not reconciled');
             const target = reconciled.target;
             const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(request.actionId);
-            const body = { v: 1 };
             const authorized = request.executionAuthorization;
+            // Mirror the signed currentness producer (06c73e2df3b0).
+            const body = { v: 1, admittedMachineRole: authorized.binding.admittedMachineRole };
             const verified = await app.inject({ method: 'POST', url: path, payload: body, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorized.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: request.actionId,
@@ -514,7 +518,7 @@ describe("external Action server-to-daemon request carrier", () => {
             expect(relayedRequests).toEqual([{
                 actionId: "session.spawn_new",
                 socketPayloadBytes: expect.any(Number),
-                inputBlobBytes: expect.any(Number),
+                inputTextBytes: expect.any(Number),
                 inputHasMultibyteCharacter: true,
             }]);
             expect(relayedRequests[0]?.socketPayloadBytes).toBeGreaterThan(expectedHttpBodyLimitBytes);
@@ -546,7 +550,7 @@ describe("external Action server-to-daemon request carrier", () => {
                 payload: {
                     v: 1,
                     target: { kind: "machine", machineId },
-                    input: { relay: "still-usable" },
+                    input: sessionSpawnInput("still-usable"),
                 },
             });
 
@@ -562,7 +566,7 @@ describe("external Action server-to-daemon request carrier", () => {
                     v: 1,
                     requestId: "carrier-response-boundary",
                     target: { kind: "machine", machineId },
-                    input: {},
+                    input: sessionSpawnInput("response-boundary"),
                 },
             };
             const exactResponseResult = createExactLimitMultibyteResponseResult();
@@ -619,7 +623,7 @@ describe("external Action server-to-daemon request carrier", () => {
             expect(daemonSocket.connected).toBe(true);
 
             // The real socket must carry base64-expanded V2 bodies above V1's wire ceiling.
-            const privateInput = { blob: 'x'.repeat(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES - 1024) };
+            const privateInput = sessionSpawnInput('x'.repeat(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES - 1024));
             const privateRequest = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: privateBinding, input: privateInput,
                 material, randomBytes: (length) => new Uint8Array(length).fill(2) });
             responseResult = exactResponseResult;

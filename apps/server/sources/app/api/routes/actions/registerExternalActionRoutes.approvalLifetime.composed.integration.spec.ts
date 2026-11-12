@@ -119,8 +119,10 @@ describe('approval decision HTTP observation lifetime', () => {
             } });
             client.on('error', () => { /* A destroyed reviewing browser has no response observer. */ });
             try {
+                // Canonical public spawn operands admitted since 6324db8cb34a.
                 client.end(JSON.stringify({ v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId },
-                    input: actionId === 'approval.request.decide' ? { artifactId: 'private-draft', decision: 'approve' } : { directory: '/workspace' } }));
+                    input: actionId === 'approval.request.decide' ? { artifactId: 'private-draft', decision: 'approve' } : { directory: { kind: 'path', path: '/workspace' },
+                        agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } } }));
                 await reachedDaemon.promise;
                 client.destroy();
                 await responseClosed.promise;
