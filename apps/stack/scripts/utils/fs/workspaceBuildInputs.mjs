@@ -344,6 +344,13 @@ export function readWorkspaceBuildInputs(packageDir, {
   // build scripts, including TypeScript helpers outside the standard roots.
   if (existsSync(join(packageDir, 'package.json'))) {
     const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+    // Protocol's export generator inventories private .ts modules to publish
+    // null subpaths. Its captured verifier needs those inputs too, even though
+    // the compiler does not emit them. Keep this exception at the shared input
+    // owner so admission, watching and capture observe the same source tree.
+    if (packageJson.name === '@happier-dev/protocol' && existsSync(join(packageDir, 'scripts/generate-exports.mjs'))) {
+      visit(join(packageDir, 'src'), { ignoreTests: false, matches: path => path.endsWith('.ts') });
+    }
     const buildScript = String(packageJson.scripts?.build ?? '');
     for (const match of buildScript.matchAll(/(?:^|\s)(\.{1,2}\/[^\s;&|]+\.(?:[cm]?[jt]sx?|json))(?=$|\s|[;&|])/g)) {
       visit(resolve(packageDir, match[1]), { ignoreTests: false });

@@ -10,6 +10,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./package.json": "./package.json",
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",

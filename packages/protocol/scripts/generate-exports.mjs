@@ -39,7 +39,8 @@ export async function deriveProtocolExports(packageRoot) {
     }
     exports[specifier] = typeof alias === 'string' ? entry(source) : alias;
   }
-  return Object.fromEntries(Object.entries(exports).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+  return { './package.json': './package.json',
+    ...Object.fromEntries(Object.entries(exports).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) };
 }
 
 export async function generateProtocolExports({ packageRoot = defaultPackageRoot, check = false, signal } = {}) {
