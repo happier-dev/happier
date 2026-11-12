@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Imported from their own testkit modules rather than the `@/dev/testkit`
@@ -19,6 +19,7 @@ import {
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 async function addHome(): Promise<Readonly<{ serverId: string; accountId: string }>> {
     const accountId = 'account-admin';
@@ -30,7 +31,27 @@ async function addHome(): Promise<Readonly<{ serverId: string; accountId: string
     return { serverId, accountId };
 }
 
+beforeAll(async () => {
+    // The front door loads its real executor on first dispatch. Finish that
+    // shared graph after installing transports and before a case owns an Action.
+    await import('@/sync/domains/state/storage');
+    await import('@/sync/ops/actions/defaultActionExecutor');
+    await import('./githubApps/managedGitHubAppsClient');
+    await import('./identity/managedIdentityProviderClient');
+});
+
 beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
     await harness.reset();
     const { resetScopedHomeActionExecutorsForTests } = await import(
         '@/sync/ops/actions/scopedHomeActionExecutor'
@@ -70,7 +91,7 @@ describe('Home administration Action approval convergence', () => {
         expect(harness.requestsFor('/v1/artifacts')).toEqual([]);
     });
 
-    it('keeps an identity-provider mutation pending without reaching its Home route', async () => {
+    it('sends no identity-provider mutation when local Ask confirmation is declined', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'identity.providers.enable');
         const { createManagedIdentityProviderClient } = await import(
@@ -87,14 +108,17 @@ describe('Home administration Action approval convergence', () => {
             },
         );
 
-        expect(result).toMatchObject({ kind: 'approval_pending', artifactId: expect.any(String) });
+        expect(result).toEqual({ kind: 'failed', failure: { code: 'approval_canceled', retryable: false } });
         expect(harness.requestsFor('/v1/identity/providers/enable')).toEqual([]);
-        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(1);
+        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
-    it('keeps a GitHub App mutation pending without reaching its Home route', async () => {
+    it('executes a GitHub App mutation once after local Ask confirmation is accepted', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'identity.githubApps.remove');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        harness.answer(scope.serverId, '/v1/identity/github-apps/remove', { body: { removed: true } });
         const { createManagedGitHubAppsClient } = await import(
             './githubApps/managedGitHubAppsClient'
         );
@@ -108,12 +132,12 @@ describe('Home administration Action approval convergence', () => {
             },
         );
 
-        expect(result).toMatchObject({ kind: 'approval_pending', artifactId: expect.any(String) });
-        expect(harness.requestsFor('/v1/identity/github-apps/remove')).toEqual([]);
-        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(1);
+        expect(result).toEqual({ kind: 'succeeded', value: { removed: true } });
+        expect(harness.requestsFor('/v1/identity/github-apps/remove')).toHaveLength(1);
+        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
-    it('fails closed when an impossible read approval replaces the list result', async () => {
+    it('sends no provider list read when local Ask confirmation is declined', async () => {
         const scope = await addHome();
         await harness.requireUiApproval(scope.serverId, 'identity.providers.list');
         const { createManagedIdentityProviderClient } = await import(
@@ -127,8 +151,9 @@ describe('Home administration Action approval convergence', () => {
 
         expect(result).toEqual({
             kind: 'failed',
-            failure: { code: 'invalid_action_output', retryable: false },
+            failure: { code: 'approval_canceled', retryable: false },
         });
         expect(harness.requestsFor('/v1/identity/providers/list')).toEqual([]);
+        expect(harness.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 });

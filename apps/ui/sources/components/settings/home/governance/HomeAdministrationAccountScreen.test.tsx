@@ -31,9 +31,6 @@ import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTest
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createManagedResourceDependencyFixture } from '@/dev/testkit/fixtures/managedResourceDependencyFixtures';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -45,7 +42,7 @@ const modalState = vi.hoisted(() => ({
     confirmResult: true,
     /** When set, decides the confirmation instead (a case that acts while the dialog is open). */
     confirmWith: null as null | (() => Promise<boolean>),
-    confirms: [] as Array<{ title: string; body: string }>,
+    confirms: [] as Array<{ title: string; body: string | undefined; options?: Parameters<typeof import('@/modal')['Modal']['confirm']>[2] }>,
     alerts: [] as Array<{ title: string; body: string }>,
     /** What the person types into the reason prompt; `null` cancels it. */
     promptResult: 'Impersonation report' as string | null,
@@ -75,10 +72,10 @@ installSettingsViewCommonModuleMocks({
     },
     // The modal is a platform presentation boundary; the confirmation decision
     // it returns is what this surface is being tested against.
-    modal: async () => ({
-        Modal: {
-            confirm: async (title: string, body: string) => {
-                modalState.confirms.push({ title, body });
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: {
+            confirm: async (title, body, options) => {
+                modalState.confirms.push({ title, body, options });
                 return modalState.confirmWith ? await modalState.confirmWith() : modalState.confirmResult;
             },
             alertAsync: async (title: string, body: string) => {
@@ -89,7 +86,7 @@ installSettingsViewCommonModuleMocks({
                 return modalState.promptResults.length ? modalState.promptResults.shift() : modalState.promptResult;
             },
         },
-    }),
+    }).module,
 });
 
 const harness = createHomeGovernanceHarness();
@@ -193,6 +190,17 @@ beforeEach(async () => {
     modalState.promptResult = 'Impersonation report';
     modalState.promptResults = [];
     modalState.prompts = [];
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockImplementation(config => {
+        if (config.chrome?.testID !== 'actions.confirmation-review.modal') return 'modal-id';
+        const props = config.props as Readonly<{ onAnswer(accepted: boolean): void }>;
+        // The fixture's person-choice controller answers either host presentation.
+        // The real executor and review still prepare and present the decision.
+        queueMicrotask(() => {
+            void vi.mocked(Modal.confirm)('Action review', '').then(accepted => props.onAnswer(accepted));
+        });
+        return 'action-review';
+    });
     routerBack.mockReset();
     announceAccessibilityMessage.mockReset();
     sockets.clear();
@@ -346,14 +354,15 @@ describe('HomeAdministrationAccountScreen', () => {
         expect(harness.requestsFor(ROLE_PATH)[0]?.input).toEqual({ accountId: 'ada', homeRole: 'admin' });
     });
 
-    it('uses the Action Ask policy for role changes without a caller confirmation or mutation', async () => {
+    it('uses one native Action confirmation for a configured role change', async () => {
         const home = await addAdministeredHome({ currentAccount: true });
         await harness.requireUiApproval(home, 'home.accounts.role.set');
         const screen = await renderAccount(home);
         await screen.pressByTestIdAsync('home-account-role:admin');
-        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(1));
-        expect(harness.requestsFor(ROLE_PATH)).toHaveLength(0);
-        expect(modalState.confirms).toHaveLength(0);
+        await waitForHomeGovernance(() => expect(harness.requestsFor(ROLE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ROLE_PATH)[0]?.input).toEqual({ accountId: 'ada', homeRole: 'admin' });
+        expect(harness.artifacts(home).list()).toHaveLength(0);
+        expect(modalState.confirms).toHaveLength(1);
     });
 
     it('explains the last active owner instead of offering a demotion, disable or delete that would strand the Home', async () => {
@@ -608,7 +617,7 @@ describe('HomeAdministrationAccountScreen', () => {
         await flushHookEffects();
         expect(modalState.confirms).toHaveLength(5);
         await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
-        expect(modalState.confirms[1]?.body).toContain('native-1');
+        expect(modalState.confirms[1]?.options?.messageParagraphs?.some(paragraph => paragraph.text.includes('native-1'))).toBe(true);
         expect(harness.requestsFor(DELETE_PATH).map(request => ({ serverId: request.serverId, input: request.input }))).toEqual([
             { serverId: home, input: { accountId: 'ada' } },
             ...resources.map(resource => ({ serverId: home, input: { accountId: 'ada', managedResourceDispositions: [{
@@ -639,9 +648,7 @@ describe('HomeAdministrationAccountScreen', () => {
         expect(announceAccessibilityMessage).not.toHaveBeenCalled();
     });
 
-    it('consumes the real Ask-first refusal into resource review and requires normal approval for the reviewed retry', async () => {
-        // This case observes both Homes over live authenticated sockets. Deliver the external
-        // SDK's successful dial so the real Account-currentness owner can admit its HTTP fact.
+    it('reviews the Home resource refusal and confirms the exact retry on the administered Home', async () => {
         installDisconnectedServerSocketBoundary((socket, url) => {
             captureSocket(socket, url);
             configureConnectedServerSocketBoundary(socket);
@@ -663,51 +670,30 @@ describe('HomeAdministrationAccountScreen', () => {
         });
         const { storage } = await import('@/sync/domains/state/storage');
         const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-        storage.getState().activateProfileScope({ serverId: resolveServerProfileScopeIdForIdentifier(focused), accountId: 'focused-account' });
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const focusedScope = { serverId: resolveServerProfileScopeIdForIdentifier(focused), accountId: 'focused-account' };
+        storage.getState().activateProfileScope(focusedScope);
         const screen = await renderAccount(home, 'ada', true);
         await waitForHomeGovernance(() => expect(sockets.get('https://home-a.example')?.listeners('update').length).toBeGreaterThan(0));
         expect(sockets.get('https://home-a.example')?.connected).toBe(true);
         expect(sockets.get('https://focused-delete.example')?.connected).toBe(true);
-        const { subscribeHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const deliverAccountChange = async () => {
-            const socket = sockets.get('https://home-a.example');
-            if (!socket) throw new Error('Expected administered Home observation transport');
-            const observedHomes: string[] = [];
-            const unsubscribe = subscribeHomeAccountChange(event => observedHomes.push(event.serverId));
-            try {
-                await act(async () => { for (const receive of socket.listeners('update')) receive({ body: { t: 'account-change' } }); });
-                expect(observedHomes).toContain(home);
-                expect(observedHomes).not.toContain(focused);
-            } finally { unsubscribe(); }
-        };
+        expect(getActiveServerAccountScope()).toEqual(focusedScope);
+
         await screen.pressByTestIdAsync('home-account-delete');
-        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(1));
-        expect(harness.requestsFor(DELETE_PATH)).toEqual([]);
-        const firstApprovalId = harness.artifacts(home).list()[0]!.id;
-        await decideApprovalAsInbox(home, firstApprovalId, 'approve');
-        expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1);
-        const failedArtifactBody = harness.artifacts(home).readPlainBody(firstApprovalId);
-        expect(failedArtifactBody).not.toBeNull();
-        const failedRequest = ApprovalRequestV2Schema.parse(JSON.parse(failedArtifactBody!));
-        expect(failedRequest.status).toBe('failed');
-        expect(readApprovalExecutionFailure(failedRequest)).toMatchObject({
-            errorCode: 'account_erasure_managed_resources_review_required',
-            details: { error: 'account_erasure_managed_resources_review_required', resources: [resource] },
-        });
-        await deliverAccountChange();
-        await flushHookEffects();
-        expect(modalState.confirms).toHaveLength(1);
-        await waitForHomeGovernance(() => expect(harness.artifacts(home).list()).toHaveLength(2));
-        expect(routerBack).not.toHaveBeenCalled();
-        expect(harness.requestsFor(DELETE_PATH)).toHaveLength(1);
-        await decideApprovalAsInbox(home, harness.artifacts(home).list()[1]!.id, 'approve');
-        await deliverAccountChange();
+
         await waitForHomeGovernance(() => expect(routerBack).toHaveBeenCalled());
-        expect(harness.requestsFor(DELETE_PATH).map(request => request.input)).toEqual([
-            { accountId: 'ada' }, { accountId: 'ada', managedResourceDispositions: [{ managedId: resource.managedId,
+        expect(getActiveServerAccountScope()).toEqual(focusedScope);
+        expect(harness.artifacts(home).list()).toHaveLength(0);
+        expect(harness.requestsFor(DELETE_PATH).every(request => request.token === createAccountTokenForTests('account-admin', { currentAccount: true }))).toBe(true);
+        // The Action confirms each new operand; the intervening resource review
+        // is the person's separate decision to assume manual responsibility.
+        expect(modalState.confirms).toHaveLength(3);
+        expect(harness.requestsFor(DELETE_PATH).map(request => ({ serverId: request.serverId, input: request.input }))).toEqual([
+            { serverId: home, input: { accountId: 'ada' } },
+            { serverId: home, input: { accountId: 'ada', managedResourceDispositions: [{ managedId: resource.managedId,
                 expectedIntentRevision: resource.intentRevision, expectedAllocation: resource.allocation,
                 expectedResource: resource.resource, expectedNativeOperationRef: resource.nativeOperationRef,
-                expectedRecovery: resource.recovery, responsibility: 'manual' }] },
+                expectedRecovery: resource.recovery, responsibility: 'manual' }] } },
         ]);
     });
 

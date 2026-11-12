@@ -7,7 +7,6 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { teamCapabilitiesFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -77,6 +76,10 @@ const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSn
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+// Collect the real graphs after boundary installation, alongside their reset
+// owners, so cold module loading cannot outlive a case and render into its successor.
+const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const TEAM_UPDATE_PATH = '/v1/teams/update';
@@ -87,10 +90,8 @@ const TEAM_LOGO_SET_PATH = '/v1/teams/logo/set';
 const TEAM_LOGO_REMOVE_PATH = '/v1/teams/logo/remove';
 const ACCOUNT_SETTINGS_V2_PATH = '/v2/account/settings';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
-const APPROVAL_ARTIFACT_ID = '00000000-0000-4000-8000-000000000001';
 
 async function renderSettings(serverId: string) {
-    const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
     return renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
 }
 
@@ -154,6 +155,17 @@ beforeEach(async () => {
     await harness.selectHomes([]);
     routerBack.mockReset();
     pickImages.mockReset();
+    const { Modal } = await import('@/modal');
+    // Modal is the host boundary. Reuse this fixture's person-choice controller
+    // for both ordinary confirmations and the real Action review dialog.
+    vi.mocked(Modal.show).mockReset().mockImplementation(config => {
+        if (config.chrome?.kind === 'card' && config.chrome.testID === 'actions.confirmation-review.modal') {
+            const props = config.props as { onAnswer(confirmed: boolean): void };
+            queueMicrotask(() => { void Modal.confirm('Action review', '').then(props.onAnswer); });
+        }
+        return 'action-review';
+    });
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -613,7 +625,7 @@ describe('TeamSettingsScreen', () => {
         await act(async () => releaseRemoval());
     });
 
-    it('surfaces a required Team approval instead of rejecting the UI action', async () => {
+    it('confirms an explicit Ask policy change locally and saves it without a self-approval Artifact', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ managePolicy: true, archiveTeam: true }),
         });
@@ -629,13 +641,13 @@ describe('TeamSettingsScreen', () => {
         await waitForTestId(screen, 'team-settings-external-sharing:disabled');
         await screen.pressByTestIdAsync('team-settings-external-sharing:disabled');
 
-        await waitForTestId(screen, 'team-approval');
-        expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
-        expect(screen.findByTestId('team-settings-history-default:from_membership')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('team-settings-archive')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        const { Modal } = await import('@/modal');
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
     });
 
-    it('surfaces a required approval for an identity save without sending the mutation twice', async () => {
+    it('confirms an explicit Ask identity save locally and sends the mutation once', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true }),
         });
@@ -649,15 +661,13 @@ describe('TeamSettingsScreen', () => {
         act(() => screen.changeTextByTestId('team-settings-name', 'Approval rename'));
         await screen.pressByTestIdAsync('team-settings-save');
 
-        await vi.waitFor(() => {
-            expect(harness.requests.map((request) => request.path)).toContain(ARTIFACT_CREATE_PATH);
-        });
-        await waitForTestId(screen, 'team-approval');
-        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-        expect(screen.findByTestId('team-settings-save')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        const { Modal } = await import('@/modal');
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
     });
 
-    it('clears a canceled identity approval so the user can retry without redispatching it', async () => {
+    it('keeps a declined Ask identity draft available for a later confirmed save', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true }),
         });
@@ -671,46 +681,20 @@ describe('TeamSettingsScreen', () => {
         const screen = await renderSettings(serverId);
         await waitForTestId(screen, 'team-settings-name');
         act(() => screen.changeTextByTestId('team-settings-name', 'Approval rename'));
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         await screen.pressByTestIdAsync('team-settings-save');
 
-        await waitForTestId(screen, 'team-approval');
-        expect(screen.findByTestId('team-settings-save')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(screen.findByTestId('team-settings-save')?.props.disabled).not.toBe(true));
         expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-        await expect(decideApprovalAsInbox(serverId, APPROVAL_ARTIFACT_ID, 'cancel')).resolves.toMatchObject({ ok: true });
-
-        await vi.waitFor(() => {
-            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-approval');
-            expect(screen.findByTestId('team-settings-save')?.props.disabled).not.toBe(true);
-        });
-        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-    });
-
-    it('refreshes the Team after an approved identity replay executes without redispatching the mutation', async () => {
-        const team = teamSummaryFixture({
-            capabilities: teamCapabilitiesFixture({ manageSettings: true }),
-        });
-        const serverId = await addHomeWithTeam(team, {
-            waiveDangerousUi: false,
-            homeKey: 'identity-approval-executed',
-        });
-        await harness.requireUiApproval(serverId, 'teams.update');
-
+        expect(screen.findByTestId('team-settings-name')?.props.value).toBe('Approval rename');
+        expect(screen.findByTestId('team-settings-save')?.props.disabled).not.toBe(true);
         harness.answer(serverId, TEAM_UPDATE_PATH, { body: { ...team, name: 'Approval rename' } });
-        const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-name');
-        const teamReadsBeforeApproval = harness.requestsFor(TEAM_GET_PATH).length;
-        act(() => screen.changeTextByTestId('team-settings-name', 'Approval rename'));
         await screen.pressByTestIdAsync('team-settings-save');
-
-        await waitForTestId(screen, 'team-approval');
-        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(0);
-        await expect(decideApprovalAsInbox(serverId, APPROVAL_ARTIFACT_ID, 'approve')).resolves.toMatchObject({ ok: true });
-
-        await vi.waitFor(() => {
-            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-approval');
-            expect(harness.requestsFor(TEAM_GET_PATH).length).toBeGreaterThan(teamReadsBeforeApproval);
-        });
-        expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1);
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
     });
 
     it('leaves the Team after archiving it and offers restore from the archived Team', async () => {
@@ -746,16 +730,19 @@ describe('TeamSettingsScreen', () => {
         // modal-confirmed action reaches the Home once without an Artifact.
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
         expect(Modal.confirm).toHaveBeenCalledTimes(1);
-        expect(routerBack).toHaveBeenCalled();
+        await vi.waitFor(() => expect(routerBack).toHaveBeenCalled());
     });
 
-    it('honors an explicit required UI approval after archive confirmation', async () => {
+    it('confirms archive once under explicit Ask and executes without a self-approval Artifact', async () => {
         const team = teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: true, archiveTeam: true }),
         });
         const serverId = await addHomeWithTeam(team, {
             waiveDangerousUi: false,
             homeKey: 'archive-explicit-approval',
+        });
+        harness.answer(serverId, TEAM_ARCHIVE_PATH, {
+            body: { ...team, archivedAt: 1_700_000_000_000 },
         });
 
         const screen = await renderSettings(serverId);
@@ -764,14 +751,13 @@ describe('TeamSettingsScreen', () => {
         vi.mocked(Modal.confirm).mockClear();
         await screen.pressByTestIdAsync('team-settings-archive');
 
-        await waitForTestId(screen, 'team-approval');
-        expect(Modal.confirm).not.toHaveBeenCalled();
-        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1);
-        expect(harness.requestsFor(TEAM_ARCHIVE_PATH)).toHaveLength(0);
-        expect(routerBack).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_ARCHIVE_PATH)).toHaveLength(1));
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        await vi.waitFor(() => expect(routerBack).toHaveBeenCalled());
     });
 
-    it('keeps restore reachable but disables it while its approval is unresolved', async () => {
+    it('keeps restore reachable while its local Ask confirmation is unresolved', async () => {
         const team = teamSummaryFixture({
             archivedAt: 1_700_000_000_000,
             capabilities: teamCapabilitiesFixture({ restoreTeam: true }),
@@ -785,12 +771,17 @@ describe('TeamSettingsScreen', () => {
         await waitForTestId(screen, 'team-settings-restore');
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear();
-        await screen.pressByTestIdAsync('team-settings-restore');
+        let settleConfirmation!: (confirmed: boolean) => void;
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => new Promise(resolve => { settleConfirmation = resolve; }));
+        act(() => screen.pressByTestId('team-settings-restore'));
 
-        await waitForTestId(screen, 'team-approval');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
         expect(harness.requestsFor(TEAM_RESTORE_PATH)).toHaveLength(0);
         expect(screen.findByTestId('team-settings-restore')).not.toBeNull();
-        expect(screen.findByTestId('team-settings-restore')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(screen.findByTestId('team-settings-restore')?.props.accessibilityState?.disabled).toBe(true));
+        await act(async () => settleConfirmation(true));
+        await vi.waitFor(() => expect(harness.requestsFor(TEAM_RESTORE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 
     it('keeps an archived Team read-only while restore stays reachable', async () => {
