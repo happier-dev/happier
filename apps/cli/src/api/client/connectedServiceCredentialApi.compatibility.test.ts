@@ -21,11 +21,50 @@ import { projectAutomationAccountCurrentnessWitnessV1 } from '@happier-dev/proto
 import { readAccountEncryptionModeOnce } from './accountEncryptionMode';
 import { projectAccountEncryptionIdentity } from '@happier-dev/sync-client';
 
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { anthropicConnectedAccountRuntime } from '../../../../../packages/plugins/claude/src/connectedAccounts/anthropicRuntime';
+import { openAiConnectedAccountRuntime } from '../../../../../packages/plugins/openai/src/auth/connectedAccountRuntime';
+
 describe('connected-service credential exact 0.2.1 response boundary', () => {
   beforeEach(() => {
     vi.mocked(axios.get).mockReset();
     vi.mocked(axios.delete).mockReset();
     vi.mocked(axios.isAxiosError).mockReset();
+  });
+
+
+  it.each([
+    { serviceId: 'anthropic' as const, pluginId: 'happier.agent.claude', runtime: anthropicConnectedAccountRuntime, envKey: 'ANTHROPIC_API_KEY' },
+    { serviceId: 'openai' as const, pluginId: 'happier.voice.openai', runtime: openAiConnectedAccountRuntime, envKey: 'OPENAI_API_KEY' },
+  ])('delivers the released $serviceId record from HTTP to runtime materialization', async ({ serviceId, pluginId, runtime, envKey }) => {
+    // Exact serialized producer shape: b1d15a8:packages/protocol/src/connect/buildConnectedServiceCredentialRecord.ts.
+    const record = { v: 1, serviceId, profileId: 'work', createdAt: 1, updatedAt: 1,
+      expiresAt: null, kind: 'token', oauth: null,
+      token: { token: 'dummy-released-key', providerAccountId: null, providerEmail: null, raw: null } };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+    const api = new ConnectedServiceCredentialHttpClient({ token: 'dummy-account-token' });
+    for (const accountMode of ['plain', 'e2ee'] as const) {
+      const envelope = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode,
+        material, payload: record, randomBytes: length => new Uint8Array(length).fill(2) });
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: envelope.t === 'plain'
+        ? { content: envelope }
+        : { sealed: { format: 'account_scoped_v1', ciphertext: envelope.c }, metadata: { kind: 'token' } } });
+      const request = { serviceId, profileId: 'work' };
+      const response = accountMode === 'plain'
+        ? (await api.getConnectedServiceCredentialPlain(request))?.content
+        : await api.getConnectedServiceCredentialSealed(request).then(value => value
+          ? { t: 'encrypted' as const, c: value.sealed.ciphertext } : undefined);
+      if (!response) throw new Error('Missing credential response');
+      const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({
+        ref: { service: { pluginId, localId: serviceId }, accountId: 'work' }, authenticationModeId: 'api-key',
+        plaintext: openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode, material, envelope: response }) });
+      // Persistence boundary reader serves the real codec result; runtime logic stays real.
+      const context = { credentials: { async get(key: string) { return payload.values[key] ?? null; } } } as Parameters<typeof runtime.status>[0];
+      expect((await runtime.status(context)).status).toBe('connected');
+      const result = await runtime.materialize({ kind: 'environment', keys: [envKey] }, context);
+      expect(result.kind === 'environment' && result.env[envKey] === record.token.token).toBe(true);
+    }
   });
 
   it('does not retain a settled mode TTL without an admitted Account socket lifetime', async () => {

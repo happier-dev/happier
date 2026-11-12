@@ -572,7 +572,9 @@ function normalizeHistoricalLegacyCredentialPayload(
         const secretKey =
             authenticationModeId === 'setup-token'
                 ? 'setupToken'
-                : authenticationModeId === 'api-key'
+                // Anthropic/OpenAI retain the token key used by their current runtimes.
+                // Gemini's api-key mode instead owns apiKey.
+                : authenticationModeId === 'api-key' && record.serviceId === 'gemini'
                     ? 'apiKey'
                     : 'token';
         return QualifiedConnectedAccountCredentialPayloadV1Schema.parse({

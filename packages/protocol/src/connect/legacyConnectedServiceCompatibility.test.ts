@@ -652,7 +652,7 @@ describe('built-in legacy Connected Services compatibility', () => {
         const ref = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
         // Untouched 0.2 storage is still the readable source for the qualified reader.
         expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key', plaintext: tokenCredential }))
-            .toMatchObject({ v: 1, values: { apiKey: 'sk-ant-test' } });
+            .toMatchObject({ v: 1, values: { token: 'sk-ant-test' } });
         // A converted credential holds only its Saved Secret reference, so it keeps the
         // qualified root: a released reader cannot mistake it for a token record.
         const converted = { v: 1 as const, values: {}, secretRefs: { token: 'happier:shared-secret:v1:anthropic-key' } };

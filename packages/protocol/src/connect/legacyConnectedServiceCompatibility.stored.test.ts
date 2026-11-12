@@ -1,8 +1,11 @@
 import { expect, it } from 'vitest';
 import {
   parseBuiltInLegacyConnectedServiceQuotaSnapshotV1,
+  parseQualifiedConnectedAccountCredentialPlaintextV1,
+  projectQualifiedConnectedAccountCredentialPlaintextV1,
   parseBuiltInLegacyProviderAccountUsageSnapshotV1,
 } from './legacyConnectedServiceCompatibility.js';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from './qualifiedConnectedAccountContentEnvelope.js';
 import { ConnectedServiceQuotaSnapshotV1Schema } from './connectedServiceSchemas.js';
 
 // Existing current-0.2 quota vector from the compatibility owner test. The
@@ -36,4 +39,31 @@ it('reads annotated current and predecessor quota/usage without losing translate
     recoveryCredits: { ...canonical.recoveryCredits, retired: true } }).success).toBe(false);
   expect(() => parseBuiltInLegacyConnectedServiceQuotaSnapshotV1({ ...quota,
     recoveryCredits: { ...annotations, totalCount: 0 } })).toThrow();
+});
+
+// Recorded producer: b1d15a8:packages/protocol/src/connect/buildConnectedServiceCredentialRecord.ts.
+// Keep its stored root (including oauth:null and token.raw:null), not a current payload fixture.
+it.each([
+  ['anthropic', 'happier.agent.claude'],
+  ['openai', 'happier.voice.openai'],
+])('reads the released %s API key as the runtime token in both storage modes', (serviceId, pluginId) => {
+  const record = { v: 1, serviceId, profileId: 'work', createdAt: 1, updatedAt: 1,
+    expiresAt: null, kind: 'token', oauth: null,
+    token: { token: 'dummy-released-key', providerAccountId: null, providerEmail: null, raw: null } };
+  const ref = { service: { pluginId, localId: serviceId }, accountId: 'work' };
+  const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+  for (const accountMode of ['plain', 'e2ee'] as const) {
+    const envelope = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode,
+      material, payload: record, randomBytes: length => new Uint8Array(length).fill(2) });
+    const plaintext = openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode,
+      material, envelope });
+    const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref,
+      authenticationModeId: 'api-key', plaintext });
+    // Boolean assertion keeps even dummy credential bytes out of failure output.
+    expect(payload.values.token === record.token.token).toBe(true);
+    const projected = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref,
+      authenticationModeId: 'api-key', payload, now: 2 });
+    expect(parseQualifiedConnectedAccountCredentialPlaintextV1({ ref,
+      authenticationModeId: 'api-key', plaintext: projected })).toEqual(payload);
+  }
 });
