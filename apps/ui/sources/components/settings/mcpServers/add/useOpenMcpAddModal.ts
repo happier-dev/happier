@@ -40,7 +40,7 @@ export function useOpenMcpAddModal(): (
     (params) => {
       openMcpAddModal({
         ...(params ?? {}),
-        onAdded: (serverId, options) => go(`${mcpServerRoute(serverId)}${options?.afterRegistryAdd ? '?afterRegistryAdd=1' : ''}`),
+        onAdded: (serverId, options) => go(mcpServerRoute(serverId, options)),
       });
     },
     [go],

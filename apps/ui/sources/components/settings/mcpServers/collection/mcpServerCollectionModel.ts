@@ -9,8 +9,8 @@ export const MCP_COLLECTION_ROUTE = SETTINGS_ROUTES.mcp;
 export const MCP_NEW_SERVER_ROUTE = `${MCP_COLLECTION_ROUTE}/new`;
 export const MCP_FOUND_ROUTE = SETTINGS_ROUTES.mcpFound;
 
-export function mcpServerRoute(serverId: string): string {
-    return `${MCP_COLLECTION_ROUTE}/${encodeURIComponent(serverId)}`;
+export function mcpServerRoute(serverId: string, options?: Readonly<{ afterRegistryAdd?: boolean }>): string {
+    return `${MCP_COLLECTION_ROUTE}/${encodeURIComponent(serverId)}${options?.afterRegistryAdd ? '?afterRegistryAdd=1' : ''}`;
 }
 
 export type McpServerCollectionRow = Readonly<{

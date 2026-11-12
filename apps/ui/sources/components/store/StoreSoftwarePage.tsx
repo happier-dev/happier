@@ -62,6 +62,7 @@ import type { StorePresetDoorItem } from './presets/storePresetDoor';
 import { describeMachineSetupPlanFailure } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import {
   SoftwareMachineMark,
+  SoftwareMachineSelect,
   foldOfflineSoftwareTargets,
   type SoftwareMachineTarget,
   SoftwareTargetsDraftProvider,
@@ -343,10 +344,10 @@ function SoftwareListingBody(
               })
             : packageChecked && !packageChecked.ok
               ? t('capabilities.store.softwarePage.invalidPackage')
-              : toolchain && !config.trim()
-                ? t('capabilities.store.softwarePage.configLabel')
-                : selectedTargets.length === 0
-                  ? t('capabilities.store.softwarePage.chooseMachines')
+              : selectedTargets.length === 0
+                ? t('capabilities.store.softwarePage.chooseMachines')
+                : toolchain && !config.trim()
+                  ? t('capabilities.store.softwarePage.configLabel')
                   : undefined;
   const review = async () => {
     const request = {
@@ -396,6 +397,14 @@ function SoftwareListingBody(
           item={presetItem}
           name={item.label}
           onChoose={setPresetHandoff}
+        />
+      ) } : selectedTargets.length === 0 && props.machines.targets.length > 0 ? { secondary: (
+        <SoftwareMachineSelect
+          testID="store.software.listing.chooseMachine"
+          machines={props.machines}
+          selectedId={null}
+          placeholder={t('capabilities.store.softwarePage.chooseMachine')}
+          onSelect={entry => setChosen(previous => new Map(previous).set(entry.machine.machineId, entry.target))}
         />
       ) } : {}),
       provenance: (

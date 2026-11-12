@@ -935,7 +935,7 @@ it('leads an unselected Node.js listing to the existing Machine chooser before R
     const { target } = await setup();
     const item = { value: { kind: 'toolchain' as const, adapterId: 'mise', tool: 'node' }, label: 'Node.js' };
     const machines = { targets: [{ target, machine: { machineId: 'machine-0', platform: 'posix' as const,
-        os: 'linux', arch: 'x64', agentIds: [], name: 'Build box', online: true } }] };
+        os: 'linux', arch: 'x64', agentIds: [], name: 'Build box', online: true, offline: false, lastSeenAt: null } }] };
     const screen = await renderScreen(<SoftwareListing target={target} item={item} machines={machines} pushed={false} onClose={() => {}} />);
     const primary = () => screen.findHostByTestId('store.software.listing:primary')!;
     await waitForHomeGovernance(() => expect(primary().props.accessibilityHint).toBe('Turn on at least one Machine'));
