@@ -2,7 +2,7 @@ import { readSessionArchivePending, readSessionArchiveOperationsForServers, proj
 import { resolveSessionRpcAvailabilityState } from '../domains/session/sessionRpcAvailability';
 import React from 'react';
 import { retainAutomationRunHistoryDemand } from '../domains/automations/automationRunHistoryDemand';
-import type { MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { readMachineField, type MachineFieldContent } from './machineFieldRead';
 import { subscribeMachineField, subscribeMachineFields } from './machineFieldSubscription';
 import { useSetting, useLocalSetting } from './settingsReadHooks';
 import { projectAtmospherePreviewKey, settingsPreviewScopeMatches, useSettingsPreviewStore } from './settingsPreview';
@@ -19,6 +19,7 @@ import { useAiLaunchProfiles } from './useAiLaunchProfiles';
 export { useThemeProfiles, useThemeProfilesSnapshot } from './useThemeProfiles';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { sync } from '@/sync/sync';
+import type { PeripheralFeed } from '@/sync/engine/viewDemandSync';
 import { log } from '@/log';
 import type { AuthoringMemory } from './domains/authoringMemory';
 import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/profiles/profileActionsV1';
@@ -205,6 +206,8 @@ import {
 } from "@happier-dev/session-core/messages";
 
 import { getStorage } from '../domains/state/storageStore';
+import { resolveSessionActionDefaultBackend } from '../domains/session/resolveSessionActionDefaultBackend';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import {
   emptySessionMessagesSnapshot,
   readSessionMessagesSnapshot,
@@ -224,7 +227,7 @@ import {
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import { areMachineLaunchInputsEqual } from './domains/areStoredMachinesEqual';
 import { machineInventoryPresentation } from './machineInventoryPresentation';
-import { carryMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { isMachineVisibleForSelection, isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { SessionsDomainSlice, StorageState } from './types';
 import { retainDeep } from '../domains/state/structuralSharing';
@@ -572,6 +575,19 @@ export function useSessionMachineId(sessionId: string): string | null {
   return getStorage()((state) => {
     const session = state.sessions[sessionId];
     return session ? resolveSessionMachineId(readSessionOwnerMetadataView(session)) : null;
+  });
+}
+
+/**
+ * The Session's own Agent target key, as a primitive (see {@link useSessionMachineId}). Owned by
+ * `resolveSessionActionDefaultBackend`, the identity fork/replay/Run already use.
+ */
+export function useSessionAgentTargetKey(sessionId: string): string | null {
+  return getStorage()((state) => {
+    const session = state.sessions[sessionId];
+    const resolved = session ? resolveSessionActionDefaultBackend({ session }) : null;
+    const target = resolved?.agentTarget ?? resolved?.backendTarget ?? null;
+    return target ? buildBackendTargetKeyV2(target) : null;
   });
 }
 
@@ -1441,7 +1457,7 @@ export function useMachineDisplaysByServerId(serverIds: readonly string[]): Read
           const display = buildMachineDisplayRenderableFromMachine(machine);
           const previous = held?.displays[machine.id];
           if (previous && areMachineDisplaySemanticsEqual(previous, display)) {
-            carryMachineActivity(previous, display);
+            linkMachineActivity(display, previous);
             displays[machine.id] = previous;
           } else displays[machine.id] = display;
         }
@@ -2722,11 +2738,6 @@ export function useMachinePoolAccountIdByServerId(): Record<string, string> {
 const noopMachineSubscribe = () => () => {};
 const readNullMachine = () => null;
 
-type MachineFieldContent = {
-  metadata: NonNullable<Machine['metadata']>;
-  daemonState: MachinePublishedDaemonStateV1;
-};
-
 /** Exact admitted content field; identity is retained by applyMachines, never by the reader. */
 export function useMachineField<Section extends keyof MachineFieldContent, Field extends keyof MachineFieldContent[Section]>(
   machineId: string,
@@ -2740,11 +2751,7 @@ export function useMachineField<Section extends keyof MachineFieldContent, Field
   const normalizedMachineId = machineId.trim();
   const getSnapshot = React.useCallback(() => {
     const state = store.getState();
-    const machine = serverId ? resolveServerScopedMachine(state, serverId, normalizedMachineId) : state.machines[normalizedMachineId];
-    if (!machine || machine.revokedAt || machine.availability?.kind !== 'available'
-      || machine.access && machine.access.accessState !== 'ready') return null;
-    const content = machine[section] as MachineFieldContent[Section] | null;
-    return content?.[field] ?? null;
+    return readMachineField(state, normalizedMachineId, section, field, serverId);
   }, [field, normalizedMachineId, section, serverId, store]);
   const subscribe = React.useCallback((listener: () => void) => subscribeMachineField(store, {
     machineId: normalizedMachineId, serverId, section, field,
@@ -3770,6 +3777,7 @@ export function useArtifactsCount(): number {
 }
 
 export function useEntitlement(id: KnownEntitlements): boolean {
+  usePeripheralFeedDemand('purchases');
   return getStorage()(useShallow((state) => state.purchases.entitlements[id] ?? false));
 }
 
@@ -3899,11 +3907,22 @@ export function useActiveServerAccountScopeLifetime(): ActiveServerAccountScopeL
   return React.useSyncExternalStore(subscribe, captureActiveServerAccountScopeLifetime, captureActiveServerAccountScopeLifetime);
 }
 
+/** Use the existing Account lifetime so mounted readers renew demand after restore or Home switch. */
+export function usePeripheralFeedDemand(feed: PeripheralFeed, enabled = true): void {
+  const lifetime = useActiveServerAccountScopeLifetime();
+  React.useEffect(() => {
+    if (!enabled || !lifetime?.isCurrent()) return;
+    return sync.acquirePeripheralFeed(feed);
+  }, [feed, enabled, lifetime]);
+}
+
 export function useFriends() {
+  usePeripheralFeedDemand('friends');
   return getStorage()(useShallow((state) => state.friends));
 }
 
-export function useFriendRequests() {
+export function useFriendRequests(enabled = true) {
+  usePeripheralFeedDemand('friends', enabled);
   return getStorage()(
     useShallow((state) => {
       // Filter friends to get pending requests (where status is 'pending')
@@ -3915,11 +3934,13 @@ export function useFriendRequests() {
 
 const selectFriendRequestCount = createFriendRequestCountSelector();
 
-export function useFriendRequestCount(): number {
+export function useFriendRequestCount(enabled = true): number {
+  usePeripheralFeedDemand('friends', enabled);
   return getStorage()(selectFriendRequestCount);
 }
 
 export function useAcceptedFriends() {
+  usePeripheralFeedDemand('friends');
   return getStorage()(
     useShallow((state) => {
       const friends = Object.values(state.friends).filter((friend) => friend.status === 'friend');
@@ -3929,6 +3950,7 @@ export function useAcceptedFriends() {
 }
 
 export function useFeedItems() {
+  usePeripheralFeedDemand('feed');
   return getStorage()(useShallow((state) => state.feedItems));
 }
 export function useFeedLoaded() {
@@ -3939,6 +3961,7 @@ export function useFriendsLoaded() {
 }
 
 export function useFriend(userId: string | undefined) {
+  usePeripheralFeedDemand('friends', Boolean(userId));
   return getStorage()(useShallow((state) => (userId ? state.friends[userId] : undefined)));
 }
 
@@ -3947,6 +3970,7 @@ export function useUser(userId: string | undefined) {
 }
 
 export function useRequestedFriends() {
+  usePeripheralFeedDemand('friends');
   return getStorage()(
     useShallow((state) => {
       // Filter friends to get sent requests (where status is 'requested')
