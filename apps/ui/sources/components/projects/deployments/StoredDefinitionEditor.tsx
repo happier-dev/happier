@@ -22,6 +22,29 @@ export function useStoredDefinitionDocument(environmentId: string, definition: D
     change: document => setDraft({ environmentId, base, document }) };
 }
 
+/** Overview reads the current definition; Settings remains the one editor and Move owner. */
+export function StoredDefinitionOverview(props: Readonly<{
+  revision: number;
+  editable: boolean;
+  onOpen: () => void;
+  onMove: (() => void) | null;
+}>) {
+  return <>
+    <ItemGroup testID="project-deployments.environment.definition"
+      title={t('projects.deployments.overviewStatus.definitionTitle')}
+      description={t('projects.deployments.overviewStatus.definitionStoredDescription', { revision: props.revision })}
+      action={<SectionActionButton testID="project-deployments.environment.definition.edit"
+        title={t(props.editable ? 'common.edit' : 'common.open')} onPress={props.onOpen} />}>
+      <Item title={t('projects.deployments.composeFile')} onPress={props.onOpen} />
+    </ItemGroup>
+    <ItemGroup testID="project-deployments.environment.definition.repositoryRequired"
+      title={t('projects.deployments.overviewStatus.definitionRepositoryRequiredTitle')}
+      description={t('projects.deployments.overviewStatus.definitionRepositoryRequiredBody')}
+      action={props.onMove ? <SectionActionButton testID="project-deployments.environment.definition.move"
+        title={t('projects.deployments.overviewStatus.definitionMoveOpen')} onPress={props.onMove} /> : undefined}>{null}</ItemGroup>
+  </>;
+}
+
 /** Only Save crosses the incumbent update Action; selectors and sidecar files retain their owner. */
 export function StoredDefinitionEditor(props: Readonly<{
   environment: DeploymentEnvironmentHeaderV1;

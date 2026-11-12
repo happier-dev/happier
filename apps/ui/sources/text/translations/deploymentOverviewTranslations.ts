@@ -2,6 +2,9 @@ import type { SupportedLanguage } from '../_all';
 
 /** Environment Overview: attention slot, Servers and service row copy (DEPLOY-COMPOSE P1). */
 type DeploymentOverviewTranslations = Readonly<{
+  pendingRepositoryTitle: string;
+  pendingDeploymentTitle: string;
+  pendingStoredRevision: (params: { revision: number; digest: string }) => string;
   ciTitle: string;
   ciAuthority: string;
   ciCopyStep: string;
@@ -13,6 +16,8 @@ type DeploymentOverviewTranslations = Readonly<{
   definitionTitle: string;
   definitionStoredDescription: (params: { revision: number }) => string;
   definitionMoveOpen: string;
+  definitionRepositoryRequiredTitle: string;
+  definitionRepositoryRequiredBody: string;
   agentPowerTitle: (params: { machine: string }) => string;
   agentPowerBody: (params: { machine: string }) => string;
   agentPowerAction: string;
@@ -28,6 +33,7 @@ type DeploymentOverviewTranslations = Readonly<{
   serversDescription: (params: { count: number }) => string;
   serversDown: (params: { down: number; count: number }) => string;
   joining: string;
+  behind: string;
   manage: string;
   openOnMachine: (params: { machine: string }) => string;
   openOnMachineDetail: string;
@@ -49,6 +55,9 @@ type DeploymentOverviewTranslations = Readonly<{
   logsNoBuild: string;
   servicesRun: (params: { machine: string }) => string;
   servicesRunAny: string;
+  /** A service row's declared Domains and volume mounts (configuration, not reachability). */
+  serviceServes: (params: { hosts: string }) => string;
+  serviceStores: (params: { paths: string }) => string;
   dataDescription: string;
   consoleTitle: string;
   consolePrivateAccess: string;
@@ -57,6 +66,11 @@ type DeploymentOverviewTranslations = Readonly<{
 
 export const deploymentOverviewTranslations = {
   "en": {
+    pendingRepositoryTitle: "Newer commit waiting",
+    pendingDeploymentTitle: "Deployment waiting",
+    pendingStoredRevision: ({ revision, digest }) => `Revision ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Needs a repository",
+    definitionRepositoryRequiredBody: "Push deploys, pull request previews, builds from source and Prepare follow repository files and commits.",
     ciTitle: "Deploy from CI",
     ciAuthority: "This token deploys only this environment and reads the operations it starts.",
     ciCopyStep: "Copy GitHub Actions step",
@@ -86,6 +100,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Runs on ${count} servers.`,
     serversDown: ({ down, count }) => `${down} of ${count} down.`,
     joining: "Joining · not counted as down",
+    behind: "Serving an older version",
     manage: "Manage",
     openOnMachine: ({ machine }) => `Open on ${machine}`,
     openOnMachineDetail: "Logs, health and controls",
@@ -107,9 +122,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Nothing has been deployed here, so there is no build log.",
     servicesRun: ({ machine }) => `What the Compose file runs on ${machine} for this environment.`,
     servicesRunAny: "What the Compose file runs for this environment.",
+    serviceServes: ({ hosts }) => `Serves ${hosts}`,
+    serviceStores: ({ paths }) => `Stores data in ${paths}`,
     dataDescription: "The databases this environment uses. Add one here; apps reach it through Variables.",
   },
   "fr": {
+    pendingRepositoryTitle: "Un commit plus récent attend",
+    pendingDeploymentTitle: "Déploiement en attente",
+    pendingStoredRevision: ({ revision, digest }) => `Révision ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Un dépôt est nécessaire",
+    definitionRepositoryRequiredBody: "Les déploiements sur push, les aperçus de pull request, les builds depuis le code et Préparer suivent les fichiers et commits du dépôt.",
     ciTitle: "Déployer depuis la CI",
     ciAuthority: "Ce jeton déploie uniquement cet environnement et lit les opérations qu’il démarre.",
     ciCopyStep: "Copier l’étape GitHub Actions",
@@ -139,6 +161,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Tourne sur ${count} serveurs.`,
     serversDown: ({ down, count }) => `${down} sur ${count} hors service.`,
     joining: "En cours d’ajout · pas compté comme hors service",
+    behind: "Exécute une version plus ancienne",
     manage: "Gérer",
     openOnMachine: ({ machine }) => `Ouvrir sur ${machine}`,
     openOnMachineDetail: "Journaux, santé et contrôles",
@@ -160,9 +183,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Rien n’a encore été déployé ici, il n’y a donc pas de journal de build.",
     servicesRun: ({ machine }) => `Ce que le fichier Compose exécute sur ${machine} pour cet environnement.`,
     servicesRunAny: "Ce que le fichier Compose exécute pour cet environnement.",
+    serviceServes: ({ hosts }) => `Sert ${hosts}`,
+    serviceStores: ({ paths }) => `Stocke les données dans ${paths}`,
     dataDescription: "Les bases de données de cet environnement. Ajoutez-en une ici ; les apps y accèdent via les Variables.",
   },
   "de": {
+    pendingRepositoryTitle: "Neuerer Commit wartet",
+    pendingDeploymentTitle: "Deployment wartet",
+    pendingStoredRevision: ({ revision, digest }) => `Revision ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Repository erforderlich",
+    definitionRepositoryRequiredBody: "Push-Deployments, Pull-Request-Vorschauen, Builds aus Quellcode und Vorbereiten folgen Dateien und Commits im Repository.",
     ciTitle: "Über CI bereitstellen",
     ciAuthority: "Dieses Token stellt nur diese Umgebung bereit und liest die gestarteten Vorgänge.",
     ciCopyStep: "GitHub-Actions-Schritt kopieren",
@@ -192,6 +222,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Läuft auf ${count} Servern.`,
     serversDown: ({ down, count }) => `${down} von ${count} ausgefallen.`,
     joining: "Tritt bei · zählt nicht als ausgefallen",
+    behind: "Führt eine ältere Version aus",
     manage: "Verwalten",
     openOnMachine: ({ machine }) => `Auf ${machine} öffnen`,
     openOnMachineDetail: "Logs, Zustand und Steuerung",
@@ -213,9 +244,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Hier wurde noch nichts deployt, daher gibt es kein Build-Log.",
     servicesRun: ({ machine }) => `Was die Compose-Datei auf ${machine} für diese Umgebung ausführt.`,
     servicesRunAny: "Was die Compose-Datei für diese Umgebung ausführt.",
+    serviceServes: ({ hosts }) => `Bedient ${hosts}`,
+    serviceStores: ({ paths }) => `Speichert Daten in ${paths}`,
     dataDescription: "Die Datenbanken dieser Umgebung. Füge hier eine hinzu; Apps erreichen sie über Variablen.",
   },
   "es": {
+    pendingRepositoryTitle: "Commit más reciente en espera",
+    pendingDeploymentTitle: "Despliegue en espera",
+    pendingStoredRevision: ({ revision, digest }) => `Revisión ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Necesita un repositorio",
+    definitionRepositoryRequiredBody: "Los despliegues al hacer push, las vistas previas de pull requests, las compilaciones desde código y Preparar siguen los archivos y commits del repositorio.",
     ciTitle: "Desplegar desde CI",
     ciAuthority: "Este token solo despliega este entorno y lee las operaciones que inicia.",
     ciCopyStep: "Copiar el paso de GitHub Actions",
@@ -245,6 +283,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Se ejecuta en ${count} servidores.`,
     serversDown: ({ down, count }) => `${down} de ${count} caídos.`,
     joining: "Uniéndose · no cuenta como caído",
+    behind: "Ejecuta una versión anterior",
     manage: "Gestionar",
     openOnMachine: ({ machine }) => `Abrir en ${machine}`,
     openOnMachineDetail: "Registros, salud y controles",
@@ -266,9 +305,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Aquí no se ha desplegado nada, así que no hay registro de build.",
     servicesRun: ({ machine }) => `Lo que el archivo Compose ejecuta en ${machine} para este entorno.`,
     servicesRunAny: "Lo que el archivo Compose ejecuta para este entorno.",
+    serviceServes: ({ hosts }) => `Sirve ${hosts}`,
+    serviceStores: ({ paths }) => `Guarda datos en ${paths}`,
     dataDescription: "Las bases de datos de este entorno. Añade una aquí; las apps llegan a ella con Variables.",
   },
   "it": {
+    pendingRepositoryTitle: "Commit più recente in attesa",
+    pendingDeploymentTitle: "Distribuzione in attesa",
+    pendingStoredRevision: ({ revision, digest }) => `Revisione ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Serve un repository",
+    definitionRepositoryRequiredBody: "I deploy su push, le anteprime delle pull request, le build dal codice e Prepara seguono i file e i commit del repository.",
     ciTitle: "Distribuisci da CI",
     ciAuthority: "Questo token distribuisce solo questo ambiente e legge le operazioni che avvia.",
     ciCopyStep: "Copia il passaggio GitHub Actions",
@@ -298,6 +344,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Gira su ${count} server.`,
     serversDown: ({ down, count }) => `${down} su ${count} non attivi.`,
     joining: "In ingresso · non conteggiato come non attivo",
+    behind: "Esegue una versione precedente",
     manage: "Gestisci",
     openOnMachine: ({ machine }) => `Apri su ${machine}`,
     openOnMachineDetail: "Log, salute e controlli",
@@ -319,9 +366,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Qui non è stato distribuito nulla, quindi non c’è un log di build.",
     servicesRun: ({ machine }) => `Ciò che il file Compose esegue su ${machine} per questo ambiente.`,
     servicesRunAny: "Ciò che il file Compose esegue per questo ambiente.",
+    serviceServes: ({ hosts }) => `Serve ${hosts}`,
+    serviceStores: ({ paths }) => `Salva i dati in ${paths}`,
     dataDescription: "I database di questo ambiente. Aggiungine uno qui; le app lo raggiungono tramite le Variabili.",
   },
   "pt": {
+    pendingRepositoryTitle: "Commit mais recente em espera",
+    pendingDeploymentTitle: "Implantação em espera",
+    pendingStoredRevision: ({ revision, digest }) => `Revisão ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Precisa de um repositório",
+    definitionRepositoryRequiredBody: "Os deploys por push, as pré-visualizações de pull requests, as compilações do código e Preparar seguem os ficheiros e commits do repositório.",
     ciTitle: "Implantar pela CI",
     ciAuthority: "Este token implanta apenas este ambiente e lê as operações que inicia.",
     ciCopyStep: "Copiar etapa do GitHub Actions",
@@ -351,6 +405,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Roda em ${count} servidores.`,
     serversDown: ({ down, count }) => `${down} de ${count} fora do ar.`,
     joining: "Entrando · não conta como fora do ar",
+    behind: "Executando uma versão anterior",
     manage: "Gerenciar",
     openOnMachine: ({ machine }) => `Abrir em ${machine}`,
     openOnMachineDetail: "Logs, saúde e controles",
@@ -372,9 +427,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Nada foi implantado aqui, então não há log de build.",
     servicesRun: ({ machine }) => `O que o arquivo Compose executa em ${machine} para este ambiente.`,
     servicesRunAny: "O que o arquivo Compose executa para este ambiente.",
+    serviceServes: ({ hosts }) => `Serve ${hosts}`,
+    serviceStores: ({ paths }) => `Guarda dados em ${paths}`,
     dataDescription: "Os bancos de dados deste ambiente. Adicione um aqui; os apps o acessam pelas Variáveis.",
   },
   "ca": {
+    pendingRepositoryTitle: "Commit més recent en espera",
+    pendingDeploymentTitle: "Desplegament en espera",
+    pendingStoredRevision: ({ revision, digest }) => `Revisió ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Cal un repositori",
+    definitionRepositoryRequiredBody: "Els desplegaments amb push, les previsualitzacions de pull requests, les compilacions del codi i Preparar segueixen els fitxers i commits del repositori.",
     ciTitle: "Desplega des de CI",
     ciAuthority: "Aquest token només desplega aquest entorn i llegeix les operacions que inicia.",
     ciCopyStep: "Copia el pas de GitHub Actions",
@@ -404,6 +466,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `S’executa en ${count} servidors.`,
     serversDown: ({ down, count }) => `${down} de ${count} caiguts.`,
     joining: "S’hi està unint · no compta com a caigut",
+    behind: "Executa una versió anterior",
     manage: "Gestiona",
     openOnMachine: ({ machine }) => `Obre a ${machine}`,
     openOnMachineDetail: "Registres, salut i controls",
@@ -425,9 +488,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Aquí no s’ha desplegat res, així que no hi ha registre de build.",
     servicesRun: ({ machine }) => `El que el fitxer Compose executa a ${machine} per a aquest entorn.`,
     servicesRunAny: "El que el fitxer Compose executa per a aquest entorn.",
+    serviceServes: ({ hosts }) => `Serveix ${hosts}`,
+    serviceStores: ({ paths }) => `Desa dades a ${paths}`,
     dataDescription: "Les bases de dades d’aquest entorn. Afegeix-ne una aquí; les apps hi arriben amb Variables.",
   },
   "pl": {
+    pendingRepositoryTitle: "Nowszy commit oczekuje",
+    pendingDeploymentTitle: "Wdrożenie oczekuje",
+    pendingStoredRevision: ({ revision, digest }) => `Wersja ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Wymaga repozytorium",
+    definitionRepositoryRequiredBody: "Wdrożenia po push, podglądy pull requestów, kompilacje ze źródeł i Przygotuj korzystają z plików i commitów repozytorium.",
     ciTitle: "Wdróż przez CI",
     ciAuthority: "Ten token wdraża tylko to środowisko i odczytuje uruchomione przez siebie operacje.",
     ciCopyStep: "Kopiuj krok GitHub Actions",
@@ -457,6 +527,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Działa na serwerach: ${count}.`,
     serversDown: ({ down, count }) => `Niedostępne: ${down} z ${count}.`,
     joining: "Dołącza · nie liczy się jako niedostępny",
+    behind: "Działa na starszej wersji",
     manage: "Zarządzaj",
     openOnMachine: ({ machine }) => `Otwórz na ${machine}`,
     openOnMachineDetail: "Logi, zdrowie i sterowanie",
@@ -478,9 +549,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Nic tu jeszcze nie wdrożono, więc nie ma logu builda.",
     servicesRun: ({ machine }) => `Co plik Compose uruchamia na ${machine} dla tego środowiska.`,
     servicesRunAny: "Co plik Compose uruchamia dla tego środowiska.",
+    serviceServes: ({ hosts }) => `Obsługuje ${hosts}`,
+    serviceStores: ({ paths }) => `Przechowuje dane w ${paths}`,
     dataDescription: "Bazy danych tego środowiska. Dodaj tu nową; aplikacje łączą się przez Zmienne.",
   },
   "ru": {
+    pendingRepositoryTitle: "Новый коммит ожидает",
+    pendingDeploymentTitle: "Развёртывание ожидает",
+    pendingStoredRevision: ({ revision, digest }) => `Ревизия ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "Нужен репозиторий",
+    definitionRepositoryRequiredBody: "Развёртывания по push, предпросмотр pull request, сборки из исходников и подготовка используют файлы и коммиты репозитория.",
     ciTitle: "Развернуть из CI",
     ciAuthority: "Этот токен развёртывает только это окружение и читает запущенные им операции.",
     ciCopyStep: "Скопировать шаг GitHub Actions",
@@ -510,6 +588,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `Работает на серверах: ${count}.`,
     serversDown: ({ down, count }) => `Недоступно: ${down} из ${count}.`,
     joining: "Подключается · не считается недоступным",
+    behind: "Работает на более ранней версии",
     manage: "Управлять",
     openOnMachine: ({ machine }) => `Открыть на ${machine}`,
     openOnMachineDetail: "Логи, состояние и управление",
@@ -531,9 +610,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "Здесь ещё ничего не развёрнуто, поэтому лога сборки нет.",
     servicesRun: ({ machine }) => `Что файл Compose запускает на ${machine} для этого окружения.`,
     servicesRunAny: "Что файл Compose запускает для этого окружения.",
+    serviceServes: ({ hosts }) => `Обслуживает ${hosts}`,
+    serviceStores: ({ paths }) => `Хранит данные в ${paths}`,
     dataDescription: "Базы данных этого окружения. Добавьте здесь; приложения подключаются через переменные.",
   },
   "ja": {
+    pendingRepositoryTitle: "新しいコミットが待機中",
+    pendingDeploymentTitle: "デプロイが待機中",
+    pendingStoredRevision: ({ revision, digest }) => `リビジョン ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "リポジトリが必要です",
+    definitionRepositoryRequiredBody: "プッシュ時のデプロイ、プルリクエストのプレビュー、ソースからのビルド、準備にはリポジトリのファイルとコミットを使います。",
     ciTitle: "CI からデプロイ",
     ciAuthority: "このトークンはこの環境だけをデプロイし、開始した操作を読み取ります。",
     ciCopyStep: "GitHub Actions のステップをコピー",
@@ -563,6 +649,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `${count} 台のサーバーで実行中。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台が停止中。`,
     joining: "参加中 · 停止としては数えません",
+    behind: "以前のバージョンを実行中",
     manage: "管理",
     openOnMachine: ({ machine }) => `${machine} で開く`,
     openOnMachineDetail: "ログ、ヘルス、操作",
@@ -584,9 +671,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "まだ何もデプロイされていないため、ビルドログはありません。",
     servicesRun: ({ machine }) => `この環境で Compose ファイルが ${machine} 上で実行するもの。`,
     servicesRunAny: "この環境で Compose ファイルが実行するもの。",
+    serviceServes: ({ hosts }) => `${hosts} を配信`,
+    serviceStores: ({ paths }) => `${paths} にデータを保存`,
     dataDescription: "この環境のデータベース。ここで追加でき、アプリは変数から接続します。",
   },
   "zh-Hans": {
+    pendingRepositoryTitle: "较新的提交正在等待",
+    pendingDeploymentTitle: "部署正在等待",
+    pendingStoredRevision: ({ revision, digest }) => `修订 ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "需要代码仓库",
+    definitionRepositoryRequiredBody: "推送部署、拉取请求预览、源码构建和准备功能依赖仓库文件和提交。",
     ciTitle: "从 CI 部署",
     ciAuthority: "此令牌只能部署此环境并读取它启动的操作。",
     ciCopyStep: "复制 GitHub Actions 步骤",
@@ -616,6 +710,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `运行在 ${count} 台服务器上。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台已停机。`,
     joining: "正在加入 · 不计为停机",
+    behind: "正在运行较旧版本",
     manage: "管理",
     openOnMachine: ({ machine }) => `在 ${machine} 上打开`,
     openOnMachineDetail: "日志、健康状况和控制",
@@ -637,9 +732,16 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "这里还没有部署任何内容，因此没有构建日志。",
     servicesRun: ({ machine }) => `Compose 文件在 ${machine} 上为此环境运行的内容。`,
     servicesRunAny: "Compose 文件为此环境运行的内容。",
+    serviceServes: ({ hosts }) => `服务 ${hosts}`,
+    serviceStores: ({ paths }) => `数据存储在 ${paths}`,
     dataDescription: "此环境使用的数据库。在这里添加；应用通过变量连接它。",
   },
   "zh-Hant": {
+    pendingRepositoryTitle: "較新的提交正在等待",
+    pendingDeploymentTitle: "部署正在等待",
+    pendingStoredRevision: ({ revision, digest }) => `修訂 ${revision} · ${digest}`,
+    definitionRepositoryRequiredTitle: "需要程式碼儲存庫",
+    definitionRepositoryRequiredBody: "推送部署、提取請求預覽、原始碼建置和準備功能依賴儲存庫檔案與提交。",
     ciTitle: "從 CI 部署",
     ciAuthority: "此權杖只能部署此環境並讀取它啟動的操作。",
     ciCopyStep: "複製 GitHub Actions 步驟",
@@ -669,6 +771,7 @@ export const deploymentOverviewTranslations = {
     serversDescription: ({ count }) => `執行於 ${count} 台伺服器。`,
     serversDown: ({ down, count }) => `${count} 台中 ${down} 台已停機。`,
     joining: "正在加入 · 不計為停機",
+    behind: "正在執行較舊版本",
     manage: "管理",
     openOnMachine: ({ machine }) => `在 ${machine} 上開啟`,
     openOnMachineDetail: "日誌、健康狀況和控制",
@@ -690,6 +793,8 @@ export const deploymentOverviewTranslations = {
     logsNoBuild: "這裡還沒有部署任何內容，因此沒有建置日誌。",
     servicesRun: ({ machine }) => `Compose 檔案在 ${machine} 上為此環境執行的內容。`,
     servicesRunAny: "Compose 檔案為此環境執行的內容。",
+    serviceServes: ({ hosts }) => `服務 ${hosts}`,
+    serviceStores: ({ paths }) => `資料儲存在 ${paths}`,
     dataDescription: "此環境使用的資料庫。在這裡新增；應用透過變數連線它。",
   },
 } satisfies Record<SupportedLanguage, DeploymentOverviewTranslations>;

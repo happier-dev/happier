@@ -156,6 +156,51 @@ async function answerTeardownController(machineId: string, execute: TeardownCont
 }
 
 const shown = { mounted: true, visible: true, focused: true };
+
+it.each([{ phone: false, receiptPage: false, stored: false }, { phone: true, receiptPage: false, stored: false },
+  { phone: false, receiptPage: true, stored: false }, { phone: true, receiptPage: true, stored: false },
+  { phone: true, receiptPage: true, stored: true }])(
+  'shows the exact latest pending deployment and its operation with %o', async ({ phone, receiptPage, stored }) => {
+  const { DeploymentPendingDeployIntentV1Schema } = await import('@happier-dev/protocol/deployments/storedAppInputV1');
+  const { deriveAutomationManualOccurrenceKeyV1 } = await import('@happier-dev/protocol/automations/automationOccurrenceV1');
+  const { Modal } = await import('@/modal');
+  const base = environmentDetailForHome();
+  const intent = DeploymentPendingDeployIntentV1Schema.parse({ sourceIntent: stored
+    ? { kind: 'stored', contentRevision: 7, composeDigest: `sha256:${'b'.repeat(64)}`,
+        document: 'services: { web: { image: nginx } }', profiles: [], services: ['web'] }
+    : { kind: 'repository', projectSourceId: base.environment.projectSourceId, sourceRevision: 1, sha: 'b'.repeat(40) },
+    requestKey: 'latest-request', targetLinkId: base.environment.runtimeTargetLinkId, actionOperationId: 'latest-operation',
+    ...(stored ? {} : { triggerOccurrence: { automationId: 'push-automation', triggerId: 'push', triggerRevision: 1,
+      occurrenceKey: deriveAutomationManualOccurrenceKeyV1({ automationId: 'push-automation', idempotencyKey: 'latest-push' }) } }) });
+  const admission = { requesterAccountId: scope.accountId, serverId: scope.serverId, requestKey: intent.requestKey,
+    actionOperationId: intent.actionOperationId, environmentRevision: 1,
+    controller: { machineId: base.environment.controllerMachineId, installationId: 'installation-a' } };
+  const detail = { ...base, pendingDeployment: { status: 'ready' as const, intent, admission } };
+  const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'running' }) });
+  const { controller } = controllerFor({ detail, receipt });
+  const screen = await renderScreen(receiptPage
+    ? <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id} deploymentId={receipt.deployment.id}
+        environmentName={detail.content.name} demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone}
+        rollback={null} cancel={null} deploy={null} readLogs={null} linkPath={null}
+        onBack={() => {}} review={noReview} onOpenReceipt={() => {}} />
+    : <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} />);
+  try {
+    await waitForContent(screen, 'project-deployments.environment.pending');
+    const { Item } = await import('@/components/ui/lists/Item');
+    const row = screen.root.findAllByType(Item).find(node => node.props.testID === 'project-deployments.environment.pending');
+    if (intent.sourceIntent.kind === 'repository') expect(row?.props.subtitle).toBe(intent.sourceIntent.sha);
+    else {
+      expect(row?.props.subtitle).toContain(String(intent.sourceIntent.contentRevision));
+      expect(row?.props.subtitle).toContain(intent.sourceIntent.composeDigest);
+    }
+    const show = vi.spyOn(Modal, 'show');
+    await screen.pressByTestIdAsync('project-deployments.environment.pending');
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ props: { serverId: scope.serverId, operationId: intent.actionOperationId } }));
+    show.mockRestore();
+  } finally { await act(async () => { controller.retire(); }); }
+});
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 
 it.each(['update_available', 'removed_from_source', 'unchecked'] as const)(
@@ -525,7 +570,7 @@ describe('Project deployments page', () => {
     } finally { await screen?.unmount(); await act(async () => { controller.retire(); }); }
   });
 
-  it('starts Move through the saved Workflow owner and opens the admitted Run with the exact serving source', async () => {
+  it.each(['Move', 'Add server', 'Remove server'] as const)('starts %s through the saved Workflow owner and opens the admitted Run with the exact serving source', async operation => {
     const { ModalProvider } = await import('@/modal');
     const { createMachineFixture } = await import('@/dev/testkit');
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -538,6 +583,7 @@ describe('Project deployments page', () => {
     const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
     const { createWorkflowAccountRunActionOwner } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
     const { createDeploymentMoveWorkflowV1 } = await import('@happier-dev/protocol/workflows/builtins/deploymentMoveV1');
+    const { createDeploymentFleetWorkflowV1 } = await import('@happier-dev/protocol/workflows/builtins/deploymentFleetV1');
     const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
     const { WorkflowRunAdmissionPreparationResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema } = await import('@happier-dev/protocol/workflows/workflowRunKeyV1');
     const { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } = await import('@happier-dev/protocol/workflows/workflowStoredContentV1');
@@ -548,7 +594,10 @@ describe('Project deployments page', () => {
     const base = environmentDetailForHome();
     const { controller, detail } = controllerFor({ detail: { ...base,
       targetLinks: base.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
-        activeDeploymentId: 'serving-move-deployment' } })),
+        activeDeploymentId: 'serving-move-deployment',
+        ...(operation === 'Remove server' ? { machines: [...row.targetLink.machines, 'existing-member'],
+          members: [...row.targetLink.members, { machineId: 'existing-member', installationId: 'existing-install', state: 'active' as const }] } : {}),
+      } })),
     } });
     const captured = await captureLazyActionAccountContext(scope.serverId);
     const definitions = createWorkflowDefinitionActions({ artifactStore: captured.workflowArtifacts,
@@ -581,6 +630,7 @@ describe('Project deployments page', () => {
     await publishMachineInventoryForTest(scope, [
       createMachineFixture({ id: 'machine-a', installationId: 'installation-a', activeAt: Date.now() }),
       createMachineFixture({ id: 'destination', installationId: 'destination-install', activeAt: Date.now() }),
+      createMachineFixture({ id: 'existing-member', installationId: 'existing-install', activeAt: Date.now() }),
     ]);
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -589,6 +639,7 @@ describe('Project deployments page', () => {
         demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null}
         review={noReview} onOpenReceipt={() => {}} lifetime={lifetime} /></ModalProvider>);
       await waitForContent(screen, 'project-deployments.environment.menu');
+      if (operation === 'Move') {
       await screen.pressByTestIdAsync('project-deployments.environment.menu');
       await waitForContent(screen, 'project-deployments.environment.menu.move');
       await screen.pressByTestIdAsync('project-deployments.environment.menu.move');
@@ -598,6 +649,19 @@ describe('Project deployments page', () => {
       const choice = screen.findAllByType(Switch).find(control => control.props.value === false)!;
       await act(async () => { choice.props.onValueChange(true); });
       await screen.pressByTestIdAsync('project-deployments.move.confirm');
+      } else {
+        await screen.pressByTestIdAsync('project-deployments.environment.tab:settings');
+        await waitForContent(screen, 'project-deployments.environment.settings.servers-build.manage');
+        await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.manage');
+        await waitForContent(screen, 'project-deployments.fleet');
+        if (operation === 'Add server') {
+          const destination = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.fleet.destination')!;
+          await act(async () => { destination.props.onSelect('destination'); });
+          const ingress = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-deployments.environment.settings.servers-build.ingress')!;
+          await act(async () => { ingress.props.onSelect('tunnel'); });
+        } else await screen.pressByTestIdAsync('project-deployments.fleet.remove.existing-member');
+        await screen.pressByTestIdAsync('project-deployments.fleet.confirm');
+      }
       await waitForHomeGovernance(() => expect(admissions).toHaveLength(1));
       const admitted = admissions[0]!;
       const runId = String(admitted.runId);
@@ -608,9 +672,16 @@ describe('Project deployments page', () => {
         envelope: parseWorkflowStoredContentEnvelopeV1(String(admitted.acceptedEnvelope)) });
       expect(opened).toMatchObject({ kind: 'available', content: {
         source: { kind: 'saved', definitionId: admitted.sourceArtifactId },
-        authoredDefinition: createDeploymentMoveWorkflowV1(),
-        inputs: { noLocalData: true, move: { sourceIntent: { kind: 'repository', sha: 'f'.repeat(40) },
-          destinationMachineId: 'destination', destinationInstallationId: 'destination-install' } },
+        authoredDefinition: operation === 'Move' ? createDeploymentMoveWorkflowV1()
+          : createDeploymentFleetWorkflowV1(operation === 'Add server' ? 'add' : 'remove', {
+            deployCurrentRelease: operation === 'Add server', configureIngress: operation === 'Add server' }),
+        inputs: operation === 'Move' ? { noLocalData: true, move: { sourceIntent: { kind: 'repository', sha: 'f'.repeat(40) },
+          destinationMachineId: 'destination', destinationInstallationId: 'destination-install' } }
+          : { fleet: operation === 'Add server' ? { sourceIntent: { kind: 'repository', sha: 'f'.repeat(40) },
+              ingress: { kind: 'cloudflareTunnel' }, machines: [
+                { machineId: 'machine-a', installationId: 'installation-a' },
+                { machineId: 'destination', installationId: 'destination-install' }] }
+            : { removedMachineId: 'existing-member', machines: [{ machineId: 'machine-a', installationId: 'installation-a' }] } },
       } });
       await waitForHomeGovernance(() => expect(routerMock.spies.push).toHaveBeenLastCalledWith(createWorkflowRunRoute(runId, 'srv_environment_navigation')));
       expect(screen.findByTestId('project-deployments.move')).toBeNull();
@@ -692,7 +763,7 @@ describe('Project deployments page', () => {
       await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/deployments.promote'),
         screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).filter(Boolean).join(', ')).toHaveLength(previousPromotionRequests + 1));
       if (response === 'review') {
-        await waitForHomeGovernance(() => expect(request).toHaveBeenCalledWith('promotion-review'));
+        await waitForHomeGovernance(() => expect(request, screen.getTextContent()).toHaveBeenCalledWith('promotion-review'));
         await waitForHomeGovernance(async () => {
           await act(async () => {});
           expect(screen.findByTestId('project-deployments.promote')).toBeNull();
@@ -972,6 +1043,8 @@ describe('Project deployments page', () => {
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
       const previousDeletions = homes.requestsFor(deletionPath).length;
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+      await waitForContent(screen, 'actions.confirmation-review.decision-approve');
+      await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
       await waitForHomeGovernance(() => {
         if (detach) expect(screen.findByTestId('project-deployments.environment') === null,
           'Deleted Environment detail closes while the collection refresh is pending').toBe(true);
@@ -992,6 +1065,40 @@ describe('Project deployments page', () => {
         await waitForContent(screen, 'project-deployments.empty');
         expect(screen.findByTestId('project-deployments.environment')).toBeNull();
       }
+    } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it.each([false, true].flatMap(phone => ['edit', 'move'].map(entry => ({ phone, entry }))))(
+    'opens the one stored editor from Overview without saving or deploying (phone=$phone entry=$entry)', async ({ phone, entry }) => {
+    const base = environmentDetailForHome();
+    const definition = { kind: 'stored' as const, contentRevision: 4, composeDigest: `sha256:${'a'.repeat(64)}`,
+      document: 'services:\n  app:\n    image: nginx:2\n', profiles: [], services: ['app'] };
+    const detail = { ...base, content: { ...base.content, definition } };
+    const { controller } = controllerFor({ detail });
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const beforeUpdates = homes.requestsFor('/v1/actions/deployments.environments.update').length;
+    const beforeDeploys = homes.requestsFor('/v1/actions/deployments.deploy').length;
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} lifetime={lifetime}
+        environmentActions={createDeploymentActions(lifetime, detail.environment.projectSourceId)} />);
+      await waitForContent(screen, 'project-deployments.environment.header');
+      const summary = screen.findByTestId('project-deployments.environment.definition');
+      expect(summary).not.toBeNull();
+      const { t } = await import('@/text');
+      expect(screen.getTextContent()).toContain(t('projects.deployments.overviewStatus.definitionStoredDescription', { revision: 4 }));
+      expect(screen.findByTestId('project-deployments.environment.definition.repositoryRequired')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.definition.move')).not.toBeNull();
+      // Merely reading the definition does not mount an editable copy of the document.
+      expect(screen.findByTestId('project-deployments.definition.document')).toBeNull();
+      await screen.pressByTestIdAsync(`project-deployments.environment.definition.${entry}`);
+      await waitForContent(screen, 'project-deployments.environment.moveRepository.open');
+      await waitForContent(screen, 'project-deployments.definition.document');
+      expect(screen.findByTestId('project-deployments.definition.document')?.props.value).toBe(definition.document);
+      expect(homes.requestsFor('/v1/actions/deployments.environments.update')).toHaveLength(beforeUpdates);
+      expect(homes.requestsFor('/v1/actions/deployments.deploy')).toHaveLength(beforeDeploys);
     } finally { await act(async () => { controller.retire(); }); }
   });
 
@@ -1358,6 +1465,70 @@ describe('Project deployments page', () => {
     );
     expect(open).toHaveBeenCalledWith(receipt.deployment.id);
     controller.retire();
+  });
+
+  describe('the first deploy ends on the live address (FIRST-DEPLOY-URL-1112)', () => {
+    const liveDomains = (targetLinkId: string): DeploymentReadTransportV1['listDomains'] => async () => ({ ok: true as const, value: {
+      items: [{
+        domain: { v: 1 as const, id: 'app-domain', environmentId: 'ignored', targetLinkId, revision: 1, state: 'active' as const,
+          contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1,
+          createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1 },
+        title: 'shop.example.test', content: { hostname: 'shop.example.test', target: { service: 'app', containerPort: 3000 } },
+      }], nextCursor: null } });
+    const servingFixture = (earlier: boolean) => {
+      const detail = environmentDetailForHome();
+      const runtime = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)!.targetLink;
+      const serving = createDeploymentReceiptDetailV1({
+        deployment: createDeploymentReceiptHeaderV1({ id: runtime.activeDeploymentId!, targetLinkId: runtime.id, state: 'succeeded' }) });
+      const older = createDeploymentReceiptDetailV1({
+        deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-deploy', targetLinkId: runtime.id, state: 'succeeded' }) });
+      return controllerFor({ detail, receipt: serving, history: earlier ? [serving, older] : [serving],
+        listDomains: liveDomains(runtime.id) });
+    };
+    const openButton = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+      const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+      return screen.findAllByType(RoundButton).find(button => button.props.testID === 'project-deployments.environment.live.open');
+    };
+
+    it('leads with the address once the first deploy serves, with Open as the one primary', async () => {
+      const { controller, detail } = servingFixture(false);
+      try {
+        const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+          demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+          onOpenReceipt={() => {}} />);
+        await waitForHomeGovernance(async () => expect(await openButton(screen)).toBeDefined());
+        expect(screen.getTextContent()).toContain('shop.example.test');
+        expect((await openButton(screen))?.props.display ?? 'default').toBe('default');
+      } finally { controller.retire(); }
+    });
+
+    it('keeps Open beside Deploy once the Environment has deployed before', async () => {
+      const { controller, detail } = servingFixture(true);
+      try {
+        const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+          demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+          onOpenReceipt={() => {}} />);
+        await waitForHomeGovernance(async () => expect(await openButton(screen)).toBeDefined());
+        expect((await openButton(screen))?.props.display).toBe('secondary');
+      } finally { controller.retire(); }
+    });
+
+    it('stays on the failure and its recovery when the first deploy fails', async () => {
+      const base = environmentDetailForHome();
+      const detail = environmentDetailForHome({ targetLinks: base.targetLinks.map(link => ({
+        ...link, targetLink: { ...link.targetLink, activeDeploymentId: undefined } })) });
+      const runtimeId = detail.environment.runtimeTargetLinkId!;
+      const failed = createDeploymentReceiptDetailV1({
+        deployment: createDeploymentReceiptHeaderV1({ id: 'first-failed', targetLinkId: runtimeId, state: 'failed' }) });
+      const { controller } = controllerFor({ detail, receipt: failed, history: [failed], listDomains: liveDomains(runtimeId) });
+      try {
+        const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+          demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+          onOpenReceipt={() => {}} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.latestFailed')).not.toBeNull());
+        expect(await openButton(screen)).toBeUndefined();
+      } finally { controller.retire(); }
+    });
   });
 
   it('says nothing is deployed when the runtime link has no active receipt, and who can deploy for a reader', async () => {
@@ -2510,4 +2681,82 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       expect(screen.findByTestId('project-deployments.environment.servers')).toBeNull();
     } finally { controller.retire(); }
   });
+});
+
+describe('passes the selected fleet failure policy and manages runtime membership', () => {
+it.each(['rollbackAll', 'keepPartial'] as const)('passes the selected fleet failure policy into the real deploy Action (%s)', async policy => {
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  const { DeploymentDeployIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentDeployIntentV1');
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { ModalProvider } = await import('@/modal');
+  const base = environmentDetailForHome();
+  const link = base.targetLinks[0]!.targetLink;
+  const second = { machineId: 'machine-b', installationId: 'installation-b', state: 'active' as const };
+  const fleet = { ...link, machines: [...link.machines, second.machineId], members: [...link.members, second] };
+  const { controller, detail } = controllerFor({ detail: { ...base,
+    targetLinks: [{ ...base.targetLinks[0]!, targetLink: fleet }] } });
+  await publishMachineInventoryForTest(scope, fleet.members.map(member => createMachineFixture({
+    id: member.machineId, installationId: member.installationId, activeAt: Date.now(),
+  })));
+  // The Action front door resolves the controller independently through the Home metadata boundary.
+  homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+    ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink),
+  } });
+  const context = await captureLazyActionAccountContext(scope.serverId);
+  const received: unknown[] = [];
+  await answerExternalActionAccountForHome(homes, scope.serverId, { machineId: detail.environment.controllerMachineId,
+    installationId: link.members[0]!.installationId,
+    deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+    actionId: 'deployments.deploy', tokenEpoch: 0, execute: raw => {
+      received.push(DeploymentDeployIntentInputV1Schema.parse(raw));
+      return { ok: false, error: 'deployment_conflict' };
+    } });
+  const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
+  let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  try {
+    screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={actions.deploy} review={noReview} onOpenReceipt={() => {}} lifetime={context.accountLifetime} /></ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.servers');
+    await screen.pressByTestIdAsync(`project-deployments.environment.failurePolicy:${policy}`);
+    await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+    await waitForHomeGovernance(() => expect(received, JSON.stringify({ text: screen?.getTextContent(),
+      requests: [...new Set(homes.requests.map(request => `${request.method} ${request.path.split('?')[0]}`))],
+    })).toContainEqual(expect.objectContaining({
+      environmentId: detail.environment.id, targetLinkId: fleet.id, onFailure: policy,
+    })));
+  } finally { await screen?.unmount(); controller.retire(); context.dispose(); }
+});
+
+
+it('opens fleet membership review from a single serving server without replacing its placement', async () => {
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { ModalProvider } = await import('@/modal');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { controller, detail } = controllerFor({});
+  const member = detail.targetLinks[0]!.targetLink.members[0]!;
+  await publishMachineInventoryForTest(scope, [createMachineFixture({ id: member.machineId,
+    installationId: member.installationId, activeAt: Date.now() }), createMachineFixture({ id: 'joining-machine',
+    installationId: 'joining-installation', activeAt: Date.now() })]);
+  const context = await captureLazyActionAccountContext(scope.serverId);
+  let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+  try {
+    screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={context.accountLifetime}
+      destination={{ tab: 'settings', section: 'servers-build' }} /></ModalProvider>);
+    await waitForContent(screen, 'project-deployments.environment.settings.servers-build.manage');
+    await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.manage');
+    await waitForContent(screen, 'project-deployments.fleet');
+    expect(screen.findByTestId('project-deployments.fleet.add')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.environment.settings.servers-build.ingress')).not.toBeNull();
+    expect(screen.findByTestId(`project-deployments.fleet.remove.${member.machineId}`)).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.link')).toBeNull();
+  } finally { await screen?.unmount(); controller.retire(); context.dispose(); }
+});
+
 });
