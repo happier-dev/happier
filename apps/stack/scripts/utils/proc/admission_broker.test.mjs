@@ -297,6 +297,41 @@ for (const resource of ['memory', 'CPU']) test(`${resource} backfills current fr
   await later.admit();
 });
 
+for (const resource of ['memory', 'CPU']) test(`recovered slots pledge ${resource} releases before newer backfills`, linux, async t => {
+  const clock = captureRecoveryClock(t);
+  const memory = resource === 'memory';
+  const { root, broker, sampleResources } = await fixture(t, { cpuCores: 100 });
+  const job = (units, extra = {}) => acquire(root, memory ? units : 1, t,
+    { cpuCost: memory ? 'host' : units, ...extra });
+  const first = await (await job(40)).admit();
+  const second = await (await job(40)).admit();
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'),
+    sampleResources, readCpuCapacity: () => 100 });
+  await replacement.start();
+  t.after(() => replacement.close());
+  const head = await job(70);
+  const small = await (await job(20)).admit();
+  const barrier = async () => {
+    const client = await request(root, { kind: 'sample' });
+    const result = await client.next(); client.socket.destroy(); return result;
+  };
+  await first.release();
+  // Drive the existing recovery boundary deterministically after the socket closes.
+  await clock.tick();
+  const snapshot = await barrier();
+  assert.equal(memory ? snapshot.head.reservationKiB : snapshot.unreservedCpuCores,
+    memory ? 40 : 0, 'a recovered holder release belongs to the waiting head');
+  for (let index = 0; index < 3; index++) {
+    const follower = await job(20, { noWait: true });
+    assert.equal((await follower.next()).reason, memory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
+  }
+  await second.release();
+  await head.admit();
+  assert.equal((await barrier()).waitingCount, 0, 'the old head runs after enough recovered holders finish');
+  await small.release();
+});
+
 test('closing the waiting head clears its released-memory pledge', linux, async t => {
   let headSocket;
   const nativeWrite = Socket.prototype.write;

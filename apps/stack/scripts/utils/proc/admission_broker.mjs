@@ -375,9 +375,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   }
   function releaseReservation(slot) {
     if (!slots.delete(slot.address)) return false;
-    // Only releases observed during this head's tenure are pledged. Recovered
-    // slots have no arrival order and do not establish a release entitlement.
-    if (headPledge && slot.arrivalOrder !== undefined) {
+    // Every release during this head's tenure is pledged, including live
+    // slots recovered at startup: their capacity was not free at head arrival.
+    if (headPledge) {
       headPledge.memoryKiB += slot.floorKiB;
       headPledge.cpuCores += slot.cpuCores ?? 0;
     }
