@@ -18,7 +18,17 @@ import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdent
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
-export { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from './deploymentReceiptResultV1.js';
+import * as receiptResult from './deploymentReceiptResultV1.js';
+
+// Fast Refresh enumerates these exports while the cyclic result module is still
+// loading. Forward on use so enumeration never reads its uninitialized exports.
+export const DeploymentReceiptSettlementFailureDetailsV1Schema = lazyZodSchema(() =>
+  receiptResult.DeploymentReceiptSettlementFailureDetailsV1Schema);
+export function readDeploymentReceiptFailureCodeV1(
+  state: z.infer<typeof DeploymentStateV1Schema>,
+): ReturnType<typeof receiptResult.readDeploymentReceiptFailureCodeV1> {
+  return receiptResult.readDeploymentReceiptFailureCodeV1(state);
+}
 
 /** Private parser diagnostics contain schema facts, never rejected values or prose. */
 export const DeploymentOutputValidationV1Schema = lazyZodSchema(() => z.strictObject({

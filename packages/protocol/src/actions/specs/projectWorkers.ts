@@ -6,10 +6,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineFinitePolicyGetResultV1Schema, MachineFinitePolicyMutationResultV1Schema,
   MachineFinitePolicyMutationV1Schema } from '../../machines/machineFinitePolicyV1.js';
-import { WorkspaceExecutionConfigAddressV1Schema, WorkspaceExecutionConfigRevisionV1Schema,
-  WorkspaceWorkerPreferenceExpectationV1Schema, WorkspaceWorkerPreferenceMutationResultV1Schema,
-  WorkspaceWorkerPreferenceReadResultV1Schema, WorkspaceWorkerPreferenceV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
-import { WorkerDestinationV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
+import * as workerPreferences from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectMemoryDemandV1Schema } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { ProjectWorkerMemoryObservationV1Schema, WorkerLoadObservationV1Schema } from '../../workspaces/projectWorkerExecutionV1.js';
@@ -24,14 +21,14 @@ export type ProjectWorkerActionIdV1 = typeof PROJECT_WORKER_ACTION_IDS_V1[number
 export const ProjectWorkerActionIdV1Schema = lazyZodSchema(() => z.enum(PROJECT_WORKER_ACTION_IDS_V1));
 
 export const WorkspaceWorkerPreferenceGetInputV1Schema = lazyZodSchema(() => z.strictObject({
-  workspace: WorkspaceExecutionConfigAddressV1Schema,
+  workspace: workerPreferences.WorkspaceExecutionConfigAddressV1Schema,
 }));
 export const WorkspaceWorkerPreferenceResetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkspaceWorkerPreferenceGetInputV1Schema, {
-  expectedRevision: WorkspaceExecutionConfigRevisionV1Schema,
-  expected: WorkspaceWorkerPreferenceExpectationV1Schema,
+  expectedRevision: workerPreferences.WorkspaceExecutionConfigRevisionV1Schema,
+  expected: workerPreferences.WorkspaceWorkerPreferenceExpectationV1Schema,
 })));
 export const WorkspaceWorkerPreferenceSetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkspaceWorkerPreferenceResetInputV1Schema, {
-  next: WorkspaceWorkerPreferenceV1Schema,
+  next: workerPreferences.WorkspaceWorkerPreferenceV1Schema,
 })));
 export const WorkspaceWorkerPreferenceSetInputV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(WorkspaceWorkerPreferenceSetInputV1Schema));
 export const MachineWorkerPolicyGetInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -40,9 +37,9 @@ export const MachineWorkerPolicyGetInputV1Schema = lazyZodSchema(() => z.strictO
 export const MachineWorkerPolicySetInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(MachineFinitePolicyMutationV1Schema, MachineWorkerPolicyGetInputV1Schema.shape)));
 
 export const ProjectWorkerStatusInputV1Schema = lazyZodSchema(() => z.strictObject({
-  workspace: WorkspaceExecutionConfigAddressV1Schema,
+  workspace: workerPreferences.WorkspaceExecutionConfigAddressV1Schema,
   // Pool resolution belongs to the incumbent pool caller, never this exact daemon read.
-  destination: WorkerDestinationV1Schema._zod.def.options[0],
+  destination: workerPreferences.WorkerDestinationV1Schema._zod.def.options[0],
   purpose: z.enum(['finite', 'service-start']),
   memoryDemand: z.optional(ProjectMemoryDemandV1Schema),
 }));
@@ -71,7 +68,7 @@ export type ProjectWorkerCopyInspectInputV1 = z.infer<typeof ProjectWorkerCopyIn
 export type ProjectWorkerCopyInspectResultV1 = z.infer<typeof ProjectWorkerCopyInspectResultV1Schema>;
 
 export const ProjectWorkerCopyRetireInputV1Schema = lazyZodSchema(() => z.strictObject({
-  workspace: WorkspaceExecutionConfigAddressV1Schema,
+  workspace: workerPreferences.WorkspaceExecutionConfigAddressV1Schema,
   machineId: z.string().check(z.trim(), z.minLength(1)),
   expectedRelationship: WorkspaceSyncRelationshipV1Schema,
   removeTargetCopy: z.optional(z.strictObject({
@@ -105,9 +102,9 @@ export const ProjectWorkerActionInputSchemasV1 = lazyDefinition(() => ({
 } as const satisfies Record<ProjectWorkerActionIdV1, z.ZodMiniType>));
 export const ProjectWorkerActionOutputSchemasV1 = lazyDefinition(() => ({
   ...ProjectServicePlacementActionOutputSchemasV1,
-  'projects.worker.preferences.get': WorkspaceWorkerPreferenceReadResultV1Schema,
-  'projects.worker.preferences.set': WorkspaceWorkerPreferenceMutationResultV1Schema,
-  'projects.worker.preferences.reset': WorkspaceWorkerPreferenceMutationResultV1Schema,
+  'projects.worker.preferences.get': lazyZodSchema(() => workerPreferences.WorkspaceWorkerPreferenceReadResultV1Schema),
+  'projects.worker.preferences.set': lazyZodSchema(() => workerPreferences.WorkspaceWorkerPreferenceMutationResultV1Schema),
+  'projects.worker.preferences.reset': lazyZodSchema(() => workerPreferences.WorkspaceWorkerPreferenceMutationResultV1Schema),
   'machines.worker.policy.get': MachineFinitePolicyGetResultV1Schema,
   'machines.worker.policy.set': MachineFinitePolicyMutationResultV1Schema,
   'projects.worker.status': ProjectWorkerStatusResultV1Schema,

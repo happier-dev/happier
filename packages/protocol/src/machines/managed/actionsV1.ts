@@ -9,7 +9,7 @@ import { PluginContributionIdentityV1Schema } from '../../plugins/contributionId
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { MachineProvisionersListResultV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerContributionV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
-import { ActionOperationGetV1RequestSchema } from '../../actions/operations/v1.js';
+import * as actionOperations from '../../actions/operations/v1.js';
 import { BugReportMachineDiagnosticsSnapshotSchema } from '../../bugs/reports/machineDiagnostics.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../../account/settings/savedSecretResourceActionsV1.js';
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
@@ -33,7 +33,7 @@ import { MachineSetupApplyResultV1Schema } from '../setup/machineSetupOperationV
 export { MachineSetupApplyResultV1Schema } from '../setup/machineSetupOperationV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import * as deploymentActions from '../../deployments/deploymentActionsV1.js';
-import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
+import * as deploymentTemplates from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workflowStartPreparationV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
@@ -51,6 +51,7 @@ export { isManagedRetainedControlInvocation } from './actionIdsV1.js';
 
 const id = () => mini.string().check(mini.trim(), mini.minLength(1));
 const revision = () => mini.int().check(mini.gte(0));
+const actionOperationSchema = lazyZodSchema(() => actionOperations.ActionOperationGetV1RequestSchema);
 export const ManagedMachineActionIdV1Schema = lazyDefinition(() => mini.enum(MANAGED_MACHINE_ACTION_IDS_V1));
 const target = () => ({ homeId: id(), managedId: id() });
 const current = () => ({ ...target(), expectedIntentRevision: revision(), requestId: id(), controller: z.optional(ManagedControllerV1Schema) });
@@ -92,7 +93,7 @@ export const MachineSetupAppChildV1Schema = lazyZodSchema(() => z.discriminatedU
   z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.environments.create'),
     input: deploymentActions.DeploymentEnvironmentCreateInputV1Schema }),
   z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.templates.instantiate'),
-    input: DeploymentTemplateInstantiateInputV1Schema }),
+    input: deploymentTemplates.DeploymentTemplateInstantiateInputV1Schema }),
   z.strictObject({ sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.deploy'),
     input: deploymentActions.DeploymentDeployInputV1Schema }),
 ]));
@@ -100,7 +101,7 @@ export type MachineSetupAppChildV1 = z.infer<typeof MachineSetupAppChildV1Schema
 /** The target's existing P45 preparation review; no executable or persisted second format. */
 export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject({
   sourceIndex: revision(), itemIndex: revision(), actionId: z.literal('deployments.templates.instantiate'),
-  review: DeploymentTemplateInstantiationReviewV1Schema,
+  review: deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema,
 }));
 export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Schema>;
 export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
@@ -284,7 +285,7 @@ export function resolveManagedAcquireReviewV1(input: ManagedAcquireInputV1) {
   return { homeId: input.selection.homeId, ...(input.selection.controller === undefined ? {} : { controller: input.selection.controller }),
     retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage };
 }
-export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(ActionOperationGetV1RequestSchema) }));
+export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(actionOperationSchema) }));
 export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(mini.boolean()),
   presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),
 }));
@@ -327,8 +328,8 @@ export const ManagedGuestDiagnosticsV1Schema = lazyZodSchema(() => z.discriminat
 ]));
 export type ManagedGuestDiagnosticsV1 = z.infer<typeof ManagedGuestDiagnosticsV1Schema>;
 export const ManagedInspectOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema,
-  operation: z.optional(ActionOperationGetV1RequestSchema), guestDiagnostics: z.optional(ManagedGuestDiagnosticsV1Schema) }));
-export const ManagedCancelOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, operation: z.optional(ActionOperationGetV1RequestSchema) }));
+  operation: z.optional(actionOperationSchema), guestDiagnostics: z.optional(ManagedGuestDiagnosticsV1Schema) }));
+export const ManagedCancelOutputV1Schema = lazyZodSchema(() => z.strictObject({ machine: ManagedMachineV1Schema, operation: z.optional(actionOperationSchema) }));
 export const ManagedErrorV1Schema = lazyZodSchema(() => z.strictObject({ code: ManagedRefusalCodeV1Schema }));
 export const ManagedControllerCurrentnessV1Schema = lazyZodSchema(() => z.strictObject(current()));
 export const ManagedControllerCurrentInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { nativeRole: z.optional(z.literal('inspect')) })));

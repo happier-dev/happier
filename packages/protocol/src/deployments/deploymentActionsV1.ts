@@ -72,7 +72,7 @@ import { DeploymentPreviewPullRequestIdV1Schema as deploymentPreviewPullRequestI
   DeploymentPreviewReferenceV1Schema } from './deploymentPreviewReferenceV1.js';
 
 
-import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetCredentialPrincipalV1Schema, DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetCreateInputV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema, DeploymentEnvironmentSecretScopeV1Schema } from './deploymentBindingPatchV1.js';
 export { DeploymentBindingsPatchInputV1Schema, type DeploymentBindingsPatchInputV1,
   DeploymentEnvironmentSecretScopeV1Schema, type DeploymentEnvironmentSecretScopeV1 } from './deploymentBindingPatchV1.js';
@@ -109,8 +109,7 @@ export { ScmRepositoryFilesPullRequestPartialV1Schema, type ScmRepositoryFilesPu
   ScmRepositoryFilesPullRequestResultV1Schema, type ScmRepositoryFilesPullRequestResultV1 } from '../scm/repositoryFilesPullRequest.js';
 export { deploymentMoveToRepositoryReviewedChildrenV1, deploymentMoveToRepositoryChildRoleV1, DEPLOYMENT_MOVE_DEFINITION_CHILD_ROLE_V1,
   type DeploymentMoveToRepositoryChildActionIdV1 } from '../scm/repositoryFilesPullRequestActionIds.js';
-import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema,
-  DeploymentTemplateInstantiationReviewV1Schema, readDeploymentTemplateCreationOperationRequestIdV1 } from './deploymentTemplateInstantiationV1.js';
+import * as deploymentTemplates from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from './deploymentPublishPreparationV1.js';
 export * from './deploymentPublishPreparationV1.js';
 import { DeploymentHealthCurrentInputV1Schema, DeploymentHealthCurrentSuccessV1Schema,
@@ -280,6 +279,8 @@ export const DeploymentTargetLinkIntentInputV1Schema = lazyZodSchema(() => z.str
   /** The same reviewed target-enable choice as first-target Create. */
   managedRetention: z.optional(DeploymentTargetManagedRetentionV1Schema),
   targetId: DeploymentIdentifierV1Schema, role: z.enum(['runtime', 'data']),
+  /** Native creation was acknowledged before this exact association attempt. */
+  provisioned: z.optional(z.literal(true)),
   source: z.optional(DeploymentTargetSourceV1Schema), targetKind: z.optional(DeploymentIdentifierV1Schema),
   machineId: z.optional(DeploymentIdentifierV1Schema), installationId: z.optional(DeploymentIdentifierV1Schema),
   replacesLinkId: z.optional(DeploymentIdentifierV1Schema),
@@ -296,7 +297,9 @@ z.refine(link => link.drainedDeploymentId === undefined || link.replacesLinkId !
   : link.role === 'runtime' && (link.targetKind === undefined || link.targetKind === 'ownServer')
     && link.machines.length > 0 && link.machineId === undefined && link.installationId === undefined
     && (link.source === undefined || link.source.id === link.targetId),
-{ message: 'A link selects one host membership or plugin identity and placement arm.' })));
+{ message: 'A link selects one host membership or plugin identity and placement arm.' }),
+z.refine(link => link.provisioned !== true || link.source?.kind === 'plugin' && link.role === 'runtime',
+{ message: 'Only a created runtime provider resource is provisioned.' })));
 /** Storage always receives prepared content; the public Action may author it in host custody. */
 export const DeploymentTargetLinkInputV1Schema = lazyZodSchema(() => z.safeExtend(
   DeploymentTargetLinkIntentInputV1Schema, DeploymentArtifactContentReferenceV1Schema.shape,
@@ -312,10 +315,23 @@ export const DeploymentTargetLinkProviderIntentInputV1Schema = lazyZodSchema(() 
   },
 ));
 export type DeploymentTargetLinkProviderIntentInputV1 = z.infer<typeof DeploymentTargetLinkProviderIntentInputV1Schema>;
+/** A reviewed create has an Account and requested name, never a guessed native resource id. */
+export const DeploymentTargetLinkCreateIntentInputV1Schema = lazyZodSchema(() => z.safeExtend(
+  DeploymentTargetLinkIntentInputV1Schema, {
+    source: deploymentPluginTargetSourceV1Schema, targetKind: DeploymentIdentifierV1Schema,
+    role: z.literal('runtime'),
+    providerCreate: z.omit(DeploymentTargetCreateInputV1Schema, {
+      v: true, serverId: true, environmentId: true, expectedRevision: true, requestKey: true,
+    }),
+    title: z.optional(z.string()),
+  },
+));
+export type DeploymentTargetLinkCreateIntentInputV1 = z.infer<typeof DeploymentTargetLinkCreateIntentInputV1Schema>;
 export const DeploymentTargetLinkActionInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentTargetLinkInputV1Schema,
   z.safeExtend(DeploymentTargetLinkIntentInputV1Schema, { source: z.optional(deploymentHostTargetSourceV1Schema) }),
   DeploymentTargetLinkProviderIntentInputV1Schema,
+  DeploymentTargetLinkCreateIntentInputV1Schema,
 ]));
 /** Native admission may refuse teardown before a receipt exists. */
 export const DeploymentTeardownRefusalDetailsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -426,6 +442,7 @@ export const DeploymentPreviewDataTargetsV1Schema = lazyZodSchema(() => z.array(
 })));
 export const DeploymentEnvironmentCreateResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, projectSourceId: z.optional(DeploymentIdentifierV1Schema),
+    replayed: z.optional(z.literal(true)),
     runtimeTargetLinkId: z.optional(DeploymentIdentifierV1Schema),
     previewDataTargets: z.optional(DeploymentPreviewDataTargetsV1Schema),
     previewCompanionRequired: z.optional(z.literal(true)),
@@ -463,6 +480,13 @@ export const DeploymentTargetLinkAlreadyLinkedResultV1Schema = lazyZodSchema(() 
   environment: DeploymentEnvironmentRefV1Schema, targetLinkId: DeploymentIdentifierV1Schema,
 }));
 export type DeploymentTargetLinkAlreadyLinkedResultV1 = z.infer<typeof DeploymentTargetLinkAlreadyLinkedResultV1Schema>;
+/** The native resource exists; retry only this retained exact association, never create again. */
+export const DeploymentTargetLinkProvisionedResultV1Schema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), error: z.literal('deployment_link_incomplete'),
+  recovery: DeploymentTargetLinkProviderIntentInputV1Schema,
+  failure: z.optional(ActionExecuteFailureSchema),
+}));
+export type DeploymentTargetLinkProvisionedResultV1 = z.infer<typeof DeploymentTargetLinkProvisionedResultV1Schema>;
 export const DeploymentTargetLinkResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...result, targetLinkId: DeploymentIdentifierV1Schema, targetLinkRevision: DeploymentRevisionV1Schema,
     failureObserver: z.optional(z.union([
@@ -475,6 +499,7 @@ export const DeploymentTargetLinkResultV1Schema = lazyZodSchema(() => z.union([
     ])),
   }),
   DeploymentTargetLinkAlreadyLinkedResultV1Schema,
+  DeploymentTargetLinkProvisionedResultV1Schema,
   DeploymentActionFailureV1Schema,
 ]));
 export const DeploymentReceiptResultV1Schema = lazyZodSchema(() => z.union([
@@ -626,6 +651,8 @@ export const DeploymentDataQueryResultV1Schema = lazyZodSchema(() => z.union([De
 export type DeploymentDataQueryResultV1 = z.infer<typeof DeploymentDataQueryResultV1Schema>;
 // Domain leaf imports legitimately reach this catalog through installation and
 // access-provider contracts. Admit catalog bindings on first use, not ESM load.
+// Reading a sibling Action can admit the map while templates are still loading;
+// keep their forwarded schemas deferred for that whole cyclic load.
 export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   ...DeploymentBackupActionInputSchemasV1,
   'deployments.backups.configure': DeploymentBackupConfigureInputV1Schema,
@@ -635,7 +662,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
   'deployments.domains.get': DeploymentDomainGetInputV1Schema,
   'deployments.domains.list': DeploymentDomainListInputV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareInputV1Schema,
-  'deployments.templates.instantiate': DeploymentTemplateInstantiateInputV1Schema,
+  'deployments.templates.instantiate': lazyZodSchema(() => deploymentTemplates.DeploymentTemplateInstantiateInputV1Schema),
   'deployments.environments.moveToRepository': DeploymentMoveToRepositoryInputV1Schema,
   'deployments.health.read': DeploymentHealthReadInputV1Schema,
   'deployments.health.current': DeploymentHealthCurrentInputV1Schema,
@@ -666,9 +693,9 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
 } as const));
 /** One-shot values and their review-only origin; no default pointer is saved on the Environment. */
 export const DeploymentEnvironmentCreationReviewV1Schema = lazyZodSchema(() => z.extend(z.pick(
-  DeploymentTemplateInstantiationReviewV1Schema, { creationDefaultsBasis: true }), {
-  creationDefaults: z.nonoptional(DeploymentTemplateInstantiationReviewV1Schema.shape.creationDefaults),
-  template: z.optional(DeploymentTemplateInstantiationReviewV1Schema),
+  deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema, { creationDefaultsBasis: true }), {
+  creationDefaults: z.nonoptional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema.shape.creationDefaults),
+  template: z.optional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema),
   copy: z.optional(DeploymentEnvironmentCopyReviewV1Schema),
 }));
 export type DeploymentEnvironmentCreationReviewV1 = z.infer<typeof DeploymentEnvironmentCreationReviewV1Schema>;
@@ -688,7 +715,7 @@ export const DeploymentActionOutputSchemasV1 = lazyDefinition(() => ({
   'deployments.domains.get': DeploymentDomainMutationResultV1Schema,
   'deployments.domains.list': DeploymentDomainListResultV1Schema,
   'deployments.publish.prepare': DeploymentPublishPrepareResultV1Schema,
-  'deployments.templates.instantiate': DeploymentTemplateInstantiateResultV1Schema,
+  'deployments.templates.instantiate': lazyZodSchema(() => deploymentTemplates.DeploymentTemplateInstantiateResultV1Schema),
   'deployments.environments.moveToRepository': DeploymentMoveToRepositoryResultV1Schema,
   'deployments.health.read': DeploymentHealthReadResultV1Schema,
   'deployments.health.current': DeploymentHealthCurrentResultV1Schema,
@@ -811,6 +838,16 @@ export function readDeploymentEnvironmentOperationRequestIdV1(input: Readonly<{
 /** The host producer and reconnecting caller observe the same native intent,
  * independently of the transport envelope that carried it. */
 export function readDeploymentActionOperationRequestIdV1(actionId: string, input: unknown): string | undefined {
+  if (actionId === 'deployments.targets.link') {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    // Native creation must never replay after response loss. Association already has
+    // Home request-key idempotency and each visible retry may make a fresh attempt.
+    return parsed.success && 'providerCreate' in parsed.data
+      ? computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+        'target-link-create', parsed.data.serverId, parsed.data.environmentId, parsed.data.requestKey,
+      ]) : undefined;
+  }
+
   if (actionId === 'deployments.backups.restore') {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
     if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;
@@ -820,7 +857,7 @@ export function readDeploymentActionOperationRequestIdV1(actionId: string, input
   }
   if (actionId === 'deployments.templates.instantiate') {
     const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    return parsed.success ? readDeploymentTemplateCreationOperationRequestIdV1(parsed.data) : undefined;
+    return parsed.success ? deploymentTemplates.readDeploymentTemplateCreationOperationRequestIdV1(parsed.data) : undefined;
   }
   if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
   const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);

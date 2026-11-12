@@ -1,14 +1,17 @@
 import * as z from '../../zodRuntimePolicy.js';
-import { lazyDefinition } from '../../lazyZodSchema.js';
-import { ActionOperationGetV1RequestSchema } from '../../actions/operations/v1.js';
+import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import * as actionOperations from '../../actions/operations/v1.js';
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
-import { RetentionV1Schema, ManagedControllerV1Schema } from './managedMachineV1.js';
+import * as managedMachine from './managedMachineV1.js';
 import { ManagedCommittedIdleEvidenceV1Schema } from './actionsV1.js';
 import { ActivityDecisionV1Schema } from './activityDecisionV1.js';
 export { ActivityDecisionV1Schema, ManagedActivityReasonV1Schema, type ActivityDecisionV1, type ManagedActivityReasonV1 } from './activityDecisionV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const revision = () => z.int().check(z.gte(0));
+// Sibling catalogs can inspect these fields before their cyclic owners finish.
+const managedControllerSchema = lazyZodSchema(() => managedMachine.ManagedControllerV1Schema);
+const actionOperationSchema = lazyZodSchema(() => actionOperations.ActionOperationGetV1RequestSchema);
 
 /** Reviewed installation replacement, admitted through the same managed row revision. */
 export const DevcontainerRebuildIntentV1Schema = lazyDefinition(() => z.strictObject({
@@ -21,14 +24,14 @@ export const ManagedIntentInputSchema = lazyDefinition(() => z.discriminatedUnio
   z.strictObject({ homeId: id(), managedId: id(), when: z.literal('now'),
     expectedRevision: revision(), intent: z.enum(['start', 'stop', 'suspend', 'resume', 'delete']) }),
   z.strictObject({ homeId: id(), managedId: id(), when: z.literal('after-idle'),
-    intent: z.enum(['stop', 'suspend', 'delete']), afterMs: z.optional(RetentionV1Schema.def.options[1].def.shape.afterMs) }),
+    intent: z.enum(['stop', 'suspend', 'delete']), afterMs: z.optional(managedMachine.RetentionV1Schema.def.options[1].def.shape.afterMs) }),
 ]));
 
 export const ManagedIntentResultSchema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('accepted'), managedId: id(), intentRevision: revision(),
     // Immediate foreground work completes natively; deferred intent is retained
     // by its existing row owner. Neither invents an asynchronous Action operation.
-    operation: z.optional(ActionOperationGetV1RequestSchema) }),
+    operation: z.optional(actionOperationSchema) }),
   z.strictObject({ kind: z.literal('conflict'), currentRevision: revision() }),
   z.strictObject({ kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema }),
 ]));
@@ -40,10 +43,10 @@ export { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 
 /** Exact retained-row correlation; requester authority comes from signed Machine ingress. */
 export const ManagedActivityReadRequestV1Schema = lazyDefinition(() => z.strictObject({
-  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
+  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(managedControllerSchema),
 }));
 export const ManagedAdmissionDrainConfirmRequestV1Schema = lazyDefinition(() => z.strictObject({
-  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(ManagedControllerV1Schema),
+  homeId: id(), managedId: id(), expectedRevision: revision(), controller: z.optional(managedControllerSchema),
   action: z.enum(['begin', 'resume']),
 }));
 /** Guest currentness signs the existing read or exact reversible drain request. */
@@ -68,7 +71,7 @@ export const ManagedWakeTargetV1Schema = lazyDefinition(() => {
   const session = z.strictObject({ homeId: id(), sessionId: id() });
   return z.strictObject({
     homeId: id(), managedId: id(), enrolledMachineId: id(), expectedIntentRevision: revision(),
-    controller: z.optional(ManagedControllerV1Schema),
+    controller: z.optional(managedControllerSchema),
     origin: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('session-input'), session, pendingRequestId: id(),
         requestedAt: z.int().check(z.gte(0)) }),
@@ -85,7 +88,7 @@ export type ManagedWakeTargetV1 = Readonly<z.infer<typeof ManagedWakeTargetV1Sch
 
 /** Existing accepted work is reread on reconnect; this is not a persisted wake queue. */
 export const ManagedWakeTargetsReadRequestV1Schema = lazyDefinition(() => z.strictObject({
-  homeId: id(), controller: ManagedControllerV1Schema,
+  homeId: id(), controller: managedControllerSchema,
 }));
 export const ManagedWakeTargetsReadResultV1Schema = lazyDefinition(() => z.strictObject({
   targets: z.array(ManagedWakeTargetV1Schema),
