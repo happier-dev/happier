@@ -166,6 +166,7 @@ let detectedByMachine: Record<string, unknown> = {};
 let accountMachines: ReturnType<typeof createMachineFixture>[] = [];
 let catalogRevision = 1;
 let accountSettingsVersion = 1;
+let accountTokenEpoch = 0;
 let accountSettings: Record<string, unknown> = {};
 let catalogReadGate: ReturnType<typeof createDeferred<void>> | null = null;
 let holdCatalogReadsAfterWrite = false;
@@ -215,6 +216,7 @@ afterEach(async () => {
     catalogReadGate?.resolve();
     catalogReadGate = null;
     await standardCleanup();
+    (await import('@/modal')).Modal.hideAll();
     await connection?.dispose();
     connection = null;
     resetMcpServerCatalogEngineForTests();
@@ -276,8 +278,10 @@ describe('MCP servers collection and tools', () => {
         const targetHome = await setServerProfileIdentityForUrl(targetUrl, 'srv_mcp_collection_machine');
         if (!targetHome) throw new Error('Expected the Machine Home identity');
         machineHome = targetHome;
+        // Each restored Account lifetime gets its own real credential, including the registry memo owner.
+        accountTokenEpoch += 1;
         const token = (accountId: string) => `e30.${Buffer.from(JSON.stringify({ sub: accountId,
-            provenance: { v: 1, kind: 'account', authority: 'present_user' }, tokenEpoch: 0 })).toString('base64url')}.signature`;
+            provenance: { v: 1, kind: 'account', authority: 'present_user' }, tokenEpoch: accountTokenEpoch })).toString('base64url')}.signature`;
         const credentials = { token: token('collection-owner') };
         await TokenStorage.setCredentialsForServerUrl('https://mcp-collection.test', {}, credentials);
         await TokenStorage.setCredentialsForServerUrl(targetUrl, { serverId: targetHome.id }, { token: token('machine-owner') });
