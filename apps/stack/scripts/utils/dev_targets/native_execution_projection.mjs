@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, posix, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { DEFAULT_LOAD_PROBE_TTL_MS, loadDevTargetExecutionConfig, loadDevTargetsConfig, parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
 import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../stack/repo_stack_identity.mjs';
@@ -207,6 +207,15 @@ async function main() {
     const packageRoot = join(resolve(process.argv[3]), 'packages/protocol');
     const generator = join(packageRoot, 'scripts/generate-exports.mjs');
     if (existsSync(generator)) {
+      // Publication runs before sync and imports the target's installed tools.
+      // Fresh siblings need the same installed-tree owner as local validation;
+      // the worker bootstrap cannot prepare this controller-side import.
+      const repository = resolve(process.argv[3]);
+      const executorRepository = fileURLToPath(new URL('../../../../../', import.meta.url));
+      if (repository !== resolve(executorRepository) && existsSync(join(repository, 'package.json'))) {
+        const { bootstrapRemoteDependencies } = await import('./remote_dependency_bootstrap.mjs');
+        await bootstrapRemoteDependencies({ repoDir: repository, toolsOnly: true });
+      }
       // Export formats belong to the target checkout, including historical worktrees.
       const { prepareProtocolExports } = await import(pathToFileURL(generator).href);
       const { resolveWorkspaceBundlePublicationMode } = await import('../../../../../scripts/workspaces/workspaceBundlePublication.mjs');
