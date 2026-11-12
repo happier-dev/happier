@@ -1427,3 +1427,21 @@ describe('planSyncActionsFromChanges', () => {
         expect(planned.kv).toEqual({ type: 'refresh-feature', feature: 'todos' });
     });
 });
+
+it('retains accounting for compact Session records while unknown and actual accounting changes still refresh', async () => {
+    const { buildSessionSystemRecordChangeV1 } = await import('@happier-dev/protocol/sessions/board/changeHint');
+    const { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } = await import('@happier-dev/protocol/usage/usageWorkEvidence');
+    const changes = Array.from({ length: 7 }, (_, index) => ({
+        ...buildSessionSystemRecordChangeV1('work-facts-' + index, {
+            sessionId: 'session-' + index, address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS,
+        }), cursor: index + 1, changedAt: index + 1,
+    }));
+    const plan = planSyncActionsFromChanges(changes);
+    expect(plannedChangesAffectUsageQuery(plan)).toBe(true);
+    expect(plannedChangesAffectUsageAccounting(plan)).toBe(false);
+    for (const change of [
+        { kind: 'session' as const, entityId: 'session-0', cursor: 8, changedAt: 8 },
+        { kind: 'account' as const, entityId: 'unknown', cursor: 8, changedAt: 8 },
+        { ...changes[0]!, hint: { malformed: true } },
+    ]) expect(plannedChangesAffectUsageAccounting(planSyncActionsFromChanges([...changes, change]))).toBe(true);
+});

@@ -182,3 +182,18 @@ describe('Home Account change subscriptions', () => {
         expect(isHomeAdministrationAccountChange(event(['unrelated-row']))).toBe(false);
     });
 });
+
+it.each(['socket', 'catch-up-pending'] as const)('keeps compact record accounting quiet on %s while mixed accounting still wakes', async source => {
+    const { buildSessionSystemRecordChangeV1 } = await import('@happier-dev/protocol/sessions/board/changeHint');
+    const { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } = await import('@happier-dev/protocol/usage/usageWorkEvidence');
+    const change = buildSessionSystemRecordChangeV1('compact-work-fact', {
+        sessionId: 'session-one', address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS,
+    });
+    const wake = { t: 'account-change' as const, changeKinds: [change.kind], entityIds: [change.entityId],
+        sessionSystemRecords: [change.hint.sessionRecords] };
+    expect(publishHomeAccountChangeWake('compact-home', wake, source).usageAccountingAffects).toBe(false);
+    expect(publishHomeAccountChangeWake('compact-home', { ...wake, entityIds: [...wake.entityIds, 'self'] }, source)
+        .usageAccountingAffects).not.toBe(false);
+    expect(publishHomeAccountChangeWake('compact-home', { ...wake, changeKinds: ['account', 'session'],
+        entityIds: [...wake.entityIds, 'session-one'] }, source).usageAccountingAffects).not.toBe(false);
+});

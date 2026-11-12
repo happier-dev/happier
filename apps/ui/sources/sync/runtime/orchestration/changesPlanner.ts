@@ -1206,6 +1206,11 @@ export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): b
 export function plannedChangesAffectUsageAccounting(planned: PlannedChangeActions): boolean {
     const relevant = planned.changes.filter(change => {
         if (change.kind === 'kv') return false;
+        // Compact records publish private evidence, independently of UsageEvent
+        // accounting changes. Socket wakes retain the canonical entity without
+        // its feed hint; malformed detailed hints still require recovery.
+        if (readSessionSystemRecordChangeV1(change) !== null
+            || (change.hint === undefined && isSessionSystemRecordChangeEntityV1(change))) return false;
         // Access rosters and independent Discussions alter private evidence,
         // not the Account-owned UsageEvent/report population. Actual access
         // and usage transitions publish their independent changes as well.

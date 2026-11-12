@@ -477,8 +477,11 @@ export function publishHomeAccountChangeForRouting(
     const accountSettingsAffects = details?.accountSettingsAffects ?? routingPlan?.invalidate.settings;
     const usageQueryAffects = details?.usageQueryAffects
         ?? (routingPlan ? plannedChangesAffectUsageQuery(routingPlan) : undefined);
+    // Accounting relevance does not require record materialization: an Account
+    // wake can name private records without carrying their detailed feed hints.
+    const accountingPlan = accountWakePlan ?? routingPlan;
     const usageAccountingAffects = details?.usageAccountingAffects
-        ?? (routingPlan ? plannedChangesAffectUsageAccounting(routingPlan) : undefined);
+        ?? (accountingPlan ? plannedChangesAffectUsageAccounting(accountingPlan) : undefined);
     const workflowTriggersAffect = details?.workflowTriggersAffect
         ?? (routingPlan ? plannedChangesAffectWorkflowTriggers(routingPlan) : undefined);
     const workflowDefinitionsAffect = details?.workflowDefinitionsAffect
