@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture,
   type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -41,15 +41,24 @@ describe('preview receipt publication to the PR Overview', () => {
         authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' }, surface: renderSurface, launchInput: input,
         surfaceContext: createSurfaceContextFixture({ accountScope: { serverId: 'srv_preview', accountId: 'preview-owner' } }),
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-        handlers: { executeAction: async ({ action, input: request, signal }) => {
+        handlers: {
+          readResource: async () => {
+            const digest = `sha256:${'1'.repeat(64)}`;
+            return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({ digest })), digest };
+          },
+          watchResource: async () => ({ digest: `sha256:${'1'.repeat(64)}` }),
+          executeAction: async ({ action, input: request, signal }) => {
           if (typeof action === 'string' || request === undefined) throw new Error('Expected registered GitHub Action');
           return plugin.invokeAction(action.localId, request, { surface: 'ui', signal });
         } },
       });
     });
     mounted.push(detail);
-    await expect(detail.getByText('Preview')).resolves.toBeDefined();
-    await expect(detail.getByText('https://pr-1284.example.test/app')).resolves.toBeDefined();
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      await expect(detail.getByText('Preview')).resolves.toBeDefined();
+      await expect(detail.getByText('https://pr-1284.example.test/app')).resolves.toBeDefined();
+    });
     expect(transport.requests.filter(request => request.method === 'POST' && new URL(request.url).pathname !== '/graphql')).toHaveLength(1);
   });
 });

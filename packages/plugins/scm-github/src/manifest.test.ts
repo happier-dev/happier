@@ -21,6 +21,7 @@ import {
   PLUGIN_MANIFEST,
 } from './manifest.js';
 import { GITHUB_PROJECT_READINESS_ACTION_ID_V1, GITHUB_CI_ACTION_IDS_V1 } from './actions/actionIds.js';
+import { GITHUB_HOSTING_OPERATION_ACTION_IDS_V1 } from './actions/hostingActionIds.js';
 import { GITHUB_DEPLOYMENT_MONITORING_OPEN_ACTION_ID } from './actions/deploymentMonitoring.js';
 import { GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID } from './actions/deploymentReviewProtocol.js';
 import { LOCAL_ACT_ACTION_IDS } from './actions/local/contracts.js';
@@ -313,6 +314,7 @@ describe('GitHub SCM manifest', () => {
     // The explicit empty list withdraws them from
     // global placement discovery without disabling any invocation surface.
     const mountedOnly = [
+      ...Object.values(GITHUB_HOSTING_OPERATION_ACTION_IDS_V1),
       GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
       GITHUB_TRIAGE_ACTION_IDS_V1.get,
       GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus,
