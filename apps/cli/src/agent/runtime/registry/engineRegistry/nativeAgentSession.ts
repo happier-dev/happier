@@ -1124,6 +1124,7 @@ function buildNativeAgentSessionOpenInputs(
     getWorkspaceWrites?: () => 'allow' | 'deny' | undefined,
     buildOptions: Readonly<{
         allowPendingProviderBinding?: boolean;
+        providerBinding?: HostSessionRuntimeFactoryParams['providerBinding'];
         sessionConnectedAccounts?: NonNullable<AgentSessionOpenRequest['connectedAccounts']>;
         idleCompaction?: AgentSessionOpenRequest['idleCompaction'];
     }> = {},
@@ -1211,7 +1212,7 @@ function buildNativeAgentSessionOpenInputs(
         : undefined;
     const providerConnectionId = modelSelection?.ref.providerConnectionId ?? null;
     if (providerConnectionId === null) {
-        if (providerBindingMaterialization !== undefined) {
+        if (providerBindingMaterialization !== undefined && !buildOptions.providerBinding) {
             throw new Error('Native model selection cannot include Provider binding materialization');
         }
         return Object.freeze({
@@ -1220,6 +1221,7 @@ function buildNativeAgentSessionOpenInputs(
             ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
             configuration,
             stateSharing,
+            ...(buildOptions.providerBinding ? { providerBinding: buildOptions.providerBinding } : {}),
             ...(buildOptions.idleCompaction ? { idleCompaction: buildOptions.idleCompaction } : {}),
             ...(connectedAccounts ? { connectedAccounts } : {}),
         });
@@ -4565,7 +4567,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     hostRuntimeParams.providerBindingMaterialization,
                     hostRuntimeParams.getPermissionMode(),
                     hostRuntimeParams.getWorkspaceWrites,
-                    { idleCompaction,
+                    { idleCompaction, providerBinding: hostRuntimeParams.providerBinding,
                         allowPendingProviderBinding: resolveLateEnvironment !== undefined
                         || (useRunnerManagedProviderBinding && params.prepareManagedProviderBinding !== undefined) },
                 );
@@ -4604,6 +4606,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     if (
                         useRunnerManagedProviderBinding
                         && privateProviderBindingHandoff
+                        && privateProviderBindingHandoff.sessionBindingMetadata !== undefined
                     ) {
                         delete lateEnvironment[
                             HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY
@@ -4645,8 +4648,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         && !useRunnerManagedProviderBinding
                         && (
                             providerBindingHandoff
-                                ? providerBindingHandoff.sessionBindingMetadata
-                                    .connectionId !== selectedProviderConnectionId
+                                ? providerBindingHandoff.sessionBindingMetadata === undefined
+                                    || providerBindingHandoff.sessionBindingMetadata.connectionId !== selectedProviderConnectionId
                                 : hostRuntimeParams.providerBindingMaterialization === undefined
                         )
                     ) {
@@ -4657,6 +4660,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     if (
                         selectedProviderConnectionId === null
                         && providerBindingHandoff
+                        && !('providerBinding' in providerBindingHandoff)
                     ) {
                         throw new Error(
                             'Native model selection cannot include a late provider binding handoff',
@@ -4681,7 +4685,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             ),
                         }),
                     });
-                    const metadataForOpen = providerBindingHandoff
+                    const metadataForOpen = providerBindingHandoff?.sessionBindingMetadata !== undefined
                         ? applySessionProviderBindingMetadataV1(
                             hostRuntimeParams.metadata,
                             providerBindingHandoff.sessionBindingMetadata,
@@ -4699,6 +4703,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         hostRuntimeParams.getWorkspaceWrites,
                         {
                             idleCompaction,
+                            providerBinding: providerBindingHandoff && 'providerBinding' in providerBindingHandoff
+                                ? providerBindingHandoff.providerBinding
+                                : hostRuntimeParams.providerBinding,
                             allowPendingProviderBinding:
                                 useRunnerManagedProviderBinding,
                             ...(resolvedLateEnvironment.sessionConnectedAccounts
@@ -5145,8 +5152,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     providerConnectionId !== null
                     && (
                         !publicBinding
-                        || publicBinding.handoff
-                            .sessionBindingMetadata.connectionId
+                        || publicBinding.handoff.sessionBindingMetadata === undefined
+                        || publicBinding.handoff.sessionBindingMetadata.connectionId
                             !== providerConnectionId
                     )
                 ) {
@@ -5160,7 +5167,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         'Native model selection cannot include a public managed Provider binding',
                     );
                 }
-                if (publicBinding) {
+                if (publicBinding?.handoff.sessionBindingMetadata !== undefined) {
                     transformAgentChildLaunchEnvironment =
                         publicBinding
                             .transformAgentChildLaunchEnvironment;
