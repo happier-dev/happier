@@ -330,10 +330,13 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       && item.status === previous.value.status && item.failureKind === previous.value.failureKind
       && item.failureReason === previous.value.failureReason && item.fallbackText === previous.value.fallbackText) return;
     state.committed = true;
-    const output = fallback ? item.fallbackText ?? '' : item.visibleOutput === undefined
-      ? { status: item.status ?? 'unknown', ...(item.failureKind === undefined ? {} : { failureKind: item.failureKind }),
+    const text = fallback ? item.fallbackText ?? '' : item.visibleOutput;
+    // Visible text supplements the native failure; it must not erase its cause.
+    const output = text === undefined || item.failureKind !== undefined || item.failureReason !== undefined
+      ? { ...(text === undefined ? {} : { text }), status: item.status ?? 'unknown',
+        ...(item.failureKind === undefined ? {} : { failureKind: item.failureKind }),
         ...(item.failureReason === undefined ? {} : { failureReason: item.failureReason }) }
-      : item.visibleOutput;
+      : text;
     publish({ kind: 'tool-result', toolCallId, output, isError: item.status !== 'completed', ...owner });
     if (item.status === 'completed') workflowLaunch(item, toolCallId);
   }

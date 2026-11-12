@@ -143,7 +143,8 @@ it('keeps the recorded rejected tool identity when its output arrives after comp
     expect(sameTool.filter(event => event.kind === 'tool-call')).toHaveLength(1);
     expect(sameTool.filter(event => event.kind === 'tool-result')).toMatchObject([
       { isError: true },
-      { output: expect.stringContaining('tool denied: approval aborted'), isError: true },
+      { output: { text: expect.stringContaining('tool denied: approval aborted'), status: 'rejected',
+        failureKind: 'approval_denied', failureReason: 'approval aborted' }, isError: true },
     ]);
   });
 });
@@ -313,4 +314,23 @@ it('retains the native workflow continuation and late child after its parent ter
       { output: expect.objectContaining({ summary: 'CHILD', text: 'CHILD' }), isError: false },
     ]);
   });
+});
+
+// Constructed native tool timeout using MSP's exported Item failure fields.
+it('retains the native timeout cause alongside its visible output', () => {
+  const projection = createMuseEventProjection({ sessionId: 'host-timeout' });
+  const events = createAgentSessionRuntimeHarness();
+  projection.watch(events.recordRuntimeEvent);
+  projection.observe({ method: 'item/completed', params: { item: {
+    itemId: 'native-timeout', kind: 'toolCall', callId: 'native-timeout-call',
+    tool: 'mcp__happier__action_execute', args: {}, status: 'failed',
+    visibleOutput: 'tool timed out', failureKind: 'timeout', failureReason: 'tool timed out',
+  } } });
+  expect(events.canonicalEvents()).toContainEqual(expect.objectContaining({
+    kind: 'tool-result', toolCallId: 'native-timeout-call', isError: true,
+    output: { text: 'tool timed out', status: 'failed', failureKind: 'timeout', failureReason: 'tool timed out' },
+  }));
+  events.expectAllEventsValidated();
+  events.dispose();
+  projection.dispose();
 });
