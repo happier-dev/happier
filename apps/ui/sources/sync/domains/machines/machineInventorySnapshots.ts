@@ -159,7 +159,7 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
     const snapshots: ServerMachineInventorySnapshotV1[] = [];
     for (const profile of params.profiles) {
         if (params.serverId && !areServerProfileIdentifiersEquivalent(profile.serverIdentityId, params.serverId, resolveScopeId)) continue;
-        const serverName = resolveHomeDisplayLabel(profile, profile.id);
+        const serverName = resolveHomeDisplayLabel(profile, profile.id, params.activeServerId);
         const serverIdentityId = normalizePortableIdentity(profile.serverIdentityId);
         if (!serverIdentityId) {
             snapshots.push(Object.freeze({

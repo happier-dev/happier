@@ -670,7 +670,7 @@ it('does not disclose a Guard answer after its captured Account retires', async 
         const call = await issued.promise;
         await homes.switchAccount(home.serverId, 'next-owner', { currentAccount: true });
         await call.reply(MachineGuardViewV1Schema.parse(createMachineGuardViewFixture()));
-        expect(await pending).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await pending).toEqual({ ok: false, reason: 'request_failed', errorCode: 'action_account_scope_changed' });
     });
 });
 

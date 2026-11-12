@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as serverProfiles from '@/sync/domains/server/serverProfiles';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 
 import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -61,6 +62,14 @@ const profiles = [
 const accountScopesByServerId = new Map(profiles.map(profile => [profile.serverIdentityId, { serverId: profile.serverIdentityId, accountId: 'account-1' }]));
 
 describe('resolveAllProfileMachineInventorySnapshots', () => {
+    it('names unnamed Homes against the inventory active Home rather than the global selection', () => {
+        const snapshots = resolveAllProfileMachineInventorySnapshots({
+            profiles: profiles.map(profile => ({ ...profile, name: '' })),
+            activeServerId: 'local-a', activeMachines: [], machineListByServerId: {},
+            machineListStatusByServerId: {}, accountScopesByServerId, loadWarmEntries: () => ({}),
+        });
+        expect(snapshots.map(snapshot => snapshot.serverName)).toEqual(['This Home', 'https://b.example.test']);
+    });
     beforeEach(clearMachineRequestReachabilityForTest);
     it('keeps the scoped last-known name and home while opening live content, without admitting the cached row', () => {
         const live = { ...machine({ id: 'selected' }), metadata: null, availability: undefined };
@@ -100,6 +109,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
             return row;
         };
         const rows = Array.from({ length: 138 }, (_, index) => makeRow(`incremental-${String(index).padStart(3, '0')}`));
+        publishMachineActivityForTest(rows);
         const input = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: rows,
             machineListByServerId: { 'local-a': rows }, machineListStatusByServerId: { 'local-a': 'idle' as const },
             accountScopesByServerId, nowMs: 20, loadWarmEntries: () => ({}) };
@@ -111,6 +121,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         const updates = 8;
         for (let index = 0; index < updates; index++) {
             current = current.map((row, rowIndex) => rowIndex === 0 ? makeRow(row.id) : row);
+            publishMachineActivityForTest(current);
             const snapshot = resolveAllProfileMachineInventorySnapshots({ ...input,
                 activeMachines: current, machineListByServerId: { 'local-a': current } })[0];
             expect(snapshot).toMatchObject({ executionEligibleMachineIds: expect.arrayContaining([current[1].id]) });
@@ -122,6 +133,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         const beforeHeartbeat = resolveAllProfileMachineInventorySnapshots(input)[0];
         // The projection consumes immutable records from the Machine store.
         const heartbeatRows = rows.map((row, index) => index === 1 ? { ...row, activeAt: row.activeAt + 1 } : row);
+        publishMachineActivityForTest(heartbeatRows);
         const heartbeatInput = { ...input, activeMachines: heartbeatRows, machineListByServerId: { 'local-a': heartbeatRows } };
         const heartbeat = resolveAllProfileMachineInventorySnapshots(heartbeatInput)[0];
         expect(heartbeat.machines[1]).not.toBe(beforeHeartbeat.machines[1]);
@@ -131,16 +143,19 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput, nowMs: 20 + 24 * 60 * 60 * 1000 })[0])
             .toMatchObject({ executionEligibleMachineIds: rows.map(row => row.id) });
         const offlineRows = heartbeatRows.map((row, index) => index === 1 ? { ...row, active: false } : row);
+        publishMachineActivityForTest(offlineRows);
         expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput,
             activeMachines: offlineRows, machineListByServerId: { 'local-a': offlineRows } })[0])
             .toMatchObject({ executionEligibleMachineIds: expect.not.arrayContaining([rows[1].id]) });
         const revokedRows = heartbeatRows.map((row, index) => index === 1 ? { ...row, revokedAt: 1 } : row);
+        publishMachineActivityForTest(revokedRows);
         expect(resolveAllProfileMachineInventorySnapshots({ ...heartbeatInput,
             activeMachines: revokedRows, machineListByServerId: { 'local-a': revokedRows } })[0])
             .toMatchObject({ executionEligibleMachineIds: expect.not.arrayContaining([rows[1].id]) });
     });
     it('retains unchanged-row eligibility through Account transport withdrawal and fresh observation', () => {
         const row = machine({ id: 'withdrawn-row', active: true });
+        publishMachineActivityForTest([row]);
         const scope = { serverId: 'srv_server_a', accountId: 'account-1' };
         const input = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: [row],
             machineListByServerId: { 'local-a': [row] }, machineListStatusByServerId: { 'local-a': 'idle' as const },
@@ -159,6 +174,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
     });
     it('does not reacquire the profile resolver per Machine in an unchanged inventory', () => {
         const rows = Array.from({ length: 100 }, (_, index) => machine({ id: `same-${index}`, active: true }));
+        publishMachineActivityForTest(rows);
         const input = { profiles, activeServerId: 'local-a', activeMachines: rows,
             machineListByServerId: { 'local-a': rows, 'local-b': rows },
             machineListStatusByServerId: { 'local-a': 'idle' as const, 'local-b': 'idle' as const },
@@ -215,12 +231,15 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
     });
     it('projects execution eligibility only from exact live raw membership, never presentation presence alone', () => {
         const row = { ...machine({ id: 'live-row', active: true }), activeAt: Date.now() };
+        publishMachineActivityForTest([row]);
         const base = { profiles: [profiles[0]], activeServerId: 'local-a',
             activeMachines: [row], machineListByServerId: { 'local-a': [row] },
             machineListStatusByServerId: { 'local-a': 'idle' as const }, accountScopesByServerId,  loadWarmEntries: () => ({}) };
         expect(resolveAllProfileMachineInventorySnapshots(base)[0]).toMatchObject({ executionEligibleMachineIds: [row.id] });
         // The scoped inventory owns current membership even if the active map still has an older object.
-        expect(resolveAllProfileMachineInventorySnapshots({ ...base, machineListByServerId: { 'local-a': [{ ...row }] } })[0])
+        const replacement = { ...row };
+        publishMachineActivityForTest([replacement]);
+        expect(resolveAllProfileMachineInventorySnapshots({ ...base, machineListByServerId: { 'local-a': [replacement] } })[0])
             .toMatchObject({ machines: [expect.objectContaining({ id: row.id })], executionEligibleMachineIds: [row.id] });
         for (const status of [undefined, 'signedOut'] as const) {
             expect(resolveAllProfileMachineInventorySnapshots({ ...base,
@@ -235,6 +254,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
             machineListStatusByServerId: { 'local-a': 'loading' } })[0]).toMatchObject({ executionEligibleMachineIds: [row.id] });
         for (const status of ['idle', 'loading'] as const) {
             const pending = { ...row, availability: undefined };
+            publishMachineActivityForTest([pending]);
             expect(resolveAllProfileMachineInventorySnapshots({ ...base, activeMachines: [pending],
                 machineListByServerId: { 'local-a': [pending] }, machineListStatusByServerId: { 'local-a': status } })[0])
                 .toMatchObject({ executionEligibleMachineIds: [] });
@@ -242,6 +262,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         expect(resolveAllProfileMachineInventorySnapshots({ ...base, activeServerId: 'other' })[0])
             .toMatchObject({ executionEligibleMachineIds: [row.id] });
         const locked = { ...row, availability: { kind: 'locked' as const, reason: 'encryption_material_unavailable' as const } };
+        publishMachineActivityForTest([locked]);
         expect(resolveAllProfileMachineInventorySnapshots({ ...base, activeMachines: [locked],
             machineListByServerId: { 'local-a': [locked] } })[0]).toMatchObject({ executionEligibleMachineIds: [] });
     });
@@ -249,6 +270,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
     it.each(['idle', 'loading'] as const)('retains opened Machine eligibility through pending content while %s without admitting fresh execution', (status) => {
         const row = { ...machine({ id: 'opening-row', active: true }), activeAt: Date.now(), daemonStateVersion: 1,
             keyBasis: { dataEncryptionKey: 'same-key', metadataVersion: 1, daemonStateVersion: 2 } };
+        publishMachineActivityForTest([row]);
         const base = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: [row],
             machineListByServerId: { 'local-a': [row] }, machineListStatusByServerId: { 'local-a': status },
             accountScopesByServerId, loadWarmEntries: () => ({}) };
@@ -266,6 +288,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
             { ...row, revokedAt: 1 },
             { ...row, replacedByMachineId: 'replacement' },
         ]) {
+            publishMachineActivityForTest([refused]);
             expect(resolveAllProfileMachineInventorySnapshots({ ...base, activeMachines: [refused],
                 machineListByServerId: { 'local-a': [refused] } })[0]).toMatchObject({ executionEligibleMachineIds: [] });
         }
@@ -273,6 +296,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
 
     it('keeps a machine with current presence selectable while its list refresh is in flight or failed, and rejects it only on positive evidence', () => {
         const row = { ...machine({ id: 'refreshing-row', active: true }), activeAt: Date.now() };
+        publishMachineActivityForTest([row]);
         const base = { profiles: [profiles[0]], activeServerId: 'local-a', activeMachines: [row],
             machineListByServerId: { 'local-a': [row] }, accountScopesByServerId, loadWarmEntries: () => ({}) };
         const target = { serverIdentityId: 'srv_server_a', machineId: row.id };
@@ -291,6 +315,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         expect(isMachineInventorySettled(resolveAllProfileMachineInventorySnapshots({ ...base, machineListStatusByServerId: { 'local-a': 'loading' } }), 'srv_server_a')).toBe(false);
         // A machine whose live presence lapsed is still rejected during the refresh, and after a failed read.
         const lapsed = { ...row, active: false, activeAt: 1 };
+        publishMachineActivityForTest([lapsed]);
         expect(resolveFleetMachineRejection({ ...target, machineSnapshots: resolveAllProfileMachineInventorySnapshots({
             ...base, activeMachines: [lapsed], machineListByServerId: { 'local-a': [lapsed] },
             machineListStatusByServerId: { 'local-a': 'loading' } }) })).toBe('offline');
@@ -301,6 +326,7 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
 
     it('projects request reachability for the exact Home and recovers after a successful retry', () => {
         const row = { ...machine({ id: 'inventory-reachability-row', active: true }), activeAt: Date.now() };
+        publishMachineActivityForTest([row]);
         const base = { profiles: [profiles[0]], activeServerId: 'local-a',
             activeMachines: [row], machineListByServerId: { 'local-a': [row] },
             machineListStatusByServerId: { 'local-a': 'idle' as const }, accountScopesByServerId,  loadWarmEntries: () => ({}) };
