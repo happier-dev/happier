@@ -1,3 +1,4 @@
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
 import { DeploymentBackupRestoreInputV1Schema, DeploymentBackupRestoreResultV1Schema,
@@ -13,6 +14,7 @@ import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/r
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectDeploymentFailure } from '../deploymentFailure';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -164,22 +166,22 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                 verified: confirmed.verified, nextAction: confirmed.nextAction,
                 evidence: normalizeStrictJsonValue({ ...confirmed, ...(snapshot ? { snapshot } : {}) }) });
         } catch (error) {
-            const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_unavailable';
+            const code = readActionErrorCodeV1(error) ?? 'deployment_unavailable';
             const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
             const steps = isRecord(details) && Array.isArray(details.steps) ? details.steps.flatMap(value => {
                 const step = DeploymentRestoreStepV1Schema.safeParse(value); return step.success ? [step.data] : [];
             }) : [];
-            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : code, error, 'deployment.restore');
+            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : code, error, `deployment.restore.${input.mode}`);
             const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
             const { effectAttempted: nativeEffectAttempted, ...projectedFailure } = projected;
             const effectAttempted = snapshot?.kind === 'confirmed' ? true
                 : nativeEffectAttempted === false && (snapshot?.kind === 'unknown' || snapshot?.kind === 'failed')
                     ? undefined : nativeEffectAttempted;
-            return { ...projectedFailure, ...(effectAttempted === undefined ? {} : { effectAttempted }),
+            return carryActionFailureDiagnostic({ ...projectedFailure, ...(effectAttempted === undefined ? {} : { effectAttempted }),
                 ...(steps.length || nativeFailure || snapshot ? { details: {
                 ...(isRecord(projected.details) ? projected.details : {}), steps,
                 ...(nativeFailure ? { nativeFailure } : {}), ...(snapshot ? { snapshot } : {}),
-            } } : {}) };
+            } } : {}) }, projected);
         } finally { upload?.release(); }
     };
     return Object.assign(execute, { prepare });
