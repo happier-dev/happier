@@ -17,9 +17,21 @@ describe('Slack authenticated message normalization', () => {
       occurrenceId: 'slack:T1:channel:C1:message:1700000000.123456', occurredAt: 1700000000123, transport: { kind: 'socket' },
       endpoint: { id: 'slack:T1:channel:C1:thread:1699999999.000001', parentId: 'slack:T1:channel:C1', kind: 'thread', audience: 'shared' },
       actor: { principalId: 'slack:T1:user:U2', kind: 'human', isIntegrationSelf: false },
-      message: { id: '1700000000.123456', text: '<@U1> hello', addressingEvidence: 'directIntegrationMention' },
+      message: { id: '1700000000.123456', text: 'hello', addressingEvidence: 'directIntegrationMention' },
     } });
     expect(ConversationNormalizedIngressV1Schema.safeParse(result).success).toBe(true);
+  });
+
+  it.each(['/stop', '/allow request-1', '/answer request-1 [{"questionIndex":0,"values":["two  spaces"]}]'])('removes the leading own-bot address before shared command parsing: %s', command => {
+    const result = mapSlackEventToIngress({ payload: payload({ type: 'app_mention', text: `<@U1> ${command}` }), identity, channel });
+    expect(result).toMatchObject({ kind: 'fullText', observation: { message: {
+      text: command, addressingEvidence: 'directIntegrationMention',
+    } } });
+  });
+
+  it.each(['<@U2> /stop', 'ask <@U1> /stop', '<@U1>suffix /stop', '/stop', '<@U1>'])('preserves content outside a separate leading own-bot address: %s', text => {
+    expect(mapSlackEventToIngress({ payload: payload({ text }), identity, channel }))
+      .toMatchObject({ kind: 'fullText', observation: { message: { text } } });
   });
 
   it('derives direct and multi-person audiences from conversations.info rather than the event channel_type', () => {

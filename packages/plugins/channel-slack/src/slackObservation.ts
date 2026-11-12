@@ -75,9 +75,19 @@ export function mapSlackEventToIngress(input: Readonly<{ payload: unknown; ident
   const unsupported = !validFiles
     || (Array.isArray(message.attachments) && message.attachments.length > 0)
     || typeof message.text !== 'string' || (!message.text.trim() && attachments.length === 0);
+  // Decode only Slack's native leading bot address. Channels owns command
+  // grammar and policy; embedded/other-user mentions remain message content.
+  let text = message.text;
+  if (typeof text === 'string') {
+    const addressed = text.trimStart();
+    const mention = `<@${identity.botUserId}>`;
+    if (addressed.startsWith(mention) && /\s/u.test(addressed.charAt(mention.length))) {
+      text = addressed.slice(mention.length).trimStart();
+    }
+  }
   const parsed = ConversationNormalizedIngressV1Schema.safeParse(edited
     ? { kind: 'routableNonAdmission', shell, reason: 'unsupportedEdit' }
     : unsupported ? { kind: 'routableNonAdmission', shell, reason: 'unsupportedContent' }
-      : { kind: 'fullText', observation: { ...shell, message: { ...shell.message, text: message.text, ...(attachments.length ? { attachments } : {}) } } });
+      : { kind: 'fullText', observation: { ...shell, message: { ...shell.message, text, ...(attachments.length ? { attachments } : {}) } } });
   return parsed.success ? parsed.data : null;
 }
