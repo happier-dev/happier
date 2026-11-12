@@ -210,7 +210,6 @@ describe('uploadSessionAttachment', () => {
         nativeCloseSpy.mockClear();
     });
     afterEach(() => {
-        delete process.env.EXPO_PUBLIC_HAPPIER_FILES_UPLOAD_PREFLIGHT_SIZE_TIMEOUT_MS;
         vi.useRealTimers();
         vi.doMock('expo-file-system', () => createNativeFileModule());
     });
@@ -332,29 +331,39 @@ describe('uploadSessionAttachment', () => {
         expect(nativeCloseSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('fails closed when native attachment size resolution times out', async () => {
+    it('reports native size acquisition failure before opening a transfer', async () => {
+        vi.doMock('expo-file-system', () => ({ File: class { constructor() { throw new Error('Native source unavailable'); } } }));
+        const transport = createSessionTransport();
+        expect(await sessionAttachmentsUploadFile({
+            sessionId: 's1', transferContext: transport.transferContext,
+            file: { kind: 'native', uri: 'file:///tmp/hello.txt', name: 'hello.txt', sizeBytes: null },
+            messageLocalId: 'm1', config,
+        })).toEqual({ success: false, error: 'Native source unavailable', errorCode: 'attachment_source_unavailable' });
+        expect(transport.call).not.toHaveBeenCalled();
+    });
+
+    it('waits for native size resolution without a phase timeout and uploads once', async () => {
         vi.useFakeTimers();
-        process.env.EXPO_PUBLIC_HAPPIER_FILES_UPLOAD_PREFLIGHT_SIZE_TIMEOUT_MS = '100';
         let resolveNativeModule!: (module: ReturnType<typeof createNativeFileModule>) => void;
         const nativeModule = new Promise<ReturnType<typeof createNativeFileModule>>((resolve) => { resolveNativeModule = resolve; });
-        // Stall the native module load instead of replacing internal size resolution.
+        // The native module loader is the device boundary; source resolution remains real.
         vi.doMock('expo-file-system', () => nativeModule);
         const transport = createSessionTransport();
-        const applyDraftPatch = vi.fn();
-        const result = uploadAttachmentDraftsToSession({
+        let settled = false;
+        const result = sessionAttachmentsUploadFile({
             sessionId: 's1', transferContext: transport.transferContext,
-            drafts: [{ id: 'draft', status: 'pending',
-                source: { kind: 'native', uri: 'file:///tmp/unknown.txt', name: 'unknown.txt', sizeBytes: null } }],
-            messageLocalId: 'm1', config, applyDraftPatch,
-        }).catch((error: unknown) => error);
-        await vi.advanceTimersByTimeAsync(100);
-        expect(readRpcErrorCode(await result)).toBe('attachment_source_unavailable');
-        expect(applyDraftPatch).toHaveBeenLastCalledWith('draft', expect.objectContaining({
-            status: 'error', error: describeUploadFailure('sourceUnavailable', t('common.machine')),
-        }));
+            file: { kind: 'native', uri: 'file:///tmp/hello.txt', name: 'hello.txt', sizeBytes: null },
+            messageLocalId: 'm1', config,
+        }).then(value => { settled = true; return value; });
+        await vi.advanceTimersByTimeAsync(20_001);
+        expect(settled).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
         expect(transport.call).not.toHaveBeenCalled();
         resolveNativeModule(createNativeFileModule());
-        await vi.waitFor(() => expect(nativeCloseSpy).toHaveBeenCalledTimes(1));
+        expect(await result).toMatchObject(finalized);
+        expect(transport.finalize).toHaveBeenCalledTimes(1);
+        expect(transport.uploadedBytes).toEqual([...new TextEncoder().encode('hello')]);
+        expect(nativeCloseSpy).toHaveBeenCalledTimes(2);
     });
 
     it('fails when the attachment exceeds the configured maximum size', async () => {
