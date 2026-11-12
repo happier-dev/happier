@@ -295,7 +295,7 @@ export function createMachineManagedServices(input: Readonly<{
                         logs: Boolean(native.logs), accounting: Boolean(native.accounting) }),
                     retirementSignal: lifetime.signal, isCurrent,
                     async inspectCurrentOccurrence() { assertCurrent(); if (!process.inspectCurrentOccurrence) unavailable();
-                        await process.inspectCurrentOccurrence(); assertCurrent(); return wrapped.snapshot(); },
+                        await process.inspectCurrentOccurrence(); assertCurrent(); input.publishServiceRow(handle); return wrapped.snapshot(); },
                     observeHealth(listener) { assertCurrent(); if (!process.observeHealth) unavailable(); return process.observeHealth(listener); },
                     readHealthSnapshot: () => process.snapshot(),
                     readNativeRuntimeFacts: () => runtimeFacts,

@@ -9,14 +9,15 @@ type ListReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.
 
 /** Visible list demand uses the one admitted list Resource; no second Action effect or timer. */
 export function useMachineServicesList(input: Readonly<ListReference['input'] & { active: boolean }>):
-    MachineServicesListState & Readonly<{ firstInventoryCount: number | null; refresh(): Promise<void> }> {
+    MachineServicesListState & Readonly<{ firstInventoryCount: number | null; coverage: 'managed_services' | null; refresh(): Promise<void> }> {
     const { resolution, binding: lifetime } = useServerCredentialAccountScopeBinding(input.serverId);
     const resolving = resolution.kind === 'resolving' || resolution.kind === 'bound' && lifetime === null;
     const reference = React.useMemo<ListReference>(() => ({ hostRead: 'machines.services.list',
         input: { serverId: input.serverId, machineId: input.machineId,
             ...(input.environmentId ? { environmentId: input.environmentId } : {}),
-            ...(input.composeService ? { composeService: input.composeService } : {}) } }),
-        [input.serverId, input.machineId, input.environmentId, input.composeService]);
+            ...(input.composeService ? { composeService: input.composeService } : {}),
+            ...(input.preflight ? { preflight: input.preflight } : {}) } }),
+        [input.serverId, input.machineId, input.environmentId, input.composeService, input.preflight]);
     const resource = useMachineServiceResource({ accountLifetime: lifetime, reference,
         resolving, active: input.active, follow: true, projection: machineServicesListProjection });
     const value = resource?.value;
@@ -24,6 +25,7 @@ export function useMachineServicesList(input: Readonly<ListReference['input'] & 
     return {
         rows: value?.kind === 'snapshot' ? value.services : null,
         firstInventoryCount: value?.firstInventoryCount ?? null,
+        coverage: value?.kind === 'snapshot' ? value.coverage ?? null : null,
         unavailable: value?.kind === 'unavailable' ? value.reason
             : input.active && !lifetime && !resolving ? 'admission_unavailable' : null,
         readAt,

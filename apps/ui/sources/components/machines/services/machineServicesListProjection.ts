@@ -14,7 +14,8 @@ export const machineServicesListProjection = Object.freeze({
             const retained = byId.get(row.serviceId);
             return retained && sameStrictJsonValue(retained, row) ? retained : row;
         });
-        return services.length === previous.services.length && services.every((row, index) => row === previous.services[index])
+        return next.coverage === previous.coverage && services.length === previous.services.length
+            && services.every((row, index) => row === previous.services[index])
             ? previous : { ...next, services, firstInventoryCount };
     },
 });

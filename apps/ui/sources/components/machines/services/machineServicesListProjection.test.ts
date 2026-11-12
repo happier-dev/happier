@@ -14,6 +14,12 @@ function decode(value: ReturnType<typeof MachineServicesListResultV1Schema.parse
 }
 
 describe('first Services inventory count', () => {
+    it('preserves explicit partial coverage even when selected rows are unchanged', () => {
+        const first = decode(snapshot([]));
+        const next = decode({ ...snapshot([]), coverage: 'managed_services' }, first);
+        expect(next).toHaveProperty('coverage', 'managed_services');
+        expect(decode({ ...snapshot([]), coverage: 'managed_services' }, next)).toBe(next);
+    });
     it.each([{ names: [] }, { names: ['web', 'worker'] }])('keeps the first successful count across changes and unavailable answers ($names)', ({ names }) => {
         const unavailable = MachineServicesListResultV1Schema.parse({ kind: 'unavailable', reason: 'admission_unavailable' });
         const unanswered = decode(unavailable);

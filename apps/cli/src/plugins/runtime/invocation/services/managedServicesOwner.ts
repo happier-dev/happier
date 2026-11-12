@@ -4813,6 +4813,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 async inspectCurrentOccurrence() {
                     if (!process.inspectCurrentOccurrence) throw new Error('preview_target_unresolved');
                     await process.inspectCurrentOccurrence();
+                    // Retained native facts (for example published ports) can change without a health transition.
+                    machineServiceRows.publish(handle);
                     return withDependencyFailure(wrapped.snapshot());
                 },
                 observe(listener: Parameters<ManagedServiceHandle['observe']>[0]) {

@@ -13,6 +13,7 @@ export { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema,
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 import { MachineServiceWatchV1Schema } from '../../../machines/machineServiceWatchesV1.js';
 import { MachineDeploymentServiceIdentityV1Schema, MachineServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { LocalServiceEndpointV1Schema } from '../../../local/services/inventory/v1.js';
 import { HealthCheckStatusV1Schema } from '../../../deployments/healthCheckV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
@@ -76,6 +77,11 @@ export const MachineServiceDiscoveryCandidateV1Schema = lazyZodSchema(() => z.st
 export type MachineServiceDiscoveryCandidateV1 = z.infer<typeof MachineServiceDiscoveryCandidateV1Schema>;
 export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...machineTarget(), environmentId: z.optional(id()), composeService: z.optional(id()),
+  /** Advisory exact query over retained managed-service facts, never a Machine-wide clearance. */
+  preflight: z.optional(z.strictObject({
+    ports: z.array(LocalServiceEndpointV1Schema.shape.port),
+    nativeNames: z.array(z.pick(MachineServiceWatchV1Schema, { adapter: true, nativeResourceId: true })),
+  })),
 }).check(z.superRefine((input, ctx) => {
   if (input.composeService && !input.environmentId) {
     ctx.addIssue({ code: 'custom', path: ['environmentId'], message: 'A Compose service selection belongs to an Environment.' });
@@ -93,7 +99,8 @@ export type MachineServicesDetailInputV1 = z.infer<typeof MachineServicesDetailI
 export type MachineServiceWatchInputV1 = z.infer<typeof MachineServiceWatchInputV1Schema>;
 export type MachineServiceUnwatchInputV1 = z.infer<typeof MachineServiceUnwatchInputV1Schema>;
 export const MachineServicesListResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('snapshot'), services: z.array(MachineServiceRowV1Schema) }), unavailable,
+  z.strictObject({ kind: z.literal('snapshot'), services: z.array(MachineServiceRowV1Schema),
+    coverage: z.optional(z.literal('managed_services')) }), unavailable,
 ]));
 export const MachineServicesDiscoveryResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('snapshot'), candidates: z.array(MachineServiceDiscoveryCandidateV1Schema),

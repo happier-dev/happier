@@ -272,6 +272,46 @@ describe('Machine Services exact demand cost', () => {
         }
     });
 
+    it('selects exact native names instead of returning an inventory or matching display labels', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+        const target = { serverId: 'home', machineId: 'machine' };
+        const adapter = { pluginId: 'example.native', localId: 'compose' };
+        const captures = vi.spyOn(fixture.registry, 'resolveProjectNativeAdapter');
+        const watches = Array.from({ length: 256 }, (_, index) => ({ v: 1 as const, watchId: `watch-${index}`,
+            name: index === 0 ? 'runtime-17' : `Display ${index}`, adapter, nativeResourceId: `runtime-${index}`,
+            lifecyclePurpose: 'deployment' as const }));
+        let metadata: MachineMetadataFieldReadV1 = { status: 'ready', metadataVersion: 1, metadata: { serviceWatchesV1: { v: 1, watches } } };
+        const demand = new AbortController();
+        let subscription: { dispose(): void | Promise<void> } | undefined;
+        let publications = 0;
+        const runtime = createMachineServicesRuntime({ target,
+            readMetadata: () => metadata,
+            captureMetadataPort() { throw new Error('Preflight cannot mutate metadata'); } });
+        let observe = true;
+        const read = (nativeResourceId: string, pluginId = adapter.pluginId) => runtime.execute({ actionId: 'machines.services.list',
+            context: { surface: 'cli', authority: 'present_user', ...(observe ? { machineServicesListResource: { observation: {
+                signal: demand.signal, invalidate() { publications++; }, retire() { demand.abort(); },
+                accept(value: { dispose(): void | Promise<void> }) { subscription = value; },
+            } } } : {}) }, input: { ...target,
+                preflight: { ports: [], nativeNames: [{ adapter: { ...adapter, pluginId }, nativeResourceId }] } } });
+        try {
+            const selected = MachineServicesListResultV1Schema.parse(await read('runtime-17'));
+            expect(selected.kind === 'snapshot' ? selected.services.map(service => service.serviceId) : null).toEqual(['watch-17']);
+            observe = false;
+            expect(await read('Display 17')).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(await read('runtime-17', 'other.native')).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(captures, 'exact retained-fact review cannot establish every saved native observation').not.toHaveBeenCalled();
+            const selectedEdit = watches.map(watch => watch.watchId === 'watch-17' ? { ...watch, name: 'Selected edit' } : watch);
+            metadata = { status: 'ready', metadataVersion: 2, metadata: { serviceWatchesV1: { v: 1, watches: selectedEdit } } };
+            await runtime.reconcile();
+            expect(publications, 'the first lifecycle reconciliation still settles an already-open exact query').toBe(1);
+            metadata = { status: 'ready', metadataVersion: 3, metadata: { serviceWatchesV1: { v: 1,
+                watches: selectedEdit.map(watch => watch.watchId === 'watch-0' ? { ...watch, name: 'Unrelated edit' } : watch) } } };
+            await runtime.reconcile();
+            expect(publications, 'unrelated saved-watch intent does not invalidate exact selection').toBe(1);
+        } finally { demand.abort(); await subscription?.dispose(); await runtime.dispose(); await fixture.dispose(); }
+    });
+
     it('reads narrow cached health metadata without inflating lists or inspecting native state', async () => {
         const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
         const target = { serverId: 'home', machineId: 'machine' };
@@ -322,7 +362,44 @@ describe('Machine Services exact demand cost', () => {
                     async stop() { throw new Error('Reading Services must not stop native work'); },
                 } } },
             });
+            {
+                const demand = new AbortController();
+                let subscription: { dispose(): void | Promise<void> } | undefined;
+                let publications = 0;
+                await runtime.execute({ actionId: 'machines.services.list',
+                    input: { ...target, preflight: { ports: [15432], nativeNames: [] } }, canReadEnvironments,
+                    context: { ...context, machineServicesListResource: { observation: {
+                        signal: demand.signal, invalidate() { publications++; }, retire() { demand.abort(); },
+                        accept(value: { dispose(): void | Promise<void> }) { subscription = value; },
+                    } } },
+                });
+                try {
+                    const retainedFacts = facts;
+                    const web = fixture.registry.projectManagedServices.listProjectServices().find(handle => handle.serviceId === 'instance/web')!;
+                    const worker = fixture.registry.projectManagedServices.listProjectServices().find(handle => handle.serviceId === 'instance/worker')!;
+                    facts = { ...facts, configuration: { ...facts.configuration!, ports: [] } };
+                    await web.inspectCurrentOccurrence();
+                    expect(publications, 'a selected service leaving the query invalidates its previous result').toBe(1);
+                    await worker.inspectCurrentOccurrence();
+                    expect(publications).toBe(2);
+                    facts = { ...facts, healthSince: 1700000002000 };
+                    await web.inspectCurrentOccurrence();
+                    expect(publications, 'changes outside the exact query do not invalidate it').toBe(2);
+                    facts = retainedFacts;
+                    await web.inspectCurrentOccurrence();
+                    expect(publications, 'a service entering the exact query invalidates it').toBe(3);
+                } finally { demand.abort(); await subscription?.dispose(); }
+            }
             const nativeAtRest = inspections;
+            const preflight = (ports: number[]) => runtime.execute({ actionId: 'machines.services.list',
+                input: { ...target, preflight: { ports, nativeNames: [] } }, context, canReadEnvironments });
+            expect(await preflight([15432])).toMatchObject({ kind: 'snapshot', services: [
+                { serviceId: 'instance/web' }, { serviceId: 'instance/worker' },
+            ] });
+            expect(await preflight([5432])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(await preflight([])).toEqual({ kind: 'snapshot', services: [], coverage: 'managed_services' });
+            expect(samples, 'advisory preflight never acquires native accounting').toBe(0);
+            expect(inspections).toBe(nativeAtRest);
             const list = async () => MachineServicesListResultV1Schema.parse(await runtime.execute({
                 actionId: 'machines.services.list', input: target, context, canReadEnvironments,
             }));

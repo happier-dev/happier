@@ -19,11 +19,12 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/run
 import { preserveUnconfirmedNativeProcess } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { createMachineServiceRowProjection, projectMachineServiceName } from './machineServiceRowProjection';
+import { createMachineServicePreflightMatcher } from './machineServicePreflightSelection';
 import { selectVisibleMachineProjectServices, type MachineServiceDisclosureRequest } from './machineServiceDisclosure';
 
 type Invocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & MachineServiceDisclosureRequest;
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
-type ServiceSelection = Pick<MachineServicesListInputV1, 'environmentId' | 'composeService'>;
+type ServiceSelection = Pick<MachineServicesListInputV1, 'environmentId' | 'composeService' | 'preflight'>;
 function matchesServiceSelection(handle: ServiceHandle, selection: ServiceSelection): boolean {
     return !selection.environmentId || handle.kind === 'environment' && handle.environmentId === selection.environmentId
         && (!selection.composeService || handle.composeService === selection.composeService);
@@ -55,7 +56,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     let reconciled: Intent | null | undefined;
     let registry: ResolvedExecutablePluginRuntimeRegistry | undefined;
     let reconciliation: Promise<void> | undefined;
-    const intentListeners = new Set<(intent: Intent | null) => void>();
+    const intentListeners = new Set<(intent: Intent | null, initial: boolean) => void>();
     const adoptedHandles = new Map<string, MachineManagedServiceHandle>();
     const readIntent = () => {
         const metadata = input.readMetadata();
@@ -158,9 +159,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                     // Saved intent stays visible as unknown; no failed or healthy native fact is invented.
                 }
             }
-            // The first reconciliation establishes the subscribing read's
-            // baseline; only a later intent change invalidates that baseline.
-            if (changed && reconciled !== undefined) for (const listener of intentListeners) listener(intent);
+            // Ordinary cold reads establish a baseline here. Exact preflight
+            // observers already have one before this first lifecycle reconciliation.
+            if (changed) for (const listener of intentListeners) listener(intent, reconciled === undefined);
             reconciled = intent;
             registry = lease.registry;
         } finally { await lease.release(); }
@@ -176,23 +177,29 @@ export function createMachineServicesRuntime(input: Readonly<{
         rows: MachineServiceRowV1[]; handles: ServiceHandle[];
     }> | null> {
         const { environmentId } = selection;
-        await ensureEnvironmentServices();
-        if (!environmentId) await reconcile(serviceId);
+        const matchesPreflight = createMachineServicePreflightMatcher(selection.preflight);
+        // Advisory selection consumes retained observations; it never restores an inventory or establishes saved watches.
+        if (!selection.preflight) {
+            await ensureEnvironmentServices();
+            if (!environmentId) await reconcile(serviceId);
+        }
         const intent = environmentId ? null : readIntent();
         if (!environmentId && !intent) return null;
         const selected = serviceId ? intent?.byId.get(serviceId) : undefined;
         const watches = environmentId ? [] : serviceId ? selected ? [selected] : [] : intent!.watches.watches;
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+        if (!lease && selection.preflight) return null;
         if (!lease) return intent?.watches.watches.length ? { rows: watches.map(watch => rows.unknown(watch, target.machineId)), handles: [] } : null;
         try {
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
             const projects = owner.listProjectServices();
             handles.push(...await selectVisibleMachineProjectServices(target,
-                environmentId ? projects.filter(handle => matchesServiceSelection(handle, selection)) : projects, request, serviceId));
+                projects.filter(handle => matchesServiceSelection(handle, selection)
+                    && (!selection.preflight || matchesPreflight(owner.machineServiceRows.read(handle)))), request, serviceId));
             const readRow = async (handle: ServiceHandle) => {
                 // Explicit list demand samples accounting; Resource snapshots project retained facts.
-                if (request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
+                if (!selection.preflight && request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
                     await accounting(handle, request.signal);
                 }
                 return owner.machineServiceRows.read(handle);
@@ -202,13 +209,18 @@ export function createMachineServicesRuntime(input: Readonly<{
             const current = readIntent();
             if (!current) return null;
             const demanded = serviceId ? current.byId.get(serviceId) : undefined;
+            const retainedPreflightHandles = selection.preflight ? new Map(owner.listMachineServices()
+                .filter(exact).map(handle => [handle.watch.watchId, handle])) : null;
             for (const watch of serviceId ? demanded ? [demanded] : [] : current.watches.watches) {
-                const incumbent = owner.resolveNativeService(watch, target);
-                if (incumbent && incumbent.authority !== 'machine' && incumbent.handle !== null) continue;
-                const candidate = registry === lease.registry ? adoptedHandles.get(watch.watchId) : undefined;
+                const candidate = retainedPreflightHandles ? retainedPreflightHandles.get(watch.watchId)
+                    : registry === lease.registry ? adoptedHandles.get(watch.watchId) : undefined;
                 const handle = candidate && sameWatch(candidate.watch, watch) && candidate.isCurrent()
                     && !candidate.retirementSignal.aborted ? candidate : undefined;
-                projectedRows.push(handle ? await readRow(handle) : rows.unknown(watch, target.machineId));
+                const preflightRow = selection.preflight ? handle ? await readRow(handle) : rows.unknown(watch, target.machineId) : null;
+                if (selection.preflight && !matchesPreflight(preflightRow)) continue;
+                const incumbent = owner.resolveNativeService(watch, target);
+                if (incumbent && incumbent.authority !== 'machine' && incumbent.handle !== null) continue;
+                projectedRows.push(preflightRow ?? (handle ? await readRow(handle) : rows.unknown(watch, target.machineId)));
                 if (handle) handles.push(handle);
             }
             return { rows: projectedRows, handles };
@@ -294,7 +306,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const serviceId = 'serviceId' in parsed.data ? parsed.data.serviceId : undefined;
                 const environmentId = 'environmentId' in parsed.data ? parsed.data.environmentId : undefined;
                 const composeService = 'composeService' in parsed.data ? parsed.data.composeService : undefined;
-                const selection = { environmentId, composeService };
+                const preflight = 'preflight' in parsed.data ? parsed.data.preflight : undefined;
+                const selection = { environmentId, composeService, preflight };
+                const matchesPreflight = createMachineServicePreflightMatcher(preflight);
                 const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
                     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -303,13 +317,28 @@ export function createMachineServicesRuntime(input: Readonly<{
                         const owner = lease.registry.projectManagedServices;
                         const homeServerIdentityId = await resolveServerProfileHomeIdentityId(target.serverId);
                         const invalidate = (digest: string) => { if (!observation.signal.aborted) observation.invalidate(digest); };
-                        const intentChanged = (intent: Intent | null) => invalidate(`sha256:${revision(intent?.watches ?? [])}`);
+                        const selectedIntentRevision = (intent: Intent | null) => revision(preflight
+                            ? (intent?.watches.watches ?? []).filter(watch => matchesPreflight(rows.unknown(watch, target.machineId)))
+                            : intent?.watches ?? []);
+                        let intentRevision = preflight ? selectedIntentRevision(readIntent()) : null;
+                        const intentChanged = (intent: Intent | null, initial: boolean) => {
+                            const next = selectedIntentRevision(intent);
+                            if (preflight ? next === intentRevision : initial) return;
+                            intentRevision = next;
+                            invalidate(`sha256:${next}`);
+                        };
                         // Demand-time baseline only. Subscribe before the admitted read so creation/retirement cannot fall in a read→watch gap.
                         const initial = [...owner.listMachineServices(), ...owner.listProjectServices()].filter(handle =>
                             (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === target.machineId
-                            && matchesServiceSelection(handle, selection));
+                            && matchesServiceSelection(handle, selection)
+                            && (!preflight || matchesPreflight(owner.machineServiceRows.read(handle))));
+                        const selectedPreflightHandles = preflight ? new Set(initial) : null;
                         const subscription = owner.machineServiceRows.subscribe(target.machineId, initial, change => {
-                            if (matchesServiceSelection(change.handle, selection)
+                            const wasSelected = selectedPreflightHandles?.has(change.handle) === true;
+                            const selected = matchesServiceSelection(change.handle, selection) && matchesPreflight(change.row);
+                            if (selected) selectedPreflightHandles?.add(change.handle);
+                            else selectedPreflightHandles?.delete(change.handle);
+                            if ((selected || wasSelected)
                                 && (target.serverId === change.serverId
                                     || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) {
                                 // The transport needs a digest hint, not another
@@ -353,7 +382,8 @@ export function createMachineServicesRuntime(input: Readonly<{
                 }
                 const projection = await projectServices(request, serviceId, selection);
                 if (!projection) return unavailable();
-                if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows };
+                if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows,
+                    ...(preflight ? { coverage: 'managed_services' as const } : {}) };
                 else {
                     const service = projection.rows.find(row => row.serviceId === serviceId);
                     const expectedGeneration = 'expectedGeneration' in parsed.data ? parsed.data.expectedGeneration : undefined;

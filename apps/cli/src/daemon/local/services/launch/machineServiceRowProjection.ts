@@ -217,8 +217,9 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             let subscribers = listeners.get(machineId);
             if (!subscribers) { subscribers = new Set(); listeners.set(machineId, subscribers); }
             const active = subscribers;
-            if (active.size === 0) for (const handle of initial) {
-                if (handle.isCurrent() && !handle.retirementSignal.aborted) published.set(handle, projection.read(handle));
+            for (const handle of initial) {
+                if ((active.size === 0 || !published.has(handle)) && handle.isCurrent() && !handle.retirementSignal.aborted)
+                    published.set(handle, projection.read(handle));
             }
             active.add(listener);
             return { dispose() { active.delete(listener); if (active.size === 0) listeners.delete(machineId); } };
