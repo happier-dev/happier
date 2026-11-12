@@ -1,4 +1,4 @@
-import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
+import { DeploymentTeardownProofV1Schema, DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/deployment-protocol';
 import type { Tx } from '@/storage/inTx';
@@ -142,6 +142,29 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
             href: `/deployments/environments/${encodeURIComponent(input.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
     } else if (input.role === 'runtime' && loaded.row.runtimeTargetLinkId) return deploymentFailure('deployment_conflict');
     const retainsOwnServer = !plugin && previous?.sourceKind === 'host';
+    if (previous && retainsOwnServer) {
+        const selectedInstallations = new Map(input.machines.map(member => [member.machineId, member.installationId]));
+        const removed = previous.machines.filter(member => selectedInstallations.get(member.machineId) !== member.installationId);
+        const retainsMembers = removed.length < previous.machines.length;
+        // A fleet reduction consumes the existing signed member teardown. A Move
+        // to disjoint Machines retains predecessor custody through disposition.
+        if (input.drainedDeploymentId !== undefined || (retainsMembers && removed.length > 0)) {
+            const latest = await tx.deployment.findFirst({ where: { environmentId: loaded.row.id, targetLinkId: previous.id },
+                orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }] });
+            const neverDeployed = input.drainedDeploymentId === undefined && !latest
+                && previous.state === 'configured' && !previous.activeDeploymentId;
+            const proof = DeploymentTeardownProofV1Schema.safeParse(latest?.teardownProof);
+            // A later failed attempt can restart a member without advancing U.
+            if (!neverDeployed && (!input.drainedDeploymentId || latest?.id !== input.drainedDeploymentId
+                || latest.operation !== 'teardown' || latest.state !== 'succeeded' || !latest.settledAt
+                || !proof.success || proof.data.targetLinkRevision !== previous.revision
+                || proof.data.machines.length !== removed.length
+                || !removed.every(member => proof.data.machines.some(proved =>
+                    proved.machineId === member.machineId && proved.installationId === member.installationId)))) {
+                return deploymentFailure('deployment_teardown_required');
+            }
+        }
+    } else if (input.drainedDeploymentId !== undefined) return deploymentFailure('deployment_conflict');
     const link = replacesPreviewData && previous
         ? await tx.deploymentTargetLink.update({ where: { id: previous.id }, data: {
             ...deploymentContentReference(input), revision: { increment: 1 },

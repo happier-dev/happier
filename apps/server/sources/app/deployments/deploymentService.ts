@@ -26,6 +26,7 @@ import { admitDeploymentTeardownEnvironmentRemovalInTx, removeAdmittedDeployment
 import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-protocol/v1';
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
 function retainedDomainTeardownFailure() {
@@ -226,6 +227,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
 /** Native outcomes enter through one installation-signed receipt CAS; old results cannot advance a newer release. */
 export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, input: DeploymentTransitionInputV1 | DeploymentCancelTransitionInputV1,
     authentication: DeploymentAuthentication = {},
+    executionBinding?: ExternalActionExecutionAuthorizationBindingV1,
 ) {
     if (input.kind === 'cancel') return requestCancelDeploymentInTx(tx, actorAccountId, input, authentication);
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
@@ -264,9 +266,14 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (!loaded.ok) return loaded;
     if ((link.deletedAt || link.detachedAt) && !removedReplay) return deploymentFailure('deployment_conflict');
     if (row.operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== link.id) return deploymentFailure('deployment_conflict');
+    const native = executionBinding?.deploymentNativeAdmission;
+    const restoreContentPublication = executionBinding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+        && native && 'kind' in native && native.kind === 'restore' && native.mode === 'confirm';
+    if (restoreContentPublication && (!isMember || row.targetLinkId !== native.targetLinkId
+        || link.activeDeploymentId !== row.id || row.state !== input.state)) return deploymentFailure('deployment_conflict');
     // Member/build daemons publish child evidence only. The captured controller
     // alone settles the aggregate or changes uniform/resource custody.
-    if (!isController) {
+    if (!isController && !restoreContentPublication) {
         if (input.kind !== 'stage' || input.state !== 'running' || input.expectedTargetLinkRevision !== undefined || input.teardownProof) {
             return deploymentFailure('deployment_access_denied');
         }
@@ -276,7 +283,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     }
     if (input.contentArtifactId !== undefined && input.contentArtifactId !== row.contentArtifactId) return deploymentFailure('deployment_conflict');
     // A replay consumes the committed terminal result; it never reapplies submitted content or activation.
-    if (row.state === input.state && isDeploymentSettledV1(input.state)) return receiptResult(row, loaded.row.revision,
+    if (!restoreContentPublication && row.state === input.state && isDeploymentSettledV1(input.state)) return receiptResult(row, loaded.row.revision,
         removedReplay && loaded.row.deletedAt !== null);
     let nextContent = input.contentArtifactId !== undefined && input.contentHeaderVersion !== undefined && input.contentBodyVersion !== undefined
         ? deploymentContentReference({ contentArtifactId: input.contentArtifactId, contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion })
@@ -288,7 +295,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (row.cancelRequestedAt && (input.state === 'queued' || input.state === 'running' || input.state === 'succeeded' || input.state === 'running_unverified')) {
         return deploymentFailure('deployment_conflict');
     }
-    if (row.revision !== input.expectedRevision || (!resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
+    if (row.revision !== input.expectedRevision || (!restoreContentPublication && !resumedTeardown && (!canTransitionDeploymentV1(DeploymentStateV1Schema.parse(row.state), input.state)
         || isDeploymentSettledV1(DeploymentStateV1Schema.parse(row.state))))) return deploymentFailure('deployment_conflict');
     const admittedTeardownSelection = deploymentTeardownMembershipAdmissionSchema.safeParse(row.teardownProof);
     const teardownSubjects = input.teardownProof
@@ -316,7 +323,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
                 members: admittedTeardownSelection.data.admittedMachines, mode: 'drain',
             })) return deploymentFailure('deployment_conflict');
         }
-    } else if (input.teardownProof || ((input.state === 'succeeded' || input.state === 'running_unverified') && input.expectedTargetLinkRevision === undefined)) return deploymentFailure('deployment_conflict');
+    } else if (input.teardownProof || (!restoreContentPublication && (input.state === 'succeeded' || input.state === 'running_unverified') && input.expectedTargetLinkRevision === undefined)) return deploymentFailure('deployment_conflict');
     if (resumedTeardown) {
         const busy = await tx.deployment.findFirst({ where: { environmentId: row.environmentId, id: { not: row.id }, state: { in: deploymentInProgressStates() } }, select: { id: true } });
         if (busy) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
@@ -338,6 +345,11 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     const joining = link.machines.filter(member => member.state === 'joining');
     const activatesJoining = input.expectedTargetLinkRevision !== undefined
         && (input.state === 'succeeded' || input.state === 'running_unverified') && joining.length > 0;
+    // Join-only settlement proves the existing serving version on the added
+    // installations; it must not replace the uniform receipt with this attempt.
+    if (input.servingDeploymentId !== undefined && (!isController || !activatesJoining
+        || link.sourceKind !== 'host' || link.targetKind !== 'ownServer'
+        || input.servingDeploymentId !== link.activeDeploymentId)) return deploymentFailure('deployment_conflict');
     if (activatesJoining
         && !await haveDeploymentMembershipRoutesInTx(tx, { environmentId: row.environmentId,
             targetLinkId: link.id, members: joining, mode: 'join' })) return deploymentFailure('deployment_conflict');
@@ -351,13 +363,13 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         state: input.state, revision: { increment: 1 }, ...nextContent,
         ...(input.teardownProof ? { teardownProof: { ...input.teardownProof, ...(removeEnvironment ? { removeEnvironment: true } : {}) } } : {}),
         ...(input.state === 'running' && !row.startedAt ? { startedAt: now } : {}),
-        ...(isDeploymentSettledV1(input.state) ? { settledAt: now } : {}),
+        ...(!restoreContentPublication && isDeploymentSettledV1(input.state) ? { settledAt: now } : {}),
         ...(resumedTeardown ? { settledAt: null } : {}),
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
     const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
     if (input.expectedTargetLinkRevision !== undefined) {
-        await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: row.id, state: 'deployed', revision: { increment: 1 } } });
+        await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: input.servingDeploymentId ?? row.id, state: 'deployed', revision: { increment: 1 } } });
         // The signed uniform receipt and Domain owner jointly prove joining readiness.
         if (activatesJoining) {
             await tx.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: link.id, state: 'joining' }, data: { state: 'active' } });
