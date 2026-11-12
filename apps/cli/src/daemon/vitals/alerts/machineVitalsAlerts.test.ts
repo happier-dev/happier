@@ -40,13 +40,15 @@ describe('machine vitals alert lifecycle', () => {
     let history = await createMinuteHistoryStore({ directory });
     let sampler = createMachineVitalsSampler({ readers: reader, historyStore: history, monotonicMs: () => Date.now() - initialTime });
     const deliveries: MachineVitalsAlertTransitionV1[] = [];
+    const events: MachineVitalsAlertTransitionV1[] = [];
+    const emit = (transition: MachineVitalsAlertTransitionV1) => { events.push(transition); };
     // Notification delivery is an outward boundary; suppression is already in memory.
     const notify = async (transition: MachineVitalsAlertTransitionV1) => {
       expect(MachineVitalsAlertEpisodeV1Schema.parse(transition.episode)).toEqual(transition.episode);
       expect(history.alerts()).toContainEqual(transition.episode);
       deliveries.push(transition);
     };
-    let alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify });
+    let alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify, emit });
     await sampler.start();
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.start();
@@ -57,7 +59,7 @@ describe('machine vitals alert lifecycle', () => {
     vi.setSystemTime(initialTime + 8 * 86_400_000);
     history = await createMinuteHistoryStore({ directory });
     sampler = createMachineVitalsSampler({ readers: reader, historyStore: history, monotonicMs: () => Date.now() - initialTime });
-    alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify });
+    alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify, emit });
     await sampler.start();
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.start();
@@ -69,7 +71,7 @@ describe('machine vitals alert lifecycle', () => {
     expect(deliveries.map(value => value.episode.state)).toEqual(['fired', 'fired', 'recovered']);
     enabled = false;
     await policy.reload();
-    alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify });
+    alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify, emit });
     pressure = 'critical';
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.start();
@@ -77,6 +79,7 @@ describe('machine vitals alert lifecycle', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.stop();
     expect(deliveries).toHaveLength(3);
+    expect(events).toEqual(deliveries);
     expect(sampler.latest()?.intervalMs).toBe(60_000);
     expect(history.alerts().map(value => value.state)).toEqual(['fired', 'recovered']);
     policy.stop();

@@ -43,3 +43,8 @@ export { projectPluginEventAdmissionSourceStatusV1 } from '../eventAutomation.js
 export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
 export { readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { readDeploymentReceiptEventFailureV1 } from './deploymentReceipts.js';
+
+export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema } from './machineServices.js';
+export type { MachineServiceObservationV1 } from './machineServices.js';
+
+export { admitDurablePushPluginEventObservationV1 } from '../eventAutomation.js';

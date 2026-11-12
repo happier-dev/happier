@@ -360,6 +360,14 @@ In current 0.3 development source, choose **Plugin event** under a trigger's
 each result shows both. The plugin's current setup form collects the source,
 and you can then adjust its filter and maximum observation age before saving.
 
+The unreleased 0.3 Machine services catalog includes **Backup failed**,
+**Backup succeeded**, and **Machine pressure changed**. Backup events select
+an Environment on a Machine and describe a run's settled outcome. Pressure
+events follow that Machine's existing enabled memory, CPU and disk alert rules,
+including recovery. These sources observe live daemon transitions: keep the
+watcher running to receive them. Their checkpointed observer does not replay
+transitions missed while stopped, and it does not detect missing backup runs.
+
 An existing Run detail with readable event evidence also offers **Create a
 trigger from this event**. This preselects the event, not its private source
 configuration: choose **Runs on** and set up the source normally. **Test this

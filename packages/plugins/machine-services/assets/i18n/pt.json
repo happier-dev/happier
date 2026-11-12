@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Falha no backup",
+  "machineServices.events.backupFailed.description": "Uma execução de backup terminou com falha.",
+  "machineServices.events.backupSucceeded.title": "Backup concluído",
+  "machineServices.events.backupSucceeded.description": "Uma execução de backup terminou com sucesso.",
+  "machineServices.events.machinePressureChanged.title": "Pressão da máquina alterada",
+  "machineServices.events.machinePressureChanged.description": "Um alerta ativado de memória, CPU ou disco foi acionado ou recuperado.",
   "machineServices.events.healthStatus.title": "Estado de saúde alterado",
   "machineServices.events.healthStatus.description": "Uma verificação de saúde guardada falhou ou recuperou.",
   "machineServices.events.healthCheckFailed.title": "Verificação de saúde falhou",

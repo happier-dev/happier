@@ -1,3 +1,6 @@
+import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { z } from 'zod/mini';
 import type { CapabilitiesDetectRequest } from '@/capabilities/types';
 import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
@@ -63,6 +66,7 @@ import type { MachineMetadataFieldReadV1, MachineMetadataFieldPortV1 } from '@ha
 import { getMachineSetupDesiredV1, mutateMachineSetupDesiredV1, getMachineAdminAccessV1 } from '@happier-dev/protocol';
 import type { MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { registerDaemonMachineResourcesPolicyRpcHandlers, type DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
+import { registerDaemonMachineRolesRpcHandlers, type DaemonMachineRolesRoutes } from '@/rpc/handlers/daemonMachineRoles';
 import { registerDaemonMachineGuardRpcHandlers, type DaemonMachineGuardRoutes } from '@/rpc/handlers/daemonMachineGuard';
 import { createMachineAgentInventoryPublication, type MachineAgentInventoryObservation } from '@/capabilities/snapshots/machineAgentInventory';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -192,7 +196,6 @@ import {
 import { registerDaemonComputerHandler } from '@/rpc/handlers/daemonComputer';
 import { registerMachineLiveStreamSourceAdmissionHandler } from '@/daemon/peer/mediation/stream/sourceAdmission';
 import { registerManagedFiniteWake } from '@/rpc/handlers/managedFiniteWake';
-import type { ComputerRoutes } from '@/daemon/computer/routes';
 import {
     registerDaemonBrowserContextHandler,
 } from '@/rpc/handlers/daemonBrowserContext';
@@ -222,6 +225,7 @@ import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSy
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
 import { projectVerifiedExternalActionRequesterContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createReadFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/readFileHandler';
+import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createWriteFileRpcActionExecutor } from '@/rpc/handlers/fileSystem/writeFileHandler';
 import { createDirectoryRpcActionExecutor } from '@/rpc/handlers/fileSystem/directoryHandlers';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FILESYSTEM_MUTATION_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -308,11 +312,7 @@ import {
 import { MACHINE_HEARTBEAT_INTERVAL_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
-import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
-import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
-import type { BrowserDiagnosticsRoutes } from '@/daemon/browser/diagnostics/routes';
-import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
-import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
+import type { DevicesRoleMachineRoutes } from '@/daemon/roles/devices/types';
 import type { ConnectedAccountDaemonRuntime } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
 import type { DaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import type { AgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
@@ -729,6 +729,8 @@ export class ApiMachineClient {
     private readonly machineRuntimeServerId = configuration.activeServerId;
     private readonly filesystemEffectAdmission = createFilesystemEffectAdmission({
         readAgentIsolation: () => this.lifecycleDependencies.agentIsolation?.read(),
+        // Sessions placed on a target: their Files/Git run in the target, never on this Machine's disk.
+        resolveWorkspaceTarget: resolveSessionTargetWorkspace,
         // Filesystem effects consume the receiving connection's authenticated
         // Home, like generic Machine admission, not an advisory saved descriptor.
         resolveHomeServerIdentityId: () => this.machineRpcAdmissionBoundary.resolveHomeServerIdentityId?.()
@@ -973,6 +975,7 @@ export class ApiMachineClient {
      * composition root owns the fact, this client only publishes it. */
     private providerBrokerIngressAdvertised = false;
     private providerBrokerAccountConnectionIngressLive = false;
+    private providerBrokerActionOperationIngressLive = false;
     private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
     private readonly projectAgentInventoryPublication = createMachineAgentInventoryPublication();
     private activeTransportGeneration = 0;
@@ -1656,12 +1659,10 @@ export class ApiMachineClient {
                 });
             },
         });
-        // Native-view imports are available independently of managed Chromium startup.
-        registerDaemonBrowserControlHandler(this.rpcHandlerManager, { getNativeClient: () => this });
         registerMachineLiveStreamSourceAdmissionHandler(this.rpcHandlerManager, {
             machineId: this.machine.id,
-            resolveComputer: () => this.resolveComputerRoutes(),
-            resolveBrowser: () => this.browserControlRoutes,
+            resolveComputer: () => this.devicesRoleRoutes?.resolveComputer?.() ?? null,
+            resolveBrowser: () => this.devicesRoleRoutes?.browserControl ?? null,
             readHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.(),
             readInstallationIdentity: readInstallationIdentityIfExistsSync,
         });
@@ -1713,6 +1714,14 @@ export class ApiMachineClient {
             resolveAccountId: async () => await this.getAccountId(),
             ...(this.lifecycleDependencies.onProjectOperationInspection
                 ? { onInspection: this.lifecycleDependencies.onProjectOperationInspection } : {}),
+            onBackupOutcome: (payload, scope) => {
+                // Account-scoped broker facts must stay with the connection Account.
+                void this.getAccountId().then(accountId => {
+                    if (accountId !== scope.accountId) return;
+                    publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1,
+                        scope: { kind: 'account' }, payload }, () => this.projectionSchedulingClosed);
+                }).catch(error => logger.warn('Backup outcome event publication failed', error));
+            },
             publishSnapshot: actionOperationPublisher,
             publishSnapshotAcknowledged: actionOperationPublisher.acknowledge,
             supportsCoreCancellation: (actionId, input) => {
@@ -1787,6 +1796,8 @@ export class ApiMachineClient {
                 },
             } : null;
         registerSessionHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
+            // The devices Machine role owns these families here (`replaceDevicesRoleRoutes`).
+            registerDeviceFamilies: false,
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input) },
             resolveHostHomeServerIdentityId: async signal => (await resolveCurrentMachineExecutionOriginContext(signal))?.serverIdentityId ?? null,
             filesystemEffectAdmission: this.filesystemEffectAdmission,
@@ -2005,6 +2016,7 @@ export class ApiMachineClient {
         registerScmHandlers(this.rpcHandlerManager, this.machineRpcWorkingDirectory, {
             accessPolicy: this.filesystemAccessPolicy,
             machineId: this.machine.id,
+            selectWorkspaceSource: (context, input) => this.filesystemEffectAdmission.selectWorkspaceSource(context, input),
             deliverFileAtRevision: async (request, response, signal) => await deliverScmFileAtRevision({ request, response, signal,
                 ...(this.lifecycleDependencies.directPeerServerLifecycle ? { lifecycle: this.lifecycleDependencies.directPeerServerLifecycle } : {}) }),
             prepareFileBytesExport: async input => {
@@ -2025,7 +2037,6 @@ export class ApiMachineClient {
         requestShutdown,
         memory,
         daemonServerWorkScheduler,
-        voiceInference,
         machineTransferChannel,
         transferRelayV2Channel,
         directPeerTransfer,
@@ -2164,7 +2175,6 @@ export class ApiMachineClient {
                 requestShutdown,
                 ...(memory ? { memory } : {}),
                 ...(daemonServerWorkScheduler ? { daemonServerWorkScheduler } : {}),
-                ...(voiceInference ? { voiceInference } : {}),
                 ...(machineTransferChannel ? { machineTransferChannel } : {}),
                 ...(transferRelayV2Channel ? { transferRelayV2Channel } : {}),
                 ...(directPeerTransfer ? { directPeerTransfer } : {}),
@@ -2761,9 +2771,13 @@ export class ApiMachineClient {
             workingDirectory: this.machineRpcWorkingDirectory, accessPolicy: this.filesystemAccessPolicy,
             getAdditionalAllowedReadDirs: () => this.additionalAllowedReadDirs,
             getAdditionalAllowedWriteDirs: () => this.additionalAllowedWriteDirs }) : null;
-        return async (request) => {
+        // The workspace source is chosen once per admitted Action; every effect below reads it.
+        return async (request) => runWithWorkspaceSource(this.filesystemEffectAdmission.selectWorkspaceSource(request.context, request.input), async () => {
             const requester = await this.filesystemEffectAdmission.resolveActionRequester?.(request.context);
-            if (requester && requester.identity.kind === 'isolated' && !isHostRequesterUnrestrictedOwner(requester.identity)
+            const source = currentWorkspaceSource();
+            // A member of a target Session is served by the target's source (owner ruling 2026-11-12);
+            // the admission below checks the Session access. Only this Machine's disk uses the native channel.
+            if (requester && source.kind === 'local' && requester.identity.kind === 'isolated' && !isHostRequesterUnrestrictedOwner(requester.identity)
                 && resolveHostRequesterAgentPlacementForHost({ identity: requester.identity,
                     snapshot: this.lifecycleDependencies.agentIsolation?.read() }) !== 'daemon') {
                 let channel: Awaited<ReturnType<typeof prepareNativeFilesystemEffect>> | undefined;
@@ -2803,7 +2817,7 @@ export class ApiMachineClient {
                 } finally { await channel?.dispose(); await requester.dispose(); }
             }
             await requester?.dispose();
-            const custodyFailure = await this.filesystemEffectAdmission.action(request.context, requester?.identity);
+            const custodyFailure = await this.filesystemEffectAdmission.action(request.context, requester?.identity, currentWorkspaceSource());
             const admittedOwner = this.externalActionIngressOwner;
             if (!admittedOwner || this.projectionSchedulingClosed) {
                 return { ok: false, errorCode: 'filesystem_action_owner_unavailable', error: 'The current filesystem Action owner is unavailable' };
@@ -2879,7 +2893,12 @@ export class ApiMachineClient {
                 // cover rejection/cancellation before that owner is reached too.
                 await deploymentArchive?.readFile?.handle.close().catch(() => undefined);
             }
-        };
+        });
+    }
+
+    /** Machine role entries register their RPC families here (daemon/roles/machineRoleRuntime.ts). */
+    getMachineRoleRpcHandlerManager(): RpcHandlerManager {
+        return this.rpcHandlerManager;
     }
 
     getPeerMediationMachineRpcHandlerManager(): PeerMachineRpcDirectHandlerManager {
@@ -3110,6 +3129,10 @@ export class ApiMachineClient {
 
     registerMachineResourcesPolicyRoutes(options: DaemonMachineResourcesPolicyRoutes): void {
         registerDaemonMachineResourcesPolicyRpcHandlers(this.rpcHandlerManager, options);
+    }
+
+    registerMachineRolesRoutes(options: DaemonMachineRolesRoutes): void {
+        registerDaemonMachineRolesRpcHandlers(this.rpcHandlerManager, options);
     }
 
     private machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
@@ -3376,52 +3399,37 @@ export class ApiMachineClient {
         this.connectedAccountPurposeBindingRuntime = runtime;
     }
 
-    private browserControlRoutes: BrowserDaemonControlRoutes | null = null;
-    private resolveComputerRoutes: () => ComputerRoutes | null = () => null;
+    /**
+     * The `devices` Machine role's RPC families (computer, browser, simulator preview): one owned
+     * set built from the routes the active devices role published, replaced as a whole. `null`
+     * (role inactive or stopped) registers none of them, so their namespaces answer
+     * `machine_role_inactive`.
+     */
+    private devicesRoleRoutes: DevicesRoleMachineRoutes | null = null;
 
-    registerComputerRoutes(resolveComputer: () => ComputerRoutes | null): void {
-        this.resolveComputerRoutes = resolveComputer;
-        registerDaemonComputerHandler(this.rpcHandlerManager, { resolveComputer });
+    replaceDevicesRoleRoutes(routes: DevicesRoleMachineRoutes | null): void {
+        this.devicesRoleRoutes = routes;
+        this.rpcHandlerManager.replaceOwnedHandlers('machine-role:devices', () => {
+            if (!routes) return;
+            const resolveBrowserControl = () => this.devicesRoleRoutes?.browserControl ?? null;
+            // Native-view imports are available independently of managed Chromium startup.
+            registerDaemonBrowserControlHandler(this.rpcHandlerManager, {
+                ...(routes.browserControl ? { browserControl: routes.browserControl } : {}),
+                getNativeClient: () => this,
+            });
+            if (routes.resolveComputer) registerDaemonComputerHandler(this.rpcHandlerManager, { resolveComputer: routes.resolveComputer });
+            if (routes.browserViewDiscovery) registerDaemonBrowserViewWatchHandler(this.rpcHandlerManager, routes.browserViewDiscovery);
+            if (routes.browserContext) registerDaemonBrowserContextHandler(this.rpcHandlerManager, { browserContext: routes.browserContext, resolveBrowserControl });
+            if (routes.browserDiagnostics) {
+                registerDaemonBrowserDiagnosticsSnapshotHandler(this.rpcHandlerManager, { browserDiagnostics: routes.browserDiagnostics, resolveBrowserControl });
+            }
+            if (routes.browserRecording) registerDaemonBrowserRecordingHandlers(this.rpcHandlerManager, { browserRecording: routes.browserRecording, resolveBrowserControl });
+            if (routes.simulatorPreview) registerDaemonSimulatorPreviewHandlers(this.rpcHandlerManager, { simulatorPreview: routes.simulatorPreview });
+        });
     }
 
     registerManagedFiniteWake(input: Parameters<typeof registerManagedFiniteWake>[1]): void {
         registerManagedFiniteWake(this.rpcHandlerManager, input);
-    }
-
-    registerBrowserControlRoutes(browserControl: BrowserDaemonControlRoutes): void {
-        this.browserControlRoutes = browserControl;
-        registerDaemonBrowserControlHandler(this.rpcHandlerManager, {
-            browserControl,
-            getNativeClient: () => this,
-        });
-    }
-
-    registerBrowserViewDiscovery(discovery: import('@/daemon/browser/control/viewDiscovery').BrowserDaemonViewDiscovery): void {
-        registerDaemonBrowserViewWatchHandler(this.rpcHandlerManager, discovery);
-    }
-
-    registerBrowserContextRoutes(browserContext: BrowserContextRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
-        registerDaemonBrowserContextHandler(this.rpcHandlerManager, {
-            browserContext, resolveBrowserControl,
-        });
-    }
-
-    registerBrowserDiagnosticsRoutes(browserDiagnostics: BrowserDiagnosticsRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
-        registerDaemonBrowserDiagnosticsSnapshotHandler(this.rpcHandlerManager, {
-            browserDiagnostics, resolveBrowserControl,
-        });
-    }
-
-    registerBrowserRecordingRoutes(browserRecording: BrowserRecordingRoutes, resolveBrowserControl: () => BrowserDaemonControlRoutes | null): void {
-        registerDaemonBrowserRecordingHandlers(this.rpcHandlerManager, {
-            browserRecording, resolveBrowserControl,
-        });
-    }
-
-    registerSimulatorPreviewRoutes(simulatorPreview: SimulatorPreviewRoutes): void {
-        registerDaemonSimulatorPreviewHandlers(this.rpcHandlerManager, {
-            simulatorPreview,
-        });
     }
 
     registerLiveStreamRelayRoutes(relay: DaemonLiveStreamRelayRoutes): void {
@@ -5009,8 +5017,13 @@ export class ApiMachineClient {
             && snapshot?.status === 'ready'
             && readServerEnabledBit(snapshot.features, 'providers') === true
             && snapshot.features.capabilities.providerBroker?.protocolVersions.includes(2) === true;
-        if (capabilities.providerBrokerIngress && personalBroker) {
-            capabilities = { ...capabilities, providerBrokerIngress: { protocolVersions: [1, 2] } };
+        const actionBroker = this.providerBrokerActionOperationIngressLive
+            && snapshot?.status === 'ready'
+            && readServerEnabledBit(snapshot.features, 'teams.credentialResources') === true
+            && snapshot.features.capabilities.providerBroker?.actionProtocolVersions?.includes(3) === true;
+        if (capabilities.providerBrokerIngress && (personalBroker || actionBroker)) {
+            capabilities = { ...capabilities, providerBrokerIngress: { protocolVersions: actionBroker
+                ? personalBroker ? [1, 2, 3] : [1, 3] : [1, 2] } };
         }
         if (
             capabilities.providerBrokerIngress
@@ -5109,17 +5122,21 @@ export class ApiMachineClient {
      * is installed; absence keeps the leaf withdrawn so every Machine stays
      * ineligible as a broker (fail closed).
      */
-    async setProviderBrokerIngressLive(live: boolean, accountConnectionIngress = false): Promise<void> {
-        if (this.providerBrokerIngressAdvertised === live && this.providerBrokerAccountConnectionIngressLive === (live && accountConnectionIngress)) return;
+    async setProviderBrokerIngressLive(live: boolean, accountConnectionIngress = false, actionOperationIngress = false): Promise<void> {
+        if (this.providerBrokerIngressAdvertised === live && this.providerBrokerAccountConnectionIngressLive === (live && accountConnectionIngress)
+            && this.providerBrokerActionOperationIngressLive === (live && actionOperationIngress)) return;
         const previous = this.providerBrokerIngressAdvertised;
         const previousPersonal = this.providerBrokerAccountConnectionIngressLive;
+        const previousAction = this.providerBrokerActionOperationIngressLive;
         this.providerBrokerIngressAdvertised = live;
         this.providerBrokerAccountConnectionIngressLive = live && accountConnectionIngress;
+        this.providerBrokerActionOperationIngressLive = live && actionOperationIngress;
         try {
             await this.refreshProviderBrokerIngressAdvertisement();
         } catch (error) {
             this.providerBrokerIngressAdvertised = previous;
             this.providerBrokerAccountConnectionIngressLive = previousPersonal;
+            this.providerBrokerActionOperationIngressLive = previousAction;
             throw error;
         }
     }

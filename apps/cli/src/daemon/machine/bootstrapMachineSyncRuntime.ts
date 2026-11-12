@@ -73,7 +73,8 @@ import { retireOrphanedTerminalControlServiceability } from '@/daemon/sessions/r
 import { captureServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { AutomationWorkerHandle } from '../automation/automationWorker';
 import type { MemoryWorkerHandle } from '../memory/memoryWorker';
-import { subscribeMemorySessionRemoval } from '../memory/subscribeMemorySessionRemoval';
+import { createMachineRoleActivationRuntime, type MachineRoleActivationRuntime, type MachineRoleContexts } from '../roles/machineRoleActivation';
+import type { MachineRolesRuntime } from '../roles/machineRolesRuntime';
 import { subscribeManagedSessionDirectoryRemoval } from '../sessions/subscribeManagedSessionDirectoryRemoval';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
 import type { VoiceInferenceWorkerHandle } from '../voiceInference/voiceInferenceWorker';
@@ -84,7 +85,7 @@ import { logger } from '@/ui/logger';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { bindPluginDaemonConnectionStateSource } from '@/agent/runtime/registry/pluginConnectionStateSource';
-import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
@@ -192,24 +193,6 @@ function readAccountSettingsChangedHintVersion(update: unknown): number | null {
  * ingress validates and projects it into the daemon-lifetime broker; it never
  * derives lifecycle facts or participates in Automation settlement.
  */
-function publishDaemonHostEvent(event: HostEventEnvelopeV1, isShuttingDown: () => boolean): void {
-  if (isShuttingDown()) return;
-  const registryLease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-  if (!registryLease) return;
-  try {
-    registryLease.registry.stableEventsBroker?.publishHostEventEnvelope(event);
-  } catch (error) {
-    logger.warn('[DAEMON RUN] Host Event projection failed (ignored)', {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    void registryLease.release().catch((error) => {
-      logger.warn('[DAEMON RUN] Host Event registry release failed (ignored)', {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-  }
-}
 
 function projectAutomationRunStateChangedHostEvent(
   update: unknown,
@@ -507,8 +490,8 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   apiMachine: ApiMachineClient | null;
   apiMachineForSessions: ApiMachineClient | null;
   automationWorker: AutomationWorkerHandle | null;
-  memoryWorker: MemoryWorkerHandle | null;
-  voiceInferenceWorker: VoiceInferenceWorkerHandle | null;
+  /** Split Machine roles (memory, voice) running for this attempt; owns their workers and RPC families. */
+  roleActivations: MachineRoleActivationRuntime | null;
   daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null;
   machineConnectionStateCleanup: (() => void) | null;
   stopProviderAccountSettings?: () => Promise<void>;
@@ -533,8 +516,7 @@ export type MachineSyncRuntimeAttemptResources = Readonly<
     BootstrapMachineSyncRuntimeResult,
     | 'apiMachine'
     | 'automationWorker'
-    | 'memoryWorker'
-    | 'voiceInferenceWorker'
+    | 'roleActivations'
     | 'machineConnectionStateCleanup'
     | 'stopProviderAccountSettings'
     | 'stopPeerMediationLoopbackServer'
@@ -595,14 +577,9 @@ export async function retireMachineSyncRuntimeAttempt(
     logger.warn('[DAEMON RUN] Failed to stop automation worker after machine-sync attempt failure', error);
   }
   try {
-    await params.memoryWorker?.stop();
+    await params.roleActivations?.stop();
   } catch (error) {
-    logger.warn('[DAEMON RUN] Failed to stop memory worker after machine-sync attempt failure', error);
-  }
-  try {
-    await params.voiceInferenceWorker?.stop();
-  } catch (error) {
-    logger.warn('[DAEMON RUN] Failed to stop voice inference worker after machine-sync attempt failure', error);
+    logger.warn('[DAEMON RUN] Failed to stop Machine roles after machine-sync attempt failure', error);
   }
   try {
     await params.apiMachine?.shutdown();
@@ -650,6 +627,8 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   attachTransferRuntimeStatePublisher: (apiMachine: ApiMachineClient) => Promise<void>;
   startAutomationWorkerForMachine: (machineId: string) => AutomationWorkerHandle | null | Promise<AutomationWorkerHandle | null>;
   startMemoryWorkerForMachine: (machineId: string) => Promise<MemoryWorkerHandle | null>;
+  /** The Machine's role set (P03-ROLES-POLICY); split roles activate and stop with it. Missing = every core role. */
+  machineRoles?: Pick<MachineRolesRuntime, 'activeRoles' | 'subscribe'>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   spawnSessionForInternalResume: PendingSessionResumePort;
   onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
@@ -740,8 +719,7 @@ export async function bootstrapMachineSyncRuntime(
       apiMachine: null,
       apiMachineForSessions: null,
       automationWorker: null,
-      memoryWorker: null,
-      voiceInferenceWorker: null,
+      roleActivations: null,
       daemonConnectivityCoordinator: null,
       machineConnectionStateCleanup: null,
       stopPeerMediationLoopbackServer: async () => {},
@@ -766,8 +744,7 @@ export async function bootstrapMachineSyncRuntime(
   let externalSessionHostActionExecutor: RpcActionExecutor | undefined;
   let sessionSpawnDirectTargetTransport: SessionSpawnDirectTargetTransport | undefined;
   let providerOperationsProducer: RuntimeProviderOperationsProducer | null = null;
-  let memoryWorker: MemoryWorkerHandle | null = null;
-  let voiceInferenceWorker: VoiceInferenceWorkerHandle | null = null;
+  let roleActivations: MachineRoleActivationRuntime | null = null;
   let voiceBinaryAppendConsumer: PeerTcpTunnelVoiceBinaryAppendConsumer | undefined;
   let voiceBinaryTerminalConsumer: PeerTcpTunnelVoiceBinaryTerminalConsumer | undefined;
   let daemonConnectivityCoordinator: ReturnType<typeof createDaemonConnectivityCoordinator> | null = null;
@@ -813,8 +790,7 @@ export async function bootstrapMachineSyncRuntime(
   const getAttemptResources = (): MachineSyncRuntimeAttemptResources => ({
     apiMachine: connectedApiMachine,
     automationWorker,
-    memoryWorker,
-    voiceInferenceWorker,
+    roleActivations,
     machineConnectionStateCleanup,
     stopProviderAccountSettings,
     stopPeerMediationLoopbackServer,
@@ -1092,37 +1068,33 @@ export async function bootstrapMachineSyncRuntime(
     automationWorker = await timeWebLatencyPhase('machine.bootstrap.automation',
       () => params.startAutomationWorkerForMachine(params.machineId));
     const activeAutomationWorker = automationWorker;
-    memoryWorker = await timeWebLatencyPhase('machine.bootstrap.memory',
-      () => params.startMemoryWorkerForMachine(params.machineId));
-    if (memoryWorker) {
-      // Derived daemon-memory rows for a deleted, access-revoked, or
-      // archive-excluded Session are cleared through the memory owner's single
-      // removal operation. Deletion/revocation purges run inside the Account
-      // change cursor's custody window, so a failure replays the fact.
-      const disposeMemorySessionRemoval = subscribeMemorySessionRemoval({
-        memoryWorker,
-        onSessionChanged: (listener) => connectedApiMachine.onSessionChanged(listener),
-        onSessionTranscriptRevised: (listener) => connectedApiMachine.onSessionTranscriptRevised(listener),
-        onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
-        onSessionAccessRevoked: (listener) => connectedApiMachine.onSessionAccessRevoked(listener),
-        onSessionAccessReset: (listener) => connectedApiMachine.onSessionAccessReset(listener),
-        onSessionArchivedStateChange: (listener) =>
-          connectedApiMachine.onSessionArchivedStateChange(listener),
-      });
-      const stopMemoryWorker = memoryWorker.stop;
-      memoryWorker = {
-        ...memoryWorker,
-        stop: async () => {
-          disposeMemorySessionRemoval();
-          await stopMemoryWorker();
+    // Role activation is the code-loading boundary: each active split role's entry loads by
+    // import() here, before the changes carrier connects and before core RPC registration.
+    // The role set's owner (P03-ROLES-POLICY) reconciles the same runtime on metadata changes.
+    const machineConnectionRoleContext = {
+        machineId: params.machineId,
+        accountId: normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
+          ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
+        startMemoryWorkerForMachine: params.startMemoryWorkerForMachine,
+        startVoiceInferenceWorkerForMachine: params.startVoiceInferenceWorkerForMachine,
+        memorySessionEvents: {
+          onSessionChanged: (listener) => connectedApiMachine.onSessionChanged(listener),
+          onSessionTranscriptRevised: (listener) => connectedApiMachine.onSessionTranscriptRevised(listener),
+          onSessionDeletedChange: (listener) => connectedApiMachine.onSessionDeletedChange(listener),
+          onSessionAccessRevoked: (listener) => connectedApiMachine.onSessionAccessRevoked(listener),
+          onSessionAccessReset: (listener) => connectedApiMachine.onSessionAccessReset(listener),
+          onSessionArchivedStateChange: (listener) =>
+            connectedApiMachine.onSessionArchivedStateChange(listener),
         },
-      };
-    }
-    voiceInferenceWorker = await timeWebLatencyPhase('machine.bootstrap.voice', () => params.startVoiceInferenceWorkerForMachine(
-      params.machineId,
-      normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
-        ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
-    ));
+    } satisfies MachineRoleContexts['memory'] & MachineRoleContexts['voice'];
+    const roleRuntime = createMachineRoleActivationRuntime({
+      rpcHandlerManager: connectedApiMachine.getMachineRoleRpcHandlerManager(),
+      ...(params.machineRoles ? { roles: params.machineRoles } : {}),
+      // Roles bound to this Machine connection; `devices` follows the daemon (session control runtime).
+      contexts: { memory: machineConnectionRoleContext, voice: machineConnectionRoleContext },
+    });
+    roleActivations = roleRuntime;
+    await roleRuntime.start(connectedApiMachine.getMachineMetadataSnapshot());
     const providerFeatureGate = {
       isEnabled: (featureId: 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement') => {
         const serverSnapshot = params.getServerFeaturesSnapshot?.();
@@ -1334,9 +1306,8 @@ export async function bootstrapMachineSyncRuntime(
         requestShutdown: () => {
           void params.beforeShutdown().finally(() => params.requestShutdown('happier-app'));
         },
-        ...(memoryWorker ? { memory: memoryWorker } : {}),
+        memory: roleRuntime.memoryExternalObservation,
         daemonServerWorkScheduler: params.daemonServerWorkScheduler,
-        ...(voiceInferenceWorker ? { voiceInference: voiceInferenceWorker } : {}),
         machineTransferChannel: {
           onEnvelope: (listener) => connectedApiMachine.onMachineTransferEnvelope(listener),
           sendEnvelope: (payload) => connectedApiMachine.sendMachineTransferEnvelope(payload),
@@ -1491,10 +1462,9 @@ export async function bootstrapMachineSyncRuntime(
       machineRpcLifecycleRegistration.externalSessionHostActionExecutor;
     sessionSpawnDirectTargetTransport =
       machineRpcLifecycleRegistration.sessionSpawnDirectTargetTransport;
-    voiceBinaryAppendConsumer =
-      machineRpcLifecycleRegistration?.voiceInference?.voiceInferenceStreaming.appendSttStreamBinaryFrame;
-    voiceBinaryTerminalConsumer =
-      machineRpcLifecycleRegistration?.voiceInference?.voiceInferenceStreaming.cancelSttStreamForTransportLoss;
+    // Stable consumers follow live voice role toggles; they refuse typed while voice is off.
+    voiceBinaryAppendConsumer = roleRuntime.voiceBinaryConsumers.append;
+    voiceBinaryTerminalConsumer = roleRuntime.voiceBinaryConsumers.terminal;
 
     // PMS-9 (finding #49) + PMS-WIRE: supply ONE observability emitter to the DIRECT loopback routes
     // AND both relay terminators. In production startup hands in the shared emitter
@@ -2298,18 +2268,13 @@ export async function bootstrapMachineSyncRuntime(
           }
           if (pendingOrphanedSessions.length > 0) {
             pendingOrphanedSessions = await publishOrphanedStartupSessionEnds({
+              serverId: params.requesterServerId ?? configuration.activeServerId,
               apiMachine: connectedApiMachine,
               orphanedDeadDaemonSessions: pendingOrphanedSessions,
               isSessionAlreadyRunning: params.isSessionAlreadyRunning,
               isShuttingDown: params.isPublicationQuiescing ?? params.isShuttingDown,
               ...(params.credentials ? { retireTerminalControlServiceability: async (marker: OrphanedDeadDaemonSession) => {
                 await retireOrphanedTerminalControlServiceability({ marker, credentials: params.credentials!,
-                  serverId: params.requesterServerId ?? configuration.activeServerId,
-                  serverHttpBaseUrl: resolveServerHttpBaseUrl(), machineId: params.machineId,
-                  encryptionMode: params.machine.encryptionMode ?? 'e2ee',
-                  custodianAccountId: normalizeNonEmptyString(params.peerMediationMachineRpc?.accountId)
-                    ?? readAccountIdFromToken(params.credentials!.token),
-                  isSessionAlreadyRunning: params.isSessionAlreadyRunning,
                   resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
                   releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext });
               } } : {}),
@@ -2454,8 +2419,7 @@ export async function bootstrapMachineSyncRuntime(
     apiMachine: connectedApiMachine,
     apiMachineForSessions: connectedApiMachine,
     automationWorker,
-    memoryWorker,
-    voiceInferenceWorker,
+    roleActivations,
     daemonConnectivityCoordinator,
     machineConnectionStateCleanup,
     stopProviderAccountSettings,

@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Copia de seguridad fallida",
+  "machineServices.events.backupFailed.description": "Una ejecución de copia de seguridad terminó con un error.",
+  "machineServices.events.backupSucceeded.title": "Copia de seguridad completada",
+  "machineServices.events.backupSucceeded.description": "Una ejecución de copia de seguridad terminó correctamente.",
+  "machineServices.events.machinePressureChanged.title": "Presión de la máquina modificada",
+  "machineServices.events.machinePressureChanged.description": "Una alerta activada de memoria, CPU o disco se disparó o se recuperó.",
   "machineServices.events.healthStatus.title": "Estado de salud actualizado",
   "machineServices.events.healthStatus.description": "Una comprobación de salud guardada falló o se recuperó.",
   "machineServices.events.healthCheckFailed.title": "Comprobación de salud fallida",

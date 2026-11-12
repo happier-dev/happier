@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "備份失敗",
+  "machineServices.events.backupFailed.description": "一次備份執行以失敗結束。",
+  "machineServices.events.backupSucceeded.title": "備份成功",
+  "machineServices.events.backupSucceeded.description": "一次備份執行成功結束。",
+  "machineServices.events.machinePressureChanged.title": "機器壓力變化",
+  "machineServices.events.machinePressureChanged.description": "已啟用的記憶體、CPU 或磁碟警報觸發或恢復。",
   "machineServices.events.healthStatus.title": "健康狀態已變更",
   "machineServices.events.healthStatus.description": "已儲存的健康檢查失敗或恢復。",
   "machineServices.events.healthCheckFailed.title": "健康檢查失敗",

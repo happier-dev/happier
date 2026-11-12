@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Échec de la sauvegarde",
+  "machineServices.events.backupFailed.description": "Une exécution de sauvegarde s’est terminée en échec.",
+  "machineServices.events.backupSucceeded.title": "Sauvegarde réussie",
+  "machineServices.events.backupSucceeded.description": "Une exécution de sauvegarde s’est terminée avec succès.",
+  "machineServices.events.machinePressureChanged.title": "Pression sur la Machine modifiée",
+  "machineServices.events.machinePressureChanged.description": "Une alerte activée de mémoire, de CPU ou de disque s’est déclenchée ou est rétablie.",
   "machineServices.events.healthStatus.title": "État de santé modifié",
   "machineServices.events.healthStatus.description": "Un contrôle de santé enregistré a échoué ou est rétabli.",
   "machineServices.events.healthCheckFailed.title": "Échec du contrôle de santé",

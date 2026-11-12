@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Ошибка резервного копирования",
+  "machineServices.events.backupFailed.description": "Запуск резервного копирования завершился ошибкой.",
+  "machineServices.events.backupSucceeded.title": "Резервное копирование выполнено",
+  "machineServices.events.backupSucceeded.description": "Запуск резервного копирования завершился успешно.",
+  "machineServices.events.machinePressureChanged.title": "Изменение нагрузки на машину",
+  "machineServices.events.machinePressureChanged.description": "Включённое оповещение о памяти, процессоре или диске сработало или снято.",
   "machineServices.events.healthStatus.title": "Состояние проверки изменилось",
   "machineServices.events.healthStatus.description": "Сохранённая проверка работоспособности завершилась сбоем или восстановилась.",
   "machineServices.events.healthCheckFailed.title": "Проверка работоспособности не пройдена",

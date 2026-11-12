@@ -1,3 +1,5 @@
+import { publishDaemonHostEvent } from './events/publishDaemonHostEvent';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
 import { enableLocalSessionRpcCalls } from '@/session/transport/rpc/localSessionRpcChannel';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
@@ -106,6 +108,7 @@ import type { createLeftBehindPass } from './processes/leftBehind/leftBehindPass
 import { resolveLiveRunnerSnapshotFingerprints } from './sessionRunnerRuntime/resolveLiveRunnerSnapshotFingerprints';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
+import type { SessionAttachCleanupByKey, SpawnResourceCleanupByKey } from './sessions/cleanupSessionResources';
 import { createAcceptedSessionWorkspaceRegistration } from './sessions/registerAcceptedSessionWorkspace';
 import { reconcileAgentRuntimeRestartDisposition } from './sessions/reconcileAgentRuntimeRestartDisposition';
 import { createDaemonSessionHandoffMetadataBridge } from './sessions/createDaemonSessionHandoffMetadataBridge';
@@ -1141,6 +1144,13 @@ export async function startDaemon(
     const releaseMachineRolesCatalogEdges = pluginReloadController.subscribe(() => machineRoles?.refreshCatalog());
     machineVitalsAlerts = createMachineVitalsAlerts({
       sampler: machineVitals, historyStore: machineVitalsHistory, policy: machineResourcesPolicy,
+      emit: transition => {
+        const target = machineResourceTarget();
+        if (!target) throw new Error('machine_vitals_event_account_unavailable');
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
+          payload: { kind: 'pressure', serverId: target.serverId, machineId: target.machineId,
+            episode: transition.episode, since: transition.since } }, () => homeTransportCancellation.signal.aborted);
+      },
       notify: async (transition, sample, policy) => {
         const target = machineResourceTarget();
         if (!target)
@@ -1164,8 +1174,8 @@ export async function startDaemon(
       },
       onError: error => logger.warn('[DAEMON RUN] Machine vitals alert failed', error),
     });
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const spawnResourceCleanupByKey: SpawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey: SessionAttachCleanupByKey = new Map();
     const connectedServicesRestartRequestedPids = new Set<number>();
     const connectedServicesMaterializationBaseDir = resolveConnectedServicesMaterializationBaseDir(configuration.happyHomeDir);
     const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
@@ -1476,8 +1486,6 @@ export async function startDaemon(
     const onHappySessionWebhook = createOnHappySessionWebhook({
       trackedSessionsByKey,
       spawnAwaiterByKey,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
       deviceLocalSecretStorage,
       registerAcceptedWorkspace: createAcceptedSessionWorkspaceRegistration({
         credentials,
@@ -2657,9 +2665,19 @@ export async function startDaemon(
         machineRpcRouteAttachments.attachLocalServicesRoutes(routes);
       },
       onComputerRoutesReady: provider => {
-        machineRpcRouteAttachments.attachComputerRoutes(provider);
+        machineRpcRouteAttachments.attachDevicesRoleRoutes({ resolveComputer: provider });
         unsubscribeStorageRecordings?.();
         storageComputerRecordings = provider()?.recordingStorage ?? null;
+        unsubscribeStorageRecordings = storageOwnerListeners.size ? recordingStorage.subscribeStorageChanges(notifyStorageOwnerChanged) : undefined;
+        notifyStorageOwnerChanged();
+      },
+      // The devices role's routes register on the Machine transport as one owned set; stopping
+      // the role withdraws them (its namespaces then answer machine_role_inactive).
+      machineRoles: bootMachineRoles,
+      onDevicesRoleStopped: () => {
+        machineRpcRouteAttachments.attachDevicesRoleRoutes(null);
+        unsubscribeStorageRecordings?.();
+        storageComputerRecordings = null;
         unsubscribeStorageRecordings = storageOwnerListeners.size ? recordingStorage.subscribeStorageChanges(notifyStorageOwnerChanged) : undefined;
         notifyStorageOwnerChanged();
       },
@@ -2681,12 +2699,13 @@ export async function startDaemon(
         acquireLocalServicePreviewApplication = routes.acquireNativeApplication;
         resolveLocalServicePreviewApplication = routes.resolveApplication;
       },
-      onBrowserControlRoutesReady: machineRpcRouteAttachments.attachBrowserControlRoutes,
-      onBrowserContextRoutesReady: machineRpcRouteAttachments.attachBrowserContextRoutes,
-      onBrowserDiagnosticsRoutesReady: machineRpcRouteAttachments.attachBrowserDiagnosticsRoutes,
-      onBrowserRecordingRoutesReady: machineRpcRouteAttachments.attachBrowserRecordingRoutes,
+      onBrowserControlRoutesReady: browserControl => machineRpcRouteAttachments.attachDevicesRoleRoutes({ browserControl }),
+      onBrowserViewDiscoveryReady: browserViewDiscovery => machineRpcRouteAttachments.attachDevicesRoleRoutes({ browserViewDiscovery }),
+      onBrowserContextRoutesReady: browserContext => machineRpcRouteAttachments.attachDevicesRoleRoutes({ browserContext }),
+      onBrowserDiagnosticsRoutesReady: browserDiagnostics => machineRpcRouteAttachments.attachDevicesRoleRoutes({ browserDiagnostics }),
+      onBrowserRecordingRoutesReady: browserRecording => machineRpcRouteAttachments.attachDevicesRoleRoutes({ browserRecording }),
       onBrowserRecordingRuntimeReady: bindStorageRecordings,
-      onSimulatorPreviewRoutesReady: machineRpcRouteAttachments.attachSimulatorPreviewRoutes,
+      onSimulatorPreviewRoutesReady: simulatorPreview => machineRpcRouteAttachments.attachDevicesRoleRoutes({ simulatorPreview }),
       onMachineAccessLossReceiverReady: machineRpcRouteAttachments.attachMachineAccessLossReceiver,
       cleanupRequesterServiceForwards: async accountId => {
         await Promise.all([closeRequesterServiceForwards(accountId), serviceExportTunnels?.closeByRequester(accountId)]);
@@ -2698,8 +2717,8 @@ export async function startDaemon(
       resolveServerFeaturesSnapshot: () => readServerFeaturesSnapshot(serverFeaturesSnapshotStore, refreshServerFeaturesSnapshot),
       liveStreamCaptureRegistry,
       simulatorInputLeaseManager,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       connectedServicesRestartRequestedPids,
       loadTerminalHostAdapters,
       startupTerminalRecovery: {
@@ -4594,8 +4613,8 @@ export async function startDaemon(
       ...(process.platform === 'linux' ? {
         allocatorMaintenance: { activity: managedActivity, trim: trimProcessAllocator },
       } : {}),
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => apiMachineForSessions,
       onChildExited,
       onTrackedSessionHealthy,

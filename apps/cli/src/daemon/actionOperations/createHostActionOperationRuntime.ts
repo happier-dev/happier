@@ -127,6 +127,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   custodyBinding?: Readonly<{ serverId: string; installationId: string }>;
   resolveAccountId: () => Promise<string | null>;
   generateOperationId?: () => string;
+  onBackupOutcome?: NonNullable<Parameters<typeof createActionOperationStore>[0]>['onBackupOutcome'];
   publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void | Promise<void>;
   publishSnapshotAcknowledged?: (snapshot: ActionOperationSnapshotV1) => Promise<boolean>;
   projectOpenReceiptPersistence?: ProjectOpenReceiptPersistence | null;
@@ -137,6 +138,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   ) => boolean;
 }>) {
   const store = createActionOperationStore({
+    ...(deps.onBackupOutcome ? { onBackupOutcome: deps.onBackupOutcome } : {}),
     ...(deps.publishSnapshot ? { onSnapshot: deps.publishSnapshot } : {}),
     ...(deps.projectOpenReceiptPersistence !== undefined ? { projectOpenReceiptPersistence: deps.projectOpenReceiptPersistence } : {}),
   });

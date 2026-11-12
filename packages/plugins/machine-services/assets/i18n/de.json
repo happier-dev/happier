@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Sicherung fehlgeschlagen",
+  "machineServices.events.backupFailed.description": "Ein Sicherungslauf wurde mit einem Fehler abgeschlossen.",
+  "machineServices.events.backupSucceeded.title": "Sicherung erfolgreich",
+  "machineServices.events.backupSucceeded.description": "Ein Sicherungslauf wurde erfolgreich abgeschlossen.",
+  "machineServices.events.machinePressureChanged.title": "Maschinenauslastung geändert",
+  "machineServices.events.machinePressureChanged.description": "Ein aktivierter Speicher-, CPU- oder Datenträgeralarm wurde ausgelöst oder aufgehoben.",
   "machineServices.events.healthStatus.title": "Integritätsstatus geändert",
   "machineServices.events.healthStatus.description": "Eine gespeicherte Integritätsprüfung ist fehlgeschlagen oder wieder erfolgreich.",
   "machineServices.events.healthCheckFailed.title": "Integritätsprüfung fehlgeschlagen",

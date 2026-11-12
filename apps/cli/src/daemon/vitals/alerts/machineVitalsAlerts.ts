@@ -10,6 +10,7 @@ export function createMachineVitalsAlerts(input: Readonly<{
   historyStore: MinuteHistoryStore;
   policy: MachineResourcesPolicyRuntime;
   notify: (transition: MachineVitalsAlertTransitionV1, sample: MachineVitalsSampleV1, policy: MachineResourcesPolicyV1) => Promise<void>;
+  emit?: (transition: MachineVitalsAlertTransitionV1) => void;
   onError?: (error: unknown) => void;
 }>): Readonly<{ stop: () => Promise<void> }> {
   let pending = Promise.resolve();
@@ -26,6 +27,7 @@ export function createMachineVitalsAlerts(input: Readonly<{
       for (const transition of transitions) {
         // Retain suppression before delivery within this daemon lifetime; restart begins fresh.
         await input.historyStore.appendAlert(transition.episode);
+        try { input.emit?.(transition); } catch (error) { input.onError?.(error); }
         try { await input.notify(transition, sample, snapshot.policy); } catch (error) { input.onError?.(error); }
       }
     }).catch(error => input.onError?.(error));

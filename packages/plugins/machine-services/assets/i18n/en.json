@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Backup failed",
+  "machineServices.events.backupFailed.description": "A backup run settled as failed.",
+  "machineServices.events.backupSucceeded.title": "Backup succeeded",
+  "machineServices.events.backupSucceeded.description": "A backup run settled successfully.",
+  "machineServices.events.machinePressureChanged.title": "Machine pressure changed",
+  "machineServices.events.machinePressureChanged.description": "An enabled memory, CPU or disk alert fired or recovered.",
   "machineServices.events.healthStatus.title": "Health status changed",
   "machineServices.events.healthStatus.description": "A saved health check failed or recovered.",
   "machineServices.events.healthCheckFailed.title": "Health check failed",

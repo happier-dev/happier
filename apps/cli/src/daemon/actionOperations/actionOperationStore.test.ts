@@ -14,6 +14,38 @@ import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersis
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('emits one outcome per backup run settlement, never for progress, replay or maintenance', () => {
+    const outcomes: unknown[] = [];
+    const store = createActionOperationStore({ onBackupOutcome: outcome => outcomes.push(outcome) });
+    const input = buildDeploymentBackupActionInputV1('deployments.backups.run', {
+      serverId: 'home', environmentId: 'environment', machineId: ACCOUNT_SCOPE.machineId,
+      installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+    });
+    expect(outcomes).toEqual([]);
+    for (const state of ['succeeded', 'failed'] as const) {
+      store.create({ operationId: state, scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
+        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+      store.markRunning(state);
+      store.updateProgress(state, { kind: 'phase', phase: 'backup', label: 'Backing up' });
+      expect(outcomes).toHaveLength(state === 'succeeded' ? 0 : 1);
+      if (state === 'succeeded') store.succeed(state, { kind: 'verified', operationId: state, manifests: [] });
+      else store.fail(state, { errorCode: 'backup_failed', error: 'Private native output' });
+      // Re-observing a retained terminal result is not another run.
+      store.get(ACCOUNT_SCOPE, state);
+      store.succeed(state, {});
+    }
+    store.create({ operationId: 'verify', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.verify',
+      title: 'Verify', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+    store.succeed('verify', {});
+    expect(outcomes).toMatchObject([
+      { kind: 'backup', serverId: 'home', machineId: ACCOUNT_SCOPE.machineId, environmentId: 'environment',
+        operationId: 'succeeded', state: 'succeeded', errorCode: null },
+      { kind: 'backup', operationId: 'failed', state: 'failed', errorCode: 'backup_failed' },
+    ]);
+    expect(outcomes).toHaveLength(2);
+    expect(JSON.stringify(outcomes)).not.toContain('Private native output');
+  });
+
   it('retains a shared Machine requester capture in the custodian partition without disclosing it to another Account', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'backup-receipt-scope-'));
     try {
@@ -41,13 +73,17 @@ describe('action operation store', () => {
         first.updateProgress('lost-backup', { kind: 'phase', phase: 'backup', label: `Backing up ${index}` });
       }
       expect(writes).toHaveBeenCalledTimes(3); // Two admissions + one terminal fact; progress adds no disk writes.
-      const restarted = createActionOperationStore({ projectOpenReceiptPersistence: await open() });
+      const outcomes: unknown[] = [];
+      const onBackupOutcome = (outcome: unknown) => { outcomes.push(outcome); };
+      const restarted = createActionOperationStore({ projectOpenReceiptPersistence: await open(), onBackupOutcome });
       expect(restarted.readDeploymentBackupOperations(ACCOUNT_SCOPE, input)).toContainEqual(
         { snapshot: first.get(ACCOUNT_SCOPE, 'shared-capture'), input });
       expect(restarted.get(ACCOUNT_SCOPE, 'lost-backup')).toMatchObject({ state: 'failed',
         error: { errorCode: 'action_outcome_unknown', effectAttempted: true } });
-      expect(createActionOperationStore({ projectOpenReceiptPersistence: await open() }).get(ACCOUNT_SCOPE, 'lost-backup'))
+      expect(createActionOperationStore({ projectOpenReceiptPersistence: await open(), onBackupOutcome }).get(ACCOUNT_SCOPE, 'lost-backup'))
         .toEqual(restarted.get(ACCOUNT_SCOPE, 'lost-backup'));
+      expect(outcomes).toMatchObject([{ kind: 'backup', operationId: 'lost-backup', state: 'failed', errorCode: 'action_outcome_unknown' }]);
+      expect(outcomes).toHaveLength(1);
       expect(restarted.readDeploymentBackupOperations({ ...ACCOUNT_SCOPE, accountId: 'machine-custodian' }, input)).toEqual([]);
       expect(restarted.get({ ...ACCOUNT_SCOPE, accountId: 'other' }, 'shared-capture')).toBeNull();
     } finally { await rm(directory, { recursive: true, force: true }); }

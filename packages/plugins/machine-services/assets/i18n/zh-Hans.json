@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "备份失败",
+  "machineServices.events.backupFailed.description": "一次备份运行以失败结束。",
+  "machineServices.events.backupSucceeded.title": "备份成功",
+  "machineServices.events.backupSucceeded.description": "一次备份运行成功结束。",
+  "machineServices.events.machinePressureChanged.title": "机器压力变化",
+  "machineServices.events.machinePressureChanged.description": "已启用的内存、CPU 或磁盘警报触发或恢复。",
   "machineServices.events.healthStatus.title": "健康状态已更改",
   "machineServices.events.healthStatus.description": "已保存的健康检查失败或恢复。",
   "machineServices.events.healthCheckFailed.title": "健康检查失败",

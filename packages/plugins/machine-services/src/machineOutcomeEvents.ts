@@ -1,6 +1,6 @@
 import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema,
     createPluginEventAutomationSetupResultV1JsonSchema, type MachineServiceObservationV1,
     type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
@@ -9,11 +9,10 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
 
 const pluginId = 'happier.machine.services';
 const id = defineProtocolString({ minLength: 1 });
-const timestamp = defineProtocolNumber({ integer: true, minimum: 0 });
 const target = { v: defineProtocolLiteral(1), serverId: id, machineId: id };
 const machineSetup = defineProtocolObject(target, { policy: 'closed' });
 const backupSetup = defineProtocolObject({ ...target, environmentId: id }, { policy: 'closed' });
-const sourceSchema = defineProtocolObject({ ...target, environmentId: id.optional(), observingSince: timestamp }, { policy: 'closed' });
+const sourceSchema = defineProtocolObject({ ...target, environmentId: id.optional() }, { policy: 'closed' });
 type Source = ReturnType<typeof sourceSchema.parse>;
 const descriptors = {
     'backup-failed': { key: 'backupFailed', title: 'Backup failed', description: 'A backup run settled as failed.', schema: BackupOutcomeEventV1ProtocolSchema },
@@ -26,8 +25,8 @@ const isEventId = (value: string): value is EventId => Object.hasOwn(descriptors
 const eventIds = Object.keys(descriptors) as EventId[];
 const matches = (event: EventId, source: Source, fact: MachineServiceObservationV1) =>
     fact.serverId === source.serverId && fact.machineId === source.machineId
-    && (fact.kind === 'pressure' ? event === 'machine-pressure-changed' && fact.episode.at >= source.observingSince
-        : fact.environmentId === source.environmentId && fact.occurredAt >= source.observingSince
+    && (fact.kind === 'pressure' ? event === 'machine-pressure-changed'
+        : fact.environmentId === source.environmentId
             && event === (fact.state === 'failed' ? 'backup-failed' : 'backup-succeeded'));
 export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event => [event + '/setup', {
     title: event === 'machine-pressure-changed' ? 'Choose Machine' : 'Choose backup Environment',
@@ -41,9 +40,9 @@ export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event 
             serverId: selected.serverId, machineId: selected.machineId,
         }, { signal: context.signal });
         if (read.status !== 'ready') throw new PluginError({ code: 'target_unavailable', message: 'The Machine resource policy is unavailable.' });
-        const sourceConfig = sourceSchema.parse({ ...selected, observingSince: context.invokedAtMs });
+        const sourceConfig = sourceSchema.parse(selected);
         return { v: 1 as const, sourceInstanceId: 'machine-event:' + computeCanonicalDomainSeparatedDigest('happier.machine.event-source.v1',
-            [selected.serverId, selected.machineId, 'environmentId' in selected ? selected.environmentId : '', event, String(context.invokedAtMs)]),
+            [selected.serverId, selected.machineId, 'environmentId' in selected ? selected.environmentId : '', event]),
             sourceContractVersion: 1, sourceConfig, displayLabel: 'environmentId' in selected ? selected.environmentId : selected.machineId };
     },
 }]));

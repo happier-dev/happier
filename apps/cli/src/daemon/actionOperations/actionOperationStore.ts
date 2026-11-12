@@ -1,3 +1,4 @@
+import type { BackupOutcomeEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { canAdvanceActionOperationSnapshotV1, canResumeDeploymentTeardownOperationV1, ActionOperationFailureV1ReadSchema,
   ActionOperationSnapshotV1Schema, projectActionOperationListSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type {
@@ -17,7 +18,7 @@ import { ActionOperationCredentialUseV1Schema, isActionOutcomeUnknownErrorCodeV1
 import { DeploymentTargetLinkProvisionedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
 import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -120,6 +121,7 @@ export function createActionOperationStore(options?: Readonly<{
   settledRetentionLimit?: number;
   settledRetentionMs?: number;
   onSnapshot?: (snapshot: ActionOperationSnapshotV1) => void;
+  onBackupOutcome?: (outcome: BackupOutcomeEventV1, scope: ActionOperationScope) => void;
   /** Undefined is an in-memory host; null means the installed host could not open its receipts. */
   projectOpenReceiptPersistence?: ProjectOpenReceiptPersistence | null;
 }>) {
@@ -191,6 +193,18 @@ export function createActionOperationStore(options?: Readonly<{
     }
   };
 
+  const emitBackupOutcome = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+    const backup = invocationMetadata.get(snapshot.operationId)?.backupInput;
+    if (snapshot.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && backup && previous && !isTerminal(previous)
+      && (snapshot.state === 'succeeded' || snapshot.state === 'failed') && snapshot.settledAt !== undefined) {
+      try {
+        options?.onBackupOutcome?.({ kind: 'backup', serverId: backup.serverId, machineId: snapshot.scope.machineId,
+          environmentId: backup.environmentId, operationId: snapshot.operationId, state: snapshot.state,
+          occurredAt: snapshot.settledAt, errorCode: snapshot.error?.errorCode ?? null }, snapshot.scope);
+      } catch { /* Observation cannot change the retained backup result. */ }
+    }
+  };
+
   const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
     const metadata = invocationMetadata.get(snapshot.operationId);
     // Recovery needs admission, returned resource facts and terminal settlement, not each progress revision.
@@ -221,6 +235,7 @@ export function createActionOperationStore(options?: Readonly<{
       // Push is a recoverable projection. It must never change the historical
       // Action result; connection-time list reconciliation repairs a miss.
     }
+    emitBackupOutcome(snapshot, previous);
     notifySubscribers(change);
   };
 
@@ -305,7 +320,10 @@ export function createActionOperationStore(options?: Readonly<{
       ...(receipt.deploymentChildIdentity ? { deploymentChildIdentity: receipt.deploymentChildIdentity } : {}),
       ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
     if (!isTerminal(prior)) {
-      try { projectOpenReceiptPersistence?.save({ ...receipt, snapshot }); }
+      try {
+        projectOpenReceiptPersistence?.save({ ...receipt, snapshot });
+        emitBackupOutcome(snapshot, prior);
+      }
       catch { logger.warn('Could not retain the restarted Action outcome; new recovery operations require a successful receipt write'); }
     }
   }

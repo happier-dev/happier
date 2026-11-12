@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Còpia de seguretat fallida",
+  "machineServices.events.backupFailed.description": "Una execució de còpia de seguretat ha acabat amb un error.",
+  "machineServices.events.backupSucceeded.title": "Còpia de seguretat completada",
+  "machineServices.events.backupSucceeded.description": "Una execució de còpia de seguretat ha acabat correctament.",
+  "machineServices.events.machinePressureChanged.title": "Pressió de la màquina modificada",
+  "machineServices.events.machinePressureChanged.description": "Una alerta activada de memòria, CPU o disc s’ha activat o s’ha recuperat.",
   "machineServices.events.healthStatus.title": "Estat de salut canviat",
   "machineServices.events.healthStatus.description": "Una comprovació de salut desada ha fallat o s’ha recuperat.",
   "machineServices.events.healthCheckFailed.title": "Comprovació de salut fallida",

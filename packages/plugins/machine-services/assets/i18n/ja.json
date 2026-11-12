@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "バックアップ失敗",
+  "machineServices.events.backupFailed.description": "バックアップの実行が失敗で終了しました。",
+  "machineServices.events.backupSucceeded.title": "バックアップ成功",
+  "machineServices.events.backupSucceeded.description": "バックアップの実行が正常に終了しました。",
+  "machineServices.events.machinePressureChanged.title": "マシン負荷の変化",
+  "machineServices.events.machinePressureChanged.description": "有効なメモリ、CPU、ディスクのアラートが発生または回復しました。",
   "machineServices.events.healthStatus.title": "ヘルス状態が変化",
   "machineServices.events.healthStatus.description": "保存済みヘルスチェックが失敗または復旧しました。",
   "machineServices.events.healthCheckFailed.title": "ヘルスチェック失敗",

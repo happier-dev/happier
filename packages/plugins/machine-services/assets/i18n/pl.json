@@ -1,4 +1,10 @@
 {
+  "machineServices.events.backupFailed.title": "Kopia zapasowa nie powiodła się",
+  "machineServices.events.backupFailed.description": "Wykonanie kopii zapasowej zakończyło się niepowodzeniem.",
+  "machineServices.events.backupSucceeded.title": "Kopia zapasowa powiodła się",
+  "machineServices.events.backupSucceeded.description": "Wykonanie kopii zapasowej zakończyło się powodzeniem.",
+  "machineServices.events.machinePressureChanged.title": "Zmiana obciążenia maszyny",
+  "machineServices.events.machinePressureChanged.description": "Włączony alert pamięci, procesora lub dysku został wyzwolony lub ustąpił.",
   "machineServices.events.healthStatus.title": "Stan sprawności zmieniony",
   "machineServices.events.healthStatus.description": "Zapisany test sprawności zakończył się niepowodzeniem lub odzyskał sprawność.",
   "machineServices.events.healthCheckFailed.title": "Test sprawności nie powiódł się",
