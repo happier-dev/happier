@@ -105,7 +105,8 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
     await waitForHomeGovernance(() => expect(harness.requestsFor(policyPath)).toHaveLength(2));
     expect(harness.requestsFor(policyPath)[1]!.input).toMatchObject({ managedDefaults: { team: {}, groups } });
     await waitForHomeGovernance(() => expect(menu()!.props.selectedId).toBe('__none__'));
-    expect(harness.requestsFor(listPath)).toHaveLength(2);
+    // The Account/Home collection owner retains settled rows across menu reopen.
+    expect(harness.requestsFor(listPath)).toHaveLength(1);
     expect(harness.requestsFor('/v1/machines/managed/list')).toHaveLength(0);
     expect(harness.requestsFor('/v1/machines/managed/acquire')).toHaveLength(0);
 });

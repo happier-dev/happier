@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TeamCredentialUsageQueryResultV1 } from '@happier-dev/protocol/teams';
+import { createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 
 import { buildTeamCredentialUsageCsv } from './teamCredentialUsageExport';
 
@@ -78,7 +79,7 @@ describe('buildTeamCredentialUsageCsv', () => {
                     directRecordedUseOnly: false, requestCountCoverage: 'complete', tokenCoverage: 'complete',
                     costCoverage: 'unavailable', unobservedExternalRequestCount: 0,
                 },
-                totals: { eventCount: 1, requestCount: 1, tokens: { ...NO_TOKENS, total: 10 }, cost: NO_COST },
+                totals: { eventCount: 1, requestCount: 1, tokens: { ...NO_TOKENS, total: 10 }, cost: createEmptyUsageCost() },
             }),
             startMs: Date.UTC(2026, 7, 15),
             endMs: Date.UTC(2026, 8, 14),
@@ -213,8 +214,8 @@ describe('buildTeamCredentialUsageCsv', () => {
                 totals: {
                     eventCount: 3,
                     requestCount: 3,
-                    tokens: NO_TOKENS,
-                    cost: NO_COST,
+                    tokens: createEmptyUsageTokens(),
+                    cost: createEmptyUsageCost(),
                 },
                 coverage: {
                     requestAdmissionCount: 3,
