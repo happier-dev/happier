@@ -352,7 +352,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const pageBack = usePageBackControl('newApp.back', back);
 
   const stepIndex = STEPS.indexOf(step);
-  const primary = addingMachine ? null :
+  // With no starter to pick, the state's own next step (Add a computer, Retry) is the only action.
+  const primary = addingMachine || (step === 'start' && starters.length === 0) ? null :
     step === 'start'
       ? {
           title: t('common.continue'),
@@ -391,7 +392,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
-    step === 'start' && !starter
+    step === 'start' && !starter && starters.length > 0
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
@@ -499,10 +500,26 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     body = (
       <>
         {header(t('newApp.startTitle'), t('newApp.startDescription'))}
-        {starterCatalog.loading && starters.length === 0 ? (
+        {/* Until the catalog owner has an answer the gallery is reading, never empty (it held "Nothing here yet" for
+            ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
+        <ItemGroup surface="none">
+        <View style={dialog ? styles.galleryInset : null}>
+        {(starterCatalog.loading || !starterCatalog.hasValue) && !starterCatalog.error && starters.length === 0 ? (
           <SurfaceStateCard testID="newApp.loading" kind="loading" layout="inline" title={t('common.loading')} />
         ) : null}
-        {starterCatalog.sourceFailures.map((failure) => (
+        {/* One cause, one line: starters are read on a Machine, so a person without one online is offered the
+            Add a computer flow that keeps this draft, instead of one Retry card per source. */}
+        {starterCatalog.sourceFailures.some((failure) => failure.status.state === 'needs_machine') && starters.length === 0 ? (
+          <SurfaceStateCard
+            testID="newApp.needsMachine"
+            kind="unavailable"
+            layout="inline"
+            title={t('newApp.noComputer')}
+            reason={t('newApp.computerNeeded')}
+            action={{ label: t('newApp.addComputer'), onPress: addComputer }}
+          />
+        ) : null}
+        {starterCatalog.sourceFailures.filter((failure) => failure.status.state !== 'needs_machine' || starters.length > 0).map((failure) => (
           <SurfaceStateCard
             key={failure.sourceId}
             testID={`newApp.catalogFailure:${failure.sourceId}`}
@@ -523,11 +540,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             action={{ label: t('common.retry'), onPress: starterCatalog.refresh }}
           />
         ) : null}
-        {!starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
+        {starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
           <SurfaceStateCard kind="empty" layout="inline" title={t('capabilities.store.emptyTitle')} />
         ) : null}
-        <ItemGroup surface="none">
-          <View style={dialog ? styles.dialogInset : null}>
             <SelectionTiles
               testIdPrefix="newApp.starter"
               variant="visual"
@@ -860,10 +875,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s16,
     paddingTop: theme.space.s4,
   },
-  ways: { gap: theme.space.s8, paddingTop: theme.space.s8, paddingHorizontal: theme.space.s16 },
+  // The lab sets the run-existing row a clear step below the gallery, not tight under its captions.
+  ways: { gap: theme.space.s8, paddingTop: theme.space.s20, paddingHorizontal: theme.space.s16 },
   waysEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
-  // The card has no page gutter; inline sections take the sheet's inset there.
+  // The card has no page gutter, and a bare group bleeds one step past the card body there. The description field
+  // takes that step back so it shares the edge of the sheets beneath it.
   dialogInset: { paddingHorizontal: theme.space.s16 },
+  // The gallery has no sheet beside it: its tiles and states take the step back plus the sheet's inset, so they
+  // line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
+  galleryInset: { paddingHorizontal: theme.space.s32 },
 
   phoneFooter: { gap: theme.space.s8 },
 }));
