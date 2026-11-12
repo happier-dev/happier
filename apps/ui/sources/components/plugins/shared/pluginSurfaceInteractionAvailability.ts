@@ -50,8 +50,8 @@ export const PluginSurfaceMachineRecoveryContext = React.createContext<Readonly<
 /**
  * Why a machine-backed surface is not live yet, when the cause is not the machine's presence:
  * `unavailable` (the chosen or only source is gone, changed or refused), `required` (several sources could
- * run it and none is chosen) or `connecting` (a source is chosen and admitted; its view has not answered
- * yet). `null` leaves the machine as the stated cause.
+ * run it and none is chosen) or `connecting` (selection is still resolving, or a source is chosen and
+ * admitted but its view has not answered yet). `null` leaves the machine as the stated cause.
  */
 type PluginSurfacePreciseSourceCause = 'home_unreachable' | 'release_unavailable' | 'non_portable' | 'source_not_ready'
     | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'no_materialization' | 'unknown';
@@ -77,7 +77,10 @@ export const PluginSurfaceSourceCauseContext = React.createContext<PluginSurface
  */
 export function resolvePluginSurfaceSourceCause(
     state: PluginMachineExecutionOriginStateV1,
+    loading: boolean,
 ): PluginSurfaceSourceCause | null {
+    // Administration's pending election is not a settled source refusal.
+    if (loading) return 'connecting';
     switch (state.kind) {
         // A chosen source the resolver admitted is not offline: until its view answers, it is connecting.
         case 'selected': return 'connecting';

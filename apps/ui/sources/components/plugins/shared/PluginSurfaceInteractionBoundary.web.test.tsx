@@ -334,28 +334,35 @@ describe('PluginSurfaceInteractionBoundary.web', () => {
         }
     });
 
+    it('keeps a resolving source pending and presents an unknown source only after selection settles', async () => {
+        const { resolvePluginSurfaceSourceCause } = await import('./pluginSurfaceInteractionAvailability');
+        const state = { kind: 'unavailable', storedOrigin: null, candidates: [], reasons: ['unknown'] } as const;
+        expect(resolvePluginSurfaceSourceCause(state, true)).toBe('connecting');
+        expect(resolvePluginSurfaceSourceCause(state, false)).toBe('unknown');
+    });
+
     it('lets presence stay the cause for an offline machine and blames the source for every other refusal', async () => {
         const { resolvePluginSurfaceSourceCause } = await import('./pluginSurfaceInteractionAvailability');
         const unavailable = (...reasons: readonly ('offline' | 'stale' | 'missing' | 'replaced' | 'no_materialization')[]) => (
-            resolvePluginSurfaceSourceCause({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons })
+            resolvePluginSurfaceSourceCause({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons }, false)
         );
         expect(unavailable('offline')).toBeNull();
         expect(unavailable('stale', 'offline')).toBeNull();
         expect(unavailable('no_materialization')).toBe('no_materialization');
         expect(unavailable('missing')).toBe('unavailable');
         expect(unavailable('offline', 'replaced')).toBe('unavailable');
-        expect(resolvePluginSurfaceSourceCause({ kind: 'selectionRequired', candidates: [] })).toBe('required');
+        expect(resolvePluginSurfaceSourceCause({ kind: 'selectionRequired', candidates: [] }, false)).toBe('required');
         // A chosen source the resolver admitted is not offline: until its view answers, it is connecting.
         expect(resolvePluginSurfaceSourceCause({
             kind: 'selected', selectionSource: 'pinned',
             origin: {} as never, candidate: {} as never,
-        })).toBe('connecting');
-        expect(resolvePluginSurfaceSourceCause({ kind: 'conflict', candidates: [], reasons: ['different_versions'] })).toBe('required');
+        }, false)).toBe('connecting');
+        expect(resolvePluginSurfaceSourceCause({ kind: 'conflict', candidates: [], reasons: ['different_versions'] }, false)).toBe('required');
         for (const reason of ['home_unreachable', 'release_unavailable', 'non_portable', 'source_not_ready',
             'daemon_unsupported', 'daemon_invalid_response', 'activation_refused'] as const) {
-            expect(resolvePluginSurfaceSourceCause({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons: [reason] })).toBe(reason);
+            expect(resolvePluginSurfaceSourceCause({ kind: 'unavailable', storedOrigin: null, candidates: [], reasons: [reason] }, false)).toBe(reason);
         }
         expect(resolvePluginSurfaceSourceCause({ kind: 'unavailable', storedOrigin: null, candidates: [],
-            reasons: ['non_portable', 'activation_refused'] })).toBe('unavailable');
+            reasons: ['non_portable', 'activation_refused'] }, false)).toBe('unavailable');
     });
 });

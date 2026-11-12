@@ -154,9 +154,9 @@ function candidate(input: Readonly<{
 }
 
 describe('resolvePluginMachineExecutionOriginState', () => {
-    it('acquires an establishing portable installation without granting execution before its source answers', () => {
+    it.each(['source_not_ready', 'stale'] as const)('acquires a %s portable installation without granting execution before its source answers', (reason) => {
         const installed = candidate({ serverIdentityId: 'srv_one', machineId: 'machine-c4', materializationId: 'installed',
-            sourceClass: 'versionedArchive', validation: { kind: 'rejected', reason: 'source_not_ready' } });
+            sourceClass: 'versionedArchive', validation: { kind: 'rejected', reason } });
         const params = { pluginId: 'acme.plugin', storedOrigin: null, candidates: [installed] };
         const state = resolvePluginMachineExecutionOriginState(params);
         expect(state.kind).toBe('unavailable');

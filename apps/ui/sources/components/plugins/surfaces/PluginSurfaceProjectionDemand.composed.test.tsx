@@ -1,4 +1,9 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+import { createRegistryHostV1, createPluginRegistrySourceDescriptorV1, projectPluginRegistrySourceDeclarationV1, RegistryFetchRequestV1Schema } from '@happier-dev/protocol/registries';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { NewAppScreen } from '@/components/projects/starters/NewAppScreen';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { socketRpcCodec } from '@happier-dev/sync-client';
@@ -63,12 +68,28 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
     const machine = createMachineFixture({ id: 'presented-machine', activeAt: 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
-    const pluginId = 'acme.preview';
+    const starterSurface = surface === 'starter';
+    const shippedManifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL('../../../../../../packages/plugins/deployment-templates/.happier-plugin/plugin.json', import.meta.url), 'utf8')));
+    const pluginId = starterSurface ? shippedManifest.id : 'acme.preview';
+    const registrySources = starterSurface ? (shippedManifest.contributes.registrySources ?? []).map(definition => ({
+        ...projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: shippedManifest.version,
+            definition }),
+        occurrenceId: `${pluginId}#1`,
+    })) : [];
+    const registryHost = createRegistryHostV1({ host: 'node',
+        http: { getJson: async () => { throw new Error('Packaged catalog must not use HTTP'); },
+            getText: async () => { throw new Error('Packaged catalog must not use HTTP'); },
+            getBytes: async () => { throw new Error('Packaged catalog must not use HTTP'); } },
+        readSources: async () => registrySources.map((entry: ReturnType<typeof projectPluginRegistrySourceDeclarationV1> & { occurrenceId: string }) =>
+            createPluginRegistrySourceDescriptorV1({ ...entry, suppliers: [machine.id] })),
+        packageContent: { read: async source => ({ text: readFileSync(new URL(
+            `../../../../../../packages/plugins/deployment-templates/${source.packageContent.path}`, import.meta.url), 'utf8'), fetchedAt: 1 }) },
+    });
     let materialization = PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: machine.id,
         materializationId: 'preview-install', pluginId, version: '1.0.0', sourceClass: 'localPath',
         portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 });
@@ -118,6 +139,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
                 enabled: true, source: { kind: 'localPath', locator: 'preview-install' }, occurrenceId: widget.occurrenceId,
                 executionOrigin, sourceCustody } },
             familiesById: {
+                ...(starterSurface ? { registrySources: { family: 'registrySources', entriesById: Object.fromEntries(registrySources.map((entry: { id: string }) => [entry.id, { ...entry, executionOrigin }])) } } : {}),
                 storeKinds: { family: 'storeKinds', entriesById: { [storeKind.id]: storeKind } },
                 pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } },
                 skills: { family: 'skills', entriesById: { 'acme.unopened/unopened': {
@@ -139,9 +161,13 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             if (event !== 'rpc-call') throw new Error(`Unexpected fixture Socket event: ${event}`);
             if (!packet || typeof packet !== 'object' || !('method' in packet)
                 || typeof packet.method !== 'string' || !('params' in packet)) throw new Error('Invalid fixture RPC');
-            expect(fleet.some(entry => packet.method === `${entry.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true);
             const content = { mode: 'plain' as const };
             const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+            if (packet.method === `${machine.id}:daemon.registries.fetch`) {
+                const result = await registryHost.fetchRequest(RegistryFetchRequestV1Schema.parse(decoded.params));
+                return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+            }
+            expect(fleet.some(entry => packet.method === `${entry.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true);
             const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(decoded.params);
             requests.push(request);
             const result = request.sectionRead ? deferred.read(request.sectionRead.digest, request.sectionRead.offset,
@@ -149,9 +175,12 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
         });
     });
+    const promptCatalog = createPromptLibraryCatalogBoundary();
     let availabilityCursor = 1;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
-        serverIdentityId, accountId, accountMode: 'plain' }], route: request => {
+        serverIdentityId, accountId, accountMode: 'plain' }], route: async request => {
+        const promptResponse = await promptCatalog.handle(request.path, { method: request.method });
+        if (promptResponse) return promptResponse;
         if (request.path === '/v1/machines') return Response.json(rows);
         if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
             id => rows.find(entry => entry.id === id) ?? null);
@@ -203,6 +232,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         const definition = { kind: 'installed', surface: { pluginId, localId: 'conversations' } } as const;
         function Presented({ visible }: Readonly<{ visible: boolean }>) {
             current = usePluginUiProjectionCurrentness({ ...target, load: false });
+            if (starterSurface) return <AppShellPluginUiProjectionProvider>{visible ? <NewAppScreen onClose={() => {}} /> : null}</AppShellPluginUiProjectionProvider>;
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
                 <StoreDiscover demand={{ presented: visible }} project={null}>
                     {() => <DeclaredDirectoryKinds />}
@@ -251,6 +281,16 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             expect(requests.length).toBeGreaterThan(0);
             expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1);
             return;
+        }
+        if (starterSurface) {
+            await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' }).length).toBeGreaterThan(0));
+            const starterIds = new Set(tree.tree.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('newApp.starter:')).map(node => node.props.testID));
+            expect(starterIds.size).toBe(5);
+            await act(async () => { tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' })[0]!.props.onPress(); });
+            const continueButton = tree.tree.root.findAllByProps({ testID: 'newApp.continue' })[0]!;
+            expect(continueButton.props.disabled).toBeFalsy();
+            await act(async () => { continueButton.props.onPress(); });
+            expect(tree.tree.root.findAllByProps({ testID: 'newApp.description' }).length).toBeGreaterThan(0);
         }
         await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
         expect(requests.length).toBeGreaterThan(0);
@@ -463,7 +503,7 @@ it('asks only the presented origin for packages and UI in a cold 20-Machine sour
     }
 });
 
-it('refreshes a restored source-not-ready origin when its surface is presented after a cold reload', async () => {
+it('refreshes a restored stale origin when its surface is presented after a cold reload', async () => {
     const { accountId, pluginId, machines, home, requestsByMachineId, manifestReadsByMachineId } = await serveSourceFleet({ machineOnly: true });
     let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
     try {
@@ -506,7 +546,7 @@ it('refreshes a restored source-not-ready origin when its surface is presented a
             expect(facts?.sourceCandidates).toHaveLength(1);
             expect(facts?.sourceCandidates[0]).toMatchObject({
                 source: { origin: { sourceRef: { machineId: target.machineId, pluginId } } },
-                validation: { kind: 'rejected', reason: 'source_not_ready' },
+                validation: { kind: 'rejected', reason: 'stale' },
             });
         });
         expect(requestsByMachineId.size).toBe(0);

@@ -945,6 +945,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     unavailableAction?: SurfaceStateAction;
     hostApi: PluginSurfaceHostApiV1;
     runPress?: (event: unknown, invoke: () => unknown) => unknown;
+    actionControls?: import('./pluginSurfaceActionControls').PluginSurfaceActionControls;
     resourceStore?: PluginUiResourceStore;
     /** Targeted caller fallback for a contributor render crash. */
     targetedFallback?: React.ReactNode;
@@ -1311,6 +1312,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 direction: environment.direction,
                 mediaStage,
                 runPress: props.runPress,
+                actionControls: props.actionControls,
                 renderLiveStream: (input) => <PluginLiveStreamViewer {...input} hostApi={props.hostApi}
                     surface={props.requestSurface} mountLifetime={props.mountLifetime} readViewing={props.readLiveStreamViewing}
                     machineId={props.liveStreamMachineId} serverId={props.liveStreamServerId} />,
@@ -1390,7 +1392,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             renderTargetedSurface,
             props.targetedSurfaceUnavailableReason,
             props.hostApi, props.requestSurface, props.mountLifetime, props.readLiveStreamViewing,
-            props.liveStreamMachineId, props.liveStreamServerId, props.runPress,
+            props.liveStreamMachineId, props.liveStreamServerId, props.runPress, props.actionControls,
         ],
     );
     const canonicalPrivateDataClient = props.dataClient ?? undefined;
@@ -4150,6 +4152,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 unavailableAction={props.unavailableAction}
                 hostApi={resolvedHostApi}
                 runPress={runPress}
+                actionControls={controller.actionControls}
                 {...(targetedBinding || composerBinding || ephemeralBinding ? {
                     ...(embeddedFallback !== undefined
                         ? { targetedFallback: embeddedFallback }
@@ -4232,7 +4235,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             notice floating over the page would cover its footer and Load more. */}
         {machineConnectionPending && !pageOwnsMachineChip ? <PluginSurfaceConnectingLine /> : null}
         <PluginSurfaceSourceCauseContext.Provider value={needsMachineExecution
-            ? pluginExecution.unverified ? 'unknown' : resolvePluginSurfaceSourceCause(pluginExecution.selection.state) : null}>
+            ? resolvePluginSurfaceSourceCause(pluginExecution.selection.state, pluginExecution.selection.loading) : null}>
         <PluginSurfaceMachineRecoveryContext.Provider value={machineRecovery}>
             {/* Always mounted: an upload starting after first paint must not remount the surface. */}
             <PluginArtifactHostingStatusProvider isCurrent={controller.isCurrent}
