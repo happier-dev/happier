@@ -167,6 +167,14 @@ describe('managed browser human interactions', () => {
       };
       emit('Page.fileChooserOpened', { backendNodeId: 44, mode: 'selectSingle' }, 'another-page');
       expect(owner.getState(view)?.fileChooser).toBeNull();
+      expect(await owner.execute({ ...view, actionKind: 'upload', payload: {
+        x: 120, y: 80, files: [{ name: 'dropped.bin', dataBase64: 'AP+A' }],
+      } })).toMatchObject({ ok: true });
+      const drops = commands.filter(command => command.method === 'Input.dispatchDragEvent');
+      expect(drops.map(command => command.params?.type)).toEqual(['dragEnter', 'dragOver', 'drop']);
+      const data = drops.at(-1)?.params?.data as { files: string[] };
+      expect(await readFile(data.files[0])).toEqual(Buffer.from([0, 255, 128]));
+      expect(drops.at(-1)?.params).toMatchObject({ x: 120, y: 80 });
       emit('Page.fileChooserOpened', { backendNodeId: 44, mode: 'selectSingle' });
       const chooserId = owner.getState(view)?.fileChooser?.chooserId;
       expect(chooserId).toEqual(expect.any(String));

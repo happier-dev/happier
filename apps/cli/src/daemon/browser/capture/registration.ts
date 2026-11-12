@@ -252,6 +252,8 @@ function inputAction(control: MachineLiveStreamControlSidebandV1, frame: Browser
                 ? { actionKind: 'clipboardWrite' as const, payload: { text: event.text } }
                 : { actionKind: event.action === 'cut' ? 'clipboardCut' as const : 'clipboardRead' as const, payload: {} };
             case 'fileChooser': return { actionKind: 'upload' as const, payload: { chooserId: event.chooserId, files: event.files } };
+            case 'fileDrop': return frame?.width && frame.height ? { actionKind: 'upload' as const,
+                payload: { x: event.x * frame.width, y: event.y * frame.height, files: event.files } } : null;
             case 'dialog': return { actionKind: 'answerDialog' as const, payload: { dialogId: event.dialogId, accept: event.accept, ...(event.promptText !== undefined ? { promptText: event.promptText } : {}) } };
             case 'download': return { actionKind: 'download' as const, payload: { downloadId: event.downloadId, offset: event.offset, byteLength: event.byteLength } };
             case 'key': return { actionKind: 'press' as const, payload: { key: event.key, modifiers: event.modifiers } };

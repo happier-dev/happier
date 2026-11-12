@@ -22,10 +22,12 @@ import type { BrowserDaemonControlDispatchClientResult } from '@/sync/domains/br
 
 import { BrowserFrameStatusCapsule } from '../frame/BrowserFrameStatusCapsule';
 import { BrowserPageInteractions } from '../streamed/BrowserPageInteractions';
+import { readBrowserUploadFile } from '../streamed/browserUploadFiles';
 import { BrowserSoftKeyboardButton } from '../streamed/BrowserSoftKeyboardButton';
 import { useBrowserSoftKeyboard } from '../streamed/useBrowserSoftKeyboard';
 import { useBrowserViewerViewport } from '../streamed/useBrowserViewerViewport';
 import { buildBrowserStreamSidebandControl, buildBrowserViewerInput } from './browserStreamSidebandControl';
+import { mapLiveStreamPointToContent } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -245,6 +247,15 @@ function BrowserStreamInput(props: Readonly<{
     const actionSequence = React.useRef(0);
     const sendAction = React.useCallback((action: LiveStreamInputGesture) => sendGesture({eventId: `viewer:${Date.now()}:${++actionSequence.current}`, action}), [sendGesture]);
     const controlling = props.input.viewerInput?.controlling === true;
+    const onFileDrop = React.useCallback((files: readonly File[], point: Readonly<{ x: number; y: number }>) => {
+        if (!sendInput) return;
+        // Use the same picture/content projection as pointer input (including local zoom).
+        const target = mapLiveStreamPointToContent({ point, viewport, content });
+        if (!target) return;
+        void Promise.all(files.map(readBrowserUploadFile)).then(files => {
+            sendInput({ kind: 'fileDrop', ...target, files });
+        }).catch(() => undefined);
+    }, [sendInput, viewport, content]);
     const actions = useRemoteViewerActions({enabled: controlling, sendGesture: sendAction, clipboardShortcut: props.input.clipboardShortcut,
         keyboard: props.keyboard, supportedModifiers: BrowserInputModifierV1Schema.options});
     const onGesture = React.useCallback((gesture: Readonly<{eventId: string; action: LiveStreamInputGesture}>) => {
@@ -273,6 +284,7 @@ function BrowserStreamInput(props: Readonly<{
                 content={content}
                 onGesture={onGesture}
                 onClipboardShortcut={props.input.clipboardShortcut}
+                onFileDrop={onFileDrop}
                 accessibilityLabel={t('browserPresence.stream.inputA11y')}
                 testID={props.testID}
             />

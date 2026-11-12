@@ -663,7 +663,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     command: BrowserAutomationCdpInputInput,
   ): Promise<BrowserAutomationCdpInputResult> {
     if (command.actionKind === 'clipboardWrite' || command.actionKind === 'clipboardCut' || command.actionKind === 'answerDialog'
-      || (command.actionKind === 'upload' && typeof command.payload.chooserId === 'string')) {
+      || (command.actionKind === 'upload' && (typeof command.payload.chooserId === 'string' || 'x' in command.payload))) {
       return contextCapture?.interactions?.execute(command) ?? { ok: false, errorCode: 'runtime_unavailable' };
     }
     if (!contextCapture) {

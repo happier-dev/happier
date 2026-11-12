@@ -46,6 +46,13 @@ export const BrowserUploadFileV1Schema = z.strictObject({
   dataBase64: z.string().check(z.refine(value => /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value))),
 });
 export type BrowserUploadFileV1 = z.infer<typeof BrowserUploadFileV1Schema>;
+export const BrowserFileDropInputEventV1Schema = z.strictObject({
+  kind: z.literal('fileDrop'), target: BrowserInputTargetV1Schema,
+  x: z.number().check(z.minimum(0), z.maximum(1)),
+  y: z.number().check(z.minimum(0), z.maximum(1)),
+  files: z.array(BrowserUploadFileV1Schema).check(z.minLength(1)),
+  sequence: z.number().check(z.int(), z.nonnegative()),
+});
 export const BrowserFileChooserInputEventV1Schema = z.strictObject({
   kind: z.literal('fileChooser'), target: BrowserInputTargetV1Schema,
   chooserId: z.string().check(z.minLength(1)), files: z.array(BrowserUploadFileV1Schema),
@@ -104,6 +111,7 @@ export const BrowserInputEventV1Schema = z.discriminatedUnion('kind', [
   BrowserWheelInputEventV1Schema,
   BrowserClipboardInputEventV1Schema,
   BrowserFileChooserInputEventV1Schema,
+  BrowserFileDropInputEventV1Schema,
   BrowserDialogInputEventV1Schema,
   BrowserDownloadInputEventV1Schema,
   z.extend(z.omit(BrowserViewportV1Schema, { emulation: true }), {

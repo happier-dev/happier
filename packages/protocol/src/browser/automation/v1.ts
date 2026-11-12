@@ -6,6 +6,7 @@ import {
   BrowserDialogInputEventV1Schema,
   BrowserDownloadInputEventV1Schema,
   BrowserFileChooserInputEventV1Schema,
+  BrowserFileDropInputEventV1Schema,
   BrowserUploadFileV1Schema,
 } from '../input/v1.js';
 
@@ -191,9 +192,16 @@ const interactionPayloadSchemas: Readonly<Partial<Record<BrowserAutomationAction
 const chooserUploadPayloadSchema = z.omit(BrowserFileChooserInputEventV1Schema, {
   kind: true, target: true, sequence: true,
 });
+const dropUploadPayloadSchema = z.extend(z.omit(BrowserFileDropInputEventV1Schema, {
+  kind: true, target: true, sequence: true,
+}), {
+  x: z.number().check(z.nonnegative()), y: z.number().check(z.nonnegative()),
+});
 
 export function browserAutomationInteractionPayloadSchema(actionKind: BrowserAutomationActionKindV1, payload: Readonly<Record<string, unknown>>) {
-  return actionKind === 'upload' && 'chooserId' in payload ? chooserUploadPayloadSchema : interactionPayloadSchemas[actionKind];
+  return actionKind === 'upload'
+    ? 'chooserId' in payload ? chooserUploadPayloadSchema : 'x' in payload ? dropUploadPayloadSchema : undefined
+    : interactionPayloadSchemas[actionKind];
 }
 
 export const BrowserAutomationActionRequestV1Schema = lazyZodSchema(() => z.strictObject({

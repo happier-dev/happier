@@ -305,6 +305,15 @@ export function createBrowserSidecarInteractions(input: Readonly<{
                     return { ok: true };
                 }
                 if (request.actionKind === 'upload') {
+                    if ('x' in payload) {
+                        const files = payload.files as Array<{ name: string; dataBase64: string }>;
+                        const paths = await stageUpload(request, files.map(file => ({ name: file.name, bytes: Buffer.from(file.dataBase64, 'base64') })));
+                        const data = { items: [], files: paths, dragOperationsMask: 1 };
+                        for (const type of ['dragEnter', 'dragOver', 'drop']) {
+                            await dispatch('Input.dispatchDragEvent', { type, x: payload.x, y: payload.y, data });
+                        }
+                        return { ok: true };
+                    }
                     const chooser = live.state.fileChooser;
                     if (!chooser || chooser.chooserId !== payload.chooserId || live.chooserNodeId === undefined) return { ok: false, errorCode: 'unsupported_action' };
                     const files = payload.files as Array<{ name: string; dataBase64: string }>;

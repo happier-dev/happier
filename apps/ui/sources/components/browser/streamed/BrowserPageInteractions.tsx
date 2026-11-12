@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readBrowserUploadFile } from './browserUploadFiles';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
@@ -332,16 +333,7 @@ async function readPickedFiles(
   const files: BrowserUploadFileV1[] = [];
   for (const entry of picked) {
     if (entry.kind === 'web') {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(entry.file);
-      });
-      files.push({
-        name: entry.file.name,
-        dataBase64: dataUrl.slice(dataUrl.indexOf(',') + 1),
-      });
+      files.push(await readBrowserUploadFile(entry.file));
     } else {
       const { File } = await import('expo-file-system');
       files.push({ name: entry.name, dataBase64: await new File(entry.uri).base64() });

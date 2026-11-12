@@ -26,6 +26,7 @@ describe('human browser input', () => {
     { kind: 'clipboard', action: 'copy' },
     { kind: 'clipboard', action: 'paste', text: 'pasted text' },
     { kind: 'fileChooser', chooserId: 'chooser', files: [{ name: 'example.txt', dataBase64: 'aGVsbG8=' }] },
+    { kind: 'fileDrop', x: 0.25, y: 0.5, files: [{ name: 'binary.dat', dataBase64: 'AP+A' }] },
     { kind: 'dialog', dialogId: 'dialog', accept: true, promptText: 'answer' },
     { kind: 'download', downloadId: 'download', offset: 0, byteLength: 1024 },
   ])('accepts page-scoped $kind input and rejects browser chrome', event => {

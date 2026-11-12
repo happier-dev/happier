@@ -80,6 +80,8 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
     onGesture: (input: Readonly<{ eventId: string; action: HappierLiveStreamInputGesture }>) => void;
     /** Clipboard gestures stay with the focused host, which owns its clipboard and input relay. */
     onClipboardShortcut?: (action: 'copy' | 'cut' | 'paste') => void;
+    /** Host files dropped on this picture; the source owns transfer and authorization. */
+    onFileDrop?: (files: readonly File[], point: InputPoint) => void;
     /** Visual treatment of the capture surface (the simulator tints it; a browser stays clear). */
     style?: HappierStyleProp;
     accessibilityLabel?: string;
@@ -292,6 +294,30 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             pendingMove.current = null;
         };
     }, [inputAccepted, queueMove, supports]);
+
+    React.useEffect(() => {
+        const target = captureRef.current as (View & Partial<Element>) | null;
+        if (!props.onFileDrop || !target?.addEventListener || !target.removeEventListener || !target.getBoundingClientRect) return;
+        const listener = (event: Event) => {
+            const drag = event as DragEvent;
+            if (!drag.dataTransfer?.types.includes('Files')) return;
+            // Even a view-only picture must not navigate the enclosing app to an OS file.
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.type !== 'drop' || !inputAccepted) return;
+            const files = Array.from(drag.dataTransfer.files);
+            if (!files.length) return;
+            const rect = target.getBoundingClientRect!();
+            const point = mapperRef.current!.hover({ x: drag.clientX - rect.left, y: drag.clientY - rect.top }, latestContext.current).point;
+            props.onFileDrop?.(files, point);
+        };
+        target.addEventListener('dragover', listener);
+        target.addEventListener('drop', listener);
+        return () => {
+            target.removeEventListener?.('dragover', listener);
+            target.removeEventListener?.('drop', listener);
+        };
+    }, [inputAccepted, props.onFileDrop]);
 
     const keyboardProps: Record<string, unknown> = {
         onKeyDown: handleKeyDown,

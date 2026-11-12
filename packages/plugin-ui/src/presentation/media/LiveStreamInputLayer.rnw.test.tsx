@@ -6,6 +6,21 @@ import { HappierLiveStreamInputLayer } from './LiveStreamInputLayer.js';
 import type { HappierLiveStreamInputGesture } from './inputGesture.js';
 
 describe('live stream keyboard focus', () => {
+    it.each([true, false])('consumes host file drops and delivers only when input is accepted (%s)', inputAccepted => {
+        const onFileDrop = vi.fn();
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted={inputAccepted} supports={() => true}
+            viewport={{ width: 800, height: 400 }} onGesture={() => {}} onFileDrop={onFileDrop} testID="viewer" />);
+        try {
+            const capture = mounted.container.querySelector('[data-testid="viewer-capture"]')!;
+            const file = new File(['proof'], 'proof.txt');
+            const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientX: 400, clientY: 200 });
+            Object.defineProperty(drop, 'dataTransfer', { value: { types: ['Files'], files: [file] } });
+            act(() => capture.dispatchEvent(drop));
+            expect(drop.defaultPrevented).toBe(true);
+            if (inputAccepted) expect(onFileDrop).toHaveBeenCalledWith([file], { x: 0.5, y: 0.5 });
+            else expect(onFileDrop).not.toHaveBeenCalled();
+        } finally { mounted.unmount(); }
+    });
     it('exposes the named remote input capture as a group', () => {
         const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted supports={() => true}
             viewport={{ width: 800, height: 400 }} onGesture={() => {}} accessibilityLabel="Control the page" testID="viewer" />);

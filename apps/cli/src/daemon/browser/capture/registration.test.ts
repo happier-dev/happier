@@ -164,12 +164,16 @@ describe('browser live capture', () => {
                 .toEqual({ ok: false, reasonCode: 'capture_stopped' });
         } finally { await stop?.(); registration.dispose(); await interactions.dispose(); await producer.dispose(); }
     });
-    it.each(['controller', 'navigation', 'interaction', 'viewer disconnect', 'unclaimed viewer disconnect', 'passive viewer disconnect'] as const)('publishes only the changed %s fact between startup and recovery snapshots', async change => {
+    it.each(['controller', 'navigation', 'interaction', 'viewer disconnect', 'unclaimed viewer disconnect', 'passive viewer disconnect', 'file drop'] as const)('publishes only the changed %s fact between startup and recovery snapshots', async change => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+        const dragEvents: Record<string, unknown>[] = [];
         // Chromium is the only substituted boundary; metadata reaches the real stream codec.
         const transport = {
             openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
-            dispatchPageCommand: async () => ({}),
+            dispatchPageCommand: async (command: { method: string; params?: Record<string, unknown> }) => {
+                if (command.method === 'Input.dispatchDragEvent') dragEvents.push(command.params ?? {});
+                return {};
+            },
             dispatchBrowserCommand: async () => ({ success: true }),
             subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
                 listeners.add(listener); return () => { listeners.delete(listener); };
@@ -222,6 +226,21 @@ describe('browser live capture', () => {
             };
             expectSnapshot();
             metadata.length = 0;
+            if (change === 'file drop') {
+                for (const listener of listeners) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
+                    params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+                const control = { v: 1 as const, kind: 'browser_input' as const, sourceId, streamId: 'human', eventId: 'drop',
+                    controlEpoch: automation.getStatus(view).controlEpoch,
+                    event: { kind: 'fileDrop' as const, target: 'page' as const, sequence: 1, x: 0.5, y: 0.25,
+                        files: [{ name: 'drop.bin', dataBase64: 'AP+A' }] } };
+                expect(result.session.applySidebandControl?.({ ...control, controlEpoch: control.controlEpoch + 1 }))
+                    .toMatchObject({ ok: false });
+                expect(dragEvents).toEqual([]);
+                expect(result.session.applySidebandControl?.(control)).toEqual({ ok: true });
+                await vi.waitFor(() => expect(dragEvents.map(event => event.type)).toEqual(['dragEnter', 'dragOver', 'drop']));
+                expect(dragEvents.at(-1)).toMatchObject({ x: 200, y: 50, data: { files: [expect.any(String)] } });
+                return;
+            }
             if (change === 'controller') {
                 await automation.recordHumanInput({ ...view, authority: 'present_user' });
                 expect(metadata).toHaveLength(1);

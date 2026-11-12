@@ -842,6 +842,17 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   In unreleased 0.3 source, an intercepted chooser can instead be answered with
   `{ chooserId, files: [{ name, dataBase64 }] }`. The chooser must still belong to that live view;
   callers supply bytes rather than paths on the daemon's Machine.
+  A host file dropped on the streamed managed viewer uses the same upload staging
+  owner and descriptors, with a page-coordinate target instead of a chooser id.
+  The viewer consumes the host drop to prevent outer-page navigation; the existing
+  input epoch and control admission govern delivery. CDP dispatches the staged
+  files through the page's dragEnter/dragOver/drop lifecycle, retaining them until
+  the view closes just like chooser uploads.
+  This adds `fileDrop` to the unreleased closed Browser input union: Protocol,
+  viewer and daemon reload together because older development readers reject
+  the new kind. No released wire epoch, stored format, capability gate or
+  predecessor adapter changes; the inspected `../0.2` frontier at
+  `b825a99dfedcb68e223155a1ba0be84babe9e2d0` has no corresponding Browser input path.
 - **Managed interaction Actions share the viewer's owner.** `clipboardRead` returns selected
   non-password text; `clipboardWrite` inserts text into the focused page. In unreleased 0.3
   source, `clipboardCut` returns the same permitted selection and deletes it only when editable,
