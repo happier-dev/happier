@@ -66,6 +66,15 @@ describe('accountErasureFailureNotice', () => {
         expect(accountErasureFailureNotice(new HappyError('account_delete_failed', true, {
             status: 502, kind: 'server', code: 'account_delete_failed',
         }))).toEqual(unconfirmed);
+        expect(accountErasureFailureNotice(new HappyError('outcome_unknown', false, {
+            code: 'outcome_unknown',
+        }))).toEqual(unconfirmed);
+    });
+
+    it('presents a known Action refusal instead of claiming the deletion outcome is unknown', () => {
+        expect(accountErasureFailureNotice(new HappyError('credential_scope_denied', false, {
+            code: 'credential_scope_denied',
+        }))).toEqual({ title: 'homeGovernance.changeFailedTitle', body: 'errors.permissionDenied' });
     });
 });
 
@@ -102,6 +111,9 @@ describe('homeGovernanceFailureNotice', () => {
             retryable: false,
             code: 'home_owner_transfer_required',
         }).body).toBe('homeGovernance.errorOwnerTransferRequired');
+        expect(homeGovernanceFailureNotice({
+            kind: 'forbidden', retryable: false, code: 'credential_scope_denied',
+        }).body).toBe('errors.permissionDenied');
     });
 
     it('explains an untyped conflict as a Home that moved, not as a change that failed', () => {

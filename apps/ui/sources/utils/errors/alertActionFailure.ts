@@ -35,6 +35,7 @@ export function showActionFailureDetails(failure: Readonly<{ code: string; conte
 
 /** Deliberate disclosure of a typed Action failure, never its private transport details. */
 export function alertActionFailure(failure: Readonly<{
+    title?: string;
     reason: string;
     code: string | null;
     requestId?: string | null;
@@ -48,7 +49,7 @@ export function alertActionFailure(failure: Readonly<{
     }
     const uncertain = code === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
     Modal.alert(
-        t(uncertain ? 'toolView.pending.unknownTitle' : 'common.error'),
+        failure.title ?? t(uncertain ? 'toolView.pending.unknownTitle' : 'common.error'),
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
         [
             ...(failure.recovery ? [{ text: failure.recovery.label, onPress: failure.recovery.onPress }] : []),

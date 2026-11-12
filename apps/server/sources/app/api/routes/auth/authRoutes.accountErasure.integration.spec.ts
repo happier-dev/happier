@@ -83,6 +83,26 @@ describe("authRoutes (Account erasure) (integration)", () => {
 
     afterAll(async () => await harness.close());
 
+    it("confirms erasure of a fresh Account with no Teams or Machines", async () => {
+        const account = await createE2eeAccount();
+        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const app = createTestApp();
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/auth/account/delete",
+                headers: { authorization: `Bearer ${token}` },
+                payload: { confirmation: "DELETE" },
+            });
+            expect({ status: response.statusCode, body: response.json() }).toEqual({
+                status: 200, body: { status: "deleted" },
+            });
+            expect(await db.account.findUnique({ where: { id: account.id } })).toBeNull();
+        } finally {
+            await app.close();
+        }
+    });
+
     it("preserves grants authored on surviving Sessions while erasing recipient grants and owned Sessions", async () => {
         const { deleteAccountForErasure } = await import("@/app/plugins/data/accountDataErase");
         const owner = await createE2eeAccount();

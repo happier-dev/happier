@@ -46,7 +46,7 @@ let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let restoreStorage: (() => void) | undefined;
 const credentials = { token: createAccountTokenForTests('account-a', { currentAccount: true }) };
 
-async function mount(waiveDeletion = false) {
+async function mount(waiveDeletion = false, refuseDeletion = false) {
     homes = await serveAccountHomes({ homes: [
         { key: 'other', serverUrl: 'https://other-home.test', accountId: 'account-other', currentAccount: true },
         { key: 'focused', serverUrl: 'https://studio-home.test', accountId: 'account-a', credentials,
@@ -54,7 +54,9 @@ async function mount(waiveDeletion = false) {
                 ...(waiveDeletion ? { approvalWaivedSurfaces: { 'account.delete': ['ui'] } } : {}) }) } },
     ], route: request => {
         if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-        if (request.path === '/v1/auth/account/delete') return Response.json({ status: 'deleted' });
+        if (request.path === '/v1/auth/account/delete') return refuseDeletion
+            ? Response.json({ error: 'account_erasure_transition_cleanup_pending' }, { status: 409 })
+            : Response.json({ status: 'deleted' });
         return undefined;
     } });
     const { storage } = await import('@/sync/domains/state/storage');
@@ -158,6 +160,22 @@ describe('Settings → Account logout redirect', () => {
         expect(confirm).not.toHaveBeenCalled();
         expect(homes.requests.filter(request => request.path === '/v1/auth/account/delete')).toHaveLength(1);
         expect(await storedCredential('focused')).toBeNull();
+    });
+
+    it('keeps credentials and discloses the Request ID for a confirmed erasure refusal', async () => {
+        const { screen } = await mount(true, true);
+        const { Modal } = await import('@/modal');
+        const alert = vi.mocked(Modal.alert);
+        alert.mockClear();
+        await screen.pressByTestIdAsync('settings-account-delete');
+        expect(await storedCredential('focused')).toEqual(credentials);
+        expect(replace).not.toHaveBeenCalled();
+        expect(alert).toHaveBeenCalledWith('homeGovernance.changeFailedTitle', 'homeGovernance.errorErasureTransitionCleanupPending',
+            expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]));
+        const buttons = alert.mock.calls[0]?.[2];
+        buttons?.find(button => button.text === 'approvals.technicalDetails')?.onPress?.();
+        const details = alert.mock.calls.at(-1)?.[1];
+        expect(JSON.parse(String(details))).toMatchObject({ code: 'account_erasure_transition_cleanup_pending', requestId: expect.any(String) });
     });
 
     it('retries acknowledged local cleanup without deleting the Account twice', async () => {

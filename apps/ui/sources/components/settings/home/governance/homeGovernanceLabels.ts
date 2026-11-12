@@ -14,6 +14,8 @@ import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDispla
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /**
  * The one place a Home-governance enum becomes words.
@@ -161,11 +163,9 @@ export function homeGovernanceFailureNotice(
  * administrator, so they are shown with the same words: the deletion was
  * answered, repeating it cannot succeed, and the actionable step is to make
  * someone else an owner first. A known encryption-cleanup refusal instead
- * explains that the same deletion can be retried. An answer without one of
- * these typed verdicts — including a request that never left or whose answer
- * was lost — keeps the "not
- * confirmed" notice, because that is the one case in which the deletion may
- * still have happened.
+ * explains that the same deletion can be retried. Other typed refusals use the
+ * Action presenter. An absent or unreadable answer keeps the "not confirmed"
+ * notice because the deletion may still have happened.
  */
 export function accountErasureFailureNotice(error: unknown): Readonly<{ title: string; body: string }> {
     if (error instanceof HappyError && error.code === 'account_erasure_transition_cleanup_pending') {
@@ -174,6 +174,14 @@ export function accountErasureFailureNotice(error: unknown): Readonly<{ title: s
     if (error instanceof HappyError
         && (error.code === 'home_owner_transfer_required' || error.code === 'team_owner_transfer_required')) {
         return homeGovernanceFailureNotice({ kind: 'conflict', retryable: false, code: error.code });
+    }
+    if (error instanceof HappyError && error.code
+        && error.code !== 'account_delete_failed' && error.code !== 'account_delete_invalid_response'
+        && !isActionOutcomeUnknownErrorCodeV1(error.code)) {
+        return Object.freeze({
+            title: t('homeGovernance.changeFailedTitle'),
+            body: resolveActionExecutionErrorMessage(error, t('homeGovernance.errorGeneric')),
+        });
     }
     return Object.freeze({
         title: t('settingsAccount.deleteAccountFailedTitle'),
@@ -203,6 +211,10 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.claim.refused');
         default:
             break;
+    }
+    if (failure.code) {
+        const message = resolveActionExecutionErrorMessage({ code: failure.code, details: failure.details }, '');
+        if (message) return message;
     }
     switch (failure.kind) {
         case 'unreachable':

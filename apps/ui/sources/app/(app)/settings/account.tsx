@@ -16,6 +16,7 @@ import { getAvatarUrl } from '@/sync/domains/profiles/profile';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { checkAccountUsername, releaseAccountUsername, setAccountUsername } from '@/sync/api/account/apiUsername';
 import { setAccountName } from '@/sync/api/account/apiAccountName';
@@ -169,6 +170,14 @@ export const WorkspaceRouteBody = React.memo(() => {
         const outcome = await accountExecution.execute(actionId, { ...accountScope,
             ...(actionId === 'account.credentials.forgetAll' ? { scope: 'all-credentials' } : {}) });
         if (!outcome.ok && isActionApprovalDeclinedErrorCode(outcome.errorCode)) return;
+        if (!outcome.ok && actionId === 'account.delete') {
+            const notice = accountErasureFailureNotice(new HappyError(outcome.error, false, {
+                code: outcome.errorCode, details: outcome.details, failureCause: outcome.failureCause,
+            }));
+            alertActionFailure({ title: notice.title, reason: notice.body, code: outcome.errorCode,
+                requestId: outcome.requestId, context: readSafeFailureDetails(outcome.details) });
+            return;
+        }
         if (!outcome.ok) throw new HappyError(outcome.error, false, { code: outcome.errorCode, details: outcome.details });
     };
     const handleLogout = async () => {
