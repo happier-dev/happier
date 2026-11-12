@@ -9,7 +9,7 @@ import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './storeKinds';
 import { useInstalledMachines } from './storeInstalled';
 import type { InstalledScopeAdmission } from './storeAccountAdmission';
-import { useMachineSetupRecipeOptions } from './storeSoftware';
+import { useAdmittedMachineSetupRecipeOptions } from './storeSoftware';
 import { machineSetupAdapters, machineSetupItemPresentation, type MachineSetupRecipeOffer } from '@/components/settings/machines/managed/machineSetupItems';
 
 type RecipeInstallation = Readonly<{ machineId: string; observation: NonNullable<MachinePublishedDaemonStateV1['setup']>['recipes'][number] | null }>;
@@ -45,7 +45,7 @@ export function useInstalledSoftware(input: StoreInstalledInput, demand: StoreDe
     const projecting = demand.presented && !!scope && !input.projectKey;
     // Rows are named by the Account's recipe declarations, the same read every setup surface names its items from.
     const recipeTarget = React.useMemo(() => scope ? { scope, machine: null } : null, [scope]);
-    const recipeOptions = useMachineSetupRecipeOptions(recipeTarget, { presented: projecting });
+    const recipeOptions = useAdmittedMachineSetupRecipeOptions(recipeTarget, { presented: projecting }, admitted);
     const offers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
     // Unchanged Software groups keep their row identity when another group's setup changes.
     const lastGroups = React.useRef(EMPTY_GROUPS);

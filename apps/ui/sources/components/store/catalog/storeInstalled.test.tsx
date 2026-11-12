@@ -30,13 +30,13 @@ afterEach(async () => {
     rpc.reset();
 });
 
-it('omits a bundled Agent subtitle that only repeats its identity while keeping useful descriptions', async () => {
+it('uses the registry outcome when a bundled Agent has no packaged description', async () => {
     const { getResolvedAgentCatalogEntries } = await import('@/agents/backendCatalog/agentCatalogProjection');
     const entry = getResolvedAgentCatalogEntries({ enabledAgentIds: [] })[0]!;
     for (const subtitle of [entry.title, `${entry.title} CLI`]) {
         expect(storeKinds.agent.summary({ ...entry, subtitle }).description).toBeNull();
     }
-    expect(storeKinds.agent.summary({ ...entry, subtitle: 'Works with your existing account' }).description)
+    expect(storeKinds.agent.summary({ ...entry, registryDescription: 'Works with your existing account' }).description)
         .toBe('Works with your existing account');
 });
 

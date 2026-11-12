@@ -6,7 +6,7 @@ import { EMPTY_INPUT_OPTIONS, type InputFieldOptionsState } from '@/components/s
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import type { StoreDemand, StoreInstalledInput, StoreItemSummary, StoreListInput } from './storeKinds';
-import { useInstalledScope } from './storeAccountAdmission';
+import { useInstalledScope, type InstalledScopeAdmission } from './storeAccountAdmission';
 
 export type StoreSoftwareTarget = Pick<StoreInstalledInput, 'scope' | 'machine'>;
 export type StoreSoftwareItem = ActionFieldOption;
@@ -26,13 +26,26 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
 /** Attached recipe presentation uses Account declarations, independently of a Machine's support or presence. */
 export function useMachineSetupRecipeOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand) {
     const declarationTarget = React.useMemo(() => target ? { scope: target.scope, machine: null } : null, [target?.scope]);
-    return useMachineSetupOptions(RECIPE_FIELD, declarationTarget, demand);
+    const admission = useInstalledScope({ scope: declarationTarget?.scope ?? null, machine: null });
+    return useAdmittedMachineSetupRecipeOptions(declarationTarget, demand, admission);
+}
+
+/** Installed already admitted its Account; recipe names consume that same lifetime. */
+export function useAdmittedMachineSetupRecipeOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
+    admission: InstalledScopeAdmission) {
+    return useAdmittedMachineSetupOptions(RECIPE_FIELD, target, demand, admission);
 }
 
 function useMachineSetupOptions(field: typeof SOFTWARE_FIELD | typeof RECIPE_FIELD,
     target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
     values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
     const admission = useInstalledScope({ scope: target?.scope ?? null, machine: target?.machine ?? null });
+    return useAdmittedMachineSetupOptions(field, target, demand, admission, values, refreshKey);
+}
+
+function useAdmittedMachineSetupOptions(field: typeof SOFTWARE_FIELD | typeof RECIPE_FIELD,
+    target: StoreSoftwareTarget | null | undefined, demand: StoreDemand, admission: InstalledScopeAdmission,
+    values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
     const { scope, binding } = admission;
     const machine = target?.machine;
     const inert = !!target && machine === null;

@@ -130,6 +130,19 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
     };
 }
 
+/**
+ * A Plain owner Machine as Sync holds it after hydrating `createPlainMachineRowFixture`'s row: the same
+ * row facts plus the content mode and access Sync reads before any Machine RPC. A bare
+ * `createMachineFixture` has neither, which no hydrated available Machine lacks, so Machine RPC
+ * owners rightly refuse it as "content mode unknown".
+ */
+export function createHydratedPlainMachineFixture(input: Readonly<{ id: string; accountId: string; machine?: Partial<Machine> }>): Machine {
+    const machine = createMachineFixture({ ...input.machine, id: input.id });
+    const row = createPlainMachineRowFixture({ id: input.id, accountId: input.accountId, machine });
+    return { ...machine, storageMode: 'plain', dataEncryptionKey: row.dataEncryptionKey, access: row.access,
+        installationId: row.installationId };
+}
+
 /** Ready Plain recipient wire: no opening key; the custodian's write basis stays explicit. */
 export function createPlainSharedMachineRowFixture(input: Readonly<{
     id: string;

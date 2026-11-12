@@ -9,6 +9,7 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '@happier-dev/protocol/p
 import type { StoreInstalledInput } from '../catalog/storeKinds';
 import { createSeededSkillsHome } from '@/dev/testkit/harness/skillsSurfaceHarness';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const rpc = createProviderSettingsHarness({ machines: [] });
@@ -302,7 +303,9 @@ it('composes the same admitted MCP for All and an exact Machine without native f
     const home = await account.restore({ serverIdentityId: 'srv_inventory_two_doors', machines,
         catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
     const scope = storage.getState().settingsScope!;
-    await publishMachineInventoryForTest(scope, machines);
+    await publishMachineInventoryForTest(scope, machines.map(machine => createHydratedPlainMachineFixture({
+        id: machine.id, accountId: scope.accountId, machine,
+    })));
     let reads = 0;
     account.home.answer(home.serverId, `GET ${MCP_SERVER_CATALOG_ROWS_ROUTE_V1}`, { select: () => {
         reads++;

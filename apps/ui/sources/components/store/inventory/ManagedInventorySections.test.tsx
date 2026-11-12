@@ -10,6 +10,7 @@ import type { ManagedInventorySectionsState, ManagedInventoryDraft, ManagedInven
 import type { ManagedInventoryField } from './inventoryRows';
 import type { SettingsColumnFilterField } from '@/components/settings/shell/useSettingsColumnFilter';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 const rpc = createProviderSettingsHarness({ machines: [] });
@@ -36,7 +37,9 @@ it('keeps one Collection and exact two-door homes through human/agent intersecti
         agentInventory: { checkedAt: 1, installedAgentIds: ['codex'] } } }));
     const home = await account.restore({ serverIdentityId: 'srv_inventory_collection', machines, catalog: providers });
     const scope = storage.getState().settingsScope!;
-    await publishMachineInventoryForTest(scope, machines);
+    await publishMachineInventoryForTest(scope, machines.map(machine => createHydratedPlainMachineFixture({
+        id: machine.id, accountId: scope.accountId, machine,
+    })));
     account.home.answer(home.serverId, `GET ${MCP_SERVER_CATALOG_ROWS_ROUTE_V1}`, { body: { status: 'present', revision: 1,
         content: { t: 'plain', v: { v: 1, servers: [{ id: 'docs', name: 'docs', title: 'Shared docs', transport: 'stdio',
             stdio: { command: 'docs', args: [] }, env: {}, createdAt: 1, updatedAt: 1 }], bindings: [{ id: 'docs-on', serverId: 'docs',
