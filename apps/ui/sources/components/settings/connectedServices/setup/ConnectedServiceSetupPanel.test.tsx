@@ -169,8 +169,8 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
             onAddAccount={() => {}} onSignInAgain={() => {}} onOpenAccount={() => {}} onOpenPool={() => {}}
         />;
         const screen = await renderScreen(element);
-        // One presentation on a phone too (crHome A): no per-service disclosure; Needs you leads with the fix.
-        expect(screen.findHostByTestId('connected-services-index:needs-you')).not.toBeNull();
+        // The device view preference applies on phones too (ee3184ecf8b); lists lead with Needs you.
+        expect(screen.findHostByTestId('connected-services-index:needs-you') !== null).toBe(presentation === 'list');
         expect(screen.findHostByTestId('connected-services-account:happier.agent.codex/openai-codex:work')).not.toBeNull();
         expect(screen.getTextContent()).toContain('connectedServicesSettings.signedOut');
         await act(async () => screen.update(React.cloneElement(element, { settled: {
@@ -299,7 +299,7 @@ describe('ConnectedServiceSetupPanel tools disclosure', () => {
         const trigger = { getBoundingClientRect: () => ({ left: 10, top: 20, width: 80, height: 32 }) };
         await act(async () => { screen.findHostByTestId(testID)!.props.onPress({ currentTarget: trigger }); });
         expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({ request: {
-            scope: null, service, anchor: { kind: 'view', ref: { current: trigger } },
+            scope: null, service, intent: 'add', anchor: { kind: 'view', ref: { current: trigger } },
         } }) }));
     });
     it('presents the qualified phone reconnect journey in place', async () => {
