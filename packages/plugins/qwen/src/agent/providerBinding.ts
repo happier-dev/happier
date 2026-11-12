@@ -40,7 +40,6 @@ export const QWEN_PROVIDER_BINDING_ADAPTER = {
     return {
       v: 1 as const,
       kind: 'configFile' as const,
-      nativeHome: true as const,
       env: [{ name: QWEN_PROVIDER_SECRET_ENV_KEY, value: apiKey, source: 'provider' as const },
         { name: 'QWEN_CODE_SYSTEM_SETTINGS_PATH', value: null, source: 'provider' as const }],
       files: [{ relativePath: QWEN_PROVIDER_SETTINGS_PATH, utf8: JSON.stringify({
